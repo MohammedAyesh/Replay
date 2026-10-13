@@ -12,6 +12,7 @@ import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
+import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
 import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 
 function dateOnly(date: Date): string {
@@ -127,6 +128,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
     startsAt: string;
     location: string;
   } | null>(null);
+  const [liveSession, setLiveSession] = useState<{ id: number; title: string } | null>(null);
   const claim = useClaimAcademyFamily();
   const attemptedToken = useRef<string | null>(null);
   const requestedLanguage = new URLSearchParams(search).get("lang");
@@ -406,7 +408,14 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                         <span><MapPin aria-hidden="true" />{session.location}</span>
                         <span>{session.footage.note || statusLabel}</span>
                       </div>
-                      <span className="fp-session-type">{statusLabel}</span>
+                       <div className="flex flex-col items-end gap-2">
+                         <span className="fp-session-type">{statusLabel}</span>
+                         {["scheduled", "recording"].includes(session.footage.status) && (
+                           <button type="button" className="fp-session-type inline-flex items-center gap-1.5 border-0" style={{ cursor: "pointer", background: "var(--replay-floodlight)", color: "var(--replay-void)" }} onClick={() => setLiveSession({ id: session.id, title })} data-testid={`button-family-live-${session.id}`}>
+                             <Play size={14} aria-hidden="true" />{labels.watch}
+                           </button>
+                         )}
+                       </div>
                     </article>];
                   }
                   return session.recordings.map((recording) => <article className="fp-session" key={recording.id} data-testid={`family-footage-${recording.id}`}>
@@ -513,6 +522,11 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
           onClose={() => setPlaying(null)}
         />
       </AnimatePresence>}
+      {liveSession && <AcademyLiveOverlay
+        statusUrl={`/api/academy/family/sessions/${liveSession.id}/live/status`}
+        title={`${family?.academy.name ?? "Academy"} · ${liveSession.title}`}
+        onClose={() => setLiveSession(null)}
+      />}
     </main>
   );
 }

@@ -17,6 +17,7 @@ import { LIVE_CAMERA_UPSTREAM, parseLiveCamera } from "../lib/liveCameras";
 import { loadRoomByCode, matchPhase, matchWindow, normalizeCode } from "../lib/matchRooms";
 import { logger } from "../lib/logger";
 import { controlFetch, controlResponse } from "./contabo";
+import { pipeLiveSegment, rewriteLivePlaylist } from "../lib/liveHlsProxy";
 import { queueUserClipExport } from "./userClips";
 import { publicExportStatus } from "../lib/userClipExportState";
 
@@ -243,33 +244,6 @@ async function readLiveStatus(ctx: MatchLiveContext) {
   };
 }
 
-function rewritePlaylist(playlist: string, code: string, variant: LiveVariant): string | null {
-  const prefix = `/api/matches/${encodeURIComponent(code)}/live/${variant}/seg/`;
-  const rewriteUri = (uri: string): string | null => {
-    const match = /(?:^|\/)seg\/([A-Za-z0-9._-]+\.(?:ts|m4s|mp4))(?:\?.*)?$/i.exec(uri)
-      ?? /^([A-Za-z0-9._-]+\.(?:ts|m4s|mp4))(?:\?.*)?$/i.exec(uri);
-    if (!match) return null;
-    return `${prefix}${match[1]}`;
-  };
-  const lines = playlist.split(/\r?\n/);
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    if (!line) continue;
-    if (line.startsWith("#")) {
-      lines[i] = line.replace(/URI="([^"]+)"/g, (full, uri: string) => {
-        const proxied = rewriteUri(uri);
-        return proxied ? `URI="${proxied}"` : full;
-      });
-      if (/URI="https?:\/\//i.test(lines[i])) return null;
-      continue;
-    }
-    const proxied = rewriteUri(line.trim());
-    if (proxied) lines[i] = proxied;
-    else if (/^https?:\/\//i.test(line.trim())) return null;
-  }
-  return lines.join("\n");
-}
-
 async function ensureMediaAccess(req: Request, res: Response): Promise<{
   ctx: MatchLiveContext;
   camera: { controlCamera: string; streamCamera: string };
@@ -334,7 +308,8 @@ router.get(
           .json({ error: "Live playlist unavailable" });
         return;
       }
-      const playlist = rewritePlaylist(await upstream.text(), access.ctx.room.code, variant);
+      const prefix = `/api/matches/${encodeURIComponent(access.ctx.room.code)}/live/${variant}/seg/`;
+      const playlist = rewriteLivePlaylist(await upstream.text(), prefix);
       if (!playlist) {
         logger.warn({ matchCode: access.ctx.room.code, variant }, "Rejected live playlist containing an unproxied URL");
         res.status(502).json({ error: "Live playlist could not be safely proxied" });
@@ -367,24 +342,9 @@ router.get(
         {},
         30_000,
       );
-      if (!upstream.ok || !upstream.body) {
-        res.status(upstream.status >= 400 && upstream.status < 600 ? upstream.status : 502)
-          .json({ error: "Live segment unavailable" });
-        return;
-      }
-      const contentType = upstream.headers.get("content-type");
-      if (contentType) res.set("Content-Type", contentType);
-      res.set("Cache-Control", "private, max-age=60");
-      const stream = Readable.fromWeb(upstream.body as globalThis.ReadableStream<Uint8Array>);
-      stream.once("error", (error) => {
+      pipeLiveSegment(upstream, res, (error) => {
         logger.warn({ error, matchCode: access.ctx.room.code, variant, name }, "Live segment stream failed");
-        if (!res.headersSent && !res.destroyed) res.status(502).json({ error: "Live segment unavailable" });
-        else if (!res.destroyed) res.destroy();
       });
-      res.once("close", () => {
-        if (!res.writableFinished) stream.destroy();
-      });
-      stream.pipe(res);
     } catch (error) {
       logger.warn({ error, matchCode: access.ctx.room.code, variant, name }, "Public match segment proxy failed");
       res.status(502).json({ error: "Live segment unavailable" });

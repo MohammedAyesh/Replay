@@ -2390,6 +2390,64 @@ paths:
         "404":
           description: Academy or squad not found in this academy
 
+  /academy/console/academies/{academyId}/sessions/{sessionId}/live/status:
+    get:
+      operationId: getAcademyConsoleSessionLiveStatus
+      tags: [academyConsole]
+      summary: Get HLS live status for a booked academy session
+      security:
+        - clerkSession: []
+      parameters:
+        - name: academyId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Session live state and same-origin playlist route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyLiveSessionStatus"
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Session not found or not accessible
+
+  /academy/family/sessions/{sessionId}/live/status:
+    get:
+      operationId: getAcademyFamilySessionLiveStatus
+      tags: [academyFamily]
+      summary: Get HLS live status for an accessible family session
+      security:
+        - clerkSession: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Session live state and same-origin playlist route
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AcademyLiveSessionStatus"
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Session not found or not accessible
+
   /academy/console/academies/{academyId}/sessions/{sessionId}:
     patch:
       operationId: updateAcademyConsoleSession
@@ -6872,6 +6930,32 @@ components:
         recordingCount:
           type: integer
           minimum: 0
+
+    AcademyLiveSessionStatus:
+      type: object
+      required: [status, windowStartsAt, windowEndsAt, camera, variant, playlistPath, message, panAvailable]
+      properties:
+        status:
+          type: string
+          enum: [upcoming, live, not_live, ended, no_booking]
+        windowStartsAt:
+          type: ["string", "null"]
+          format: date-time
+        windowEndsAt:
+          type: ["string", "null"]
+          format: date-time
+        camera:
+          type: ["string", "null"]
+        variant:
+          type: string
+          enum: [hls]
+        playlistPath:
+          type: ["string", "null"]
+        message:
+          type: string
+        panAvailable:
+          type: boolean
+          enum: [false]
 
     AcademySessionSummary:
       type: object
