@@ -48,14 +48,17 @@ export function useAcademyLiveStatus({
     && now >= window.start - WINDOW_MARGIN_MS && now <= window.end + WINDOW_MARGIN_MS;
 
   useEffect(() => {
+    if (!pollWindow && now > window.end + WINDOW_MARGIN_MS) return;
     const update = () => setNow(Date.now());
-    const nextBoundary = window.start - WINDOW_MARGIN_MS;
+    const nextBoundary = now < window.start - WINDOW_MARGIN_MS
+      ? window.start - WINDOW_MARGIN_MS
+      : window.end + WINDOW_MARGIN_MS;
     const delay = pollWindow
       ? POLL_MS
       : Math.max(1_000, Math.min(MAX_TIMEOUT_MS, nextBoundary - Date.now()));
     const timer = setTimeout(update, delay);
     return () => clearTimeout(timer);
-  }, [pollWindow, window.start]);
+  }, [now, pollWindow, window.start, window.end]);
 
   const query = useQuery(surface === "console"
     ? getGetAcademyConsoleSessionLiveStatusQueryOptions(academyId ?? 0, sessionId, {
