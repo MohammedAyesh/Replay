@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
+  getGetAcademyConsoleSessionLiveStatusQueryKey,
+  getGetAcademyFamilySessionLiveStatusQueryKey,
   getGetAcademyConsoleSessionLiveStatusQueryOptions,
   getGetAcademyFamilySessionLiveStatusQueryOptions,
 } from "@workspace/api-client-react";
@@ -57,10 +59,10 @@ export function useAcademyLiveStatus({
 
   const query = useQuery(surface === "console"
     ? getGetAcademyConsoleSessionLiveStatusQueryOptions(academyId ?? 0, sessionId, {
-      query: { enabled: Boolean(academyId) && pollWindow, refetchInterval: pollWindow ? POLL_MS : false },
+      query: { queryKey: getGetAcademyConsoleSessionLiveStatusQueryKey(academyId ?? 0, sessionId), enabled: Boolean(academyId) && pollWindow, refetchInterval: pollWindow ? POLL_MS : false },
     })
     : getGetAcademyFamilySessionLiveStatusQueryOptions(sessionId, {
-      query: { enabled: pollWindow, refetchInterval: pollWindow ? POLL_MS : false },
+      query: { queryKey: getGetAcademyFamilySessionLiveStatusQueryKey(sessionId), enabled: pollWindow, refetchInterval: pollWindow ? POLL_MS : false },
     }));
 
   return { status: query.data, polling: pollWindow, liveWindow: window };

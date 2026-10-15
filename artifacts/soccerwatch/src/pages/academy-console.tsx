@@ -27,16 +27,19 @@ import {
   getGetAcademyConsoleDashboardQueryKey,
   getGetAcademyConsoleMembershipsQueryKey,
   getListAcademyConsoleSquadsQueryKey,
+  getListAcademyConsoleSessionsQueryKey,
   useCreateAcademyConsoleSquad,
   useDeleteAcademyConsoleSquad,
   useGetAcademy,
   useGetAcademyConsoleDashboard,
   useGetAcademyConsoleMemberships,
   useListAcademyConsoleSquads,
+  useListAcademyConsoleSessions,
   useUpdateAcademyConsoleSquad,
   type AcademyConsoleDashboard,
   type AcademyConsoleMembership,
   type AcademySquadSummary,
+  type AcademySessionSummary,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
@@ -73,6 +76,8 @@ import { cn } from "@/lib/utils";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 import { AcademyPlayersSection } from "@/components/academy-console/players-section";
 import { AcademySessionsSection } from "@/components/academy-console/sessions-section";
+import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
+import { useAcademyLiveStatus, formatAmmanClock } from "@/components/academy-console/use-academy-live-status";
 import { AcademyAttendanceSection } from "@/components/academy-console/attendance-section";
 import { AcademyRecordingsSection } from "@/components/academy-console/recordings-section";
 import { AcademyAnnouncementsSection } from "@/components/academy-console/announcements-section";
@@ -305,74 +310,75 @@ function Dashboard({ dashboard, isOwner }: { dashboard: AcademyConsoleDashboard;
     { section: "players", label: labels.gettingStartedPlayers, description: labels.gettingStartedPlayersDescription, icon: UserRound },
     { section: "schedule", label: labels.gettingStartedSchedule, description: labels.gettingStartedScheduleDescription, icon: CalendarDays },
   ];
-
   return (
     <div className="space-y-7" data-testid="academy-console-dashboard">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-turf">{labels.overview}</p>
-          <h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-text" data-testid="text-academy-name">{dashboard.academyName}</h1>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-muted-text">{labels.dashboardDescription}</p>
-        </div>
-        <div className="flex flex-wrap gap-2" data-testid="academy-console-roles">
-          {roleLabels.map((role) => <span key={role} className="rounded-full border border-turf/30 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf">{role}</span>)}
-        </div>
+        <div><p className="text-xs font-bold uppercase tracking-[0.18em] text-turf">{labels.overview}</p><h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-text" data-testid="text-academy-name">{dashboard.academyName}</h1><p className="mt-2 max-w-xl text-sm leading-6 text-muted-text">{labels.dashboardDescription}</p></div>
+        <div className="flex flex-wrap gap-2" data-testid="academy-console-roles">{roleLabels.map((role) => <span key={role} className="rounded-full border border-turf/30 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf">{role}</span>)}</div>
       </div>
-
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {counts.map(({ label, value, icon: Icon, testId }) => (
-          <div key={testId} className="rounded-2xl border border-line bg-surface p-5" data-testid={testId}>
-            <div className="flex items-start justify-between gap-3">
-              <span className="text-sm font-semibold text-muted-text">{label}</span>
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-raised text-turf"><Icon className="h-4 w-4" aria-hidden="true" /></span>
-            </div>
-            <p className="mt-6 font-display text-4xl font-bold tabular-nums text-text">{value}</p>
-          </div>
-        ))}
-        {isOwner && dashboard.collectThisWeek && (
-          <article className="rounded-2xl border border-line bg-surface p-5" data-testid="stat-collect-this-week">
-            <div className="flex items-start justify-between gap-3">
-              <span className="text-sm font-semibold text-muted-text">{labels.collectThisWeek}</span>
-              <span className="grid h-9 w-9 place-items-center rounded-xl bg-raised text-turf">
-                <Coins className="h-4 w-4" aria-hidden="true" />
-              </span>
-            </div>
-            <p className="mt-6 font-display text-3xl font-bold tabular-nums text-text">
-              <bdi dir={locale === "ar" ? "rtl" : "ltr"}>
-                {new Intl.NumberFormat(locale === "ar" ? "ar-JO" : "en-JO", {
-                  style: "currency",
-                  currency: "JOD",
-                  maximumFractionDigits: 3,
-                }).format(dashboard.collectThisWeek.totalFils / 1000)}
-              </bdi>
-            </p>
-            <p className="mt-2 text-xs leading-5 text-muted-text">
-              {labels.collectThisWeekDescription(dashboard.collectThisWeek.playerCount)}
-            </p>
-          </article>
-        )}
+        {counts.map(({ label, value, icon: Icon, testId }) => <div key={testId} className="rounded-2xl border border-line bg-surface p-5" data-testid={testId}><div className="flex items-start justify-between gap-3"><span className="text-sm font-semibold text-muted-text">{label}</span><span className="grid h-9 w-9 place-items-center rounded-xl bg-raised text-turf"><Icon className="h-4 w-4" aria-hidden="true" /></span></div><p className="mt-6 font-display text-4xl font-bold tabular-nums text-text">{value}</p></div>)}
+        {isOwner && dashboard.collectThisWeek && <article className="rounded-2xl border border-line bg-surface p-5" data-testid="stat-collect-this-week"><div className="flex items-start justify-between gap-3"><span className="text-sm font-semibold text-muted-text">{labels.collectThisWeek}</span><span className="grid h-9 w-9 place-items-center rounded-xl bg-raised text-turf"><Coins className="h-4 w-4" aria-hidden="true" /></span></div><p className="mt-6 font-display text-3xl font-bold tabular-nums text-text"><bdi dir={locale === "ar" ? "rtl" : "ltr"}>{new Intl.NumberFormat(locale === "ar" ? "ar-JO" : "en-JO", { style: "currency", currency: "JOD", maximumFractionDigits: 3 }).format(dashboard.collectThisWeek.totalFils / 1000)}</bdi></p><p className="mt-2 text-xs leading-5 text-muted-text">{labels.collectThisWeekDescription(dashboard.collectThisWeek.playerCount)}</p></article>}
       </div>
-
+      <DashboardLiveNow academyId={dashboard.academyId} />
       <section className="rounded-2xl border border-line bg-surface p-5 sm:p-6" data-testid="academy-getting-started">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-text">{labels.nextUp}</p>
-            <h2 className="mt-2 font-display text-2xl font-bold text-text">{labels.gettingStarted}</h2>
-          </div>
-          <span className="hidden text-xs text-muted-text sm:block">{isOwner ? labels.ownerAccess : labels.coachAccess}</span>
-        </div>
-        <div className="mt-5 divide-y divide-line">
-          {links.map(({ section, label, description, icon: Icon }) => (
-            <button key={section} type="button" onClick={() => setLocation(`/academy/${section}`)} className="flex w-full items-center gap-4 py-4 text-start transition-colors hover:text-turf" data-testid={`link-getting-started-${section}`}>
-              <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-raised text-turf"><Icon className="h-4 w-4" aria-hidden="true" /></span>
-              <span className="min-w-0 flex-1"><span className="block text-sm font-bold text-text">{label}</span><span className="mt-1 block text-xs leading-5 text-muted-text">{description}</span></span>
-              {localeDirectionArrow(locale === "ar" ? "rtl" : "ltr")}
-            </button>
-          ))}
-        </div>
+        <div className="flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-text">{labels.nextUp}</p><h2 className="mt-2 font-display text-2xl font-bold text-text">{labels.gettingStarted}</h2></div><span className="hidden text-xs text-muted-text sm:block">{isOwner ? labels.ownerAccess : labels.coachAccess}</span></div>
+        <div className="mt-5 divide-y divide-line">{links.map(({ section, label, description, icon: Icon }) => <button key={section} type="button" onClick={() => setLocation(`/academy/${section}`)} className="flex w-full items-center gap-4 py-4 text-start transition-colors hover:text-turf" data-testid={`link-getting-started-${section}`}><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-raised text-turf"><Icon className="h-4 w-4" aria-hidden="true" /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-text">{label}</span><span className="mt-1 block text-xs leading-5 text-muted-text">{description}</span></span>{localeDirectionArrow(locale === "ar" ? "rtl" : "ltr")}</button>)}</div>
       </section>
     </div>
   );
+}
+
+function DashboardLiveNow({ academyId }: { academyId: number }) {
+  const { t, locale } = useTranslation();
+  const copy = t.academyConsole.schedule;
+  const sessionsQuery = useListAcademyConsoleSessions(academyId, {
+    query: { queryKey: getListAcademyConsoleSessionsQueryKey(academyId), refetchInterval: 60_000, staleTime: 30_000 },
+  });
+  const [statuses, setStatuses] = useState<Record<number, string | null>>({});
+  const [selected, setSelected] = useState<AcademySessionSummary | null>(null);
+  const dayKey = (date: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Amman", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  const today = dayKey(new Date());
+  const sessions = (sessionsQuery.data ?? []).filter((session) => dayKey(new Date(session.startsAt)) === today);
+  const liveSessions = sessions.filter((session) => statuses[session.id] === "live");
+  return (
+    <>
+      {sessions.map((session) => <DashboardLiveProbe key={session.id} academyId={academyId} session={session} setStatuses={setStatuses} />)}
+      {liveSessions.length > 0 && (
+        <section className="rounded-2xl border border-destructive/30 bg-surface p-5" data-testid="academy-live-now">
+          <h2 className="mb-4 font-display text-xl font-bold text-text">{copy.liveNow}</h2>
+          <div className="space-y-2">{liveSessions.map((session) => (
+            <div key={session.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-raised/50 p-3">
+              <div><p className="text-sm font-bold text-text">{formatAmmanClock(new Date(session.startsAt).getTime(), locale)} · {session.squadName ?? copy.unassigned}</p><p className="mt-1 text-xs text-muted-text">{session.location}</p></div>
+              <Button type="button" size="sm" onClick={() => setSelected(session)} className="bg-floodlight text-void" data-testid={`button-dashboard-watch-live-${session.id}`}><Video className="me-1.5 h-4 w-4" aria-hidden="true" />{copy.watchLive}</Button>
+            </div>
+          ))}</div>
+        </section>
+      )}
+      {selected && <AcademyLiveOverlay
+        statusUrl={`/api/academy/console/academies/${academyId}/sessions/${selected.id}/live/status`}
+        title={`${selected.type === "match" ? copy.match : copy.training} · ${selected.location}`}
+        onClose={() => setSelected(null)}
+      />}
+    </>
+  );
+}
+
+function DashboardLiveProbe({
+  academyId, session, setStatuses,
+}: {
+  academyId: number;
+  session: AcademySessionSummary;
+  setStatuses: React.Dispatch<React.SetStateAction<Record<number, string | null>>>;
+}) {
+  const { status, polling } = useAcademyLiveStatus({
+    academyId, sessionId: session.id, startsAt: session.startsAt, endsAt: session.endsAt, surface: "console",
+  });
+  useEffect(() => {
+    const value = polling ? status?.status ?? null : null;
+    setStatuses((current) => current[session.id] === value ? current : { ...current, [session.id]: value });
+  }, [polling, session.id, setStatuses, status?.status]);
+  return null;
 }
 
 function localeDirectionArrow(direction: "ltr" | "rtl") {

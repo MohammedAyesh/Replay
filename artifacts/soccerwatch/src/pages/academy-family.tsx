@@ -13,6 +13,7 @@ import { useAuth } from "@/lib/auth";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
+import { formatAmmanClock, useAcademyLiveStatus } from "@/components/academy-console/use-academy-live-status";
 import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 
 function dateOnly(date: Date): string {
@@ -59,6 +60,7 @@ const copy = {
     today: "Today", upcoming: "UP NEXT", score: "Final score",
     footage: "Session footage", footageHint: "Recordings shared for sessions in your schedule.",
     noFootage: "No session footage has been shared yet.", watch: "Watch",
+    liveNow: "Live now", watchLive: "Watch live", liveFrom: "Live from {time}", livePaused: "Live feed paused",
     footageStatus: {
       none: "Not booked",
       no_camera: "No camera assigned",
@@ -96,6 +98,7 @@ const copy = {
     today: "اليوم", upcoming: "الموعد القادم", score: "النتيجة النهائية",
     footage: "تسجيلات المواعيد", footageHint: "التسجيلات التي تمت مشاركتها لمواعيد اللاعب.",
     noFootage: "لم تتم مشاركة تسجيلات للمواعيد بعد.", watch: "مشاهدة",
+    liveNow: "مباشر الآن", watchLive: "شاهد البث", liveFrom: "البث من {time}", livePaused: "البث متوقف مؤقتًا",
     footageStatus: {
       none: "غير محجوز",
       no_camera: "لا توجد كاميرا مخصصة",
@@ -108,6 +111,33 @@ const copy = {
     },
   },
 };
+
+function FamilyLiveNotice({
+  session, locale, labels, onWatch,
+}: {
+  session: { id: number; startsAt: string; endsAt: string | null };
+  locale: string;
+  labels: { liveNow: string; watchLive: string; liveFrom: string; livePaused: string };
+  onWatch: () => void;
+}) {
+  const { status } = useAcademyLiveStatus({
+    sessionId: session.id, startsAt: session.startsAt, endsAt: session.endsAt, surface: "family",
+  });
+  if (!status || status.status === "ended" || status.status === "no_booking") return null;
+  const time = formatAmmanClock(new Date(session.startsAt).getTime() - 3 * 60_000, locale);
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2" data-testid={`family-live-state-${session.id}`}>
+      {status.status === "upcoming" && <span>{labels.liveFrom.replace("{time}", time)}</span>}
+      {status.status === "live" && <span className="rounded-full bg-destructive px-2.5 py-1 text-xs font-bold text-white">{labels.liveNow}</span>}
+      {status.status === "not_live" && <span>{labels.livePaused}</span>}
+      {(status.status === "live" || status.status === "not_live") && (
+        <button type="button" onClick={onWatch} className="fp-session-type inline-flex items-center gap-1.5 border-0" style={{ cursor: "pointer", background: "var(--replay-floodlight)", color: "var(--replay-void)" }}>
+          <Play size={14} aria-hidden="true" />{labels.watchLive}
+        </button>
+      )}
+    </div>
+  );
+}
 
 function extractBunnyVideoId(value: string): string {
   try {
@@ -189,7 +219,10 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const footageSessions = family?.sessions.filter((session) => (
     session.recordings.length > 0 || session.footage.status !== "none"
   )) ?? [];
-  const nextSession = upcomingSessions[0];
+  const currentOrNextSessions = family?.sessions
+    .filter((session) => new Date(session.endsAt ?? new Date(new Date(session.startsAt).getTime() + 90 * 60_000).toISOString()).getTime() + 5 * 60_000 >= Date.now())
+    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()) ?? [];
+  const nextSession = currentOrNextSessions[0];
 
   if (source === "token") {
     const invitePath = `/p/${encodeURIComponent(familyToken)}`;
@@ -372,7 +405,14 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                 </div>
                 {nextSession && <div className="fp-next" data-testid="family-next-session">
                   <span className="fp-next-icon"><CalendarDays size={18} aria-hidden="true" /></span>
-                  <span><small>{labels.upcoming}</small><strong>{formatDate(nextSession.startsAt, locale)}</strong><span>{new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(new Date(nextSession.startsAt))} · {nextSession.type === "match" ? labels.match : labels.training}</span></span>
+                  <span><small>{labels.upcoming}</small><strong>{formatDate(nextSession.startsAt, locale)}</strong><span>{new Intl.DateTimeFormat(locale, { hour: "numeric", minute: "2-digit" }).format(new Date(nextSession.startsAt))} · {nextSession.type === "match" ? labels.match : labels.training}</span>
+                    {["scheduled", "recording"].includes(nextSession.footage.status) && <FamilyLiveNotice
+                      session={nextSession}
+                      locale={locale}
+                      labels={labels}
+                      onWatch={() => setLiveSession({ id: nextSession.id, title: nextSession.type === "match" ? labels.match : labels.training })}
+                    />}
+                  </span>
                 </div>}
               </div>
             </section>
