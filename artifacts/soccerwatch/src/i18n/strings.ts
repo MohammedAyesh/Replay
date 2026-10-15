@@ -692,6 +692,10 @@ const strings = {
         deleteError: "Could not delete this announcement. Try again.", deleting: "Deleting…", delete: "Delete",
       },
       schedule: {
+        liveFrom: "Live from {time}",
+        liveNow: "LIVE",
+        watchLive: "Watch live",
+        livePaused: "Live feed paused",
         description: "Keep academy training and match results organized in one dependable schedule.",
         add: "Add session",
         upcoming: "Upcoming",
@@ -2004,6 +2008,10 @@ const strings = {
         deleteError: "تعذّر حذف هذا الإعلان. حاول مجددًا.", deleting: "جارٍ الحذف…", delete: "حذف",
       },
       schedule: {
+        liveFrom: "البث من {time}",
+        liveNow: "مباشر",
+        watchLive: "شاهد البث",
+        livePaused: "البث متوقف مؤقتًا",
         description: "نظّم تدريبات الأكاديمية ومبارياتها واحتفظ بالنتائج في جدول واحد.",
         add: "إضافة موعد",
         upcoming: "القادمة",

@@ -40,6 +40,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { AcademyLiveOverlay } from "./AcademyLiveOverlay";
+import { formatAmmanClock, useAcademyLiveStatus } from "./use-academy-live-status";
 import {
   ammanInputToUtcIso,
   formatAmmanDateTime,
@@ -60,6 +61,38 @@ type SessionForm = {
   notes: string;
 };
 type FormField = keyof SessionForm;
+
+function SessionLiveNotice({
+  academyId,
+  session,
+  locale,
+  copy,
+  onWatch,
+}: {
+  academyId: number;
+  session: AcademySessionSummary;
+  locale: string;
+  copy: { liveFrom: string; liveNow: string; watchLive: string; livePaused: string };
+  onWatch: () => void;
+}) {
+  const { status } = useAcademyLiveStatus({
+    academyId, sessionId: session.id, startsAt: session.startsAt, endsAt: session.endsAt, surface: "console",
+  });
+  if (!status || status.status === "ended" || status.status === "no_booking") return null;
+  const time = formatAmmanClock(new Date(session.startsAt).getTime() - 3 * 60_000, locale);
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" data-testid={`session-live-state-${session.id}`}>
+      {status.status === "upcoming" && <span className="text-muted-text">{copy.liveFrom.replace("{time}", time)}</span>}
+      {status.status === "live" && <span className="rounded-full bg-destructive px-2.5 py-1 font-bold text-white">{copy.liveNow}</span>}
+      {status.status === "not_live" && <span className="text-muted-text">{copy.livePaused}</span>}
+      {(status.status === "live" || status.status === "not_live") && (
+        <Button type="button" variant="ghost" size="sm" onClick={onWatch} className="min-h-8 px-2 text-xs text-turf" data-testid={`button-watch-live-${session.id}`}>
+          <Play className="me-1.5 h-3.5 w-3.5" aria-hidden="true" />{copy.watchLive}
+        </Button>
+      )}
+    </div>
+  );
+}
 
 const blankForm: SessionForm = {
   type: "training",
@@ -376,16 +409,13 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
               </div>
             )}
             {["scheduled", "recording"].includes(session.footage.status) && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setLiveSession(session)}
-                className="mt-2 min-h-8 px-2 text-xs text-turf"
-                data-testid={`button-live-session-${session.id}`}
-              >
-                <Play className="me-1.5 h-3.5 w-3.5" aria-hidden="true" />Live view
-              </Button>
+              <SessionLiveNotice
+                academyId={academyId}
+                session={session}
+                locale={locale}
+                copy={copy}
+                onWatch={() => setLiveSession(session)}
+              />
             )}
           </div>
           <div className="flex items-center justify-end gap-1 border-t border-line pt-2 sm:border-0 sm:pt-0">
