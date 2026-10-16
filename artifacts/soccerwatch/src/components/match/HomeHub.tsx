@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
-import { Camera, CalendarPlus, ChevronRight, CirclePlus, Film, Loader2, Play, Smartphone } from "lucide-react";
+import { Camera, CalendarPlus, ChevronRight, ChevronLeft, CirclePlus, Loader2, Play, Smartphone, Target } from "lucide-react";
 import { useListUserClips, getListUserClipsQueryKey } from "@workspace/api-client-react";
 import { StatCarousel } from "@/components/home/StatCarousel";
 import { MatchCard } from "@/components/match/MatchCard";
@@ -9,8 +9,10 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useToast } from "@/hooks/use-toast";
 import { useLocale } from "@/i18n/context";
 import { useMatchCopy } from "@/i18n/match-strings";
+import { formatDay } from "@/components/match/bits";
 import { useAuth } from "@/lib/auth";
-import { formatJod, useAvatarRemove, useAvatarUpload, useBookingFields, useMyMatches, useReplayProfile } from "@/lib/match-api";
+import { formatJod, useAvatarRemove, useAvatarUpload, useBookingFields, useMyMatches, useReplayProfile, type MyMatchItem } from "@/lib/match-api";
+import { cn } from "@/lib/utils";
 
 function useTicker(ms: number) {
   const [now, setNow] = useState(Date.now());
@@ -59,17 +61,17 @@ export function HomeHub() {
   const invites = data?.invites.slice(0, 3) ?? [];
   const voting = data?.recent.filter((m) => m.voteOpen) ?? [];
   const recent = (data?.recent ?? []).filter((m) => !m.voteOpen).slice(0, 3);
-  const myClips = (clips.data ?? []).slice(0, 6);
+  const myClips = (clips.data ?? []).slice(0, 4);
   // The most impressive things Replay can tell this player right now, best first, chosen by the server.
   const tiles = data?.statTiles ?? (data?.statTile ? [data.statTile] : []);
   const statTile = tiles.length ? <StatCarousel tiles={tiles} /> : null;
 
   return (
     <div className="mb-8 flex flex-col gap-6">
-      <div className="flex items-center gap-3 px-1">
+      <div className="flex flex-col items-start gap-3 px-1">
         <HomeAvatar name={user?.name ?? ""} avatarUrl={profile.data?.avatarUrl ?? null} />
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-display text-2xl font-bold leading-tight">{firstName ? copy.hello(firstName) : copy.helloGuest}</p>
+        <div className="min-w-0">
+          <p className="font-display text-[34px] font-extrabold leading-tight">{firstName ? copy.hello(firstName) : copy.helloGuest}</p>
           {profile.data && profile.data.matchesPlayed > 0 && (
             <p className="text-xs text-muted-text">
               {profile.data.matchesPlayed} {copy.played} · {profile.data.wins} {copy.wins} · {profile.data.motmCount} {copy.motmShort}
@@ -87,17 +89,18 @@ export function HomeHub() {
           {bookRow}
         </>
       ) : (
-        <section className="rounded-3xl border border-line bg-surface p-4" data-testid="home-no-match">
-          <p className="font-display text-lg font-bold leading-tight">{copy.homeNoMatch}</p>
-          <ol className="mt-3 grid grid-cols-[1fr_20px_1fr_20px_1fr] items-center text-center">
-            {[CalendarPlus, BallIcon, Smartphone].map((Icon, index) => (
+        <section className="flex flex-col gap-[22px] rounded-2xl border border-line bg-surface px-[22px] py-6" data-testid="home-no-match">
+          <style>{`@keyframes floodOn{0%{opacity:.3}8%{opacity:1}13%{opacity:.45}22%{opacity:1}100%{opacity:1}}.flood-on{animation:floodOn 1.1s ease-out .3s both}@media(prefers-reduced-motion:reduce){.flood-on{animation:none}}`}</style>
+          <p className="font-display text-[26px] font-extrabold leading-tight">{copy.homeNoMatch}</p>
+          <ol className="m-0 flex list-none flex-col p-0">
+            {[CalendarPlus, Target, Smartphone].map((Icon, index) => (
               <Step key={index} index={index} label={copy.homeSteps[index]}>
-                <Icon className="h-[18px] w-[18px]" aria-hidden />
+                <Icon className="h-[22px] w-[22px]" aria-hidden />
               </Step>
             ))}
           </ol>
           {canBook && (
-            <Link href="/book" className="mt-4 flex min-h-11 items-center justify-center rounded-full bg-floodlight px-5 text-sm font-bold text-void" data-testid="link-home-book">
+            <Link href="/book" className="flood-on flex min-h-[58px] items-center justify-center rounded-full bg-floodlight px-5 text-center font-display text-[17px] font-extrabold text-void shadow-[0_0_0_6px_rgba(212,255,79,0.08)]" data-testid="link-home-book">
               {bookLabel}
             </Link>
           )}
@@ -118,28 +121,28 @@ export function HomeHub() {
       )}
 
       {moreUpcoming.length > 0 && (
-        <Section title={copy.upcoming}>
-          {moreUpcoming.map((m) => <MatchCard key={`u-${m.code}`} item={m} copy={copy} now={now} />)}
+        <Section title={copy.upcoming} horizontal>
+          {moreUpcoming.map((m) => <HomeMatchCard key={`u-${m.code}`} item={m} copy={copy} now={now} />)}
         </Section>
       )}
 
       {recent.length > 0 && (
-        <Section title={copy.recentMatches} href="/matches" more={copy.allMatches}>
-          {recent.map((m) => <MatchCard key={`r-${m.code}`} item={m} copy={copy} now={now} />)}
+        <Section title={copy.recentMatches} href="/matches" more={copy.allMatches} horizontal>
+          {recent.map((m) => <HomeMatchCard key={`r-${m.code}`} item={m} copy={copy} now={now} />)}
         </Section>
       )}
 
       {myClips.length > 0 && (
         <section>
           <SectionHead title={copy.recentClips} href="/my-clips" more={copy.allClips} />
-          <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4">
+          <div className="grid grid-cols-2 gap-3 px-1">
             {myClips.map((clip) => (
-              <Link key={clip.id} href="/my-clips" className="w-40 shrink-0 overflow-hidden rounded-2xl border border-line bg-surface">
-                <div className="relative aspect-video bg-raised">
+              <Link key={clip.id} href="/my-clips" className="relative h-[220px] min-w-0 overflow-hidden rounded-2xl border border-line bg-surface">
+                <div className="relative h-[168px] bg-raised">
                   <ClipThumb src={clip.thumbnailUrl ?? null} />
-                  <span className="absolute bottom-1.5 end-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-void/70"><Play className="h-3 w-3 fill-current" /></span>
+                  <span className="absolute start-1/2 top-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-violet text-text"><Play className="h-[17px] w-[17px] fill-current" /></span>
                 </div>
-                <p className="truncate px-2.5 py-2 text-xs font-semibold">{clip.title}</p>
+                <ClipFooter title={clip.title} locale={copy.locale} now={now} labels={copy} />
               </Link>
             ))}
           </div>
@@ -164,10 +167,10 @@ function BallIcon(props: React.SVGProps<SVGSVGElement>) {
 function Step({ index, label, children }: { index: number; label: string; children: React.ReactNode }) {
   return (
     <>
-      {index > 0 && <span aria-hidden className="h-0 border-t-[1.5px] border-dashed border-[#2C3650]" />}
-      <li className="flex min-w-0 flex-col items-center gap-1.5">
-        <span className={index === 0 ? "flex h-10 w-10 items-center justify-center rounded-xl bg-raised text-floodlight" : "flex h-10 w-10 items-center justify-center rounded-xl bg-raised text-turf"}>{children}</span>
-        <span className="text-[11px] font-semibold leading-tight">{label}</span>
+      {index > 0 && <li aria-hidden className="h-[22px] w-0 ms-[23px] border-s border-dotted border-muted-text/50" />}
+      <li className="flex min-w-0 items-center gap-[14px]">
+        <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-line bg-raised text-turf">{children}</span>
+        <span className="text-[17px] font-bold leading-tight">{label}</span>
       </li>
     </>
   );
@@ -211,7 +214,7 @@ function HomeAvatar({ name, avatarUrl }: { name: string; avatarUrl: string | nul
   };
   return (
     <div className="relative shrink-0">
-      <PlayerAvatar name={name} avatarUrl={avatarUrl} size={52} className={busy ? "opacity-50" : undefined} />
+      <PlayerAvatar name={name} avatarUrl={avatarUrl} size={76} className={cn("border-2 border-turf", busy ? "opacity-50" : undefined)} />
       <button
         type="button"
         disabled={busy}
@@ -219,8 +222,8 @@ function HomeAvatar({ name, avatarUrl }: { name: string; avatarUrl: string | nul
         aria-label={avatarUrl ? copy.photo.change : copy.photo.add}
         data-testid="button-home-photo"
         className={avatarUrl
-          ? "absolute -bottom-1 -end-1 flex h-[22px] w-[22px] items-center justify-center rounded-full border-2 border-void bg-raised text-text before:absolute before:-inset-2.5 before:content-['']"
-          : "absolute -bottom-1 -end-1 flex h-[26px] w-[26px] items-center justify-center rounded-full border-2 border-void bg-floodlight text-void before:absolute before:-inset-2 before:content-['']"}
+          ? "absolute -bottom-1 -end-1 flex h-[30px] w-[30px] items-center justify-center rounded-full border-[3px] border-void bg-raised text-text before:absolute before:-inset-2.5 before:content-['']"
+          : "absolute -bottom-1 -end-1 flex h-[30px] w-[30px] items-center justify-center rounded-full border-[3px] border-void bg-raised text-text before:absolute before:-inset-2 before:content-['']"}
       >
         {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className={avatarUrl ? "h-[11px] w-[11px]" : "h-[13px] w-[13px]"} strokeWidth={2.4} />}
       </button>
@@ -241,20 +244,22 @@ function HomeAvatar({ name, avatarUrl }: { name: string; avatarUrl: string | nul
   );
 }
 
-function SectionHead({ title, href, more }: { title: string; href?: string; more?: string }) {
+function SectionHead({ title, href, more, styled = true }: { title: string; href?: string; more?: string; styled?: boolean }) {
   return (
-    <div className="mb-2 flex items-baseline justify-between px-1">
-      <h2 className="text-sm font-bold">{title}</h2>
-      {href && more && <Link href={href} className="text-xs font-semibold text-turf">{more}</Link>}
+    <div className="mb-2 flex items-center justify-between px-1">
+      <h2 className={styled ? "font-display text-[22px] font-extrabold" : "text-sm font-bold"}>{title}</h2>
+      {href && more && (styled
+        ? <Link href={href} className="flex min-h-11 items-center gap-0.5 text-sm font-bold text-turf">{more}<ChevronLeft className="h-[18px] w-[18px] ltr:rotate-180" aria-hidden /></Link>
+        : <Link href={href} className="text-xs font-semibold text-turf">{more}</Link>)}
     </div>
   );
 }
 
-function Section({ title, href, more, children }: { title: string; href?: string; more?: string; children: React.ReactNode }) {
+function Section({ title, href, more, horizontal = false, children }: { title: string; href?: string; more?: string; horizontal?: boolean; children: React.ReactNode }) {
   return (
     <section>
-      <SectionHead title={title} href={href} more={more} />
-      <div className="flex flex-col gap-2">{children}</div>
+      <SectionHead title={title} href={href} more={more} styled={horizontal} />
+      <div className={horizontal ? "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-[10px] overflow-x-auto px-4" : "flex flex-col gap-2"}>{children}</div>
     </section>
   );
 }
@@ -264,10 +269,42 @@ function ClipThumb({ src }: { src: string | null }) {
   const [broken, setBroken] = useState(false);
   if (!src || broken) {
     return (
-      <div className="flex h-full w-full items-center justify-center" style={{ background: "repeating-linear-gradient(180deg,#0F2A2A 0 25%,#0D2525 25% 50%)" }}>
-        <Film className="h-5 w-5 text-turf/70" />
+      <div className="absolute inset-0 bg-raised">
+        <span aria-hidden className="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 bg-violet/25" />
+        <span aria-hidden className="absolute start-1/2 top-1/2 h-[84px] w-[84px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-violet/55 bg-raised" />
       </div>
     );
   }
-  return <img src={src} alt="" className="h-full w-full object-cover" loading="lazy" onError={() => setBroken(true)} />;
+  return <img src={src} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" onError={() => setBroken(true)} />;
+}
+
+function HomeMatchCard({ item, copy, now }: { item: MyMatchItem; copy: ReturnType<typeof useMatchCopy>; now: number }) {
+  const href = item.inviteToken ? `/m/${item.code}?i=${item.inviteToken}` : `/m/${item.code}`;
+  const day = formatDay(item.startMs, copy.locale, now, copy);
+  const title = item.title || item.field.name;
+  const clock = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Amman", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(item.startMs));
+  return (
+    <Link href={href} className="flex min-h-[164px] w-[150px] shrink-0 snap-start flex-col justify-between gap-3 rounded-2xl border border-line bg-surface p-4">
+      <span className="text-[13px] font-medium text-muted-text">{day}</span>
+      {item.score
+        ? <span dir="ltr" className="self-start font-display text-5xl font-bold leading-none tracking-wide text-text">{item.score.a}-{item.score.b}</span>
+        : <span dir="ltr" className="self-start font-display text-[42px] font-bold leading-none text-turf">{clock}</span>}
+      <span className="line-clamp-2 font-display text-base font-bold leading-tight">{title}</span>
+    </Link>
+  );
+}
+
+function ClipFooter({ title, locale, now, labels }: { title: string; locale: "en" | "ar"; now: number; labels: { today: string; tomorrow: string } }) {
+  const date = title.match(/\d{4}-\d{2}-\d{2}/)?.[0];
+  const time = title.match(/\b\d{2}:\d{2}\b/)?.[0];
+  const dateMs = date && time ? Date.parse(`${date}T${time}:00+03:00`) : NaN;
+  const dayLabel = Number.isFinite(dateMs) ? formatDay(dateMs, locale, now, labels) : title;
+  return (
+    <span className="absolute inset-x-0 bottom-0 flex h-[52px] items-center justify-between gap-2 bg-void px-3.5">
+      <span className="min-w-0 truncate text-sm font-bold">{dayLabel}</span>
+      {time && Number.isFinite(dateMs) && <span dir="ltr" className="shrink-0 font-display text-[15px] font-semibold text-muted-text">{time}</span>}
+    </span>
+  );
 }

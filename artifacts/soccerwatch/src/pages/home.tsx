@@ -135,11 +135,11 @@ export default function Home() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   return (
-    <div className="home-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
-      <div className="home-page-scroll min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-4">
+    <div className="home-page relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className="home-page-scroll min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-36 pt-4">
         <HomeHub />
         <div className="mb-4 flex items-center gap-3 px-1">
-          <h1 className="text-sm font-semibold text-foreground">
+          <h1 className="font-display text-[22px] font-extrabold text-foreground">
             {locale === "ar" ? "الجديد" : "What's new"}
           </h1>
           <div className="h-px flex-1 bg-border" />
@@ -158,6 +158,7 @@ export default function Home() {
           ))}
         </div>
       </div>
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-[150px] bg-gradient-to-b from-transparent via-background/75 to-background" />
     </div>
   );
 }
@@ -194,9 +195,9 @@ function NewsCard({
         y: 0,
         transition: { delay: index * 0.06, duration: 0.35, ease: "easeOut" as const },
       }}
-      className="overflow-hidden rounded-[22px] border border-border bg-card"
+      className="overflow-hidden rounded-2xl border border-line bg-surface"
     >
-      <div className="relative aspect-video overflow-hidden">
+      <div className="relative h-[240px] overflow-hidden bg-void">
         {post.image ? (
           <>
             <div className="absolute inset-0 field-pattern bg-gradient-to-br from-card via-muted to-card" />
@@ -212,16 +213,15 @@ function NewsCard({
         ) : (
           <div className="absolute inset-0 field-pattern bg-gradient-to-br from-card via-muted to-card" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-black/10 to-transparent" />
-        <span className="absolute start-3 top-3 rounded-[7px] border border-[rgba(255,255,255,0.12)] bg-[rgba(7,8,10,0.72)] px-[9px] py-1 text-[9.5px] font-extrabold uppercase tracking-[0.12em] text-primary">
+        <span className="absolute bottom-3 start-3 flex h-7 items-center rounded-full bg-turf px-3 text-[13px] font-bold text-void">
           {text.tag}
         </span>
       </div>
 
       <button type="button" onClick={onToggle} className="w-full text-start">
-        <div className="px-4 pb-[15px] pt-3.5">
+        <div className="flex flex-col gap-2 px-5 pb-2 pt-[18px]">
           <p
-            className="text-[11px] font-bold uppercase tracking-[0.07em] text-muted-foreground/40"
+            className="text-[13px] font-medium text-muted-text"
             style={{
               unicodeBidi: "isolate",
               direction: locale === "ar" ? "rtl" : "ltr",
@@ -229,13 +229,13 @@ function NewsCard({
           >
             {text.date} · {text.readTime}
           </p>
-          <h2 className="mt-1.5 font-display text-[18.5px] font-bold leading-[1.22] tracking-[-0.02em] text-foreground">
+          <h2 className="font-display text-[22px] font-extrabold leading-[1.35] text-foreground">
             {text.title}
           </h2>
-          <p className="mt-2 text-[13.5px] leading-[1.55] text-muted-foreground/[0.66]">
+          <p className="line-clamp-2 text-[15px] leading-[1.65] text-muted-text">
             {text.excerpt}
           </p>
-          <div className="mt-3 flex items-center gap-1.5 text-xs font-extrabold text-primary">
+          <div className="flex min-h-11 items-center gap-1.5 text-sm font-bold text-turf">
             <span>
               {isExpanded
                 ? locale === "ar"
@@ -246,7 +246,7 @@ function NewsCard({
                   : "Read full story"}
             </span>
             <ChevronDown
-              className={`h-3.5 w-3.5 transition-transform duration-300 ${
+              className={`h-4 w-4 transition-transform duration-300 ${
                 isExpanded ? "rotate-180" : ""
               }`}
             />

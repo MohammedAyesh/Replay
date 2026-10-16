@@ -32,7 +32,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Find yourself is part of the app (header, language switch, tab bar) but
   // scrolls as a document, so its tab bar is pinned to the viewport.
   const isWholeGameClaim = location.startsWith("/find/");
-  const isWatchFeed = location === "/home";
   const isLegalDocument = location === "/privacy" || location === "/terms" || location === "/delete-account";
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
@@ -44,7 +43,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
   const hideHeader = isLogin || isImmersivePlayer || isPortfolio || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom || isGuidedDemo || isAcademyConsole;
   const hideTabBar = hideHeader || location.startsWith("/f/") || isPublicStandalonePath(location);
-  const useTranslucentBar = isWatchFeed;
 
   return (
     <div
@@ -93,57 +91,48 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <nav
           className={cn(
             isWholeGameClaim ? "fixed" : "absolute",
-            "bottom-3 start-3 end-3 z-50 flex h-[70px] mx-auto max-w-[408px] items-center justify-around gap-1 rounded-2xl border border-line px-2 pb-safe pt-2 backdrop-blur-md",
-            useTranslucentBar
-              ? "bg-void/85 text-text"
-              : "bg-surface/95 text-muted-foreground"
+            "bottom-3 start-3 end-3 z-50 mx-auto grid h-[66px] max-w-[408px] grid-flow-col auto-cols-fr items-center gap-0.5 rounded-[22px] border border-line bg-raised p-1.5 pb-safe text-muted-foreground shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
           )}
         >
           <NavItem
             href="/home"
-            icon={<Home className="w-6 h-6" />}
+            icon={<Home className="h-[22px] w-[22px]" />}
             label={t.nav.home}
             isActive={location === "/home"}
-            isTranslucent={useTranslucentBar}
           />
           <NavItem
             href="/view"
-            icon={<MapPin className="w-6 h-6" />}
+            icon={<MapPin className="h-[22px] w-[22px]" />}
             label={t.nav.fields}
             isActive={location === "/view"}
-            isTranslucent={useTranslucentBar}
           />
           <NavItem
             href="/matches"
-            icon={<CalendarDays className="w-6 h-6" />}
+            icon={<CalendarDays className="h-[22px] w-[22px]" />}
             label={t.nav.myMatches}
             isActive={location === "/matches"}
-            isTranslucent={useTranslucentBar}
             badge={inviteCount}
             badgeLabel={matchCopy.invites}
           />
           <NavItem
             href="/my-clips"
-            icon={<Bookmark className="w-6 h-6" />}
+            icon={<Bookmark className="h-[22px] w-[22px]" />}
             label={t.nav.myClips}
             isActive={location === "/my-clips"}
-            isTranslucent={useTranslucentBar}
           />
           {academyFamily.data && (
             <NavItem
               href="/academy/me"
-              icon={<GraduationCap className="w-6 h-6" />}
+              icon={<GraduationCap className="h-[22px] w-[22px]" />}
               label={t.account.myAcademy}
               isActive={location === "/academy/me"}
-              isTranslucent={useTranslucentBar}
             />
           )}
           <NavItem
             href="/account"
-            icon={<UserIcon className="w-6 h-6" />}
+            icon={<UserIcon className="h-[22px] w-[22px]" />}
             label={t.nav.me}
             isActive={location === "/account"}
-            isTranslucent={useTranslucentBar}
           />
         </nav>
       )}
@@ -156,7 +145,6 @@ function NavItem({
   icon,
   label,
   isActive,
-  isTranslucent,
   badge = 0,
   badgeLabel,
 }: {
@@ -164,7 +152,6 @@ function NavItem({
   icon: React.ReactNode;
   label: string;
   isActive: boolean;
-  isTranslucent: boolean;
   badge?: number;
   badgeLabel?: string;
 }) {
@@ -173,18 +160,13 @@ function NavItem({
       href={href}
       aria-label={badge > 0 ? `${label}: ${badge} ${badgeLabel ?? ""}`.trim() : label}
       className={cn(
-        "flex h-[54px] min-w-0 flex-1 max-w-16 flex-col items-center justify-center gap-0.5 rounded-xl border-0 py-1 transition-colors",
-        isActive ? "bg-turf/10" : "bg-transparent"
+        "flex h-full min-w-0 flex-col items-center justify-center gap-0.5 rounded-2xl border-0 transition-colors",
+        isActive ? "bg-turf text-void" : "bg-transparent text-muted-text"
       )}
     >
       <div
         className={cn(
-          "relative transition-colors",
-          isActive
-             ? "text-turf"
-            : isTranslucent
-             ? "text-muted-foreground hover:text-text"
-             : "text-muted-foreground hover:text-text"
+          "relative transition-colors"
         )}
       >
         {icon}
@@ -196,19 +178,11 @@ function NavItem({
       </div>
       <span
         className={cn(
-          "text-[10px] font-medium uppercase transition-colors",
-          isActive
-             ? "text-turf"
-            : isTranslucent
-             ? "text-muted-foreground"
-             : "text-muted-foreground"
+          "text-[11px] font-bold leading-none transition-colors"
         )}
       >
         {label}
       </span>
-      {isActive && (
-        <span className="mt-0.5 h-1 w-6 rounded-full bg-turf" />
-      )}
     </Link>
   );
 }
