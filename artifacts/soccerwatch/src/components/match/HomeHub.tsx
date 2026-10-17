@@ -140,7 +140,9 @@ export function HomeHub() {
               <Link key={clip.id} href="/my-clips" className="relative h-[220px] min-w-0 overflow-hidden rounded-2xl border border-line bg-surface">
                 <div className="relative h-[168px] bg-raised">
                   <ClipThumb src={clip.thumbnailUrl ?? null} />
-                  <span className="absolute start-1/2 top-1/2 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-violet text-text"><Play className="h-[17px] w-[17px] fill-current" /></span>
+                  <span className="absolute inset-0 z-10 flex items-center justify-center">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-violet text-text"><Play className="h-[17px] w-[17px] fill-current" /></span>
+                  </span>
                 </div>
                 <ClipFooter title={clip.title} locale={copy.locale} now={now} labels={copy} />
               </Link>
@@ -269,9 +271,9 @@ function ClipThumb({ src }: { src: string | null }) {
   const [broken, setBroken] = useState(false);
   if (!src || broken) {
     return (
-      <div className="absolute inset-0 bg-raised">
+      <div className="absolute inset-0 flex items-center justify-center bg-raised">
         <span aria-hidden className="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 bg-violet/25" />
-        <span aria-hidden className="absolute start-1/2 top-1/2 h-[84px] w-[84px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-violet/55 bg-raised" />
+        <span aria-hidden className="relative z-[1] h-[84px] w-[84px] shrink-0 rounded-full border-2 border-violet/55 bg-raised" />
       </div>
     );
   }
