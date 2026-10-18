@@ -4,7 +4,7 @@ import { CalendarDays, Crown, Loader2, Sparkles, Trophy, Users } from "lucide-re
 import { useForm } from "react-hook-form";
 import { MatchCard } from "@/components/match/MatchCard";
 import { RecentFormPanel } from "@/components/match/MatchStats";
-import { PlayerAvatar } from "@/components/match/bits";
+import { PhaseChip, PlayerAvatar, formatDay } from "@/components/match/bits";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -72,16 +72,51 @@ export default function Matches() {
   return (
     <div dir={copy.locale === "ar" ? "rtl" : "ltr"} className="min-h-0 flex-1 overflow-y-auto no-scrollbar px-4 pb-28 pt-2">
       <div className="flex min-h-full flex-col">
+      {profile.data && (
+        <section className="mb-4 flex flex-col items-center gap-2.5 px-2 pt-2 text-center">
+          <PlayerAvatar
+            name={profile.data.name}
+            avatarUrl={profile.data.avatarUrl}
+            size={76}
+            ring="#2FD8C4"
+          />
+          <p className="font-display text-[22px] font-extrabold leading-tight"><bdi dir="auto">{profile.data.name}</bdi></p>
+          <div className="flex items-center justify-center gap-2">
+            <Link
+              href={`/players/${profile.data.id}`}
+              className="inline-flex min-h-11 items-center justify-center rounded-full border border-line bg-surface px-4 text-sm font-bold text-text"
+            >
+              {copy.playerCard}
+            </Link>
+            <Link
+              href="/friends"
+              aria-label={friendsCopy.title}
+              className="inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-turf/50 px-4 text-sm font-bold text-turf"
+            >
+              <Users className="h-4 w-4" aria-hidden="true" />
+              {friendsCopy.title}
+            </Link>
+          </div>
+        </section>
+      )}
+
+      {profile.data && (
+        <div className="mb-4 grid grid-cols-3 gap-2.5">
+          <Stat value={profile.data.matchesPlayed} label={copy.played} />
+          <Stat value={profile.data.wins} label={copy.wins} />
+          <Stat value={profile.data.motmCount} label={copy.motmShort} icon={<Crown className="h-[15px] w-[15px] text-floodlight" />} />
+        </div>
+      )}
+
       <section
         aria-labelledby="join-match-by-code-title"
         className="mb-4 rounded-2xl border border-line bg-surface p-4"
       >
-        <h2 id="join-match-by-code-title" className="font-display text-lg font-bold">
+        <h2 id="join-match-by-code-title" className="font-display text-[17px] font-extrabold">
           {copy.joinByCodeTitle}
         </h2>
-        <p className="mt-1 text-sm text-muted-text">{copy.joinByCodeDesc}</p>
         <Form {...codeForm}>
-          <form onSubmit={onJoinByCode} className="mt-3 flex items-start gap-2">
+          <form onSubmit={onJoinByCode} className="mt-2 flex items-start gap-2">
             <FormField
               control={codeForm.control}
               name="code"
@@ -92,7 +127,7 @@ export default function Matches() {
               }}
               render={({ field }) => (
                 <FormItem className="min-w-0 flex-1">
-                  <FormLabel>{copy.matchCode}</FormLabel>
+                  <FormLabel className="sr-only">{copy.matchCode}</FormLabel>
                   <FormControl>
                     <Input
                       {...field}
@@ -102,6 +137,7 @@ export default function Matches() {
                       autoCapitalize="characters"
                       maxLength={6}
                       placeholder={copy.matchCodePlaceholder}
+                      className="h-[50px] rounded-xl border-line bg-void px-4 font-display text-xl font-semibold tracking-[3px] placeholder:text-[#3A4560]"
                       onChange={(event) => {
                         codeForm.clearErrors("code");
                         field.onChange(event.target.value.replace(/[^a-z0-9]/gi, "").toUpperCase());
@@ -114,39 +150,21 @@ export default function Matches() {
             />
             <Button
               type="submit"
-              className="mt-8 shrink-0"
+              className="h-[50px] shrink-0 rounded-full bg-floodlight px-5 font-display text-[15px] font-extrabold text-void hover:bg-floodlight/90"
               disabled={isLoading || joinByCode.isPending || codeForm.formState.isSubmitting}
               data-testid="button-join-match-by-code"
             >
               {joinByCode.isPending || codeForm.formState.isSubmitting
                 ? copy.joiningByCode
-                : copy.joinByCodeButton}
+                : copy.joinShort}
             </Button>
           </form>
         </Form>
+        <p className="mt-2 text-xs leading-relaxed text-muted-text">{copy.joinByCodeDesc}</p>
       </section>
 
-      {profile.data && (
-        <div className="mb-4 flex items-center gap-2">
-          <Link href={`/players/${profile.data.id}`} className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl border border-line bg-surface p-3">
-            <PlayerAvatar name={profile.data.name} avatarUrl={profile.data.avatarUrl} size={44} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-display text-base font-bold">{profile.data.name}</p>
-              <p className="text-[11px] text-muted-text">{copy.playerCard}</p>
-            </div>
-            <Stat value={profile.data.matchesPlayed} label={copy.played} />
-            <Stat value={profile.data.wins} label={copy.wins} />
-            <Stat value={profile.data.motmCount} label={copy.motmShort} icon={<Crown className="h-3 w-3 text-floodlight" />} />
-          </Link>
-          <Link href="/friends" aria-label={friendsCopy.title} className="flex min-h-11 shrink-0 flex-col items-center justify-center gap-0.5 rounded-2xl border border-line bg-surface px-2 text-[10px] font-bold text-turf">
-            <Users className="h-4 w-4" aria-hidden="true" />
-            {friendsCopy.title}
-          </Link>
-        </div>
-      )}
-
       {data && (data.personalForm || data.personalFormPending === true) && (
-        <section className="mb-5 rounded-2xl border border-floodlight/25 bg-surface p-4" data-testid="section-personal-form">
+        <section className="mb-5 rounded-2xl border border-line bg-surface p-4" data-testid="section-personal-form">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>
               <p className="font-display text-lg font-bold">{copy.competitionForm}</p>
@@ -168,13 +186,14 @@ export default function Matches() {
         </section>
       )}
       {data && !data.personalForm && data.personalFormPending !== true && (
-        <section className="mb-5 rounded-2xl border border-floodlight/25 bg-surface p-4" data-testid="section-personal-form-empty">
-          <p className="text-sm leading-5 text-muted-text">{copy.competitionFormStart}</p>
+        <section className="mb-5 flex items-center gap-2.5 rounded-[14px] bg-turf/10 px-3 py-3.5" data-testid="section-personal-form-empty">
+          <Sparkles className="h-[18px] w-[18px] shrink-0 text-turf" aria-hidden="true" />
+          <p className="min-w-0 flex-1 text-sm leading-5 text-[#C9CFDB]">{copy.competitionFormStart}</p>
           {recentFindRecordingId !== null && (
             <Link
               href={findPath(recentFindRecordingId, recentFind?.code)}
               data-testid="button-find-yourself-start-form"
-              className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
             >
               <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
               {copy.competitionFormFind}
@@ -206,9 +225,9 @@ export default function Matches() {
 
 function Stat({ value, label, icon }: { value: number; label: string; icon?: React.ReactNode }) {
   return (
-    <div className="flex w-12 flex-col items-center">
-      <span className="flex items-center gap-0.5 font-mono text-xl font-bold leading-none">{icon}{value}</span>
-      <span className="mt-0.5 text-[9px] font-semibold uppercase text-muted-text">{label}</span>
+    <div className="flex min-w-0 flex-col items-center gap-1 rounded-2xl border border-line bg-surface px-1.5 py-3">
+      <span className="flex items-center gap-1 font-display text-[30px] font-bold leading-none">{value}{icon}</span>
+      <span className="text-center text-xs font-medium text-muted-text">{label}</span>
     </div>
   );
 }
@@ -217,24 +236,97 @@ function Section({ title, items, copy, now, icon }: {
   title: string; items: MyMatchItem[]; copy: ReturnType<typeof useMatchCopy>; now: number; icon?: React.ReactNode;
 }) {
   if (!items.length) return null;
+  const groups = groupMatchesByDay(items, copy, now);
   return (
     <section>
-      <h2 className="mb-2 flex items-center gap-2 px-1 text-sm font-bold">{icon}{title}</h2>
-      <div className="flex flex-col gap-2">
-        {items.map((m) => (
-          <div key={`${m.code}-${m.inviteToken ?? ""}`} className="flex flex-col gap-1.5">
-            <MatchCard item={m} copy={copy} now={now} />
-            {m.findRecordingId ? (
-              <Link
-                href={findPath(m.findRecordingId, m.code)}
-                className="ms-4 inline-flex w-fit items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
-              >
-                <Sparkles className="h-3.5 w-3.5" />{copy.findTitle}
-              </Link>
-            ) : null}
-          </div>
+      <h2 className="mb-2.5 flex items-center gap-2 px-1 font-display text-xl font-extrabold">{icon}{title}</h2>
+      <ol className="relative ms-1 list-none p-0">
+        <span aria-hidden="true" className="absolute bottom-6 top-2 w-0.5 bg-line" style={{ insetInlineStart: 6 }} />
+        {groups.map((group) => (
+          <li key={group.key} className="relative pb-[18px] ps-[26px] last:pb-0">
+            <span aria-hidden="true" className="absolute top-[5px] h-3 w-3 rounded-full border-2 border-turf bg-void" style={{ insetInlineStart: 1 }} />
+            <p className="mb-2 text-sm font-bold text-muted-text">{group.label}</p>
+            <div className="flex flex-col gap-2">
+              {group.items.map((item) => (
+                <div key={`${item.code}-${item.inviteToken ?? ""}`} className="flex flex-col gap-1.5">
+                  <CompactMatchCard item={item} copy={copy} />
+                  {item.findRecordingId ? (
+                    <Link
+                      href={findPath(item.findRecordingId, item.code)}
+                      className="ms-2 inline-flex w-fit items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />{copy.findTitle}
+                    </Link>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </li>
         ))}
-      </div>
+      </ol>
     </section>
+  );
+}
+
+function groupMatchesByDay(items: MyMatchItem[], copy: ReturnType<typeof useMatchCopy>, now: number) {
+  const groups = new Map<string, { key: string; label: string; items: MyMatchItem[] }>();
+  for (const item of items) {
+    const dateKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Amman",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(item.startMs));
+    const group = groups.get(dateKey);
+    if (group) group.items.push(item);
+    else groups.set(dateKey, {
+      key: dateKey,
+      label: formatDay(item.startMs, copy.locale, now, copy),
+      items: [item],
+    });
+  }
+  return [...groups.values()];
+}
+
+function CompactMatchCard({ item, copy }: { item: MyMatchItem; copy: ReturnType<typeof useMatchCopy> }) {
+  const href = item.inviteToken ? `/m/${item.code}?i=${item.inviteToken}` : `/m/${item.code}`;
+  const title = item.title || item.field.name;
+  const needed = item.needed ?? 0;
+  const countIn = item.countIn ?? 0;
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Amman",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(item.startMs));
+
+  return (
+    <Link
+      href={href}
+      className="flex min-h-16 items-center gap-2.5 rounded-2xl border border-line bg-surface px-3 py-2.5 text-text"
+    >
+      <span dir="ltr" className="w-[54px] shrink-0 text-center font-display text-[22px] font-bold leading-none text-turf">{time}</span>
+      <span aria-hidden="true" className="h-9 w-px shrink-0 bg-line" />
+      <span dir="auto" className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden font-display text-[17px] font-bold leading-tight">
+        <span className="truncate">{title}</span>
+        {item.isCaptain && <Crown className="h-3.5 w-3.5 shrink-0 text-floodlight" aria-label={copy.captainTag} />}
+      </span>
+      {item.score ? (
+        <span dir="ltr" className="shrink-0 font-display text-[26px] font-bold leading-none">{item.score.a}-{item.score.b}</span>
+      ) : item.myRsvp === "invited" ? (
+        <span className="shrink-0 rounded-full bg-floodlight px-2.5 py-1 text-[11px] font-bold text-void">{copy.phaseSteps.invited}</span>
+      ) : item.voteOpen ? (
+        <span className="shrink-0 rounded-full bg-violet/15 px-2.5 py-1 text-[11px] font-bold text-violet">{copy.voteNow}</span>
+      ) : item.inviteToken ? (
+        <span className="shrink-0 rounded-full bg-floodlight px-2.5 py-1 text-[11px] font-bold text-void">{copy.open}</span>
+      ) : needed > 0 ? (
+        <span className="flex shrink-0 items-center gap-1 font-display text-sm font-semibold text-muted-text">
+          <Users className="h-3.5 w-3.5" aria-hidden="true" />
+          <span dir="ltr">{countIn}/{needed}</span>
+        </span>
+      ) : (
+        <PhaseChip phase={item.phase} label={copy.phase[item.phase] ?? item.phase} />
+      )}
+    </Link>
   );
 }
