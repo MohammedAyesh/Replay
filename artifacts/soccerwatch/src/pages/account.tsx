@@ -1,10 +1,10 @@
 import * as React from "react";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useGetAcademyConsoleMemberships, useGetAcademyFamilyMe, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, getGetAcademyConsoleMembershipsQueryKey, getGetAcademyFamilyMeQueryKey, type PlayerProfileInputPosition as ProfileInputPosition, type PlayerProfileInputGender as ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles, GraduationCap } from "lucide-react";
+import { ChevronRight, ChevronLeft, ChevronDown, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles, GraduationCap, Bookmark, Heart, MapPin, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -77,6 +77,9 @@ export default function Account() {
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isDeleteAccountOpen, setIsDeleteAccountOpen] = React.useState(false);
   const [deleteConfirmation, setDeleteConfirmation] = React.useState("");
+  const [activeTab, setActiveTab] = React.useState<"profile" | "settings">(() =>
+    isGuest || new URLSearchParams(window.location.search).get("tab") === "settings" ? "settings" : "profile"
+  );
 
   const updateProfile = useUpdateProfile();
   const deleteAccount = useDeleteAccount();
@@ -173,302 +176,132 @@ export default function Account() {
   const name = isGuest ? t.account.guestName : displayUser?.name || t.account.playerFallback;
   const rawEmail = isGuest ? "" : displayUser?.email || "";
   const email = rawEmail.endsWith("@soccerwatch.local") ? "" : rawEmail;
+  const positionLabels: Record<string, string> = {
+    goalkeeper: t.account.goalkeeper,
+    defender: t.account.defender,
+    midfielder: t.account.midfielder,
+    forward: t.account.forward,
+  };
+  const genderLabels: Record<string, string> = {
+    male: t.account.male,
+    female: t.account.female,
+    prefer_not_to_say: t.account.preferNotToSay,
+  };
+  const accountRowClass = "flex min-h-14 w-full items-center gap-3 px-3.5 text-start text-text transition-colors hover:bg-raised/60";
+  const iconBox = "flex h-9 w-9 shrink-0 items-center justify-center rounded-[11px]";
+  const renderChevron = () => (
+    <>
+      <ChevronRight className="h-[18px] w-[18px] text-muted-text rtl:hidden" aria-hidden="true" />
+      <ChevronLeft className="h-[18px] w-[18px] text-muted-text ltr:hidden" aria-hidden="true" />
+    </>
+  );
 
   return (
     <div className="account-page flex flex-col flex-1 h-full min-h-0 overflow-hidden bg-background">
       {isLoggingOut && <ReplaySignOutOverlay />}
 
-      <div className="shrink-0 bg-background px-4 pb-3 pt-4">
-        <h1 className="font-display text-2xl font-bold text-foreground">{t.account.title}</h1>
-        <p className="text-sm text-muted-foreground">{isGuest ? t.account.guestSubtitle : t.account.subtitle}</p>
-      </div>
-
-       <div className="account-page-scroll flex-1 overflow-y-auto no-scrollbar pb-28">
-        {/* Profile Card */}
-        <div className="bg-background px-4 pb-4">
-          <div className="flex items-center gap-3">
+      <div className="account-page-scroll flex-1 overflow-y-auto no-scrollbar pb-28">
+        <div className="px-4 pb-safe pt-5">
+          <section className="flex flex-col items-center gap-1.5 text-center">
             <AvatarPicker initial={initial} userId={isGuest ? null : displayUser?.id ?? null} />
-            <div className="min-w-0">
-              <h2 className="truncate font-display text-xl font-bold text-foreground">{name}</h2>
-              <p className="truncate text-sm text-muted-foreground">{email}</p>
-              {!isGuest && (
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {displayUser?.position && (
-                    <span className="rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] font-semibold capitalize text-muted-foreground">
-                      {displayUser.position}
-                    </span>
-                  )}
-                  {displayUser?.age != null && (
-                    <span className="rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] font-semibold text-muted-foreground">
-                      {displayUser.age} yrs
-                    </span>
-                  )}
-                  {displayUser?.gender && (
-                    <span className="rounded-lg border border-border bg-muted/40 px-2 py-1 text-[11px] font-semibold capitalize text-muted-foreground">
-                      {displayUser.gender.replace(/_/g, " ")}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+            <h1 className="mt-1 max-w-full truncate font-display text-[23px] font-extrabold leading-tight text-text" dir="auto">{name}</h1>
+            {email && <p className="max-w-full truncate text-[13px] text-muted-text" dir="ltr">{email}</p>}
+          </section>
 
-        {/* Stats */}
-        {!isGuest && (
-          <div className="bg-background px-4 pb-4">
-            <div className="grid grid-cols-3 gap-2">
-              <StatCard label={t.account.savedClips} value={stats?.savedClips ?? 0} />
-              <StatCard label={t.account.likesGiven} value={stats?.likesGiven ?? 0} />
-              <StatCard label={t.account.fields} value={stats?.fieldsVisited ?? 0} />
-            </div>
-          </div>
-        )}
-
-        {!isGuest && (
-          <div className="mx-4 mb-4 rounded-[22px] border border-border bg-card p-4">
-            <div className="mb-3 flex items-center justify-between">
-              <div>
-                <h2 className="font-display text-base font-bold text-foreground">Claimed matches</h2>
-                <p className="text-xs text-muted-foreground">Your player identity is kept separate for each recording.</p>
-              </div>
-              <span className="rounded-full bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
-                {claimedMatches?.filter((match) => match.state === "confirmed").length ?? 0}
-              </span>
-            </div>
-            {claimedMatches?.length ? (
-              <div className="space-y-2">
-                {claimedMatches.map((match) => (
-                  <Link
-                    key={`${match.recordingId}-${match.personId}`}
-                    href={`/find/${match.recordingId}`}
-                    className="flex items-center justify-between rounded-xl border border-border/70 bg-background/60 px-3 py-2.5 transition-colors hover:bg-muted/40"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-foreground">{match.recordingLabel}</p>
-                      <p className="text-xs text-muted-foreground">{match.date} · {Math.round(match.supportPercent)}% support</p>
-                    </div>
-                    <span className={`ms-3 shrink-0 text-[10px] font-bold uppercase tracking-wide ${
-                      match.state === "confirmed" ? "text-turf" :
-                        match.state === "disputed" ? "text-muted-text" :
-                          match.state === "needs_resolution" ? "text-muted-text" : "text-muted-foreground"
-                    }`}>
-                      {match.state.replace("_", " ")}
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            ) : (
-              <p className="rounded-xl bg-muted/30 px-3 py-3 text-sm text-muted-foreground">No claimed matches yet.</p>
-            )}
-          </div>
-        )}
-
-        {/* Settings List */}
-        <div className="mx-4 mt-1 overflow-hidden rounded-[22px] border border-border bg-card divide-y divide-border">
-          {!isGuest && user && (
-            <>
-              <Link
-                href={`/portfolio/${user.id}`}
-                className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
-                    <Sparkles className="h-4 w-4 text-primary" />
-                  </span>
-                  <span className="font-medium text-foreground">{t.account.myPortfolio}</span>
-                </div>
-                <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-                <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-              </Link>
-              <button
-                onClick={() => setIsEditOpen(true)}
-                className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
-                    <Pencil className="h-4 w-4 text-muted-foreground" />
-                  </span>
-                  <span className="font-medium text-foreground">{t.account.editProfile}</span>
-                </div>
-                <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-                <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-              </button>
-            </>
-          )}
-          {!isGuest && user && (
-            <Link
-              href="/friends"
-              data-testid="link-friends"
-              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
-                  <Users className="h-4 w-4 text-primary" />
-                </span>
-                <span className="font-medium text-foreground">{friendsCopy.title}</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </Link>
-          )}
-          {!isGuest && user && (
-            <Link
-              href="/account/blocked"
-              data-testid="link-blocked-players"
-              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
-                  <Ban className="h-4 w-4 text-primary" />
-                </span>
-                <span className="font-medium text-foreground">{safety.blockedPlayers}</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </Link>
-          )}
-          {/* Language toggle */}
-          <LanguageToggle />
-
-          <Link
-            href="/privacy"
-            className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-          >
-            <div className="flex items-center gap-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
-                <Shield className="h-4 w-4 text-primary" />
-              </span>
-              <span className="font-medium text-foreground">{legal.privacyPolicy}</span>
-            </div>
-            <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-            <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-          </Link>
-
-          <Link
-            href="/terms"
-            className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-          >
-            <div className="flex items-center gap-3">
-              <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
-                <FileText className="h-4 w-4 text-primary" />
-              </span>
-              <span className="font-medium text-foreground">{legal.termsOfUse}</span>
-            </div>
-            <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-            <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-          </Link>
-
-          {supportHref && (
-            <a
-              href={supportHref}
-              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
-                  <Mail className="h-4 w-4 text-primary" />
-                </span>
-                <span className="font-medium text-foreground">{legal.contactSupport}</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </a>
-          )}
-
-          {(displayUser?.ownedFieldIds?.length ?? 0) > 0 && (
-            <Link
-              href="/owner"
-              data-testid="link-owner-console"
-              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/10">
-                  <Video className="h-4 w-4 text-primary" />
-                </span>
-                <span className="font-medium text-foreground">{t.account.ownerConsole}</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </Link>
-          )}
-
-          {(academyMemberships?.length ?? 0) > 0 && (
-            <Link
-              href="/academy"
-              data-testid="link-academy-console"
-              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-turf/10">
-                  <GraduationCap className="h-4 w-4 text-turf" />
-                </span>
-                <span className="font-medium text-foreground">{t.account.academyConsole}</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </Link>
-          )}
-
-          {myAcademyFamilyQuery.data && (
-            <Link
-              href="/academy/me"
-              data-testid="link-my-academy-family"
-              className="flex min-h-[64px] w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-turf/10">
-                  <GraduationCap className="h-4 w-4 text-turf" />
-                </span>
-                <span className="font-medium text-foreground">
-                  {(myAcademyFamilyQuery.data?.players.length ?? 0) > 1
-                    ? t.account.myAcademyChildren(myAcademyFamilyQuery.data!.players.length)
-                    : t.account.myAcademy}
-                </span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </Link>
-          )}
-
-          {isAdmin && (
-            <Link
-              href="/admin"
-              className="flex w-full items-center justify-between bg-card p-4 transition-colors hover:bg-muted/30"
-            >
-              <div className="flex items-center gap-3">
-                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
-                  <Shield className="h-4 w-4 text-primary" />
-                </span>
-                <span className="font-medium text-foreground">Admin Panel</span>
-              </div>
-              <ChevronRight className="h-5 w-5 text-muted-foreground rtl:hidden" />
-              <ChevronLeft className="h-5 w-5 text-muted-foreground ltr:hidden" />
-            </Link>
-          )}
-        </div>
-
-        <div className="mx-4 mt-4 pb-safe">
-          <Button
-            type="button"
-            variant="outline"
-            disabled={isLoggingOut}
-            className="w-full rounded-2xl border border-line bg-transparent py-6 font-semibold text-text hover:bg-raised disabled:opacity-50"
-            onClick={handleLogout}
-          >
-            <LogOut className="me-2 h-5 w-5" />
-            {isLoggingOut
-              ? (isGuest ? "Redirecting..." : "Signing out...")
-              : (isGuest ? t.account.signInRegister : t.account.signOut)}
-          </Button>
           {!isGuest && (
-            <div className="mt-2 text-center">
-              <button
-                type="button"
-                onClick={() => setIsDeleteAccountOpen(true)}
-                className="min-h-11 rounded-xl px-4 text-sm font-semibold text-[#FF5A3C] transition-colors hover:bg-[#FF5A3C]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5A3C] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-              >
-                {legal.accountDeletion.button}
-              </button>
+            <div role="tablist" aria-label={t.account.accountTabs} className="mt-4 grid grid-cols-2 gap-1 rounded-full border border-line bg-surface p-[5px]">
+              {(["profile", "settings"] as const).map((tab) => (
+                <button key={tab} type="button" role="tab" aria-selected={activeTab === tab} onClick={() => setActiveTab(tab)}
+                  className={`min-h-11 rounded-full px-3 text-[15px] font-extrabold transition-colors ${activeTab === tab ? "bg-turf text-void" : "text-muted-text hover:text-text"}`}>
+                  {tab === "profile" ? t.account.profileTab : t.account.settingsTab}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {(isGuest || activeTab === "profile") && !isGuest && (
+            <div className="mt-4 space-y-4">
+              <section className="overflow-hidden rounded-[18px] border border-line bg-surface">
+                <div className="flex items-center gap-2.5 px-3 py-3">
+                  <MiniPitch position={displayUser?.position ?? null} />
+                  <div className="grid min-w-0 flex-1 grid-cols-3">
+                    <ProfileValue value={displayUser?.position ? positionLabels[displayUser.position] ?? "—" : "—"} label={t.account.position} />
+                    <ProfileValue value={displayUser?.age != null ? (locale === "ar" ? `${displayUser.age} سنة` : `${displayUser.age} yrs`) : "—"} label={t.account.age} />
+                    <ProfileValue value={displayUser?.gender ? genderLabels[displayUser.gender] ?? "—" : "—"} label={t.account.gender} />
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 border-t border-line px-2 py-3">
+                  <StatCard icon={<Bookmark />} label={t.account.savedClips} value={stats?.savedClips ?? 0} />
+                  <StatCard icon={<Heart />} label={t.account.likesGiven} value={stats?.likesGiven ?? 0} />
+                  <StatCard icon={<MapPin />} label={t.account.fields} value={stats?.fieldsVisited ?? 0} />
+                </div>
+              </section>
+
+              <details open className="group overflow-hidden rounded-2xl border border-line bg-surface">
+                <summary className="flex min-h-14 cursor-pointer list-none items-center gap-3 px-3.5 [&::-webkit-details-marker]:hidden">
+                  <span className={`${iconBox} bg-turf/10 text-turf`}><Target className="h-[18px] w-[18px]" /></span>
+                  <span className="flex-1 text-[15px] font-semibold text-text">{t.account.foundYourself}</span>
+                  <span className="font-display text-base font-bold tabular-nums text-text">{claimedMatches?.filter((match) => match.state === "confirmed").length ?? 0}</span>
+                  <ChevronDown className="h-[18px] w-[18px] rotate-180 text-muted-text transition-transform group-open:rotate-0" />
+                </summary>
+                <div className="space-y-2 px-3.5 pb-3.5">
+                  {claimedMatches?.length ? claimedMatches.map((match) => (
+                    <Link key={`${match.recordingId}-${match.personId}`} href={`/find/${match.recordingId}`}
+                      className="flex min-h-14 items-center justify-between gap-3 rounded-xl border border-line bg-raised px-3 py-2.5">
+                      <span className="min-w-0"><span className="block truncate text-sm font-semibold text-text">{match.recordingLabel}</span><span className="block text-xs text-muted-text">{match.date} · {Math.round(match.supportPercent)}% {t.account.support}</span></span>
+                      <span className={`shrink-0 text-xs font-bold ${match.state === "confirmed" ? "text-turf" : "text-muted-text"}`}>
+                        {match.state === "confirmed" ? t.account.confirmed : match.state === "disputed" ? t.account.disputed : match.state === "needs_resolution" ? t.account.needsResolution : match.state}
+                      </span>
+                    </Link>
+                  )) : <p className="rounded-xl bg-void px-3.5 py-3 text-sm text-muted-text">{t.account.noClaimedMatches}</p>}
+                </div>
+              </details>
+
+              {user && <AccountGroup title={t.account.accountGroup}>
+                {user && <Link href={`/portfolio/${user.id}`} className={accountRowClass}>
+                  <span className={`${iconBox} bg-turf/10 text-turf`}><Sparkles className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.myPortfolio}</span>{renderChevron()}
+                </Link>}
+                {user && <button type="button" onClick={() => setIsEditOpen(true)} className={accountRowClass}>
+                  <span className={`${iconBox} bg-raised text-muted-text`}><Pencil className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.editProfile}</span>{renderChevron()}
+                </button>}
+                {user && <Link href="/friends" data-testid="link-friends" className={accountRowClass}>
+                  <span className={`${iconBox} bg-turf/10 text-turf`}><Users className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{friendsCopy.title}</span>{renderChevron()}
+                </Link>}
+              </AccountGroup>}
+            </div>
+          )}
+
+          {(isGuest || activeTab === "settings") && (
+            <div className="mt-4 space-y-4">
+              {!isGuest && user && <AccountGroup title={t.account.accountGroup}>
+                <Link href="/account/blocked" data-testid="link-blocked-players" className={accountRowClass}>
+                  <span className={`${iconBox} bg-raised text-muted-text`}><Ban className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{safety.blockedPlayers}</span>{renderChevron()}
+                </Link>
+              </AccountGroup>}
+
+              <AccountGroup title={t.account.appGroup}>
+                <div className={`${accountRowClass} justify-between`}>
+                  <span className="flex items-center gap-3"><span className={`${iconBox} bg-raised text-muted-text`}><Globe className="h-[18px] w-[18px]" /></span><span className="text-[15px] font-semibold">{t.account.language}</span></span>
+                  <LanguageToggle />
+                </div>
+                <Link href="/privacy" className={accountRowClass}><span className={`${iconBox} bg-raised text-muted-text`}><Shield className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{legal.privacyPolicy}</span>{renderChevron()}</Link>
+                <Link href="/terms" className={accountRowClass}><span className={`${iconBox} bg-raised text-muted-text`}><FileText className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{legal.termsOfUse}</span>{renderChevron()}</Link>
+                {supportHref && <a href={supportHref} className={accountRowClass}><span className={`${iconBox} bg-raised text-muted-text`}><Mail className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{legal.contactSupport}</span>{renderChevron()}</a>}
+              </AccountGroup>
+
+              {!isGuest && ((displayUser?.ownedFieldIds?.length ?? 0) > 0 || (academyMemberships?.length ?? 0) > 0 || Boolean(myAcademyFamilyQuery.data) || isAdmin) && <AccountGroup title={t.account.controlPanels}>
+                {(displayUser?.ownedFieldIds?.length ?? 0) > 0 && <Link href="/owner" data-testid="link-owner-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><Video className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.ownerConsole}</span>{renderChevron()}</Link>}
+                {(academyMemberships?.length ?? 0) > 0 && <Link href="/academy" data-testid="link-academy-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><GraduationCap className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.academyConsole}</span>{renderChevron()}</Link>}
+                {myAcademyFamilyQuery.data && <Link href="/academy/me" data-testid="link-my-academy-family" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><GraduationCap className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{(myAcademyFamilyQuery.data.players.length ?? 0) > 1 ? t.account.myAcademyChildren(myAcademyFamilyQuery.data.players.length) : t.account.myAcademy}</span>{renderChevron()}</Link>}
+                {isAdmin && <Link href="/admin" data-testid="link-admin-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><Shield className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.adminPanel}</span>{renderChevron()}</Link>}
+              </AccountGroup>}
+
+              <div className="pb-safe pt-1">
+                <Button type="button" variant="outline" disabled={isLoggingOut} className="min-h-[54px] w-full rounded-2xl border border-line bg-transparent font-semibold text-text hover:bg-raised disabled:opacity-50" onClick={handleLogout}>
+                  <LogOut className="me-2 h-5 w-5" />{isLoggingOut ? (isGuest ? "Redirecting..." : "Signing out...") : (isGuest ? t.account.signInRegister : t.account.signOut)}
+                </Button>
+                {!isGuest && <div className="mt-1 text-center"><button type="button" onClick={() => setIsDeleteAccountOpen(true)} className="min-h-10 px-3 text-xs font-medium text-muted-text underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-turf">{legal.accountDeletion.button}</button></div>}
+              </div>
             </div>
           )}
         </div>
@@ -561,60 +394,70 @@ function ReplaySignOutOverlay() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: number | string }) {
+function AccountGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-[18px] border border-border bg-card px-2 py-3 text-center">
-      <div className="mb-0.5 font-display text-2xl font-bold text-primary">{value}</div>
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{label}</div>
+    <section>
+      <h2 className="mb-2 px-1.5 text-[13px] font-bold text-muted-text">{title}</h2>
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface [&>*+*]:border-t [&>*+*]:border-line">{children}</div>
+    </section>
+  );
+}
+
+function ProfileValue({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="flex min-w-0 flex-col items-center justify-center gap-0.5 px-1 text-center [&+&]:border-s [&+&]:border-line">
+      <span className="max-w-full truncate font-display text-[16px] font-extrabold leading-tight text-text">{value}</span>
+      <span className="text-[11px] text-muted-text">{label}</span>
     </div>
   );
 }
 
-function SettingRow({ icon, label }: { icon: React.ReactNode; label: string; borderBottom?: boolean }) {
+function MiniPitch({ position }: { position: string | null }) {
+  const xByPosition: Record<string, number> = { goalkeeper: 182, defender: 148, midfielder: 100, forward: 52 };
+  const x = position ? xByPosition[position] : undefined;
   return (
-    <button className="w-full flex items-center justify-between p-4 bg-background hover:bg-muted/30 transition-colors">
-      <div className="flex items-center gap-3">
-        {icon}
-        <span className="font-medium text-foreground">{label}</span>
-      </div>
-      <ChevronRight className="w-5 h-5 text-muted-foreground rtl:hidden" />
-      <ChevronLeft className="w-5 h-5 text-muted-foreground ltr:hidden" />
-    </button>
+    <div className="relative h-[58px] w-24 shrink-0 overflow-hidden rounded-[10px] bg-[#102629]">
+      <svg viewBox="0 0 200 120" className="absolute inset-0 h-full w-full" aria-hidden="true">
+        <defs><radialGradient id="account-pitch-glow"><stop offset="0" stopColor="#D4FF4F" stopOpacity=".55" /><stop offset="1" stopColor="#D4FF4F" stopOpacity="0" /></radialGradient></defs>
+        <g fill="none" stroke="#2FD8C4" strokeOpacity=".45" strokeWidth="3">
+          <rect x="8" y="8" width="184" height="104" rx="6" /><line x1="100" y1="8" x2="100" y2="112" />
+          <circle cx="100" cy="60" r="18" /><rect x="8" y="36" width="24" height="48" /><rect x="168" y="36" width="24" height="48" />
+        </g>
+        {x !== undefined && <><circle cx={x} cy="60" r="34" fill="url(#account-pitch-glow)" /><circle cx={x} cy="60" r="9" fill="#D4FF4F" /></>}
+      </svg>
+    </div>
+  );
+}
+
+function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: number | string }) {
+  return (
+    <div className="flex flex-col items-center gap-1 [&+&]:border-s [&+&]:border-line">
+      <span className="font-display text-[22px] font-bold leading-none tabular-nums text-text">{value}</span>
+      <span className="flex items-center gap-1 text-xs text-muted-text"><span className="text-[#B9A8FF] [&>svg]:h-[13px] [&>svg]:w-[13px]">{icon}</span>{label}</span>
+    </div>
   );
 }
 
 function LanguageToggle() {
-  const { t, locale, setLocale } = useTranslation();
+  const { locale, setLocale } = useTranslation();
   return (
-    <div className="flex w-full items-center justify-between bg-card p-4">
-      <div className="flex items-center gap-3">
-        <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted/50">
-          <Globe className="h-4 w-4 text-muted-foreground" />
-        </span>
-        <span className="font-medium text-foreground">{t.account.language}</span>
-      </div>
-      <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+    <div role="group" aria-label={locale === "ar" ? "اللغة" : "Language"} className="flex items-center gap-0.5 rounded-full border border-line bg-void p-1">
         <button
+          type="button"
           onClick={() => setLocale("en")}
-          className={`rounded-md px-3 py-1 text-sm font-semibold transition-colors ${
-            locale === "en"
-              ? "bg-line text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
+          aria-pressed={locale === "en"}
+          className={`min-h-8 rounded-full px-3 text-xs font-bold transition-colors ${locale === "en" ? "bg-turf text-void" : "text-muted-text hover:text-text"}`}
         >
           EN
         </button>
         <button
+          type="button"
           onClick={() => setLocale("ar")}
-          className={`rounded-md px-3 py-1 text-sm font-semibold transition-colors ${
-            locale === "ar"
-              ? "bg-line text-foreground"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
+          aria-pressed={locale === "ar"}
+          className={`min-h-8 rounded-full px-3 text-xs font-bold transition-colors ${locale === "ar" ? "bg-turf text-void" : "text-muted-text hover:text-text"}`}
         >
           عربي
         </button>
-      </div>
     </div>
   );
 }
@@ -786,10 +629,10 @@ function AvatarPicker({ initial, userId }: { initial: string; userId: number | n
       disabled={!userId || upload.isPending}
       onClick={() => inputRef.current?.click()}
       aria-label={locale === "ar" ? "غيّر صورتك" : "Change your photo"}
-      className="relative flex h-[76px] w-[76px] shrink-0 items-center justify-center rounded-full"
+      className="relative flex h-20 w-20 shrink-0 items-center justify-center rounded-full p-[3px]"
       style={{ background: "linear-gradient(135deg, var(--replay-turf), var(--replay-violet))" }}
     >
-      <span className="flex h-[68px] w-[68px] items-center justify-center overflow-hidden rounded-full bg-card text-2xl font-bold text-primary">
+      <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-surface font-display text-[28px] font-bold text-text">
         {avatarUrl ? <img src={avatarUrl} alt="" className="h-full w-full object-cover" /> : initial}
       </span>
       {userId && (
