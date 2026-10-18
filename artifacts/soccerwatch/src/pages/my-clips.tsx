@@ -31,7 +31,9 @@ import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { applyFrameToVideo, frameToVideoStyle, interpolateFrame } from "@/lib/cropFrame";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
+import { formatClipTitle } from "@/lib/clip-title";
 import { useSafetyCopy, hiddenClipNoticeText } from "@/i18n/safety-strings";
+import { useMatchCopy } from "@/i18n/match-strings";
 import {
   fetchDownloadQuota,
   formatQuotaLabel,
@@ -41,7 +43,7 @@ import {
   type ExportStatusResponse,
   type DownloadQuota,
 } from "@/lib/downloadQuota";
-import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Lock, Target, Trophy, Zap, Send, Eye } from "lucide-react";
+import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send } from "lucide-react";
 
 /** How long to wait for the branding intro to actually start before skipping it. */
 const INTRO_START_TIMEOUT_MS = 4000;
@@ -1500,6 +1502,7 @@ function UserClipCard({
 }) {
   const { toast } = useToast();
   const { t } = useTranslation();
+  const matchCopy = useMatchCopy();
   const safetyCopy = useSafetyCopy();
   const queryClient = useQueryClient();
   const deleteUserClip = useDeleteUserClip();
@@ -1507,6 +1510,7 @@ function UserClipCard({
   const [showDelete, setShowDelete] = useState(false);
   const [portfolioVisible, setPortfolioVisible] = useState(clip.showInPortfolio);
   const [portfolioDialog, setPortfolioDialog] = useState<"share" | "unshare" | null>(null);
+  const [thumbnailFailed, setThumbnailFailed] = useState(false);
   const [liveProgress, setLiveProgress] = useState({
     liveClipStatus: clip.liveClipStatus ?? null,
     liveClipError: clip.liveClipError ?? null,
@@ -1515,9 +1519,6 @@ function UserClipCard({
   });
   const partialReadyInvalidatedRef = useRef(clip.liveClipStatus === "ready" && clip.liveClipPartial);
 
-  const startPct = (clip.startTime * 100).toFixed(0);
-  const endPct = (clip.endTime * 100).toFixed(0);
-  const durationHint = `${startPct}%–${endPct}%`;
   const isPrivate = clip.visibility === "private";
   const needsPublicConsent = clip.visibility !== "public";
   const isLiveClip = Boolean(clip.matchCode);
@@ -1602,6 +1603,7 @@ function UserClipCard({
           : liveProgress.exportStatus === "error"
             ? t.myClips.liveExportFailed
             : t.myClips.liveClipReady;
+  const clipTitle = formatClipTitle(clip.title, matchCopy.locale, Date.now(), matchCopy);
 
   const handleDelete = async () => {
     try {
@@ -1646,32 +1648,33 @@ function UserClipCard({
       whileTap={{ scale: 0.95 }}
       onClick={() => { if (canPlay) onPlay(clip); }}
       aria-disabled={!canPlay}
-      className={cn("group relative flex min-h-[86px] items-center gap-3 overflow-hidden rounded-[18px] border border-border bg-card p-2 shadow-sm", canPlay ? "cursor-pointer" : "cursor-default")}
+      className={cn("group relative overflow-hidden rounded-2xl border border-line bg-surface shadow-sm", canPlay ? "cursor-pointer" : "cursor-default")}
     >
-      <div className="relative h-[70px] w-[112px] shrink-0 overflow-hidden rounded-xl">
-        {clip.thumbnailUrl ? (
+      <div className="flex items-center gap-[14px] p-3">
+        <div className="relative h-[84px] w-[132px] shrink-0 overflow-hidden rounded-xl bg-raised">
+        {clip.thumbnailUrl && !thumbnailFailed ? (
           <img
             src={clip.thumbnailUrl}
             alt={clip.title}
             className="absolute inset-0 h-full w-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
+            onError={() => setThumbnailFailed(true)}
           />
         ) : (
-          <div className="absolute inset-0 field-pattern bg-card" />
+          <div className="absolute inset-0 flex items-center justify-center bg-raised">
+            <span aria-hidden className="absolute inset-x-0 top-1/2 h-0.5 -translate-y-1/2 bg-violet/25" />
+            <span aria-hidden className="relative z-[1] h-[54px] w-[54px] shrink-0 rounded-full border-2 border-violet/55 bg-raised" />
+          </div>
         )}
 
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-        <div className="absolute inset-0 transition-colors duration-200 group-hover:bg-white/5" />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/45 text-white">
+        <div className="absolute inset-0 z-[1] transition-colors duration-200 group-hover:bg-white/5" />
+        <div className="absolute inset-0 z-10 flex items-center justify-center">
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-violet text-text shadow-[0_4px_14px_rgba(11,15,26,0.45)]">
             <Play className="ms-0.5 h-3.5 w-3.5 fill-current" />
           </span>
         </div>
         {/* Live clip status remains visible until the captured source can play. */}
         {!clip.playbackUrl && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1.5 bg-black/70">
+          <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 bg-black/70">
             <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">
               {isLiveClip ? liveStatusText : "Live recording"}
             </span>
@@ -1680,24 +1683,28 @@ function UserClipCard({
             </span>
           </div>
         )}
-      </div>
+        </div>
 
-      <div className="min-w-0 flex-1 pe-7 text-start">
-        <h3 className="line-clamp-2 text-sm font-bold leading-tight text-foreground">{clip.title}</h3>
-        <p className="mt-1 text-[10px] font-medium text-primary">
-          {new Date(clip.createdAt).toLocaleDateString()}
-        </p>
+        <div className="min-w-0 flex-1 text-start">
+          <h3 className="line-clamp-2 font-display text-[17px] font-extrabold leading-[1.3] text-text">{clipTitle.dayLabel}</h3>
+          {(clipTitle.time || clipTitle.pitch) && (
+            <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm font-medium text-muted-text">
+              {clipTitle.time && <span dir="ltr" className="font-display text-base font-semibold text-text">{clipTitle.time}</span>}
+              {clipTitle.time && clipTitle.pitch && <span aria-hidden>·</span>}
+              {clipTitle.pitch && <span dir="auto" className="font-display text-[15px] font-semibold text-text">{clipTitle.pitch}</span>}
+            </p>
+          )}
         {clip.isHidden && (
           <p
             role="status"
             data-testid={`status-hidden-clip-${clip.id}`}
-            className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-200"
+            className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 px-2 py-1.5 text-[10px] font-medium text-amber-800 dark:text-amber-200"
           >
             {hiddenClipNoticeText(clip.hiddenReason, safetyCopy.locale)}
           </p>
         )}
         {isLiveClip && (
-        <p className={cn("mt-1 text-[10px] font-semibold", liveProgress.liveClipStatus === "failed" || liveProgress.exportStatus === "error" ? "text-live" : "text-muted-foreground")}>
+        <p className={cn("mt-1 text-[10px] font-semibold", liveProgress.liveClipStatus === "failed" || liveProgress.exportStatus === "error" ? "text-live" : "text-muted-text")}>
             {liveStatusText}
             {(liveProgress.liveClipError || (liveProgress.exportStatus === "error" && liveProgress.liveClipStatus === "ready")) && (
               <span className="block truncate font-normal">{liveProgress.liveClipError || t.myClips.liveExportFailed}</span>
@@ -1708,54 +1715,48 @@ function UserClipCard({
           <p
             role="status"
             data-testid={`status-live-clip-partial-${clip.id}`}
-            className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 px-3 py-2 text-xs font-medium text-amber-800 dark:text-amber-200"
+            className="mt-2 rounded-lg border border-amber-400/50 bg-amber-500/10 px-2 py-1.5 text-[10px] font-medium text-amber-800 dark:text-amber-200"
           >
             {LIVE_CLIP_PARTIAL_NOTICE}
           </p>
         )}
-        {isPrivate ? (
-          <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-            <Lock className="h-2.5 w-2.5" />
-            {t.myClips.private}
-          </span>
-        ) : (
-          <span className="mt-1 inline-flex items-center gap-1 rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-            <Scissors className="h-2.5 w-2.5" />
-            {durationHint}
-          </span>
-        )}
-        {portfolioVisible && (
-          <span className="mt-1 inline-flex items-center gap-1 rounded-md border border-primary/35 bg-primary/15 px-1.5 py-0.5 text-[10px] font-bold text-primary">
-            <Eye className="h-2.5 w-2.5" />
-            {t.myClips.sharedToPortfolio}
-          </span>
-        )}
+      </div>
       </div>
 
-      <button
-        type="button"
-        onClick={handlePortfolioToggle}
-        disabled={updateUserClip.isPending}
-        aria-pressed={portfolioVisible}
-        aria-label={t.myClips.showInPortfolio}
-        title={t.myClips.showInPortfolioDesc}
-        className={cn(
-          "absolute end-10 top-2 z-10 flex h-7 items-center gap-1 rounded-lg px-2 text-[10px] font-semibold transition-colors",
-          portfolioVisible ? "bg-primary/20 text-primary" : "bg-muted/80 text-muted-foreground",
-        )}
-      >
-        <Eye className="h-3 w-3" />
-        <span className="sr-only">{t.myClips.showInPortfolio}</span>
-      </button>
-
-      {/* Delete button */}
-      <button
-        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(true); }}
-        className="absolute end-2 top-1/2 z-10 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-muted/80 transition-opacity active:opacity-70"
-        aria-label="Delete clip"
-      >
-        <Trash2 className="h-3 w-3 text-muted-foreground" />
-      </button>
+      <div className="flex items-center border-t border-line">
+        <button
+          type="button"
+          role="switch"
+          onClick={handlePortfolioToggle}
+          disabled={updateUserClip.isPending}
+          aria-pressed={portfolioVisible}
+          aria-checked={portfolioVisible}
+          aria-label={t.myClips.onMyPage}
+          title={t.myClips.showInPortfolioDesc}
+          className="flex min-h-14 min-w-0 flex-1 items-center justify-between gap-3 border-0 bg-transparent px-[14px] text-start disabled:cursor-wait"
+        >
+          <span className="flex min-w-0 flex-col gap-0.5">
+            <span className="text-[15px] font-bold text-text">{t.myClips.onMyPage}</span>
+            <span className={cn("text-[13px] font-medium", portfolioVisible ? "text-turf" : "text-muted-text")}>
+              {portfolioVisible
+                ? t.myClips.shownToEveryoneOnPage
+                : isPrivate ? t.myClips.privateOnlyYou : t.myClips.notOnMyPage}
+            </span>
+          </span>
+          <span aria-hidden="true" className={cn("flex h-[30px] w-[50px] flex-none items-center rounded-full p-[3px] transition-colors", portfolioVisible ? "justify-end bg-turf" : "justify-start bg-line")}>
+            <span className={cn("h-6 w-6 rounded-full transition-colors", portfolioVisible ? "bg-void" : "bg-muted-text")} />
+          </span>
+        </button>
+        <span aria-hidden="true" className="h-7 w-px bg-line" />
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setShowDelete(true); }}
+          className="flex h-14 w-14 flex-none items-center justify-center border-0 bg-transparent text-muted-text transition-colors hover:text-text active:opacity-70"
+          aria-label="Delete clip"
+        >
+          <Trash2 className="h-[19px] w-[19px]" />
+        </button>
+      </div>
 
       {/* Delete confirmation overlay */}
       <AnimatePresence>

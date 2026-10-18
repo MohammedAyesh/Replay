@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocale } from "@/i18n/context";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { formatDay } from "@/components/match/bits";
+import { formatClipTitle } from "@/lib/clip-title";
 import { useAuth } from "@/lib/auth";
 import { formatJod, useAvatarRemove, useAvatarUpload, useBookingFields, useMyMatches, useReplayProfile, type MyMatchItem } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
@@ -299,14 +300,11 @@ function HomeMatchCard({ item, copy, now }: { item: MyMatchItem; copy: ReturnTyp
 }
 
 function ClipFooter({ title, locale, now, labels }: { title: string; locale: "en" | "ar"; now: number; labels: { today: string; tomorrow: string } }) {
-  const date = title.match(/\d{4}-\d{2}-\d{2}/)?.[0];
-  const time = title.match(/\b\d{2}:\d{2}\b/)?.[0];
-  const dateMs = date && time ? Date.parse(`${date}T${time}:00+03:00`) : NaN;
-  const dayLabel = Number.isFinite(dateMs) ? formatDay(dateMs, locale, now, labels) : title;
+  const { dayLabel, time } = formatClipTitle(title, locale, now, labels);
   return (
     <span className="absolute inset-x-0 bottom-0 flex h-[52px] items-center justify-between gap-2 bg-void px-3.5">
       <span className="min-w-0 truncate text-sm font-bold">{dayLabel}</span>
-      {time && Number.isFinite(dateMs) && <span dir="ltr" className="shrink-0 font-display text-[15px] font-semibold text-muted-text">{time}</span>}
+      {time && <span dir="ltr" className="shrink-0 font-display text-[15px] font-semibold text-muted-text">{time}</span>}
     </span>
   );
 }
