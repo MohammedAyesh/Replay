@@ -17,7 +17,7 @@ import {
   PlayerDribbleStats,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Users, UserCheck, Video, UserPlus, UserMinus, MapPinned } from "lucide-react";
+import { ChevronLeft, ChevronRight, Users, UserCheck, Video, UserPlus, UserMinus, MapPinned, BellPlus, Crown, Bookmark, Target, Heart, ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
@@ -199,23 +199,31 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
   };
 
   const isMutating = followMutation.isPending || unfollowMutation.isPending;
+  const playerPosition = profile.position
+    ? t.profile.positions[profile.position] ?? profile.position
+    : null;
+  const statsAvailable = !statsLoading && !statsError && Boolean(playerStats);
+  const measuredTotals = playerStats?.measured?.totals;
+  const totalDistanceKm = playerStats?.totals.totalDistanceMetres == null ? 0 : playerStats.totals.totalDistanceMetres / 1000;
 
   if (apiErrorReason(replayProfile.error) === "blocked") {
     return <BlockedProfileNotice userId={profile.id} isMyBlock={blockedByViewer} />;
   }
 
   return (
-    <div className="flex-1 bg-background flex flex-col h-full overflow-y-auto no-scrollbar">
+    <div dir={locale === "ar" ? "rtl" : "ltr"} className="relative flex h-full flex-1 flex-col overflow-y-auto bg-void px-4 pb-28 pt-2 text-text no-scrollbar">
       {/* Top bar */}
-      <div className="pt-safe px-4 pt-4 flex items-center gap-2 sticky top-0 z-10 bg-background/95 backdrop-blur-md pb-3">
+      <div className="sticky top-0 z-10 flex items-center gap-2 bg-void/95 pb-2 pt-safe backdrop-blur-md">
         <button
+          type="button"
           onClick={() => history.back()}
-          className="w-9 h-9 rounded-full bg-muted flex items-center justify-center text-foreground active:scale-95 transition-transform"
+          aria-label={locale === "ar" ? "رجوع" : "Back"}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-text transition-transform active:scale-95"
         >
           <ChevronLeft className="w-5 h-5 rtl:hidden" />
           <ChevronRight className="w-5 h-5 ltr:hidden" />
         </button>
-        <span className="text-sm font-semibold text-muted-foreground flex-1 truncate">{profile.name}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-muted-text" dir="auto">{profile.name}</span>
         {!isGuest && user && !isOwnProfile && (
           <SafetyMenu
             target={{ type: "user", id: profile.id, name: profile.name }}
@@ -227,85 +235,58 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
         )}
       </div>
 
-      <div className="px-5 py-8">
-        {/* Avatar */}
-        <motion.div
-          initial={{ scale: 0.8, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: "spring", stiffness: 300, damping: 20 }}
-          className="flex flex-col items-center gap-4 mb-8"
-        >
-          <ProfileFace userId={profile.id} name={profile.name} />
-          <div className="text-center">
-            <h1 className="text-2xl font-bold">{profile.name}</h1>
-            {profile.position && (
-              <p className="text-muted-foreground text-sm capitalize mt-0.5">{profile.position}</p>
-            )}
-            {profile.age && (
-              <p className="text-muted-foreground text-xs mt-0.5">{t.profile.age(profile.age)}</p>
-            )}
-          </div>
-        </motion.div>
-
-        {/* Stats row */}
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.1 }}
-          className="grid grid-cols-3 gap-3 mb-8"
-        >
-          <StatCard value={profile.clipCount} label={t.profile.clips} icon={<Video className="w-4 h-4" />} />
-          <StatCard value={profile.followerCount} label={t.profile.followers} icon={<Users className="w-4 h-4" />} />
-          <StatCard value={profile.followingCount} label={t.profile.following} icon={<UserCheck className="w-4 h-4" />} />
-        </motion.div>
-
-        {/* Follow / Unfollow button */}
-        {!isOwnProfile && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15 }}
-          >
-            <div className="flex gap-3">
-              <button
-                onClick={handleFollow}
-                disabled={isMutating}
-                className={cn(
-                  "min-h-11 flex-1 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 transition-all active:scale-95",
-                  profile.isFollowing
-                    ? "bg-muted text-foreground"
-                    : "bg-primary text-white"
-                )}
-              >
-                {profile.isFollowing ? (
-                  <>
-                    <UserMinus className="w-4 h-4" />
-                    {t.profile.unfollow}
-                  </>
-                ) : (
-                  <>
-                    <UserPlus className="w-4 h-4" />
-                    {t.profile.follow}
-                  </>
-                )}
-              </button>
-              <div className="min-w-0 flex-1">
-                <FriendButton userId={profile.id} name={profile.name} />
-              </div>
+      <div className="pb-safe">
+        <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="relative mt-1 overflow-hidden rounded-3xl border border-turf/35 bg-gradient-to-br from-[#173B3E] via-[#13283A] to-surface px-4 pb-3.5 pt-4">
+          <PitchBackdrop />
+          <div className="relative flex items-center gap-3.5">
+            <ProfileFace userId={profile.id} name={profile.name} />
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate font-display text-[22px] font-extrabold leading-tight" dir="auto">{profile.name}</h1>
+              {(playerPosition || profile.age != null) && (
+                <div className="mt-1.5 flex min-h-6 items-center gap-2 text-sm font-bold text-text/80">
+                  {playerPosition && <span className="rounded-full bg-floodlight px-2.5 py-1 text-xs font-extrabold text-void">{playerPosition}</span>}
+                  {profile.age != null && <span><bdi className="font-display font-bold" dir="ltr">{profile.age}</bdi> {t.profile.years}</span>}
+                </div>
+              )}
             </div>
-          </motion.div>
-        )}
+          </div>
+          <div className="relative mt-3 grid grid-cols-2">
+            {[
+              { label: t.profile.speed, value: statsAvailable ? (measuredTotals?.topSpeedKmh ?? 0).toFixed(1) : "–" },
+              { label: t.profile.distance, value: statsAvailable ? totalDistanceKm.toFixed(2) : "–" },
+              { label: t.profile.goals, value: statsAvailable ? String(measuredTotals?.goals ?? 0) : "–" },
+              { label: t.profile.passes, value: statsAvailable ? String(measuredTotals?.passesCompleted ?? 0) : "–" },
+              { label: t.profile.touches, value: statsAvailable ? String(measuredTotals?.touches ?? 0) : "–" },
+              { label: t.profile.dribbles, value: statsAvailable ? String(measuredTotals?.dribbles ?? playerStats?.totals.dribbles?.total ?? 0) : "–" },
+            ].map((stat, index) => (
+              <div key={stat.label} className={`flex min-w-0 items-baseline gap-2 py-1.5 ${index >= 2 ? "border-t border-white/10" : ""} ${index % 2 === 0 ? "pe-2" : "border-s border-white/10 ps-3"}`}>
+                <bdi dir="ltr" className="min-w-[52px] font-display text-[26px] font-bold leading-none tabular-nums">{stat.value}</bdi>
+                <span className="truncate text-xs font-semibold text-[#9FB3B5]">{stat.label}</span>
+              </div>
+            ))}
+          </div>
+          <div className="relative mt-2.5 flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
+            <ProfileCount icon={<Video />} value={profile.clipCount} label={t.profile.clips} />
+            <ProfileCount icon={<Users />} value={profile.followerCount} label={t.profile.followers} />
+            <ProfileCount icon={<UserCheck />} value={profile.followingCount} label={t.profile.following} />
+          </div>
+        </motion.section>
 
-        {isOwnProfile && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.15 }}
-            className="text-center text-sm text-muted-foreground py-2"
-          >
-            {t.profile.ownProfile}
-          </motion.div>
+        {!isOwnProfile ? (
+          <div className="mt-3 flex gap-2.5">
+            <div className="min-w-0 flex-1"><FriendButton userId={profile.id} name={profile.name} /></div>
+            <button type="button" onClick={handleFollow} disabled={isMutating} className={cn(
+              "inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-[14px] border px-3 text-sm font-bold transition-opacity disabled:opacity-50",
+              profile.isFollowing ? "border-line bg-raised text-text" : "border-[#7B5CFF]/50 bg-[#7B5CFF]/[0.16] text-text"
+            )}>
+              {profile.isFollowing ? <UserMinus className="h-4 w-4 text-[#B9A8FF]" /> : <BellPlus className="h-4 w-4 text-[#B9A8FF]" />}
+              {profile.isFollowing ? t.profile.unfollow : t.profile.follow}
+            </button>
+          </div>
+        ) : (
+          <div className="mt-3 flex min-h-11 items-center justify-center rounded-xl border border-dashed border-line px-3 text-center text-sm font-semibold text-muted-text">{t.profile.ownProfile}</div>
         )}
+        <StatsBetaNote className="mt-2.5" />
 
         <MatchRecord userId={profile.id} />
 
@@ -314,6 +295,7 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
           loading={statsLoading}
           error={statsError}
           locale={locale}
+          ownProfile={isOwnProfile}
           canClaim={CLAIM_YOUR_MATCH_ENABLED && shouldShowEmptyStatsCta(profile.id, user?.id, isGuest)}
         />
       </div>
@@ -326,152 +308,89 @@ function PlayerStatsSection({
   loading,
   error,
   locale,
+  ownProfile,
   canClaim,
 }: {
   stats: PublicPlayerStats | undefined;
   loading: boolean;
   error: boolean;
   locale: "en" | "ar";
+  ownProfile: boolean;
   canClaim: boolean;
 }) {
   const { t } = useTranslation();
-
-  if (loading) {
-    return (
-      <section className="player-stats-section" aria-labelledby="player-stats-title">
-        <div className="player-stats-heading">
-          <div>
-            <h2 id="player-stats-title">{t.profile.statsTitle}</h2>
-            <p>{t.profile.statsSubtitle}</p>
-          </div>
-        </div>
-        <div className="player-stats-loading">{t.profile.loading}</div>
-      </section>
-    );
-  }
-
-  if (error || !stats) {
-    return (
-      <section className="player-stats-section" aria-labelledby="player-stats-title">
-        <div className="player-stats-heading">
-          <div>
-            <h2 id="player-stats-title">{t.profile.statsTitle}</h2>
-            <p>{t.profile.statsSubtitle}</p>
-          </div>
-        </div>
-        <div className="player-stats-error">{t.profile.statsLoadFailed}</div>
-      </section>
-    );
-  }
-
-  if (stats.matches.length === 0) {
-    return (
-      <section className="player-stats-section" aria-labelledby="player-stats-title">
-        <div className="player-stats-heading">
-          <div>
-            <h2 id="player-stats-title">{t.profile.statsTitle}</h2>
-            <p>{t.profile.statsSubtitle}</p>
-          </div>
-        </div>
-        {stats.excludedClaimCount > 0 && (
-          <div className="player-stats-review-note" role="status">
-            <b>{t.profile.awaitingReview(stats.excludedClaimCount)}</b>
-            <span>{t.profile.awaitingReviewDesc}</span>
-          </div>
-        )}
-        <div className="player-stats-empty">
-          {canClaim ? (
-            <>
-              <MapPinned className="w-6 h-6 text-muted-foreground" />
-              <h3>{t.profile.noConfirmedTitle}</h3>
-              <p>{t.profile.noConfirmedDesc}</p>
-              <Link href="/claim/demo" className="player-stats-cta">{t.profile.viewClaimFlow}</Link>
-            </>
-          ) : (
-            <p className="player-stats-neutral-empty">{t.profile.noConfirmedOther}</p>
-          )}
-        </div>
-        <MeasuredTotalTiles measured={stats.measured ?? null} />
-        <OtherMeasuredMatches matches={stats.measured?.matches ?? []} locale={locale} titled={false} />
-      </section>
-    );
-  }
-
-  const showPerMatch = shouldShowPerMatchHeatmaps(stats.matches);
-  const aggregateHeatmap = aggregatePitchHeatmaps(stats.matches);
-  // Each measured match sits beside the claimed recording it was measured on.
-  const measured = attachMeasured(stats.matches, stats.measured?.matches ?? []);
+  const hasStats = Boolean(stats) && !loading && !error;
+  const matches = hasStats ? stats!.matches : [];
+  const showPerMatch = shouldShowPerMatchHeatmaps(matches);
+  const aggregateHeatmap = !showPerMatch ? aggregatePitchHeatmaps(matches) : null;
+  const measured = attachMeasured(matches, hasStats ? stats!.measured?.matches ?? [] : []);
+  const emptyMatches = hasStats && matches.length === 0;
+  const totals = hasStats ? stats!.totals : null;
+  const humanMinutes = totals ? totals.totalHumanVouchedSeconds / 60 : 0;
+  const inferredMinutes = totals ? totals.totalInferredSeconds / 60 : 0;
+  const trustedTotal = humanMinutes + inferredMinutes;
+  const humanPercent = trustedTotal > 0 ? humanMinutes / trustedTotal * 100 : 0;
 
   return (
-    <section className="player-stats-section" aria-labelledby="player-stats-title">
-      <div className="player-stats-heading">
+    <section className="mt-7 grid gap-3.5 pb-8" aria-labelledby="player-stats-title">
+      <div className="flex items-end justify-between gap-3 px-0.5">
         <div>
-          <h2 id="player-stats-title">{t.profile.statsTitle}</h2>
-          <p>{t.profile.statsSubtitle}</p>
+          <h2 id="player-stats-title" className="font-display text-xl font-extrabold">{t.profile.matchesHeading}</h2>
+          <p className="mt-0.5 text-[13px] text-muted-text">{ownProfile ? t.profile.ownMatchesSubtitle : t.profile.otherMatchesSubtitle}</p>
         </div>
-        {stats.excludedClaimCount > 0 && (
-          <span className="player-stats-review-pill">{t.profile.awaitingReview(stats.excludedClaimCount)}</span>
-        )}
+        {hasStats && stats!.excludedClaimCount > 0 && <span className="shrink-0 rounded-full border border-[#7B5CFF]/40 bg-[#7B5CFF]/[0.16] px-2.5 py-1 text-xs font-bold text-[#B9A8FF]">{t.profile.awaitingReview(stats!.excludedClaimCount)}</span>}
       </div>
-      <StatsBetaNote />
+      {hasStats && stats!.excludedClaimCount > 0 && <div className="rounded-lg border-s-[3px] border-[#7B5CFF] bg-[#7B5CFF]/10 px-3 py-2 text-xs text-muted-text"><span>{t.profile.awaitingReviewDesc}</span></div>}
+      {error && <p role="status" className="text-center text-xs text-muted-text">{t.profile.statsLoadFailed}</p>}
 
-      {stats.excludedClaimCount > 0 && (
-        <div className="player-stats-review-note" role="status">
-          <b>{t.profile.awaitingReview(stats.excludedClaimCount)}</b>
-          <span>{t.profile.awaitingReviewDesc}</span>
-        </div>
-      )}
+      {emptyMatches && <div className="grid justify-items-center gap-2 rounded-2xl border border-line bg-surface p-5 text-center">
+        {canClaim ? <>
+          <Target className="h-6 w-6 text-turf" aria-hidden="true" />
+          <h3 className="font-bold">{t.profile.noConfirmedTitle}</h3>
+          <p className="max-w-sm text-sm leading-5 text-muted-text">{t.profile.noConfirmedDesc}</p>
+          <Link href="/claim/demo" className="mt-1 inline-flex min-h-11 items-center justify-center rounded-full bg-floodlight px-4 text-sm font-extrabold text-void">{t.profile.viewClaimFlow}</Link>
+        </> : <p className="text-sm text-muted-text">{t.profile.noConfirmedOther}</p>}
+      </div>}
 
-      <div className="player-stats-total-grid">
-        <StatCard value={stats.totals.totalMatchesClaimed} label={t.profile.matchesClaimed} />
-        <StatCard value={stats.totals.totalMinutesPlayed} label={t.profile.totalMinutes} suffix=" min" />
-        <div className="player-stats-total-card">
-          <span>{t.profile.totalDistance}</span>
-          <b>{formatDistance(stats.totals.totalDistanceMetres, t.profile.distanceUnavailable)}</b>
-        </div>
+      <div className="grid grid-cols-3 gap-2">
+        <TotalValue value={totals ? String(totals.totalMatchesClaimed) : "–"} label={t.profile.matchesClaimed} />
+        <TotalValue value={totals ? String(Math.round(totals.totalMinutesPlayed)) : "–"} label={t.profile.totalMinutes} />
+        <TotalValue value={totals ? (totals.totalDistanceMetres == null ? 0 : totals.totalDistanceMetres / 1000).toFixed(1) : "–"} label={t.profile.totalDistance} />
       </div>
 
-      <MeasuredTotalTiles measured={stats.measured ?? null} fallbackDribbles={stats.totals.dribbles ?? null} />
-
-      <div className="player-stats-trust-grid">
-        <div>
-          <span>{t.profile.humanVouched}</span>
-          <b>{formatMinutes(stats.totals.totalHumanVouchedSeconds / 60)} min</b>
-        </div>
-        <div>
-          <span>{t.profile.inferred}</span>
-          <b>{formatMinutes(stats.totals.totalInferredSeconds / 60)} min</b>
-        </div>
-      </div>
-
-      {!showPerMatch && aggregateHeatmap && (
-        <div className="player-stats-heatmap-card">
-          <div className="player-stats-card-heading">
-            <span><MapPinned className="w-4 h-4" />{t.profile.aggregateHeatmap}</span>
-            <small>{t.profile.pitchCoordinates}</small>
-          </div>
-          <p>{t.profile.aggregateHeatmapDesc}</p>
+      <div className="grid grid-cols-2 gap-2.5">
+        <section className="min-w-0 rounded-2xl border border-line bg-surface p-2.5">
+          <h3 className="mb-2 text-[13px] font-bold text-muted-text">{t.profile.heatmap}</h3>
           <PlayerStatsHeatmap heatmap={aggregateHeatmap} label={t.profile.heatmap} />
+          {showPerMatch && <p className="mt-1.5 text-[10px] leading-4 text-muted-text">{t.profile.perMatchMapsNote}</p>}
+        </section>
+        <section className="flex min-w-0 flex-col justify-center gap-2 rounded-2xl border border-line bg-surface p-2.5">
+          <TotalLine label={t.profile.matchesClaimed} value={totals ? String(totals.totalMatchesClaimed) : "–"} />
+          <TotalLine label={t.profile.totalMinutes} value={totals ? String(Math.round(totals.totalMinutesPlayed)) : "–"} />
+          <TotalLine label={t.profile.totalDistance} value={totals ? (totals.totalDistanceMetres == null ? 0 : totals.totalDistanceMetres / 1000).toFixed(1) : "–"} />
+        </section>
+      </div>
+
+      <section className="rounded-2xl border border-line bg-surface p-3.5">
+        <h3 className="mb-2.5 text-[13px] font-bold text-text">{t.profile.confirmedMinutesTitle}</h3>
+        <div className="flex h-2 overflow-hidden rounded-full bg-line">
+          {humanPercent > 0 && <span className="bg-turf" style={{ width: `${humanPercent}%` }} />}
+          {trustedTotal > humanMinutes && <span className="flex-1 bg-[#7B5CFF]/65" />}
         </div>
-      )}
+        <div className="mt-2 flex justify-between gap-3 text-[11px] text-muted-text">
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-turf" />{t.profile.humanVouched}<bdi dir="ltr" className="font-display text-sm font-bold text-text">{totals ? formatMinutes(humanMinutes) : "–"}</bdi></span>
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#7B5CFF]" />{t.profile.inferred}<bdi dir="ltr" className="font-display text-sm font-bold text-text">{totals ? formatMinutes(inferredMinutes) : "–"}</bdi></span>
+        </div>
+      </section>
 
-      {showPerMatch && (
-        <p className="player-stats-coordinate-note">{t.profile.perMatchHeatmapDesc}</p>
-      )}
-
-      <div className="player-stats-match-list">
-        {stats.matches.map((match) => (
-          <PlayerMatchStatsRow
-            key={match.recordingId}
-            match={match}
-            measured={measured.byRecording.get(match.recordingId) ?? null}
-            locale={locale}
-            showHeatmap={showPerMatch}
-          />
+      {emptyMatches && stats!.excludedClaimCount > 0 && <p className="text-xs text-muted-text">{t.profile.awaitingReviewDesc}</p>}
+      {loading && <p className="py-2 text-center text-xs text-muted-text">{t.profile.loading}</p>}
+      <div className="grid gap-2">
+        {matches.map((match, index) => (
+          <PlayerMatchStatsRow key={match.recordingId} match={match} measured={measured.byRecording.get(match.recordingId) ?? null} locale={locale} showHeatmap={showPerMatch} defaultOpen={index === 0} />
         ))}
       </div>
-
-      <OtherMeasuredMatches matches={measured.unattached} locale={locale} titled />
+      {hasStats && <OtherMeasuredMatches matches={measured.unattached} locale={locale} titled />}
     </section>
   );
 }
@@ -481,96 +400,71 @@ function PlayerMatchStatsRow({
   measured,
   locale,
   showHeatmap,
+  defaultOpen,
 }: {
   match: PublicPlayerMatchStats;
-  /** the match report's figures for this game, when Replay measured them */
   measured: PublicPlayerMeasuredMatch | null;
   locale: "en" | "ar";
   showHeatmap: boolean;
+  defaultOpen: boolean;
 }) {
   const { t } = useTranslation();
-  // Dribbles from the match report when it has them, so the two never disagree.
-  const reportFigures = measuredTiles(measured);
-  const showClaimDribbles = Boolean(match.dribbles) && !reportFigures.some((tile) => tile.key === "dribbles");
-  const date = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", {
-    dateStyle: "medium",
-  }).format(new Date(`${match.date}T12:00:00`));
+  const figures = measuredTiles(measured, { distance: true });
+  const figure = (key: MeasuredTileValue["key"]) => figures.find((item) => item.key === key);
+  const dribbles = figure("dribbles")?.value ?? match.dribbles?.total ?? 0;
+  const passes = figure("passes");
+  const distanceKm = figure("distance")?.value ?? (match.distanceMetres ?? 0) / 1000;
+  const statCells = [
+    [t.profile.distance, `${distanceKm.toFixed(2)} km`],
+    [t.profile.topSpeed, `${(figure("topSpeed")?.value ?? 0).toFixed(1)} ${t.profile.kmh}`],
+    [t.profile.goals, String(figure("goals")?.value ?? 0)],
+    [t.profile.shots, String(figure("shots")?.value ?? 0)],
+    [t.profile.passes, passes ? (passes.tried === null ? String(passes.value) : t.profile.passesOf(passes.tried)) : "0"],
+    [t.profile.touches, String(figure("touches")?.value ?? 0)],
+    [t.profile.dribbles, String(dribbles)],
+    [t.profile.humanVouched, `${formatMinutes(match.humanVouchedSeconds / 60)} min`],
+    [t.profile.inferred, `${formatMinutes(match.inferredSeconds / 60)} min`],
+  ] as const;
+  const date = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { dateStyle: "medium" })
+    .format(new Date(`${match.date}T12:00:00`));
 
   return (
-    <article className="player-stats-match">
-      <div className="player-stats-match-heading">
-        <div>
-          <h3>{match.title}</h3>
-          <span>{t.profile.matchDate(date)}</span>
-        </div>
-        <strong>{formatMinutes(match.minutesPlayed)} min</strong>
-      </div>
-      <div className="player-stats-match-metrics">
-        <div>
-          <span>{t.profile.minutes}</span>
-          <b>{formatMinutes(match.minutesPlayed)} min</b>
-        </div>
-        <div>
-          <span>{t.profile.distance}</span>
-          <b>{formatDistance(match.distanceMetres, t.profile.distanceUnavailable)}</b>
-          {match.distanceMetres === null && <small>{t.profile.matchUnavailableDistance}</small>}
-        </div>
-        {showClaimDribbles && match.dribbles && (
-          <div>
-            <span>{t.profile.dribbles}</span>
-            <b>{match.dribbles.total}</b>
-            <small>{t.profile.dribblesSplit(match.dribbles.succeeded, match.dribbles.failed)}</small>
-          </div>
-        )}
-        {reportFigures.map((tile) => <MeasuredCell key={tile.key} tile={tile} />)}
-        <div>
-          <span>{t.profile.humanVouched}</span>
-          <b>{formatMinutes(match.humanVouchedSeconds / 60)} min</b>
-        </div>
-        <div>
-          <span>{t.profile.inferred}</span>
-          <b>{formatMinutes(match.inferredSeconds / 60)} min</b>
-        </div>
-      </div>
-      {match.offPitchSeconds > 0 && (
-        <p className="player-stats-off-pitch">
-          {t.profile.offPitch(match.offPitchSeconds / 60)}
-        </p>
-      )}
-      {showHeatmap && (
-        <div className="player-stats-match-heatmap">
-          <div className="player-stats-card-heading">
-            <span><MapPinned className="w-4 h-4" />{t.profile.heatmap}</span>
-            <small>{match.heatmap.coordinateSpace === "pitch" ? t.profile.pitchCoordinates : t.profile.cameraCoordinates}</small>
-          </div>
+    <details open={defaultOpen} className="group overflow-hidden rounded-2xl border border-line bg-surface">
+      <summary className="flex min-h-[60px] cursor-pointer list-none items-center gap-2.5 px-3.5 py-2 [&::-webkit-details-marker]:hidden">
+        <span className="min-w-0 flex-1">
+          <span dir="ltr" className="block truncate text-start font-display text-base font-bold">{match.title}</span>
+          <span className="mt-0.5 block text-xs text-muted-text">{t.profile.matchDate(date)}</span>
+        </span>
+        <bdi dir="ltr" className="font-display text-lg font-bold tabular-nums">{formatMinutes(match.minutesPlayed)}</bdi>
+        <span className="text-xs text-muted-text">{t.profile.minuteShort}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-muted-text transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="grid grid-cols-3 gap-1.5 px-3.5 pb-3.5">
+        {statCells.map(([label, value]) => <MetricCell key={label} label={label} value={value} />)}
+        {match.offPitchSeconds > 0 && <p className="col-span-3 mt-0.5 text-xs font-semibold text-muted-text">{t.profile.offPitch(match.offPitchSeconds / 60)}</p>}
+        {showHeatmap && <div className="col-span-3 mt-1 rounded-xl border border-line bg-raised p-2.5">
+          <div className="mb-2 flex items-center justify-between gap-2 text-xs font-bold text-muted-text"><span>{t.profile.heatmap}</span><span className="text-[10px] font-medium">{match.heatmap.coordinateSpace === "pitch" ? t.profile.pitchCoordinates : t.profile.cameraCoordinates}</span></div>
           <PlayerStatsHeatmap heatmap={match.heatmap} label={t.profile.heatmap} />
-        </div>
-      )}
-    </article>
+        </div>}
+      </div>
+    </details>
   );
 }
 
-function PlayerStatsHeatmap({ heatmap, label }: { heatmap: PublicPlayerHeatmap; label: string }) {
+function PlayerStatsHeatmap({ heatmap, label }: { heatmap: PublicPlayerHeatmap | null; label: string }) {
   return (
-    <div
-      className="player-stats-heatmap"
-      role="img"
-      aria-label={`${label} (${heatmap.coordinateSpace})`}
-    >
-      {heatmap.cells.map((cell) => (
-        <span
-          className="player-stats-heatmap-cell bg-primary"
-          key={`${cell.x}:${cell.y}`}
-          style={{
-            gridColumn: Math.min(12, Math.max(1, Math.floor(cell.x * 12) + 1)),
-            gridRow: Math.min(8, Math.max(1, Math.floor(cell.y * 8) + 1)),
-            opacity: Math.max(0.12, Math.min(1, cell.weight)),
-          }}
-        />
-      ))}
-      <span className="player-stats-heatmap-midline" />
-      <span className="player-stats-heatmap-circle" />
-    </div>
+    <svg viewBox="0 0 200 120" className="block w-full overflow-hidden rounded-lg bg-[#0F2427]" role="img" aria-label={`${label} (${heatmap?.coordinateSpace ?? "pitch"})`}>
+      <defs>
+        <radialGradient id="player-heat-glow"><stop offset="0" stopColor="#D4FF4F" stopOpacity=".92" /><stop offset=".44" stopColor="#2FD8C4" stopOpacity=".48" /><stop offset="1" stopColor="#2FD8C4" stopOpacity="0" /></radialGradient>
+      </defs>
+      {(heatmap?.cells ?? []).map((cell, index) => {
+        const weight = Math.max(0, Math.min(1, cell.weight));
+        return <circle key={`${cell.x}:${cell.y}:${index}`} cx={cell.x * 200} cy={cell.y * 120} r={8 + weight * 11} fill="url(#player-heat-glow)" opacity={Math.max(.12, weight)} />;
+      })}
+      <g fill="none" stroke="#F2F4F8" strokeOpacity=".35" strokeWidth="1.2">
+        <rect x="8" y="8" width="184" height="104" rx="6" /><line x1="100" y1="8" x2="100" y2="112" /><circle cx="100" cy="60" r="16" /><rect x="8" y="34" width="26" height="52" /><rect x="166" y="34" width="26" height="52" />
+      </g>
+    </svg>
   );
 }
 
@@ -678,25 +572,23 @@ function OtherMeasuredMatches({ matches, locale, titled }: { matches: PublicPlay
   if (!matches.length) return null;
   const format = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { dateStyle: "medium" });
   return (
-    <div className="player-stats-match-list">
+    <div className="grid gap-2">
       {titled && <p className="player-stats-coordinate-note">{t.profile.otherMatches}</p>}
       {matches.map((match) => {
         const figures = measuredTiles(match, { distance: true });
         return (
-          <article className="player-stats-match" key={match.matchId}>
-            <div className="player-stats-match-heading">
-              <div>
-                <h3>{match.fieldName ?? t.profile.measuredTitle}</h3>
-                <span>{t.profile.matchDate(format.format(new Date(`${match.date}T12:00:00`)))}</span>
-              </div>
-              {match.minutes !== null && <strong>{t.profile.onCameraMin(formatMinutes(match.minutes))}</strong>}
-            </div>
-            {figures.length > 0 && (
-              <div className="player-stats-match-metrics">
-                {figures.map((tile) => <MeasuredCell key={tile.key} tile={tile} />)}
-              </div>
-            )}
-          </article>
+          <details className="group overflow-hidden rounded-2xl border border-line bg-surface" key={match.matchId}>
+            <summary className="flex min-h-[60px] cursor-pointer list-none items-center gap-2.5 px-3.5 py-2 [&::-webkit-details-marker]:hidden">
+              <span className="min-w-0 flex-1"><span className="block truncate font-display text-base font-bold">{match.fieldName ?? t.profile.measuredTitle}</span><span className="mt-0.5 block text-xs text-muted-text">{t.profile.matchDate(format.format(new Date(`${match.date}T12:00:00`)))}</span></span>
+              <bdi dir="ltr" className="font-display text-sm font-bold">{match.minutes == null ? "0.0" : formatMinutes(match.minutes)}</bdi>
+              <span className="text-xs text-muted-text">{t.profile.minuteShort}</span>
+              <ChevronDown className="h-4 w-4 text-muted-text transition-transform group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="grid grid-cols-3 gap-1.5 px-3.5 pb-3.5">{figures.map((tile) => {
+              const shown = useMeasuredText()(tile, null);
+              return <MetricCell key={tile.key} label={shown.label} value={shown.value} />;
+            })}</div>
+          </details>
         );
       })}
     </div>
@@ -707,57 +599,75 @@ function formatMinutes(value: number): string {
   return value.toFixed(1);
 }
 
-function StatCard({ value, label, icon, suffix = "" }: { value: number; label: string; icon?: React.ReactNode; suffix?: string }) {
-  return (
-    <div className="p-3 flex flex-col items-center gap-1">
-      <div className="text-muted-foreground">{icon}</div>
-      <span className="text-xl font-bold">{typeof value === "number" && !Number.isInteger(value) ? value.toFixed(1) : value}{suffix}</span>
-      <span className="text-xs text-muted-foreground">{label}</span>
-    </div>
-  );
-}
-
-
 function ProfileFace({ userId, name }: { userId: number; name: string }) {
   const { data } = useReplayProfile(userId);
   return (
-    <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full border-2 border-turf/50 bg-raised shadow-lg">
+    <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-turf to-[#7B5CFF] p-[3px]">
+      <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-raised font-display text-[30px] font-bold text-text">
       {data?.avatarUrl ? (
         <img src={data.avatarUrl} alt="" className="h-full w-full object-cover" />
       ) : (
-        <span className="font-display text-3xl font-bold text-text">{getInitials(name)}</span>
+        getInitials(name)
       )}
+      </span>
     </div>
   );
 }
 
 /** Matches played on Replay: record, man-of-the-match crowns, recent results. */
-function MatchRecord({ userId }: { userId: number }) {
+function MatchRecord({ userId, ownProfile }: { userId: number; ownProfile: boolean }) {
   const copy = useMatchCopy();
-  const { data } = useReplayProfile(userId);
-  if (!data || data.matchesPlayed === 0) return null;
+  const { t, locale } = useTranslation();
+  const { data, isLoading } = useReplayProfile(userId);
+  const dateParts = (local: string) => {
+    const [date, time = "00:00"] = local.split(" ");
+    const [year, month, day] = date.split("-").map(Number);
+    const [hour, minute] = time.split(":").map(Number);
+    const dateValue = new Date(year, month - 1, day, hour, minute);
+    return {
+      day: new Intl.NumberFormat("en").format(day),
+      month: new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { month: "short" }).format(dateValue),
+      weekday: new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { weekday: "long" }).format(dateValue),
+    };
+  };
   return (
-    <section className="mt-8 rounded-2xl border border-line bg-surface p-4">
-      <div className="grid grid-cols-3 gap-2 text-center">
-        <div><p className="font-mono text-3xl font-bold">{data.matchesPlayed}</p><p className="text-[11px] font-semibold uppercase text-muted-text">{copy.played}</p></div>
-        <div><p className="font-mono text-3xl font-bold text-turf">{data.wins}</p><p className="text-[11px] font-semibold uppercase text-muted-text">{copy.wins}</p></div>
-        <div><p className="flex items-center justify-center gap-1 font-mono text-3xl font-bold text-floodlight"><CrownIcon className="h-5 w-5" />{data.motmCount}</p><p className="text-[11px] font-semibold uppercase text-muted-text">{copy.motmShort}</p></div>
+    <section className="mt-7" aria-labelledby="replay-matches-heading">
+      <div className="mb-3">
+        <h2 id="replay-matches-heading" className="font-display text-xl font-extrabold">{t.profile.replayMatches}</h2>
+        <p className="mt-0.5 text-[13px] text-muted-text">{ownProfile ? t.profile.ownMatchesRecord : t.profile.otherMatchesRecord}</p>
       </div>
-      <ul className="mt-4 flex flex-col gap-2">
-        {data.recent.slice(0, 6).map((m) => (
-          <li key={m.code}>
-            <Link href={`/m/${m.code}`} className="flex items-center gap-3 rounded-xl border border-line bg-raised px-3 py-2">
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold">{m.field.name}</span>
-                <span className="text-[11px] text-muted-text">{m.startLocal.slice(0, 10)}</span>
-              </span>
-              {m.motm && <CrownIcon className="h-4 w-4 text-floodlight" aria-label={copy.motm} />}
-              {m.score && <span className="font-mono text-base font-bold" dir="ltr">{m.score.a}–{m.score.b}</span>}
-              {m.score && m.team && <span className={m.won ? "text-[10px] font-bold text-turf" : "text-[10px] font-bold text-muted-text"}>{m.won ? copy.won : copy.lost}</span>}
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <div className="grid grid-cols-3 gap-2">
+        <MatchStat value={data ? data.matchesPlayed : isLoading ? "–" : 0} label={copy.played} />
+        <MatchStat value={data ? data.wins : isLoading ? "–" : 0} label={copy.wins} turf />
+        <MatchStat value={data ? data.motmCount : isLoading ? "–" : 0} label={copy.motmShort} crown />
+      </div>
+      {data?.matchesPlayed === 0 || (data && data.recent.length === 0) ? (
+        <p className="mt-3 rounded-2xl border border-dashed border-line bg-surface px-4 py-3 text-center text-sm leading-5 text-muted-text">{ownProfile ? t.profile.noReplayMatchesOwn : t.profile.noReplayMatchesOther}</p>
+      ) : data?.recent.length ? (
+        <div className="mt-3 grid">
+          {data.recent.slice(0, 6).map((match, index) => {
+            const date = dateParts(match.startLocal);
+            return <div key={match.code} className="flex gap-2.5">
+              <div className="flex w-11 shrink-0 flex-col items-center pt-2">
+                <span className="font-display text-[22px] font-bold leading-none">{date.day}</span><span className="text-[11px] font-semibold text-muted-text">{date.month}</span>
+              </div>
+              <div className="flex w-3 shrink-0 flex-col items-center">
+                <span className={`h-3.5 w-0.5 ${index ? "bg-line" : "bg-transparent"}`} />
+                <span className={`h-3 w-3 shrink-0 rounded-full border-[2.5px] bg-void ${match.motm ? "border-floodlight" : "border-turf"}`} />
+                <span className={`min-h-3 flex-1 w-0.5 ${index < Math.min(data.recent.length, 6) - 1 ? "bg-line" : "bg-transparent"}`} />
+              </div>
+              <Link href={`/m/${match.code}`} className="mb-2.5 flex min-h-[62px] min-w-0 flex-1 flex-col justify-center gap-1 rounded-2xl border border-line bg-surface px-3 py-2.5 text-text">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-1.5"><span dir="ltr" className="truncate font-display text-base font-bold">{match.field.name}</span>{match.motm && <CrownIcon className="h-3.5 w-3.5 shrink-0 text-floodlight" aria-label={copy.motm} />}</span>
+                  {match.score && <span className="flex shrink-0 items-center gap-1.5"><bdi dir="ltr" className="font-display text-lg font-bold">{match.score.a}–{match.score.b}</bdi>{match.team && <span className={`text-xs font-extrabold ${match.won ? "text-turf" : "text-muted-text"}`}>{match.won ? copy.won : copy.lost}</span>}</span>}
+                  {!match.score && <span className="shrink-0 text-xs text-muted-text">{t.profile.noScore}</span>}
+                </span>
+                <span className="text-[11px] text-muted-text">{date.weekday}</span>
+              </Link>
+            </div>;
+          })}
+        </div>
+      ) : isLoading ? <p className="mt-3 text-center text-xs text-muted-text">{t.profile.loading}</p> : null}
     </section>
   );
 }
