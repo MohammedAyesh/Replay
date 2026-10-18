@@ -12,12 +12,10 @@ import {
   PublicPlayerHeatmap,
   PublicPlayerMatchStats,
   PublicPlayerStats,
-  PublicPlayerMeasured,
   PublicPlayerMeasuredMatch,
-  PlayerDribbleStats,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Users, UserCheck, Video, UserPlus, UserMinus, MapPinned, BellPlus, Crown, Bookmark, Target, Heart, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, Users, UserCheck, Video, UserMinus, BellPlus, Crown, Target, ChevronDown } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
@@ -27,7 +25,6 @@ import { FriendButton } from "@/components/friends/FriendButton";
 import {
   aggregatePitchHeatmaps,
   attachMeasured,
-  formatDistance,
   measuredTiles,
   shouldShowEmptyStatsCta,
   shouldShowPerMatchHeatmaps,
@@ -200,7 +197,7 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
 
   const isMutating = followMutation.isPending || unfollowMutation.isPending;
   const playerPosition = profile.position
-    ? t.profile.positions[profile.position] ?? profile.position
+    ? t.profile.positions[profile.position as keyof typeof t.profile.positions] ?? profile.position
     : null;
   const statsAvailable = !statsLoading && !statsError && Boolean(playerStats);
   const measuredTotals = playerStats?.measured?.totals;
@@ -288,7 +285,7 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
         )}
         <StatsBetaNote className="mt-2.5" />
 
-        <MatchRecord userId={profile.id} />
+        <MatchRecord userId={profile.id} ownProfile={isOwnProfile} />
 
         <PlayerStatsSection
           stats={playerStats}
@@ -412,14 +409,14 @@ function PlayerMatchStatsRow({
   const figures = measuredTiles(measured, { distance: true });
   const figure = (key: MeasuredTileValue["key"]) => figures.find((item) => item.key === key);
   const dribbles = figure("dribbles")?.value ?? match.dribbles?.total ?? 0;
-  const passes = figure("passes");
+  const passes = figures.find((item) => item.key === "passes");
   const distanceKm = figure("distance")?.value ?? (match.distanceMetres ?? 0) / 1000;
   const statCells = [
     [t.profile.distance, `${distanceKm.toFixed(2)} km`],
     [t.profile.topSpeed, `${(figure("topSpeed")?.value ?? 0).toFixed(1)} ${t.profile.kmh}`],
     [t.profile.goals, String(figure("goals")?.value ?? 0)],
     [t.profile.shots, String(figure("shots")?.value ?? 0)],
-    [t.profile.passes, passes ? (passes.tried === null ? String(passes.value) : t.profile.passesOf(passes.tried)) : "0"],
+    [t.profile.passes, passes?.key === "passes" ? (passes.tried === null ? String(passes.value) : t.profile.passesOf(passes.tried)) : "0"],
     [t.profile.touches, String(figure("touches")?.value ?? 0)],
     [t.profile.dribbles, String(dribbles)],
     [t.profile.humanVouched, `${formatMinutes(match.humanVouchedSeconds / 60)} min`],
@@ -498,77 +495,10 @@ function useMeasuredText() {
   };
 }
 
-const MEASURED_KEY_FIELD: Record<MeasuredTileValue["key"], keyof PublicPlayerMeasuredMatch> = {
-  topSpeed: "topSpeedKmh",
-  distance: "distanceKm",
-  goals: "goals",
-  shots: "shots",
-  passes: "passesCompleted",
-  touches: "touches",
-  dribbles: "dribbles",
-};
-
-/**
- * What Replay measured across the player's matches -- the match reports' own
- * figures. A figure no match measured is simply not shown; nothing is labelled
- * "Unavailable". Dribbles fall back to the claimed games' count when no match
- * report has them.
- */
-function MeasuredTotalTiles({ measured, fallbackDribbles = null }: { measured: PublicPlayerMeasured | null; fallbackDribbles?: PlayerDribbleStats | null }) {
-  const { t } = useTranslation();
-  const text = useMeasuredText();
-  const matches = measured?.matches ?? [];
-  const tiles = matches.length ? measuredTiles(measured!.totals) : [];
-  const showFallbackDribbles = Boolean(fallbackDribbles) && !tiles.some((tile) => tile.key === "dribbles");
-  if (!tiles.length && !showFallbackDribbles) return null;
-  return (
-    <div className="flex flex-col gap-2">
-      {tiles.length > 0 && (
-        <div className="player-stats-card-heading">
-          <span>{t.profile.measuredTitle}</span>
-          <small>{t.profile.measuredDesc}</small>
-        </div>
-      )}
-      <div className="player-stats-unavailable-grid">
-        {tiles.map((tile) => {
-          const count = matches.filter((match) => match[MEASURED_KEY_FIELD[tile.key]] !== null).length;
-          const shown = text(tile, count);
-          return (
-            <div className="player-stats-unavailable-tile is-measured" key={tile.key} title={tile.key === "dribbles" ? t.profile.dribblesDesc : undefined}>
-              <span>{shown.label}</span>
-              <b dir="ltr" className="text-start">{shown.value}</b>
-              {shown.note && <small>{shown.note}</small>}
-            </div>
-          );
-        })}
-        {showFallbackDribbles && fallbackDribbles && (
-          <div className="player-stats-unavailable-tile is-measured" title={t.profile.dribblesDesc}>
-            <span>{t.profile.dribbles}</span>
-            <b>{fallbackDribbles.total}</b>
-            <small>{t.profile.dribblesSplit(fallbackDribbles.succeeded, fallbackDribbles.failed)}</small>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** One measured figure inside a match row, styled like the row's other metrics. */
-function MeasuredCell({ tile }: { tile: MeasuredTileValue }) {
-  const text = useMeasuredText();
-  const shown = text(tile, null);
-  return (
-    <div>
-      <span>{shown.label}</span>
-      <b dir="ltr" className="text-start">{shown.value}</b>
-      {shown.note && <small>{shown.note}</small>}
-    </div>
-  );
-}
-
 /** Measured matches with no claimed recording on the page: their figures, one row each. */
 function OtherMeasuredMatches({ matches, locale, titled }: { matches: PublicPlayerMeasuredMatch[]; locale: "en" | "ar"; titled: boolean }) {
   const { t } = useTranslation();
+  const text = useMeasuredText();
   if (!matches.length) return null;
   const format = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { dateStyle: "medium" });
   return (
@@ -585,7 +515,7 @@ function OtherMeasuredMatches({ matches, locale, titled }: { matches: PublicPlay
               <ChevronDown className="h-4 w-4 text-muted-text transition-transform group-open:rotate-180" aria-hidden="true" />
             </summary>
             <div className="grid grid-cols-3 gap-1.5 px-3.5 pb-3.5">{figures.map((tile) => {
-              const shown = useMeasuredText()(tile, null);
+              const shown = text(tile, null);
               return <MetricCell key={tile.key} label={shown.label} value={shown.value} />;
             })}</div>
           </details>
@@ -597,6 +527,69 @@ function OtherMeasuredMatches({ matches, locale, titled }: { matches: PublicPlay
 
 function formatMinutes(value: number): string {
   return value.toFixed(1);
+}
+
+function PitchBackdrop() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 360 150" preserveAspectRatio="xMidYMid slice" className="pointer-events-none absolute inset-0 h-full w-full opacity-[0.11]">
+      <g fill="none" stroke="white" strokeWidth="1">
+        <rect x="8" y="8" width="344" height="134" rx="7" />
+        <line x1="180" y1="8" x2="180" y2="142" />
+        <circle cx="180" cy="75" r="25" />
+        <rect x="8" y="40" width="45" height="70" />
+        <rect x="307" y="40" width="45" height="70" />
+      </g>
+    </svg>
+  );
+}
+
+function ProfileCount({ icon, value, label }: { icon: React.ReactNode; value: number; label: string }) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-text">
+      <span className="shrink-0 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
+      <bdi dir="ltr" className="font-display text-sm font-bold text-text">{value}</bdi>
+      <span className="truncate">{label}</span>
+    </div>
+  );
+}
+
+function TotalValue({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl border border-line bg-surface px-2 py-3 text-center">
+      <bdi dir="ltr" className="font-display text-lg font-bold tabular-nums">{value}</bdi>
+      <span className="text-[10px] font-semibold leading-tight text-muted-text">{label}</span>
+    </div>
+  );
+}
+
+function TotalLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-line/70 pb-1.5 last:border-0 last:pb-0">
+      <span className="min-w-0 text-xs leading-tight text-muted-text">{label}</span>
+      <bdi dir="ltr" className="shrink-0 font-display text-sm font-bold tabular-nums">{value}</bdi>
+    </div>
+  );
+}
+
+function MetricCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1 rounded-lg bg-raised px-2 py-2">
+      <span className="truncate text-[10px] font-medium leading-tight text-muted-text">{label}</span>
+      <bdi dir="ltr" className="truncate text-start font-display text-xs font-bold tabular-nums">{value}</bdi>
+    </div>
+  );
+}
+
+function MatchStat({ value, label, turf = false, crown = false }: { value: number | string; label: string; turf?: boolean; crown?: boolean }) {
+  return (
+    <div className="flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl border border-line bg-surface px-2 py-2.5 text-center">
+      <div className="flex items-center gap-1.5">
+        {crown && <Crown className="h-3.5 w-3.5 text-floodlight" aria-hidden="true" />}
+        <bdi dir="ltr" className={cn("font-display text-lg font-bold tabular-nums", turf && "text-turf")}>{value}</bdi>
+      </div>
+      <span className="truncate text-[10px] font-semibold text-muted-text">{label}</span>
+    </div>
+  );
 }
 
 function ProfileFace({ userId, name }: { userId: number; name: string }) {
