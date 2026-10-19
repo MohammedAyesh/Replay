@@ -113,6 +113,25 @@ const SALAD_GPU_OPTIONS = [
   },
 ] as const;
 
+const VAST_GPU_OPTIONS = [
+  {
+    value: "vast",
+    label: "Vast · cheapest RTX 5090 / 4090 that passes our reliability and speed filters",
+  },
+  {
+    value: "vast:RTX 4090",
+    label: "Vast RTX 4090 · ~$0.39–0.48/h · speed being tested",
+  },
+  {
+    value: "vast:RTX 5090",
+    label: "Vast RTX 5090 · up to $0.60/h · often none available",
+  },
+  {
+    value: "vast:RTX 3090",
+    label: "Vast RTX 3090 · ~$0.17–0.28/h · slower card, speed being tested",
+  },
+] as const;
+
 type SaladFleetCardCount = "auto" | 2 | 3 | 4 | 5 | 6 | 8 | 10;
 type FleetTargetMin = 60 | 120 | 240 | 480;
 
@@ -191,6 +210,11 @@ function GpuOptionList() {
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </optgroup>
+      <optgroup label="Vast.ai (on-demand, not interruptible)">
+        {VAST_GPU_OPTIONS.map((option) => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </optgroup>
     </>
   );
 }
@@ -214,6 +238,14 @@ function analysisGpuLabel(gpu?: string): string {
       return "Auto";
     case "salad":
       return "Salad (cheapest)";
+    case "vast":
+      return "Vast (cheapest)";
+    case "vast:RTX 4090":
+      return "Vast RTX 4090";
+    case "vast:RTX 5090":
+      return "Vast RTX 5090";
+    case "vast:RTX 3090":
+      return "Vast RTX 3090";
     case "salad:RTX 3090":
       return "Salad RTX 3090";
     case "salad:RTX 4090":

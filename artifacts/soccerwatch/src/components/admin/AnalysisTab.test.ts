@@ -28,6 +28,13 @@ describe("analysis GPU params", () => {
       .toEqual({ gpu: "auto" });
   });
 
+  it("sends Vast single-card values unchanged without a Salad tier suffix", () => {
+    expect(buildAnalysisJobParams("manual", [{ gpu: "vast", saladTier: "batch" }], "auto"))
+      .toEqual({ gpu: "vast" });
+    expect(buildAnalysisJobParams("manual", [{ gpu: "vast:RTX 4090", saladTier: "low" }], "auto"))
+      .toEqual({ gpu: "vast:RTX 4090" });
+  });
+
   it("preserves the existing ordered multi-card payload", () => {
     expect(buildAnalysisJobParams("manual", [
       { gpu: "salad:RTX 3090", saladTier: "batch" },
@@ -35,6 +42,17 @@ describe("analysis GPU params", () => {
     ], "auto")).toEqual({
       gpu: "multi",
       gpus: ["salad:RTX 3090@batch", "RTX 5090"],
+    });
+  });
+
+  it("sends Vast multi-card values unchanged alongside Salad cards", () => {
+    expect(buildAnalysisJobParams("manual", [
+      { gpu: "vast:RTX 4090", saladTier: "batch" },
+      { gpu: "vast", saladTier: "low" },
+      { gpu: "salad:RTX 3090", saladTier: "batch" },
+    ], "auto")).toEqual({
+      gpu: "multi",
+      gpus: ["vast:RTX 4090", "vast", "salad:RTX 3090@batch"],
     });
   });
 });
@@ -56,5 +74,12 @@ describe("analysis GPU queue labels", () => {
       .toBe("Salad fleet · finish within ~4 h");
     expect(analysisGpuQueueLabel({ gpu: "salad-fleet", cards: "auto", fleetTargetMin: 480 }))
       .toBe("Salad fleet · finish within no rush");
+  });
+
+  it("labels Vast jobs readably", () => {
+    expect(analysisGpuQueueLabel({ gpu: "vast" })).toBe("Vast (cheapest)");
+    expect(analysisGpuQueueLabel({ gpu: "vast:RTX 4090" })).toBe("Vast RTX 4090");
+    expect(analysisGpuQueueLabel({ gpu: "multi", gpus: ["vast:RTX 5090", "vast:RTX 3090"] }))
+      .toBe("2 cards: Vast RTX 5090 + Vast RTX 3090");
   });
 });
