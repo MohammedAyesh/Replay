@@ -1261,7 +1261,7 @@ function PortfolioClosing({ onEdit }: { onEdit?: () => void }) {
   );
 }
 
-function useStoryLinkCopy() {
+export function useStoryLinkCopy() {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
 
   const copyStoryLink = async () => {
@@ -1727,7 +1727,7 @@ function VideoVault({ clips, isLoading, isError }: { clips: PortfolioClip[]; isL
   );
 }
 
-function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; onClose: () => void }) {
+export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; onClose: () => void }) {
   const { t, locale } = useTranslation();
   const videoRef = useRef<HTMLVideoElement>(null);
   const fullscreenTargetRef = useRef<HTMLDivElement>(null);
@@ -1967,7 +1967,7 @@ function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; onClose: 
   );
 }
 
-function PortfolioEditor({
+export function PortfolioEditor({
   value,
   clips,
   onClose,
@@ -2304,6 +2304,10 @@ function PortfolioEditor({
        </AnimatePresence>
     </motion.div>
   );
+}
+
+export function PortfolioFeatureStyles() {
+  return <style>{PORTFOLIO_HEADER_STYLES}</style>;
 }
 
 function isSupportedPortfolioImage(file: File): boolean {

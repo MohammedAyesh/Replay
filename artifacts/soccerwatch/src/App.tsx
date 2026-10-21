@@ -48,7 +48,6 @@ import { consumeExplicitAuthRedirect, getIncompleteProfileOnboardingRedirect, ge
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
-import PortfolioPage from "@/features/portfolio/page";
 import LegacyDemoPage from "@/pages/demo-route";
 import DemoPage from "@/pages/demo/DemoPage";
 import AcademyConsole from "@/pages/academy-console";
@@ -561,7 +560,7 @@ function AppRouter() {
         <Route path="/academies"><Academies /></Route>
         <Route path="/player/:id" component={Player} />
         <Route path="/players/:id" component={Profile} />
-        <Route path="/portfolio/:id" component={PortfolioPage} />
+        <Route path="/portfolio/:id" component={Profile} />
         <Route path="/my-clips" component={MyClips} />
         <Route path="/live" component={Live} />
         <Route path="/claim/demo" component={ClaimDemo} />
@@ -625,7 +624,7 @@ function ClerkProviderWithRoutes() {
       <ClerkQueryClientCacheInvalidator />
       <TooltipProvider>
         <AppRouter />
-        {!location.startsWith("/portfolio/") && <Toaster />}
+        <Toaster />
       </TooltipProvider>
     </ClerkProvider>
   );

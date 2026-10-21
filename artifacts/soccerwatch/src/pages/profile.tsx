@@ -1,4 +1,5 @@
 import { useRoute, useLocation, Link } from "wouter";
+import { useMemo, useRef, useState } from "react";
 import { Crown as CrownIcon } from "lucide-react";
 import { useReplayProfile } from "@/lib/match-api";
 import { useMatchCopy } from "@/i18n/match-strings";
@@ -15,7 +16,7 @@ import {
   PublicPlayerMeasuredMatch,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Users, UserCheck, Video, UserMinus, BellPlus, Crown, Target, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, Users, UserCheck, Video, UserMinus, BellPlus, Crown, Target, ChevronDown, Flame, Share2, Play, Edit3, Sparkles, Gauge, Footprints, Crosshair, CircleDot, RotateCw } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
@@ -34,6 +35,10 @@ import { SafetyMenu } from "@/components/safety/SafetyMenu";
 import { StatsBetaNote } from "@/components/match/StatsBeta";
 import { useMyBlocks, useUnblockUser, type BlockedPlayer } from "@/lib/safety-api";
 import { useSafetyCopy } from "@/i18n/safety-strings";
+import { getGetUserPortfolioQueryKey, useGetUserPortfolio, useUpdateUserPortfolio, type PortfolioView, type PortfolioClip } from "@workspace/api-client-react";
+import { portfolioFromApi, portfolioToUpdateInput, positionLabelKey, type PortfolioState } from "@/features/portfolio/model";
+import { PortfolioEditor, PortfolioClipViewer, PortfolioFeatureStyles, useStoryLinkCopy } from "@/features/portfolio/page";
+import { AnimatePresence } from "framer-motion";
 
 function getInitials(name: string): string {
   return name
@@ -55,8 +60,9 @@ function apiErrorReason(error: unknown): string | undefined {
 }
 
 export default function Profile() {
-  const [, params] = useRoute("/players/:id");
-  const userId = parseInt(params?.id || "0", 10);
+  const [, playerParams] = useRoute("/players/:id");
+  const [, portfolioParams] = useRoute("/portfolio/:id");
+  const userId = parseInt(playerParams?.id ?? portfolioParams?.id ?? "0", 10);
   const { t } = useTranslation();
   const { user, isGuest } = useAuth();
   const blocks = useMyBlocks(Boolean(user) && !isGuest);
@@ -143,161 +149,218 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
   const queryClient = useQueryClient();
   const replayProfile = useReplayProfile(profile.id);
   const { data: playerStats, isLoading: statsLoading, isError: statsError } = useGetPublicPlayerStats(profile.id, {
-    query: {
-      enabled: Boolean(profile.id),
-      queryKey: getGetPublicPlayerStatsQueryKey(profile.id),
-    },
+    query: { enabled: Boolean(profile.id), queryKey: getGetPublicPlayerStatsQueryKey(profile.id) },
   });
-
+  const polling = useRef({ dataUpdatedAt: 0, intervalMs: 3_000 });
+  const portfolioQuery = useGetUserPortfolio(profile.id, { query: {
+    enabled: Boolean(profile.id),
+    queryKey: getGetUserPortfolioQueryKey(profile.id),
+    retry: false,
+    refetchInterval: (query) => {
+      const processing = query.state.data?.clips.some((clip) => clip.playbackStatus === "processing") ?? false;
+      if (!processing) { polling.current = { dataUpdatedAt: 0, intervalMs: 3_000 }; return false; }
+      const updatedAt = query.state.dataUpdatedAt;
+      if (updatedAt > 0 && updatedAt !== polling.current.dataUpdatedAt) {
+        if (polling.current.dataUpdatedAt > 0) polling.current.intervalMs = Math.min(polling.current.intervalMs * 2, 30_000);
+        polling.current.dataUpdatedAt = updatedAt;
+      }
+      return polling.current.intervalMs;
+    },
+  } });
+  const portfolio = useMemo(() => portfolioQuery.data ? portfolioFromApi(portfolioQuery.data) : null, [portfolioQuery.data]);
+  const updatePortfolio = useUpdateUserPortfolio();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [activeClip, setActiveClip] = useState<PortfolioClip | null>(null);
+  const [allClips, setAllClips] = useState(false);
+  const { copyState, copyStoryLink } = useStoryLinkCopy();
   const followMutation = useFollowUser();
   const unfollowMutation = useUnfollowUser();
-
   const isOwnProfile = !isGuest && user?.id === profile.id;
   const blockedByViewer = myBlocks.some((row) => row.userId === profile.id);
-
   const handleFollow = () => {
-    if (isGuest) {
-      toast({
-        title: t.profile.signInToFollow,
-        description: t.profile.signInToFollowDesc,
-      });
-      return;
-    }
-
-    if (profile.isFollowing) {
-      unfollowMutation.mutate(
-        { id: profile.id },
-        {
-          onSuccess: (data) => {
-            queryClient.setQueryData(getProfileQueryKey(profile.id), (old: PublicProfile | undefined) =>
-              old ? { ...old, isFollowing: false, followerCount: data.followerCount } : old
-            );
-          },
-          onError: () => {
-            toast({ title: t.profile.followFailed, variant: "destructive" });
-          },
-        }
-      );
-    } else {
-      followMutation.mutate(
-        { id: profile.id },
-        {
-          onSuccess: (data) => {
-            queryClient.setQueryData(getProfileQueryKey(profile.id), (old: PublicProfile | undefined) =>
-              old ? { ...old, isFollowing: true, followerCount: data.followerCount } : old
-            );
-          },
-          onError: () => {
-            toast({ title: t.profile.followFailed, variant: "destructive" });
-          },
-        }
-      );
-    }
+    if (isGuest) { toast({ title: t.profile.signInToFollow, description: t.profile.signInToFollowDesc }); return; }
+    const following = !profile.isFollowing;
+    const mutation = following ? followMutation : unfollowMutation;
+    mutation.mutate({ id: profile.id }, {
+      onSuccess: (data) => queryClient.setQueryData(getProfileQueryKey(profile.id), (old: PublicProfile | undefined) =>
+        old ? { ...old, isFollowing: following, followerCount: data.followerCount } : old),
+      onError: () => toast({ title: t.profile.followFailed, variant: "destructive" }),
+    });
+  };
+  const blockedByReplay = apiErrorReason(replayProfile.error) === "blocked";
+  if (blockedByReplay) return <BlockedProfileNotice userId={profile.id} isMyBlock={blockedByViewer} />;
+  const name = portfolio?.name || profile.name;
+  const position = portfolio?.position || profile.position || "";
+  const positionKey = positionLabelKey(position);
+  const translatedPosition = t.profile.positions[positionKey];
+  const statsReady = Boolean(playerStats) && !statsLoading && !statsError;
+  const totals = playerStats?.totals;
+  const measured = playerStats?.measured?.totals;
+  const totalDistance = totals?.totalDistanceMetres == null ? 0 : totals.totalDistanceMetres / 1000;
+  const heatmap = playerStats && statsReady ? aggregatePitchHeatmaps(playerStats.matches) : null;
+  const canEdit = Boolean(portfolio?.canEdit);
+  const clips = portfolio?.clips ?? [];
+  const share = () => void copyStoryLink();
+  const fallbackValues = {
+    speed: statsReady ? (measured?.topSpeedKmh ?? 0).toFixed(1) : "–",
+    distance: statsReady ? totalDistance.toFixed(2) : "–",
+    goals: statsReady ? String(measured?.goals ?? 0) : "–",
+    passes: statsReady ? String(measured?.passesCompleted ?? 0) : "–",
+    touches: statsReady ? String(measured?.touches ?? 0) : "–",
+    dribbles: statsReady ? String(measured?.dribbles ?? totals?.dribbles?.total ?? 0) : "–",
+  };
+  const highlightCards = [
+    { label: t.profile.topSpeed, value: fallbackValues.speed, unit: t.profile.kmh, note: statsReady ? t.profile.topSpeedBest(playerStats?.measured?.matches.length ?? 0) : "", color: "floodlight", icon: <Gauge /> },
+    { label: t.profile.distance, value: fallbackValues.distance, unit: "km", note: "", color: "turf", icon: <Footprints /> },
+    { label: t.profile.goals, value: fallbackValues.goals, unit: "", note: "", color: "violet", icon: <CircleDot /> },
+    { label: t.profile.passes, value: fallbackValues.passes, unit: "", note: statsReady && measured?.passesTried != null ? t.profile.passesOf(measured.passesTried) : "", color: "turf", icon: <Crosshair /> },
+    { label: t.profile.touches, value: fallbackValues.touches, unit: "", note: "", color: "violet", icon: <Target /> },
+    { label: t.profile.dribbles, value: fallbackValues.dribbles, unit: "", note: statsReady && measured?.dribblesWon != null && measured.dribblesLost != null ? t.profile.dribblesWonLost(measured.dribblesWon, measured.dribblesLost) : "", color: "floodlight", icon: <RotateCw /> },
+  ];
+  const getClipDate = (title: string) => {
+    const parsed = title.match(/^(?:cam\d+_)?(\d{4}-\d{2}-\d{2})_(\d{2}:\d{2})$/i);
+    if (!parsed) return null;
+    const date = new Date(`${parsed[1]}T12:00:00`);
+    return {
+      day: new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { weekday: "long", day: "numeric", month: "short" }).format(date),
+      time: parsed[2],
+      camera: title.match(/^(cam\\d+)/i)?.[1] ?? "",
+    };
   };
 
-  const isMutating = followMutation.isPending || unfollowMutation.isPending;
-  const playerPosition = profile.position
-    ? t.profile.positions[profile.position as keyof typeof t.profile.positions] ?? profile.position
-    : null;
-  const statsAvailable = !statsLoading && !statsError && Boolean(playerStats);
-  const measuredTotals = playerStats?.measured?.totals;
-  const totalDistanceKm = playerStats?.totals.totalDistanceMetres == null ? 0 : playerStats.totals.totalDistanceMetres / 1000;
-
-  if (apiErrorReason(replayProfile.error) === "blocked") {
-    return <BlockedProfileNotice userId={profile.id} isMyBlock={blockedByViewer} />;
-  }
-
   return (
-    <div dir={locale === "ar" ? "rtl" : "ltr"} className="relative flex h-full flex-1 flex-col overflow-y-auto bg-void px-4 pb-28 pt-2 text-text no-scrollbar">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 flex items-center gap-2 bg-void/95 pb-2 pt-safe backdrop-blur-md">
-        <button
-          type="button"
-          onClick={() => history.back()}
-          aria-label={locale === "ar" ? "رجوع" : "Back"}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-text transition-transform active:scale-95"
-        >
-          <ChevronLeft className="w-5 h-5 rtl:hidden" />
-          <ChevronRight className="w-5 h-5 ltr:hidden" />
+    <div dir={locale === "ar" ? "rtl" : "ltr"} className="player-page relative flex h-full min-h-0 flex-1 flex-col overflow-y-auto bg-void px-4 pb-28 pt-2 text-text no-scrollbar">
+      <PortfolioFeatureStyles />
+      <div className="sticky top-0 z-20 flex items-center gap-2 bg-void/95 pb-2 pt-safe backdrop-blur-md">
+        <button data-testid="button-profile-back" type="button" onClick={() => history.back()} aria-label={locale === "ar" ? "رجوع" : "Back"} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-text active:scale-95">
+          <ChevronLeft className="h-5 w-5 rtl:hidden" /><ChevronRight className="h-5 w-5 ltr:hidden" />
         </button>
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-muted-text" dir="auto">{profile.name}</span>
-        {!isGuest && user && !isOwnProfile && (
-          <SafetyMenu
-            target={{ type: "user", id: profile.id, name: profile.name }}
-            onBlocked={() => {
-              if (window.history.length > 1) window.history.back();
-              else setLocation("/matches");
-            }}
-          />
-        )}
+        <span data-testid="text-profile-name" className="min-w-0 flex-1 truncate text-sm font-semibold text-muted-text" dir="auto">{name}</span>
+        {!isGuest && user && !isOwnProfile && <SafetyMenu target={{ type: "user", id: profile.id, name }} onBlocked={() => window.history.length > 1 ? history.back() : setLocation("/matches")} />}
       </div>
-
-      <div className="pb-safe">
-        <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="relative mt-1 overflow-hidden rounded-3xl border border-turf/35 bg-gradient-to-br from-[#173B3E] via-[#13283A] to-surface px-4 pb-3.5 pt-4">
-          <PitchBackdrop />
-          <div className="relative flex items-center gap-3.5">
-            <ProfileFace userId={profile.id} name={profile.name} />
-            <div className="min-w-0 flex-1">
-              <h1 className="truncate font-display text-[22px] font-extrabold leading-tight" dir="auto">{profile.name}</h1>
-              {(playerPosition || profile.age != null) && (
-                <div className="mt-1.5 flex min-h-6 items-center gap-2 text-sm font-bold text-text/80">
-                  {playerPosition && <span className="rounded-full bg-floodlight px-2.5 py-1 text-xs font-extrabold text-void">{playerPosition}</span>}
-                  {profile.age != null && <span><bdi className="font-display font-bold" dir="ltr">{profile.age}</bdi> {t.profile.years}</span>}
-                </div>
-              )}
-            </div>
-          </div>
-          <div className="relative mt-3 grid grid-cols-2">
-            {[
-              { label: t.profile.speed, value: statsAvailable ? (measuredTotals?.topSpeedKmh ?? 0).toFixed(1) : "–" },
-              { label: t.profile.distance, value: statsAvailable ? totalDistanceKm.toFixed(2) : "–" },
-              { label: t.profile.goals, value: statsAvailable ? String(measuredTotals?.goals ?? 0) : "–" },
-              { label: t.profile.passes, value: statsAvailable ? String(measuredTotals?.passesCompleted ?? 0) : "–" },
-              { label: t.profile.touches, value: statsAvailable ? String(measuredTotals?.touches ?? 0) : "–" },
-              { label: t.profile.dribbles, value: statsAvailable ? String(measuredTotals?.dribbles ?? playerStats?.totals.dribbles?.total ?? 0) : "–" },
-            ].map((stat, index) => (
-              <div key={stat.label} className={`flex min-w-0 items-baseline gap-2 py-1.5 ${index >= 2 ? "border-t border-white/10" : ""} ${index % 2 === 0 ? "pe-2" : "border-s border-white/10 ps-3"}`}>
-                <bdi dir="ltr" className="min-w-[52px] font-display text-[26px] font-bold leading-none tabular-nums">{stat.value}</bdi>
-                <span className="truncate text-xs font-semibold text-[#9FB3B5]">{stat.label}</span>
-              </div>
-            ))}
-          </div>
-          <div className="relative mt-2.5 flex items-center justify-between gap-2 border-t border-white/10 pt-2.5">
-            <ProfileCount icon={<Video />} value={profile.clipCount} label={t.profile.clips} />
-            <ProfileCount icon={<Users />} value={profile.followerCount} label={t.profile.followers} />
-            <ProfileCount icon={<UserCheck />} value={profile.followingCount} label={t.profile.following} />
-          </div>
+      <main className="mx-auto w-full max-w-xl pb-safe">
+        <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="player-cover relative mt-1 h-[210px] overflow-hidden rounded-[22px] border border-line" aria-label={t.profile.wherePlays}>
+          {heatmap ? <PlayerStatsHeatmap heatmap={heatmap} label={t.profile.heatmap} /> : <FallbackPitch position={positionKey} />}
+          <div className="absolute inset-0 bg-gradient-to-t from-void via-void/10 to-transparent" />
+          <span className="absolute inset-inline-start-3 top-3 inline-flex min-h-8 items-center gap-1.5 rounded-full border border-white/10 bg-void/75 px-2.5 text-xs font-bold backdrop-blur">
+            <Flame className="h-3.5 w-3.5 text-floodlight" />{t.profile.wherePlays}
+          </span>
         </motion.section>
-
-        {!isOwnProfile ? (
-          <div className="mt-3 flex gap-2.5">
-            <div className="min-w-0 flex-1"><FriendButton userId={profile.id} name={profile.name} /></div>
-            <button type="button" onClick={handleFollow} disabled={isMutating} className={cn(
-              "inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-[14px] border px-3 text-sm font-bold transition-opacity disabled:opacity-50",
-              profile.isFollowing ? "border-line bg-raised text-text" : "border-[#7B5CFF]/50 bg-[#7B5CFF]/[0.16] text-text"
-            )}>
-              {profile.isFollowing ? <UserMinus className="h-4 w-4 text-[#B9A8FF]" /> : <BellPlus className="h-4 w-4 text-[#B9A8FF]" />}
-              {profile.isFollowing ? t.profile.unfollow : t.profile.follow}
+        <section className="relative z-[1] -mt-[58px] flex flex-col items-center text-center">
+          <ProfileFace userId={profile.id} name={name} photo={portfolio?.profilePhoto || replayProfile.data?.avatarUrl || null} size={112} />
+          <h1 dir="auto" className="mt-2 max-w-full truncate font-display text-2xl font-extrabold">{name}</h1>
+        </section>
+        <section className="mt-3 grid grid-cols-3 overflow-hidden rounded-2xl border border-line bg-surface">
+          <Fact label={t.portfolio.age} value={portfolio?.age ?? profile.age ?? "—"} numeric />
+          <Fact label={t.profile.nation} value={portfolio?.nation || "—"} />
+          <Fact label={t.profile.position} value={position ? translatedPosition : "—"} />
+        </section>
+        <div className="mt-3 flex items-center justify-center gap-5">
+          <ProfileCount icon={<Video />} value={profile.clipCount} label={t.profile.clips} />
+          <ProfileCount icon={<Users />} value={profile.followerCount} label={t.profile.followers} />
+          <ProfileCount icon={<UserCheck />} value={profile.followingCount} label={t.profile.following} />
+        </div>
+        <div className="mt-3 flex gap-2">
+          {isOwnProfile ? canEdit && <button data-testid="button-edit-profile" type="button" onClick={() => setEditorOpen(true)} className="flex min-h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-floodlight px-3 text-sm font-extrabold text-void"><Edit3 className="h-4 w-4" />{t.profile.editPage}</button> : <>
+            <div className="min-w-0 flex-1"><FriendButton userId={profile.id} name={name} /></div>
+            <button data-testid="button-profile-follow" type="button" onClick={handleFollow} disabled={followMutation.isPending || unfollowMutation.isPending} className={cn("inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 rounded-xl border px-2 text-sm font-bold disabled:opacity-50", profile.isFollowing ? "border-line bg-raised" : "border-violet/50 bg-violet/15")}>
+              {profile.isFollowing ? <UserMinus className="h-4 w-4 text-[#B9A8FF]" /> : <BellPlus className="h-4 w-4 text-[#B9A8FF]" />}{profile.isFollowing ? t.profile.unfollow : t.profile.follow}
             </button>
+          </>}
+          <button data-testid="button-share-profile" type="button" onClick={share} aria-label={t.profile.sharePage} className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-line bg-surface text-violet"><Share2 className="h-5 w-5" /></button>
+        </div>
+        <p className="min-h-5 pt-1 text-center text-xs text-turf" role="status" aria-live="polite">{copyState === "copied" ? t.profile.linkCopied : copyState === "failed" ? t.profile.linkCopyFailed : ""}</p>
+        <section className="mt-4" aria-labelledby="profile-highlights">
+          <h2 id="profile-highlights" className="mb-2 flex items-center gap-2 font-display text-xl font-extrabold">{t.profile.highlights}<span className="ms-auto"><StatsBetaPill /></span></h2>
+          {statsError && <p role="status" className="mb-2 text-xs text-muted-text">{t.profile.statsLoadFailed}</p>}
+          <div className="flex snap-x gap-2.5 overflow-x-auto pb-2 no-scrollbar">
+            {highlightCards.map((card) => <article key={card.label} data-testid={`card-highlight-${card.label}`} className={`player-highlight is-${card.color} min-h-[128px] w-[132px] shrink-0 snap-start rounded-xl border border-line bg-surface p-3`}>
+              <div className="flex items-center justify-between text-muted-text">{card.icon}<span className="text-[10px]">{card.unit}</span></div>
+              <bdi dir="ltr" className="mt-2 block font-display text-[27px] font-bold leading-none tabular-nums">{card.value}</bdi>
+              <strong className="mt-1 block truncate text-xs">{card.label}</strong>
+              <small className="mt-1 block min-h-4 truncate text-[9px] text-muted-text">{card.note}</small>
+            </article>)}
           </div>
-        ) : (
-          <div className="mt-3 flex min-h-11 items-center justify-center rounded-xl border border-dashed border-line px-3 text-center text-sm font-semibold text-muted-text">{t.profile.ownProfile}</div>
-        )}
-        <StatsBetaNote className="mt-2.5" />
-
+          <StatsBetaNote className="mt-1" />
+        </section>
+        <section className="mt-6" aria-labelledby="profile-clips">
+          <div className="mb-2 flex items-center justify-between"><h2 id="profile-clips" className="font-display text-xl font-extrabold">{t.profile.clipsHeading}</h2>
+            {clips.length > 4 && <button data-testid="button-all-clips" type="button" onClick={() => setAllClips((value) => !value)} aria-expanded={allClips} className="min-h-11 px-3 text-sm font-bold text-violet">{allClips ? t.profile.showFewer : t.profile.all}</button>}
+          </div>
+          {portfolioQuery.isLoading ? <div className="grid grid-cols-2 gap-2">{[1, 2].map((n) => <div key={n} className="aspect-video animate-pulse rounded-xl bg-raised" />)}</div> : clips.length ? <div className="grid grid-cols-2 gap-2.5">
+            {(allClips ? clips : clips.slice(0, 4)).map((clip, index) => {
+              const caption = getClipDate(clip.title);
+              const available = clip.playbackStatus === "ready" && Boolean(clip.playbackUrl);
+              return <button data-testid={`button-open-clip-${clip.id}`} key={clip.id} type="button" onClick={() => setActiveClip(clip)} className="group min-w-0 overflow-hidden rounded-xl border border-line bg-surface text-start">
+                <span className="relative block aspect-video overflow-hidden bg-raised">
+                  {clip.thumbnailUrl ? <img src={clip.thumbnailUrl} alt="" loading="lazy" className="h-full w-full object-cover" /> : <div className="flex h-full items-center justify-center bg-gradient-to-br from-[#173B3E] to-raised font-display text-3xl font-bold text-turf">R</div>}
+                  <span className="absolute inset-0 bg-void/15" /><span className="absolute inset-0 m-auto flex h-10 w-10 items-center justify-center rounded-full bg-violet/90 text-white"><Play className="h-4 w-4 fill-current" /></span>
+                  <bdi dir="ltr" className="absolute inset-inline-start-2 top-2 rounded bg-void/80 px-1.5 py-0.5 font-display text-xs font-bold">{String(index + 1).padStart(2, "0")}</bdi>
+                </span>
+                <span className="block min-h-[48px] p-2">
+                  {caption ? <><span className="block truncate text-[11px] font-bold">{caption.day}</span><span dir="ltr" className="block truncate text-[10px] text-muted-text">{caption.time}{caption.camera ? ` · ${caption.camera}` : ""}</span></>
+                    : <span dir="auto" className="block truncate text-[11px] font-bold">{clip.title}</span>}
+                  {!available && <span className="mt-0.5 block truncate text-[9px] text-muted-text">{clip.playbackStatus === "expired" ? t.portfolio.clipExpired : clip.playbackStatus === "processing" ? t.portfolio.clipProcessing : t.portfolio.videoUnavailable}</span>}
+                </span>
+              </button>;
+            })}
+          </div> : <EmptyPortfolio text={isOwnProfile ? t.profile.noClipsOwn : t.profile.noClipsOther} button={isOwnProfile ? t.profile.goToClips : undefined} onClick={() => setLocation("/my-clips")} />}
+        </section>
+        <section className="mt-6" aria-labelledby="profile-career">
+          <div className="mb-2 flex items-center justify-between"><h2 id="profile-career" className="font-display text-xl font-extrabold">{t.profile.career}</h2></div>
+          {portfolioQuery.isLoading ? <div className="h-20 animate-pulse rounded-xl bg-raised" /> : portfolio?.history.length ? <div className="grid gap-2">
+            {portfolio.history.map((item) => <article key={item.editorId} className={`flex min-h-[72px] items-center gap-3 rounded-xl border border-line border-s-[3px] ${item.current ? "border-s-floodlight" : "border-s-turf"} bg-surface px-3 py-2`}>
+              <div className="min-w-0 flex-1"><h3 dir="auto" className="truncate font-display text-lg font-bold">{item.academy}</h3><p dir="auto" className="truncate text-xs text-muted-text">{item.role === "firstTeam" ? t.portfolio.roles.firstTeam : item.role === "developmentSquad" ? t.portfolio.roles.developmentSquad : item.role === "academyPlayer" ? t.portfolio.roles.academyPlayer : item.role}</p></div>
+              <span className="shrink-0 text-end">{item.current ? <b className="rounded-full bg-turf/15 px-2.5 py-1 text-xs font-bold text-turf">{t.profile.currentTeam}</b> : <bdi dir="ltr" className="font-display text-sm font-bold">{item.startYear} – {item.endYear ?? "—"}</bdi>}</span>
+            </article>)}
+          </div> : <EmptyPortfolio text={isOwnProfile ? t.profile.noCareerOwn : t.profile.noCareerOther} button={isOwnProfile && canEdit ? t.profile.editPage : undefined} onClick={() => setEditorOpen(true)} />}
+        </section>
         <MatchRecord userId={profile.id} ownProfile={isOwnProfile} />
-
-        <PlayerStatsSection
-          stats={playerStats}
-          loading={statsLoading}
-          error={statsError}
-          locale={locale}
-          ownProfile={isOwnProfile}
-          canClaim={CLAIM_YOUR_MATCH_ENABLED && shouldShowEmptyStatsCta(profile.id, user?.id, isGuest)}
-        />
-      </div>
+        <PlayerStatsSection stats={playerStats} loading={statsLoading} error={statsError} locale={locale} ownProfile={isOwnProfile} canClaim={CLAIM_YOUR_MATCH_ENABLED && shouldShowEmptyStatsCta(profile.id, user?.id, isGuest)} />
+        <section className="my-6 rounded-2xl border border-turf/40 bg-surface px-5 py-6 text-center">
+          <Sparkles className="mx-auto h-6 w-6 text-floodlight" />
+          <h2 className="mt-2 font-display text-2xl font-extrabold">{t.portfolio.verifiedOnFilm}</h2>
+          <p className="mt-2 text-sm text-muted-text">{t.profile.closingLine}</p>
+          <button data-testid="button-copy-profile-link" type="button" onClick={share} className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-full border border-turf px-4 text-sm font-bold text-turf"><Share2 className="h-4 w-4" />{t.profile.copyPageLink}</button>
+          <p className="mt-2 min-h-5 text-xs text-turf" role="status" aria-live="polite">{copyState === "copied" ? t.profile.linkCopied : copyState === "failed" ? t.profile.linkCopyFailed : ""}</p>
+        </section>
+      </main>
+      <AnimatePresence>{activeClip && <PortfolioClipViewer clip={activeClip} onClose={() => setActiveClip(null)} />}</AnimatePresence>
+      <AnimatePresence>{editorOpen && portfolio && <PortfolioEditor value={portfolio} clips={clips} onClose={() => setEditorOpen(false)}
+        onClipRemoved={(clipId) => {
+          queryClient.setQueryData<PortfolioView | undefined>(getGetUserPortfolioQueryKey(profile.id), (current) => current ? { ...current, clips: current.clips.filter((clip) => clip.id !== clipId) } : current);
+          void queryClient.invalidateQueries({ queryKey: getGetUserPortfolioQueryKey(profile.id) });
+        }}
+        onSave={async (next: PortfolioState) => {
+          const saved = await updatePortfolio.mutateAsync({ id: profile.id, data: portfolioToUpdateInput(next) });
+          queryClient.setQueryData(getGetUserPortfolioQueryKey(profile.id), saved);
+          setEditorOpen(false);
+        }} />}</AnimatePresence>
     </div>
   );
+}
+
+function StatsBetaPill() {
+  const { t } = useTranslation();
+  return <span className="inline-flex items-center rounded-full border border-floodlight/40 bg-floodlight/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-floodlight">{t.profile.beta}</span>;
+}
+
+function Fact({ label, value, numeric = false }: { label: string; value: string | number; numeric?: boolean }) {
+  return <div className="min-w-0 border-s border-line px-2 py-2.5 text-center first:border-s-0"><span className="block truncate text-[10px] text-muted-text">{label}</span><bdi dir={numeric ? "ltr" : "auto"} className={cn("mt-1 block truncate text-xs font-bold", numeric && "font-display tabular-nums")}>{value}</bdi></div>;
+}
+
+function EmptyPortfolio({ text, button, onClick }: { text: string; button?: string; onClick: () => void }) {
+  return <div className="rounded-2xl border border-dashed border-line bg-surface px-4 py-5 text-center"><p className="text-sm text-muted-text">{text}</p>{button && <button type="button" onClick={onClick} className="mt-3 min-h-11 rounded-full bg-floodlight px-4 text-sm font-extrabold text-void">{button}</button>}</div>;
+}
+
+function FallbackPitch({ position }: { position: ReturnType<typeof positionLabelKey> }) {
+  const dots: Record<ReturnType<typeof positionLabelKey>, { x: number; y: number }> = { goalkeeper: { x: 8, y: 50 }, defender: { x: 28, y: 50 }, midfielder: { x: 50, y: 50 }, forward: { x: 76, y: 50 } };
+  const point = dots[position];
+  return <svg viewBox="0 0 400 210" className="h-full w-full bg-[#10292c]" aria-hidden="true">
+    <defs><radialGradient id="cover-dot"><stop stopColor="#D4FF4F" stopOpacity=".95" /><stop offset="1" stopColor="#D4FF4F" stopOpacity="0" /></radialGradient></defs>
+    <g fill="none" stroke="#d8efdf" strokeOpacity=".3" strokeWidth="1.5"><rect x="16" y="14" width="368" height="182" rx="8" /><line x1="200" y1="14" x2="200" y2="196" /><circle cx="200" cy="105" r="28" /><rect x="16" y="58" width="52" height="94" /><rect x="332" y="58" width="52" height="94" /></g>
+    <circle cx={point.x * 4} cy={point.y * 2.1} r="44" fill="url(#cover-dot)" /><circle cx={point.x * 4} cy={point.y * 2.1} r="6" fill="#D4FF4F" />
+  </svg>;
 }
 
 function PlayerStatsSection({
@@ -348,12 +411,6 @@ function PlayerStatsSection({
           <Link href="/claim/demo" className="mt-1 inline-flex min-h-11 items-center justify-center rounded-full bg-floodlight px-4 text-sm font-extrabold text-void">{t.profile.viewClaimFlow}</Link>
         </> : <p className="text-sm text-muted-text">{t.profile.noConfirmedOther}</p>}
       </div>}
-
-      <div className="grid grid-cols-3 gap-2">
-        <TotalValue value={totals ? String(totals.totalMatchesClaimed) : "–"} label={t.profile.matchesClaimed} />
-        <TotalValue value={totals ? String(Math.round(totals.totalMinutesPlayed)) : "–"} label={t.profile.totalMinutes} />
-        <TotalValue value={totals ? (totals.totalDistanceMetres == null ? 0 : totals.totalDistanceMetres / 1000).toFixed(1) : "–"} label={t.profile.totalDistance} />
-      </div>
 
       <div className="grid grid-cols-2 gap-2.5">
         <section className="min-w-0 rounded-2xl border border-line bg-surface p-2.5">
@@ -546,18 +603,9 @@ function PitchBackdrop() {
 function ProfileCount({ icon, value, label }: { icon: React.ReactNode; value: number; label: string }) {
   return (
     <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-text">
-      <span className="shrink-0 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
+      <span className="shrink-0 text-violet [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
       <bdi dir="ltr" className="font-display text-sm font-bold text-text">{value}</bdi>
       <span className="truncate">{label}</span>
-    </div>
-  );
-}
-
-function TotalValue({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="flex min-w-0 flex-col items-center justify-center gap-1 rounded-xl border border-line bg-surface px-2 py-3 text-center">
-      <bdi dir="ltr" className="font-display text-lg font-bold tabular-nums">{value}</bdi>
-      <span className="text-[10px] font-semibold leading-tight text-muted-text">{label}</span>
     </div>
   );
 }
@@ -592,13 +640,13 @@ function MatchStat({ value, label, turf = false, crown = false }: { value: numbe
   );
 }
 
-function ProfileFace({ userId, name }: { userId: number; name: string }) {
+function ProfileFace({ userId, name, photo, size = 84 }: { userId: number; name: string; photo?: string | null; size?: number }) {
   const { data } = useReplayProfile(userId);
   return (
-    <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-turf to-[#7B5CFF] p-[3px]">
-      <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-raised font-display text-[30px] font-bold text-text">
-      {data?.avatarUrl ? (
-        <img src={data.avatarUrl} alt="" className="h-full w-full object-cover" />
+    <div style={{ width: size, height: size }} className="flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-turf to-[#7B5CFF] p-[3px]">
+      <span className="flex h-full w-full items-center justify-center overflow-hidden rounded-full border-[5px] border-void bg-raised font-display text-[30px] font-bold text-text">
+      {photo || data?.avatarUrl ? (
+        <img src={photo || data?.avatarUrl || ""} alt="" className="h-full w-full object-cover" />
       ) : (
         getInitials(name)
       )}
