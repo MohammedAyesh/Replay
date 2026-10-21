@@ -1,0 +1,36 @@
+Use FREE MODE for this task.
+
+Restyle the match report (the page `/m/:code` shows after the whistle) to match the attached reference file `match-report-reference.html` and the attached screenshot. The report is built in `artifacts/soccerwatch/src/components/match/report/MatchReport.tsx`, with its sections in `StatsReport.tsx` and `ReportParts.tsx`. This is a UI change only: do not change any API, hook, query, mutation, permission, slot, route or calculation. Keep every handler and every data-testid (for example `link-watch-full-match`, `link-find-yourself`, `button-open-vote`, `button-vote-*`, `button-make-captain-*`, `report-teams`, `report-invite`, `report-captain-tools`). Keep the brand tokens and fonts (Cairo for Arabic headings, Tajawal for Arabic body, Rajdhani for numbers). Arabic is RTL; English is the same layout mirrored (start/end). Every tap target is at least 44px.
+
+The reference shows three phones: (1) you played and found yourself, (2) right after the whistle, as in the screenshot, and (3) footage ready but you have not found yourself yet.
+
+1. HEADER: unchanged (back, "تقرير الماتش", share).
+
+2. THE TOP CARD (new): one card, 24px radius, a dark turf-to-violet gradient background and a thin line border. It replaces the current title block, footage block and find-yourself block, and holds their content:
+   - First line: the existing meta line (day, title, field, minutes, #code).
+   - When you played and are in the numbers (`me` exists): your avatar (58px, Floodlight ring) with a crown above it when you are a man-of-the-match winner; the heading "ماتشك"; a subtitle built from the existing data: "رجل الماتش" when you won the vote, and "وسجّلت بالدقيقة N" for your goal minutes (from your goals in the replay or `me.report.goalTimes`). On the end side: the score (Rajdhani 30) and, when the score is in and your team is known, ربحنا / خسرنا / تعادل (turf for a win, muted otherwise).
+   - Then your three headline numbers from YouSection (distance per 10 min on camera, top speed, touches per 10 min) as three small dark tiles: the number (Rajdhani 24), its label, and its rank line (the existing rank / shared / not-ranked text). A number that is a personal best is Floodlight with "أفضل رقم إلك" instead of the rank.
+   - Then two buttons side by side: "شوف الماتش" (Floodlight, play icon, the existing watch link) and "شارك ماتشي" (outline, the existing share-card action).
+   - When you are not in the numbers: show both teams with their colour dots and the big score (or "–") in the middle, as in phones 2 and 3. Under it, the existing "score not in yet" line, Replay's suggested score and the captain's "use this score" / "put the score in" actions, exactly as they work today. Three-team matches keep the standings table here.
+   - Inside the card, in the same place: while the footage is being prepared, the existing processing text and progress bar on a darker inset (phone 2). If it has expired, the existing expired line. When you can find yourself, the existing find-yourself text and Floodlight "لاقي حالك" button on that inset, with "شوف الماتش كامل" as a turf outline button under it (phone 3).
+   - "محفوظ لغاية …" (kept until) stays, under the buttons.
+
+3. UNDER THE CARD: the existing game bar and its caption, then the goal list (minute and scorer, your goals in Floodlight), then the flagged moments as small cards in a sideways row (flag icon, kind in turf, time and who). Same data and links as today.
+
+4. SECTIONS: keep every existing section, in the current order, with the same content and logic. Give each section heading an icon in a small tinted rounded square (34px) before the title, as in the reference:
+   - your numbers "أرقامك كاملة" (star, Floodlight; the beta pill at the end of the heading): show the three headline numbers as rows with their icon (route, lightning, touch), label, rank and number, then the existing totals as small chips, then the existing share button;
+   - "كل اللي بالملعب" (people, turf), "مين برز" (medal, Floodlight), "الفريقين" (trophy, Floodlight), "المقاطع" (film, violet; "قص مقطع" with a scissors icon at the end), "التصويت" / man of the match (crown, Floodlight), "مين لعب" (people, turf);
+   - the sections not drawn in the reference (your game ten minutes at a time, your moments, you against, the locked-stats panel, the booking and RSVP slots) keep their place and content, with the same icon heading style;
+   - "مين برز" rows get an icon per line (distance, speed, touches, dribbles, goals);
+   - in "مين لعب", the team colour stays as the avatar ring and your own row's initials are Floodlight.
+5. FOLD-OUTS: "الفرق والتبديلات", "ضيف حدا لعب معنا" and "أدوات الكابتن وصاحب الملعب" become rows with a small icon square (people, add person, shield) and a chevron; their contents are unchanged.
+6. FOOTER: the precision line and "كيف بنقيس" with an info icon; the methods sheet is unchanged.
+
+Only one Floodlight action is the main one at a time: in the top card it is "شوف الماتش" (or "لاقي حالك" when you can find yourself). Keep the existing rule that the friend buttons in the squad list are outlines.
+
+Add any new strings ("ماتشك", "وسجّلت بالدقيقة", "أرقامك كاملة" and the like) to the i18n files in English and Arabic (Ammani).
+
+When done, check and report:
+- the three states in the reference render correctly, plus a three-team match, a visitor who did not play, and expired footage;
+- watch, share card, find yourself, vote, make captain, the score buttons, flagged moments, clip links, the fold-outs and the methods sheet all still work;
+- nothing changed outside the match report; typecheck and tests pass.
