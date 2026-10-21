@@ -251,20 +251,24 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
     </span>
   );
 
+  const renderFamilyLinkButton = (player: AcademyPlayerSummary) => (
+    isOwner && player.isActive ? (
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="min-h-11 md:min-h-9"
+        onClick={() => setFamilyLinkPlayer(player)}
+        data-testid={`button-open-family-link-${player.id}`}
+      >
+        <Link2 className="me-2 h-4 w-4" aria-hidden="true" />
+        {labels.familyLinkButton}
+      </Button>
+    ) : null
+  );
+
   const renderActions = (player: AcademyPlayerSummary) => (
     <div className="flex items-center gap-2">
-      {isOwner && player.isActive && (
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setFamilyLinkPlayer(player)}
-          data-testid={`button-open-family-link-${player.id}`}
-        >
-          <Link2 className="me-2 h-4 w-4" aria-hidden="true" />
-          {labels.familyLinkButton}
-        </Button>
-      )}
       <Button
         type="button"
         variant="outline"
@@ -407,15 +411,18 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
                     <TableCell dir="auto" className="text-muted-text">{player.squadName || labels.unassigned}</TableCell>
                     <TableCell>{renderStatus(player)}</TableCell>
                     <TableCell>
-                      {player.userId ? (
-                        <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-turf" title={player.linkedUserEmail ?? undefined}>
-                          <ShieldCheck className="h-4 w-4" aria-hidden="true" />{labels.linkedReplayAccount}
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1.5 text-xs text-muted-text">
-                          <Link2 className="h-4 w-4" aria-hidden="true" />{labels.notLinked}
-                        </span>
-                      )}
+                      <div className="flex flex-col items-start gap-2">
+                        {player.userId ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-turf" title={player.linkedUserEmail ?? undefined}>
+                            <ShieldCheck className="h-4 w-4" aria-hidden="true" />{labels.linkedReplayAccount}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-muted-text">
+                            <Link2 className="h-4 w-4" aria-hidden="true" />{labels.notLinked}
+                          </span>
+                        )}
+                        {renderFamilyLinkButton(player)}
+                      </div>
                     </TableCell>
                     <TableCell className="text-end">
                       <div className="flex justify-end">{renderActions(player)}</div>
@@ -446,8 +453,11 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
                   <div><dt className="text-xs text-muted-text">{labels.filterBySquad}</dt><dd dir="auto" className="mt-1 font-semibold text-text">{player.squadName || labels.unassigned}</dd></div>
                   <div className="col-span-2">
                     <dt className="text-xs text-muted-text">{labels.linkedReplayAccount}</dt>
-                    <dd className="mt-1 flex items-center gap-1.5 text-sm text-text">
-                      {player.userId ? <><ShieldCheck className="h-4 w-4 text-turf" aria-hidden="true" />{player.linkedUserEmail}</> : <><Link2 className="h-4 w-4 text-muted-text" aria-hidden="true" />{labels.notLinked}</>}
+                    <dd className="mt-1 flex flex-col items-start gap-2 text-sm text-text">
+                      <span className="inline-flex items-center gap-1.5">
+                        {player.userId ? <><ShieldCheck className="h-4 w-4 text-turf" aria-hidden="true" />{player.linkedUserEmail}</> : <><Link2 className="h-4 w-4 text-muted-text" aria-hidden="true" />{labels.notLinked}</>}
+                      </span>
+                      {renderFamilyLinkButton(player)}
                     </dd>
                   </div>
                 </dl>
