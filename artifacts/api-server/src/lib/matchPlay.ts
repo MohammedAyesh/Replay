@@ -1278,20 +1278,87 @@ function isKickoff(t: number, goals: number[], touches: Touch[], pitch: PitchSiz
 }
 
 /**
+ * What makes a "shot" event a shot. goals.py fires one whenever the ball is
+ * inside a goal quad for two frames, and on rec 394 (22 Oct audit, 41 events
+ * checked frame by frame) only 16 were shots: the rest were the warm-up, a
+ * keeper holding the ball, a ball resting in the mouth at a stoppage, a ball
+ * at the centre spot, and repeats of one shot. A real shot ARRIVES: some
+ * ball-tracker step in the second and a half before the event moves at a
+ * kicked ball's speed. A held or resting ball does not, and a faster step is
+ * the tracker jumping between two balls.
+ */
+export const SHOT = {
+  /** the arrival is looked for this long before the event... */
+  arriveFromSeconds: 1.5,
+  /** ...up to this long after it, seconds */
+  arriveToSeconds: 0.2,
+  /** a step between two ball samples at least this fast is the ball travelling, m/s... */
+  arriveMinMetresPerSecond: 5,
+  /** ...and above this it is the tracker jumping, m/s */
+  arriveMaxMetresPerSecond: 45,
+  /** samples further apart than this are not one step, seconds */
+  stepGapSeconds: 0.5,
+  /** shot events closer together than this are one shot (the first), seconds */
+  mergeSeconds: 4,
+} as const;
+
+/** What `detectedShots` can use beyond the events: the ball's positions, and when the ball was in play. */
+export type ShotContext = { ball?: BallPoint[]; inPlay?: ReadonlyArray<readonly [number, number]> | null };
+
+/** The shot context of a loaded recording. */
+export function shotContext(play: {
+  manifest: Pick<TrackingManifest, "width" | "height" | "pitchModel" | "frameRate">;
+  sidecars?: Array<BallSidecar | null> | null;
+  inPlay?: ReadonlyArray<readonly [number, number]> | null;
+}): ShotContext {
+  return { ball: ballOnPitch(play.manifest, play.sidecars), inPlay: play.inPlay ?? null };
+}
+
+/** True when t is inside one of the spans; with no spans at all there is nothing to gate on, so true. */
+export function inSpans(spans: ReadonlyArray<readonly [number, number]> | null | undefined, t: number): boolean {
+  if (!spans?.length) return true;
+  return spans.some(([a, b]) => t >= a && t <= b);
+}
+
+/** Whether the ball arrived at the moment t moving like a kicked ball (SHOT). */
+function ballArrived(ball: BallPoint[], t: number): boolean {
+  const from = t - SHOT.arriveFromSeconds, to = t + SHOT.arriveToSeconds;
+  let lo = 0, hi = ball.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (ball[mid].t < from) lo = mid + 1; else hi = mid; }
+  for (let k = lo + 1; k < ball.length && ball[k].t <= to; k++) {
+    const a = ball[k - 1], b = ball[k];
+    if (a.t < from) continue;
+    const dt = b.t - a.t;
+    if (dt <= 0 || dt > SHOT.stepGapSeconds) continue;
+    const v = Math.hypot(b.p[0] - a.p[0], b.p[1] - a.p[1]) / dt;
+    if (v >= SHOT.arriveMinMetresPerSecond && v <= SHOT.arriveMaxMetresPerSecond) return true;
+  }
+  return false;
+}
+
+/**
  * Shots on target (the ball seen inside a goal mouth), each with the player
  * who struck it -- never the goalkeeper, and nobody when no touch can have
- * been the strike. Kick-offs read as shots are dropped.
+ * been the strike. Kick-offs read as shots are dropped. With a context, so
+ * are events while the ball was out of play, events where the ball did not
+ * arrive moving (SHOT), and repeats within SHOT.mergeSeconds.
  */
-export function detectedShots(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null): DetectedShot[] {
+export function detectedShots(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null, context: ShotContext = {}): DetectedShot[] {
   const goals = events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t);
-  return events
-    .filter((e) => e.type.toLowerCase() === "shot")
-    .sort((a, b) => a.t - b.t)
-    .filter((e) => !isKickoff(e.t, goals, touches, pitch))
-    .map((e) => {
-      const touch = strikerBefore(touches, e.t, GOAL.shooterSeconds, pitch);
-      return { t: e.t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, touchF: touch?.f ?? null };
-    });
+  const ball = context.ball ?? [];
+  const kept: BundleEvent[] = [];
+  for (const e of events.filter((x) => x.type.toLowerCase() === "shot").sort((a, b) => a.t - b.t)) {
+    if (isKickoff(e.t, goals, touches, pitch)) continue;
+    if (!inSpans(context.inPlay, e.t)) continue;
+    if (ball.length && !ballArrived(ball, e.t)) continue;
+    const prev = kept[kept.length - 1];
+    if (prev && e.t - prev.t < SHOT.mergeSeconds) continue;
+    kept.push(e);
+  }
+  return kept.map((e) => {
+    const touch = strikerBefore(touches, e.t, GOAL.shooterSeconds, pitch);
+    return { t: e.t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, touchF: touch?.f ?? null };
+  });
 }
 
 /** Which side a shirt is on under a pick, or null. */

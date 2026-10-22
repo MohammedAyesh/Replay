@@ -29,6 +29,7 @@ import {
   goalContext,
   detectedGoals,
   detectedShots,
+  shotContext,
   passEvents,
   pitchSizeOf,
   playerPlay,
@@ -395,7 +396,7 @@ export async function buildDemoReport(recordingId: number): Promise<DemoReport |
   const events = passEvents(play.touches, pick);
   const pitch = pitchSizeOf(play.manifest);
   const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
-  const shots = detectedShots(play.events, play.touches, pitch);
+  const shots = detectedShots(play.events, play.touches, pitch, shotContext(play));
 
   let team: DemoReport["team"] = null;
   if (pick && play.touches.length) {

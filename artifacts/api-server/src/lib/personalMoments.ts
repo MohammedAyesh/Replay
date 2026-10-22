@@ -18,6 +18,8 @@ import type { DeepReadonly } from "./claimBundleSegments";
 import type { ChainEarnedClip } from "./claimChainState";
 import {
   goalContext,
+  inSpans,
+  shotContext,
   detectedGoals,
   detectedShots,
   pitchSizeOf,
@@ -42,6 +44,14 @@ export const PERSONAL = {
   maxPasses: 4,
   /** a pass has to travel this far to be worth a clip, metres */
   longPassMetres: 12,
+  /**
+   * A dribble moment is a WON take-on over a short run. On rec 394 (22 Oct
+   * audit, all 31 dribbles checked by eye) the undecided ones and the long
+   * runs were mostly a player running into space with the "beaten" man never
+   * near him, or a tackle read backwards: 4 clear of 15 as shown before, 3
+   * clear and 2 likely of 6 with this rule.
+   */
+  dribbleMaxMetres: 12,
   /** half the clip, seconds (ensureClaimMomentUserClip cuts +/- 8 s) */
   halfWindow: 8,
 } as const;
@@ -146,11 +156,14 @@ export function personalMoments(
   if (!play.hasBall || !parts.length) return [];
   const pitch = pitchSizeOf(play.manifest);
   const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
-  const shots = detectedShots(play.events, play.touches, pitch);
+  const shots = detectedShots(play.events, play.touches, pitch, shotContext(play));
   const own = playerMoments(parts, play.dribbles, goals, shots);
   const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions);
+  // the ball out of play (warm-up, stoppages) is nobody's moment: on rec 394
+  // all five long "passes" sampled from the warm-up went, none from the match
+  const live = (t: number) => inSpans(play.inPlay, t);
   const passes = playerPlay(play.touches, passEvents(play.touches, pick), parts, Boolean(pick)).passes
-    .filter((p) => p.give && p.completed && p.metres >= PERSONAL.longPassMetres)
+    .filter((p) => p.give && p.completed && p.metres >= PERSONAL.longPassMetres && live(p.t0))
     .sort((a, b) => b.metres - a.metres)
     .slice(0, PERSONAL.maxPasses);
   const follow = (t: number) => followPath(parts, segments, manifest, t);
@@ -162,11 +175,11 @@ export function personalMoments(
     if (own.goals.some((g) => Math.abs(g.t - s.t) < 10)) continue;
     moments.push({ id: `me-shot-${Math.round(s.t)}`, title: `Your shot on target · ${clock(s.t)}`, momentSeconds: s.t, kind: "your-shot", status: "ready", follow: follow(s.t) });
   }
-  // successful dribbles first, then the ones nobody touched after; the best
-  // are the ones past the most people over the longest run
+  // successful take-ons only (PERSONAL.dribbleMaxMetres); the best are the
+  // ones past the most people
   const runs = own.dribbles
-    .filter((d) => d.outcome !== "lost")
-    .sort((a, b) => (a.outcome === "won" ? 0 : 1) - (b.outcome === "won" ? 0 : 1) || b.beaten - a.beaten || (b.metres ?? 0) - (a.metres ?? 0))
+    .filter((d) => d.outcome === "won" && d.metres !== null && d.metres <= PERSONAL.dribbleMaxMetres && live(d.t0))
+    .sort((a, b) => b.beaten - a.beaten || (b.metres ?? 0) - (a.metres ?? 0))
     .slice(0, PERSONAL.maxDribbles);
   for (const d of runs) {
     const t = (d.t0 + d.t1) / 2;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectedGoals, detectedShots, type Lab, type Touch } from "./matchPlay";
+import { detectedGoals, detectedShots, inSpans, SHOT, type BallPoint, type Lab, type Touch } from "./matchPlay";
 
 // Shot and goal credit, modelled on the touches of recording 392 (first real
 // match, 2026-10-04; 40 x 20 m, goals at x = 0 and x = 40).
@@ -88,5 +88,56 @@ describe("shot credit", () => {
       at(98.4, "s0:rebound", [36.5, 9], [36.5, 9], DARK),
     ];
     expect(detectedShots([{ type: "shot", t: 98.9 }], play, pitch)[0].trackId).toBe("s0:rebound");
+  });
+});
+
+// The 22 Oct audit of rec 394: 41 "shot" events, 16 of them shots. The rest
+// were a held or resting ball in the mouth, the warm-up, and repeats.
+describe("what makes a shot a shot (rec 394)", () => {
+  const striker = [at(99.2, "s0:white", [33, 10], [33.5, 10])];
+  /** ball samples every 0.1 s from `from` to `to` (metres) over [t0, t1] */
+  const path = (t0: number, t1: number, from: [number, number], to: [number, number]): BallPoint[] => {
+    const out: BallPoint[] = [];
+    for (let t = t0; t <= t1 + 1e-9; t += 0.1) {
+      const k = (t - t0) / (t1 - t0);
+      out.push({ t: +t.toFixed(2), p: [from[0] + k * (to[0] - from[0]), from[1] + k * (to[1] - from[1])] });
+    }
+    return out;
+  };
+  const shot = [{ type: "shot", t: 100 }];
+
+  it("keeps a ball that arrives at the goal at a kicked ball's speed", () => {
+    const ball = path(99.2, 100, [33.5, 10], [40, 10]); // 6.5 m in 0.8 s, ~8 m/s
+    expect(detectedShots(shot, striker, pitch, { ball })).toHaveLength(1);
+  });
+
+  it("drops a ball held or resting in the mouth (a keeper with it, a stoppage)", () => {
+    const ball = path(98, 100.5, [39.5, 10], [39.7, 10.2]);
+    expect(detectedShots(shot, striker, pitch, { ball })).toEqual([]);
+  });
+
+  it("drops a 'shot' whose only fast step is the tracker jumping between two balls", () => {
+    const ball: BallPoint[] = [...path(98.5, 99.5, [10, 5], [10.1, 5]), { t: 99.6, p: [39.8, 10] }, ...path(99.7, 100.2, [39.8, 10], [39.8, 10])];
+    // 29.7 m in 0.1 s is 297 m/s, above SHOT.arriveMaxMetresPerSecond
+    expect(SHOT.arriveMaxMetresPerSecond).toBeLessThan(297);
+    expect(detectedShots(shot, striker, pitch, { ball })).toEqual([]);
+  });
+
+  it("drops shots while the ball is out of play (the warm-up), and keeps everything when there are no spans", () => {
+    const ball = path(99.2, 100, [33.5, 10], [40, 10]);
+    expect(detectedShots(shot, striker, pitch, { ball, inPlay: [[600, 3000]] })).toEqual([]);
+    expect(detectedShots(shot, striker, pitch, { ball, inPlay: [[60, 3000]] })).toHaveLength(1);
+    expect(inSpans(null, 5)).toBe(true);
+    expect(inSpans([], 5)).toBe(true);
+  });
+
+  it("counts one shot, not three, when the event repeats within SHOT.mergeSeconds (39:59.8 and 40:00.0)", () => {
+    const ball = [...path(99, 100.2, [30, 10], [40, 10]), ...path(102, 103.2, [30, 10], [40, 10])];
+    const events = [{ type: "shot", t: 100 }, { type: "shot", t: 100.2 }, { type: "shot", t: 103 }];
+    expect(detectedShots(events, striker, pitch, { ball }).map((x) => x.t)).toEqual([100]);
+  });
+
+  it("without a context only merges repeats (no ball or in-play test)", () => {
+    expect(detectedShots([{ type: "shot", t: 100 }, { type: "shot", t: 100.2 }, { type: "shot", t: 110 }], striker, pitch).map((x) => x.t)).toEqual([100, 110]);
   });
 });
