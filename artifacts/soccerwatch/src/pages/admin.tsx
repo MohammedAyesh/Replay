@@ -853,6 +853,42 @@ function ClipsTab() {
   const selectedPlayerClips = selectedPlayer !== null ? clips.filter((c) => c.userId === selectedPlayer) : [];
   const allHidden = selectedPlayerClips.length > 0 && selectedPlayerClips.every((c) => c.isHidden);
   const noneHidden = selectedPlayerClips.every((c) => !c.isHidden);
+  const deletedClips = selectedPlayerClips.filter((c) => c.isHidden && c.hiddenReason === "deleted");
+
+  const bulkRestoreDeleted = async () => {
+    if (deletedClips.length === 0) return;
+    const playerName = deletedClips[0]?.userName ?? "this player";
+    if (!window.confirm(
+      `Restore ${deletedClips.length} deleted clips for ${playerName}? Clips hidden for moderation will remain hidden.`
+    )) return;
+
+    setBulkWorking(true);
+    setActionNotice(null);
+    const restoredIds = new Set<number>();
+    const applyRestoredState = () => {
+      setClips((prev) => prev.map((clip) => restoredIds.has(clip.id)
+        ? { ...clip, isHidden: false, hiddenReason: null }
+        : clip));
+      if (restoredIds.size > 0) invalidateFeeds();
+    };
+    try {
+      for (const clip of deletedClips) {
+        await apiFetch(`/admin/clips/${clip.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ isHidden: false }),
+        });
+        restoredIds.add(clip.id);
+      }
+      applyRestoredState();
+      setActionNotice(`Restored ${restoredIds.size} deleted clips. Other hidden clips were left unchanged.`);
+    } catch {
+      applyRestoredState();
+      setActionNotice(`Restored ${restoredIds.size} of ${deletedClips.length} clips. Some could not be restored; retry after resolving the error.`);
+    } finally {
+      setBulkWorking(false);
+    }
+  };
+
   const repairRequest = () => ({
     userId: repairUserId.trim() ? Number(repairUserId) : undefined,
     clipIdMin: repairMinId.trim() ? Number(repairMinId) : undefined,
@@ -945,6 +981,16 @@ function ClipsTab() {
               title="Show all clips from this player"
             >
               <Eye className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => void bulkRestoreDeleted()}
+              disabled={bulkWorking || deletedClips.length === 0}
+              className="inline-flex items-center gap-1.5 px-2 py-2 rounded-xl bg-emerald-900/30 text-emerald-300 border border-emerald-800/50 text-[10px] font-medium hover:bg-emerald-900/50 disabled:opacity-40 transition-colors whitespace-nowrap"
+              title={`Restore only ${deletedClips.length} deleted clips; other hidden clips stay hidden`}
+              aria-label={`Restore ${deletedClips.length} deleted clips`}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Restore deleted ({deletedClips.length})
             </button>
           </>
         )}
