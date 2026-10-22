@@ -2429,6 +2429,7 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   let upstream: Response | null = null;
   let upstreamNodeStream: Readable | null = null;
   const abortUpstream = () => {
+    logger.info({ clipId, finished: res.writableFinished }, "Download proxy downstream close observed");
     if (!abort.signal.aborted) abort.abort();
     upstreamNodeStream?.destroy();
     void upstream?.body?.cancel().catch(() => {});
