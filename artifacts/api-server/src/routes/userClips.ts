@@ -2434,6 +2434,7 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
     void upstream?.body?.cancel().catch(() => {});
   };
   req.on("aborted", abortUpstream);
+  req.socket.on("close", abortUpstream);
   res.on("close", abortUpstream);
   res.socket?.on("close", abortUpstream);
 
