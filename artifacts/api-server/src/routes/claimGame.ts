@@ -42,6 +42,7 @@ import {
   detectedGoals,
   detectedShots,
   goalContext,
+  shotContext,
   pitchSizeOf,
   DRIBBLE,
   kitOfParts,
@@ -604,7 +605,7 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
   const mine = playerPlay(touches, events, parts, Boolean(pick));
   const pitch = pitchSizeOf(play.manifest);
   const goals = detectedGoals(playEvents, touches, pitch, goalContext(play));
-  const shots = detectedShots(playEvents, touches, pitch);
+  const shots = detectedShots(playEvents, touches, pitch, shotContext(play));
   const own = playerMoments(parts, playDribbles, goals, shots);
   const perSide = <T extends { kit: Lab | null }>(rows: T[]): [number, number] => {
     const n: [number, number] = [0, 0];

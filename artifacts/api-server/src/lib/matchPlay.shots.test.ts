@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { detectedGoals, detectedShots, type Lab, type Touch } from "./matchPlay";
+import { detectedGoals, detectedShots, inSpans, type BallPoint, type Lab, type Touch } from "./matchPlay";
 
 // Shot and goal credit, modelled on the touches of recording 392 (first real
 // match, 2026-10-04; 40 x 20 m, goals at x = 0 and x = 40).
@@ -88,5 +88,72 @@ describe("shot credit", () => {
       at(98.4, "s0:rebound", [36.5, 9], [36.5, 9], DARK),
     ];
     expect(detectedShots([{ type: "shot", t: 98.9 }], play, pitch)[0].trackId).toBe("s0:rebound");
+  });
+});
+
+describe("what makes a shot a shot (rec 394)", () => {
+  const movingBall = (eventT: number, speed = 8): BallPoint[] =>
+    Array.from({ length: 18 }, (_, i) => {
+      const t = eventT - 1.5 + i * 0.1;
+      return { t, p: [40 + speed * (t - eventT), 10] as [number, number] };
+    });
+
+  it("keeps a ball arriving at the goal at about 8 m/s", () => {
+    const shots = detectedShots(
+      [{ type: "shot", t: 100 }],
+      [],
+      pitch,
+      { ball: movingBall(100) },
+    );
+    expect(shots.map((shot) => shot.t)).toEqual([100]);
+  });
+
+  it("drops a ball resting in the goal mouth", () => {
+    const ball = movingBall(100).map(({ t }) => ({ t, p: [40, 10] as [number, number] }));
+    expect(detectedShots([{ type: "shot", t: 100 }], [], pitch, { ball })).toEqual([]);
+  });
+
+  it("drops a tracker jump of 30 metres in 0.1 seconds", () => {
+    const ball = movingBall(100).map(({ t }) => ({
+      t,
+      p: [t < 99.5 ? 5 : 35, 10] as [number, number],
+    }));
+    expect(detectedShots([{ type: "shot", t: 100 }], [], pitch, { ball })).toEqual([]);
+  });
+
+  it("drops events outside in-play spans and treats missing spans as unrestricted", () => {
+    expect(detectedShots([{ type: "shot", t: 99.9 }], [], pitch, {
+      ball: movingBall(99.9),
+      inPlay: [[100, 120]],
+    })).toEqual([]);
+    expect(inSpans(null, 99.9)).toBe(true);
+    expect(inSpans([], 99.9)).toBe(true);
+  });
+
+  it("keeps only the first of events less than four seconds apart", () => {
+    const ball: BallPoint[] = [
+      { t: 99.9, p: [39.2, 10] },
+      { t: 100, p: [40, 10] },
+      { t: 100.1, p: [40.8, 10] },
+      { t: 100.2, p: [41.6, 10] },
+      { t: 102.9, p: [39.2, 10] },
+      { t: 103, p: [40, 10] },
+    ];
+    const shots = detectedShots(
+      [100, 100.2, 103].map((t) => ({ type: "shot", t })),
+      [],
+      pitch,
+      { ball },
+    );
+    expect(shots.map((shot) => shot.t)).toEqual([100]);
+  });
+
+  it("merges repeats without context, retaining the first event", () => {
+    const shots = detectedShots(
+      [100, 100.2, 110].map((t) => ({ type: "shot", t })),
+      [],
+      pitch,
+    );
+    expect(shots.map((shot) => shot.t)).toEqual([100, 110]);
   });
 });

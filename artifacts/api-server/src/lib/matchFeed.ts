@@ -44,6 +44,7 @@ import { logger } from "./logger";
 import { readOptionalMatchTeamSpans } from "./optionalMatchTeamSpans";
 import {
   goalContext,
+  shotContext,
   detectedGoals,
   detectedShots,
   pitchSizeOf,
@@ -571,7 +572,7 @@ async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: 
         kits,
         dribbles: play.dribbles.filter((d) => within(d.t0)),
         goals: detectedGoals(play.events.filter((e) => within(e.t)), play.touches.filter((t) => within(t.t)), pitchSizeOf(play.manifest), goalContext(play)),
-        shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches.filter((t) => within(t.t)), pitchSizeOf(play.manifest)),
+        shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches.filter((t) => within(t.t)), pitchSizeOf(play.manifest), shotContext(play)),
       });
     }
   }

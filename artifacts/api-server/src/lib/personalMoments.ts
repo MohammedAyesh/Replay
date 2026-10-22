@@ -18,6 +18,7 @@ import type { DeepReadonly } from "./claimBundleSegments";
 import type { ChainEarnedClip } from "./claimChainState";
 import {
   goalContext,
+  shotContext,
   detectedGoals,
   detectedShots,
   pitchSizeOf,
@@ -146,7 +147,7 @@ export function personalMoments(
   if (!play.hasBall || !parts.length) return [];
   const pitch = pitchSizeOf(play.manifest);
   const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
-  const shots = detectedShots(play.events, play.touches, pitch);
+  const shots = detectedShots(play.events, play.touches, pitch, shotContext(play));
   const own = playerMoments(parts, play.dribbles, goals, shots);
   const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions);
   const passes = playerPlay(play.touches, passEvents(play.touches, pick), parts, Boolean(pick)).passes

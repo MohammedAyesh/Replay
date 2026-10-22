@@ -979,6 +979,9 @@ export type BallPoint = { t: number; p: [number, number] };
 /** What `detectedGoals` needs beyond the touches: the ball's positions and when play ended. */
 export type GoalContext = { ball?: BallPoint[]; ends?: number[] };
 
+/** What `detectedShots` needs beyond events and touches. */
+export type ShotContext = { ball?: BallPoint[]; inPlay?: Array<[number, number]> | null };
+
 /** The goal context of a loaded recording: every ball sample, and the end of each stretch of game and of the recording. */
 export function goalContext(play: {
   manifest: Pick<TrackingManifest, "width" | "height" | "pitchModel" | "frameRate" | "duration">;
@@ -988,6 +991,20 @@ export function goalContext(play: {
   const ends = (play.phases ?? []).filter((p) => p.kind === "game").map((p) => p.end);
   if (play.manifest.duration > 0) ends.push(play.manifest.duration);
   return { ball: ballOnPitch(play.manifest, play.sidecars), ends };
+}
+
+/** The shot context of a loaded recording: pitch-mapped ball samples and in-play spans. */
+export function shotContext(play: {
+  manifest: Pick<TrackingManifest, "width" | "height" | "pitchModel" | "frameRate" | "duration">;
+  sidecars?: Array<BallSidecar | null> | null;
+  inPlay?: Array<[number, number]> | null;
+}): ShotContext {
+  return { ball: ballOnPitch(play.manifest, play.sidecars), inPlay: play.inPlay };
+}
+
+/** Old recordings without in-play metadata remain eligible. */
+export function inSpans(spans: Array<[number, number]> | null | undefined, t: number): boolean {
+  return !spans?.length || spans.some(([start, end]) => t >= start && t <= end);
 }
 
 const ballCache = new WeakMap<object, BallPoint[]>();
@@ -1111,6 +1128,21 @@ export const KICKOFF = {
   radiusMetres: 3,
   /** ...and this long before the shot at most, seconds */
   leadSeconds: 4,
+} as const;
+
+export const SHOT = {
+  /** Search for the ball's arrival from this long before an event, seconds. */
+  lookbackSeconds: 1.5,
+  /** ...through this long after it, seconds. */
+  lookaheadSeconds: 0.2,
+  /** A ball step this fast counts as travelling, metres per second. */
+  minBallSpeed: 5,
+  /** Faster steps are tracker jumps between balls, metres per second. */
+  maxBallSpeed: 45,
+  /** Samples farther apart than this are not one step, seconds. */
+  maxStepSeconds: 0.5,
+  /** Shot events closer than this are one shot; keep the first, seconds. */
+  mergeSeconds: 4,
 } as const;
 
 /** Touches with t in [from, to], by binary search (touches are sorted by frame). */
@@ -1384,16 +1416,38 @@ function isKickoff(t: number, goals: number[], touches: Touch[], pitch: PitchSiz
  * who struck it -- never the goalkeeper, and nobody when no touch can have
  * been the strike. Kick-offs read as shots are dropped.
  */
-export function detectedShots(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null): DetectedShot[] {
+export function detectedShots(
+  events: BundleEvent[],
+  touches: Touch[],
+  pitch: PitchSize | null = null,
+  context: ShotContext = {},
+): DetectedShot[] {
   const goals = events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t);
-  return events
+  const ball = (context.ball ?? []).slice().sort((a, b) => a.t - b.t);
+  const out: DetectedShot[] = [];
+  for (const e of events
     .filter((e) => e.type.toLowerCase() === "shot")
-    .sort((a, b) => a.t - b.t)
-    .filter((e) => !isKickoff(e.t, goals, touches, pitch))
-    .map((e) => {
-      const touch = strikerBefore(touches, e.t, GOAL.shooterSeconds, pitch);
-      return { t: e.t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, touchF: touch?.f ?? null };
-    });
+    .sort((a, b) => a.t - b.t)) {
+    if (isKickoff(e.t, goals, touches, pitch)) continue;
+    if (context.inPlay !== undefined && !inSpans(context.inPlay, e.t)) continue;
+    if (ball.length) {
+      const from = e.t - SHOT.lookbackSeconds;
+      const to = e.t + SHOT.lookaheadSeconds;
+      const hasShotStep = ball.some((sample, i) => {
+        if (i === 0 || sample.t < from || sample.t > to) return false;
+        const previous = ball[i - 1];
+        const dt = sample.t - previous.t;
+        if (dt <= 0 || dt > SHOT.maxStepSeconds) return false;
+        const speed = Math.hypot(sample.p[0] - previous.p[0], sample.p[1] - previous.p[1]) / dt;
+        return speed >= SHOT.minBallSpeed && speed <= SHOT.maxBallSpeed;
+      });
+      if (!hasShotStep) continue;
+    }
+    if (out.length && e.t - out[out.length - 1].t < SHOT.mergeSeconds) continue;
+    const touch = strikerBefore(touches, e.t, GOAL.shooterSeconds, pitch);
+    out.push({ t: e.t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, touchF: touch?.f ?? null });
+  }
+  return out;
 }
 
 /** Which side a shirt is on under a pick, or null. */
