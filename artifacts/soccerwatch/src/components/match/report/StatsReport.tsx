@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { ChevronDown, Loader2, Play, Share2 } from "lucide-react";
+import { ChevronDown, Loader2, Play, Share2, Sparkles, Users, Clock3, Zap, Medal, Trophy, Route, Footprints, Swords, Crown } from "lucide-react";
 import { PlayerAvatar } from "@/components/match/bits";
 import { useMatchStatsData, type PlayerStats, type Stats, type TeamStats } from "@/components/match/MatchStats";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -152,20 +152,22 @@ export function YouSection({ me, players, stats, room, r, durationSeconds, repla
   };
 
   return (
-    <Section eyebrow={r.you}>
+    <Section eyebrow={r.numbersComplete} icon={<Sparkles className="h-4 w-4" />} iconTone="lime">
       {shown.length > 0 ? (
-        <div className="grid grid-cols-3 gap-2.5">
+        <div className="flex flex-col divide-y divide-line">
           {shown.map((cell) => {
             const n = note(cell.metric);
-            return <BigStat key={cell.metric} value={formatMetric(cell.metric, cell.value!)} label={cell.label} note={n?.text} noteTone={n?.tone} />;
+            const Icon = cell.metric === "distanceRate" ? Route : cell.metric === "topSpeed" ? Zap : Footprints;
+            return <div key={cell.metric} className="flex min-h-14 items-center gap-3 py-2">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-floodlight/15 text-floodlight"><Icon className="h-4 w-4" /></span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{cell.label}</span><span className={cn("block truncate text-[11px]", n?.tone === "lime" ? "text-floodlight" : "text-muted-text")}>{n?.text ?? r.notRankedShort(Math.round(me.minutes ?? 0))}</span></span>
+              <Num className="text-2xl font-bold text-floodlight">{formatMetric(cell.metric, cell.value!)}</Num>
+            </div>;
           })}
         </div>
       ) : null}
-      {totals.length > 0 && (
-        <p className="text-xs leading-5 text-muted-text">
-          {totals.join(" · ")}{formText ? `. ${formText}` : ""}
-        </p>
-      )}
+      {totals.length > 0 && <div className="flex flex-wrap gap-1.5">{totals.map((total) => <span key={total} className="rounded-full border border-line bg-surface px-2.5 py-1 text-[11px] text-muted-text">{total}</span>)}</div>}
+      {formText && <p className="text-xs leading-5 text-muted-text">{formText}</p>}
       {pbs.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {pbs.map((label) => (
@@ -177,7 +179,7 @@ export function YouSection({ me, players, stats, room, r, durationSeconds, repla
         type="button"
         disabled={sharing}
         onClick={() => void share()}
-        className="flex min-h-10 items-center justify-center gap-2 self-start rounded-full border border-line px-4 text-sm font-semibold text-text disabled:opacity-60"
+        className="flex min-h-11 items-center justify-center gap-2 self-start rounded-full border border-line px-4 text-sm font-semibold text-text disabled:opacity-60"
         data-testid="button-share-my-night"
       >
         {sharing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Share2 className="h-4 w-4" />}
@@ -217,7 +219,7 @@ export function EveryoneSection({ players, meId, r }: { players: PlayerStats[]; 
   }).filter((strip): strip is NonNullable<typeof strip> => strip !== null);
   if (!strips.length) return null;
   return (
-    <Section eyebrow={r.everyone} aside={r.tapALine}>
+    <Section eyebrow={r.everyone} icon={<Users className="h-4 w-4" />} aside={r.tapALine}>
       <div className="flex flex-col gap-4">
         {strips.map((strip) => (
           <StripPlot
@@ -374,7 +376,7 @@ export function NightSection({ me, r, durationSeconds, room }: { me: PlayerStats
   const halves = compareHalves(report.blocks, durationSeconds);
   const hasDistance = blocks.some((block) => block.metres !== null);
   return (
-    <Section eyebrow={r.yourNight}>
+    <Section eyebrow={r.yourNight} icon={<Clock3 className="h-4 w-4" />} iconTone="lime">
       <div dir="ltr" className="relative">
         <div className="relative h-4">
           {report.goalTimes.map((at, index) => (
@@ -415,7 +417,7 @@ export function NightSection({ me, r, durationSeconds, room }: { me: PlayerStats
           {halves.level ? r.halvesLevel : halves.change < 0 ? r.halvesDown(Math.round(-halves.change * 100)) : r.halvesUp(Math.round(halves.change * 100))}
         </p>
       )}
-      <button type="button" onClick={() => setOpen(true)} className="self-start text-sm font-semibold text-turf">{r.openMinutes} ›</button>
+      <button type="button" onClick={() => setOpen(true)} className="min-h-11 self-start text-sm font-semibold text-turf">{r.openMinutes} ›</button>
       <MinutesSheet open={open} onClose={() => setOpen(false)} me={me} r={r} durationSeconds={durationSeconds} room={room} />
     </Section>
   );
@@ -490,7 +492,7 @@ export function MomentsSection({ me, room, r }: { me: PlayerStats; room: MatchRo
   ].sort((a, b) => a.at - b.at).slice(0, 12);
   if (!tiles.length) return null;
   return (
-    <Section eyebrow={r.moments}>
+    <Section eyebrow={r.moments} icon={<Sparkles className="h-4 w-4" />} iconTone="lime">
       <div className="no-scrollbar -mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1">
         {tiles.map((tile, index) => {
           const href = watchHref(room, tile.at);
@@ -544,7 +546,7 @@ export function RivalSection({ players, meId, room, r }: { players: PlayerStats[
         const selected = player.playerId === value;
         const info = avatar(player.playerId);
         return (
-          <button key={player.playerId} type="button" onClick={() => onPick(player.playerId)} aria-pressed={selected} className="flex w-14 shrink-0 flex-col items-center gap-1">
+      <button key={player.playerId} type="button" onClick={() => onPick(player.playerId)} aria-pressed={selected} className="flex min-h-11 w-14 shrink-0 flex-col items-center justify-center gap-1">
             <PlayerAvatar name={player.name} initials={info?.initials} avatarUrl={info?.avatarUrl} size={40} ring={selected ? (tone === "lime" ? "#D4FF4F" : "#7B5CFF") : undefined} />
             <span className={cn("w-full truncate text-center text-[10px]", selected ? "font-semibold text-text" : "text-muted-text")}>{firstName(player.name)}</span>
           </button>
@@ -553,7 +555,7 @@ export function RivalSection({ players, meId, room, r }: { players: PlayerStats[
     </div>
   );
   return (
-    <Section eyebrow={me ? <>{r.youAgainst} <span className="normal-case tracking-normal" style={{ color: "#A98CFF" }}>{rightName}</span></> : r.compareTwo}>
+    <Section eyebrow={me ? <>{r.youAgainst} <span className="normal-case tracking-normal" style={{ color: "#A98CFF" }}>{rightName}</span></> : r.compareTwo} icon={<Swords className="h-4 w-4" />} iconTone="violet">
       {!me && picker(left.playerId, claimed, (id) => { setLeftId(id); if (id === right.playerId) setRightId(null); }, "lime")}
       {picker(right.playerId, claimed.filter((player) => player.playerId !== left.playerId), setRightId, "violet")}
       <div className="flex flex-col gap-3">
@@ -588,7 +590,7 @@ export function RivalSection({ players, meId, room, r }: { players: PlayerStats[
       <p className="font-display text-sm font-bold text-text">
         {me ? r.tallyLine(score.you, score.level, score.them, rightName) : r.tallyLineTwo(leftName, score.you, score.level, rightName, score.them)}
       </p>
-      <button type="button" onClick={() => setSheet(true)} className="self-start text-sm font-semibold text-turf">{r.moreComparison} ›</button>
+      <button type="button" onClick={() => setSheet(true)} className="min-h-11 self-start text-sm font-semibold text-turf">{r.moreComparison} ›</button>
       <RivalSheet open={sheet} onClose={() => setSheet(false)} left={left} right={right} leftName={leftName} rightName={rightName} r={r} />
     </Section>
   );
@@ -680,12 +682,15 @@ export function StoodOutSection({ players, meId, room, r }: { players: PlayerSta
   const counted = claimed.filter((player) => (player.minutes ?? 0) >= 10).length;
   const total = Math.max(room.players.filter((player) => player.rsvp === "in").length, claimed.length);
   return (
-    <Section eyebrow={r.stoodOut}>
+    <Section eyebrow={r.stoodOut} icon={<Medal className="h-4 w-4" />} iconTone="lime">
       <ul className="flex flex-col divide-y divide-[#1B2236]">
         {rows.map((row) => (
-          <li key={row.key} className="flex items-baseline gap-3 py-2.5">
-            <span className="w-[38%] shrink-0 text-xs text-muted-text">{row.label}</span>
-            <span className={cn("min-w-0 flex-1 truncate text-sm font-semibold", row.mine ? "text-floodlight" : "text-text")}>{row.who}</span>
+          <li key={row.key} className="flex min-h-14 items-center gap-2.5 py-2">
+            <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg", row.mine ? "bg-floodlight/15 text-floodlight" : "bg-violet/15 text-violet")}>
+              {row.key === "motm" ? <Crown className="h-4 w-4" /> : row.key === "distanceRate" ? <Route className="h-4 w-4" /> : row.key === "topSpeed" ? <Zap className="h-4 w-4" /> : row.key === "touchRate" ? <Footprints className="h-4 w-4" /> : row.key === "goals" ? <Trophy className="h-4 w-4" /> : <Swords className="h-4 w-4" />}
+            </span>
+            <span className="w-[32%] shrink-0 text-xs text-muted-text">{row.label}</span>
+            <span className={cn("min-w-0 flex-1 truncate text-sm font-semibold", row.mine ? "text-floodlight" : "text-violet")}>{row.who}</span>
             <span className="shrink-0 text-end">
               {row.value && <Num className="block text-sm font-bold">{row.value}</Num>}
               {row.note && <span className="block text-[10px] text-muted-text">{row.note}</span>}
@@ -732,13 +737,14 @@ export function TwoSidesSection({ room, r, copy, whole, players }: {
   ] : [];
   const sides = three ? t!.sides.slice(0, 3) : [sideX, sideY];
   const showKm = gameId === null && !three && (km("A") > 0 || km("B") > 0);
+  const statIcon = (label: string) => label === r.goalsRow ? Trophy : label === r.shots ? Zap : label === r.possession ? Clock3 : label === r.dribbles ? Swords : label === r.touches ? Footprints : label === r.groundCovered ? Route : Users;
   return (
-    <Section eyebrow={three ? r.threeSides : r.twoSides}>
+    <Section eyebrow={three ? r.threeSides : r.twoSides} icon={<Trophy className="h-4 w-4" />} iconTone="lime">
       {room.games.length >= 2 && (
         <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4" dir="ltr" data-testid="stats-game-filters">
-          <button type="button" onClick={() => setGameId(null)} className={cn("shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold", gameId === null ? "border-turf text-turf" : "border-line text-muted-text")} data-testid="button-stats-whole-session">{r.wholeSession}</button>
+          <button type="button" onClick={() => setGameId(null)} className={cn("min-h-11 shrink-0 rounded-full border px-3 text-xs font-semibold", gameId === null ? "border-turf text-turf" : "border-line text-muted-text")} data-testid="button-stats-whole-session">{r.wholeSession}</button>
           {room.games.map((item, index) => (
-            <button key={item.id} type="button" onClick={() => setGameId(item.id)} className={cn("shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold", gameId === item.id ? "border-turf text-turf" : "border-line text-muted-text")} data-testid={`button-stats-game-${item.id}`}>
+            <button key={item.id} type="button" onClick={() => setGameId(item.id)} className={cn("min-h-11 shrink-0 rounded-full border px-3 text-xs font-semibold", gameId === item.id ? "border-turf text-turf" : "border-line text-muted-text")} data-testid={`button-stats-game-${item.id}`}>
               {r.gameN(index + 1, Math.round(item.startOffsetSec / 60), Math.round(item.endOffsetSec / 60))} · {name(item.teamX)} {copy.vs} {name(item.teamY)}
             </button>
           ))}
@@ -756,12 +762,15 @@ export function TwoSidesSection({ room, r, copy, whole, players }: {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
-                  <tr key={row.label} className="border-b border-[#1B2236] last:border-0">
-                    <th className="py-2 text-start font-normal text-muted-text">{row.label}</th>
-                    {row.values.slice(0, 3).map((value, index) => <td key={index} className="py-2 text-end"><Num className="font-bold">{row.format(value)}</Num></td>)}
-                  </tr>
-                ))}
+                {rows.map((row) => {
+                  const StatIcon = statIcon(row.label);
+                  return (
+                    <tr key={row.label} className="border-b border-[#1B2236] last:border-0">
+                      <th className="py-2 text-start font-normal text-muted-text"><span className="inline-flex items-center gap-2"><StatIcon className="h-3.5 w-3.5 text-turf" />{row.label}</span></th>
+                      {row.values.slice(0, 3).map((value, index) => <td key={index} className="py-2 text-end"><Num className="font-bold">{row.format(value)}</Num></td>)}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -775,11 +784,12 @@ export function TwoSidesSection({ room, r, copy, whole, players }: {
             {[...rows, ...(showKm ? [{ label: r.groundCovered, values: [km("A"), km("B")], format: (v: number) => `${v.toFixed(1)} km` }] : [])].map((row) => {
               const [a, b] = [row.values[0] ?? 0, row.values[1] ?? 0];
               const total = a + b;
+              const StatIcon = statIcon(row.label);
               return (
                 <div key={row.label} className="flex flex-col gap-1">
                   <div className="grid grid-cols-[4.5rem_1fr_4.5rem] items-baseline text-[13px]" dir="ltr">
                     <Num className={cn(a > b ? "font-bold text-text" : "text-muted-text")}>{row.format(a)}</Num>
-                    <span className="text-center text-xs text-muted-text">{row.label}</span>
+                    <span className="inline-flex items-center justify-center gap-1.5 text-center text-xs text-muted-text"><StatIcon className="h-3.5 w-3.5 shrink-0 text-turf" />{row.label}</span>
                     <Num className={cn("text-end", b > a ? "font-bold text-text" : "text-muted-text")}>{row.format(b)}</Num>
                   </div>
                   <div dir="ltr" className="flex h-1 overflow-hidden rounded-full bg-[#1B2236]">
@@ -801,12 +811,14 @@ export function TwoSidesSection({ room, r, copy, whole, players }: {
 
 /* ------------------------------------------------------------------ disclosure */
 
-export function Disclosure({ title, children, defaultOpen = false, testId }: { title: string; children: React.ReactNode; defaultOpen?: boolean; testId?: string }) {
+export function Disclosure({ title, children, defaultOpen = false, testId, icon, tone = "turf" }: { title: string; children: React.ReactNode; defaultOpen?: boolean; testId?: string; icon?: React.ReactNode; tone?: "lime" | "turf" | "violet" }) {
   const [open, setOpen] = useState(defaultOpen);
+  const iconTone = tone === "lime" ? "bg-floodlight/15 text-floodlight" : tone === "violet" ? "bg-violet/20 text-violet-text" : "bg-turf/15 text-turf";
   return (
     <div className="border-b border-[#1B2236]" data-testid={testId}>
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex min-h-12 w-full items-center justify-between gap-3 py-3 text-start">
-        <span className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-muted-text rtl:tracking-normal rtl:text-xs">{title}</span>
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex min-h-[54px] w-full items-center gap-2.5 py-2 text-start">
+        {icon && <span className={cn("flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px]", iconTone)}>{icon}</span>}
+        <span className="flex-1 text-sm font-bold">{title}</span>
         <ChevronDown className={cn("h-4 w-4 text-muted-text transition-transform", open && "rotate-180")} />
       </button>
       {open && <div className="flex flex-col gap-4 pb-6">{children}</div>}

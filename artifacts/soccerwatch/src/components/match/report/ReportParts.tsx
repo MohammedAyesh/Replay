@@ -36,20 +36,30 @@ export function visibleColour(hex: string | null | undefined, fallback = "#8A93A
   return luminance < 0.05 ? "#5A6478" : `#${m[1]}`;
 }
 
-export function Section({ eyebrow, aside, children, className, id, last = false }: {
+export function Section({ eyebrow, aside, children, className, id, last = false, icon, iconTone = "turf" }: {
   eyebrow?: ReactNode;
   aside?: ReactNode;
   children: ReactNode;
   className?: string;
   id?: string;
   last?: boolean;
+  icon?: ReactNode;
+  iconTone?: "lime" | "turf" | "violet";
 }) {
+  const iconToneClass = {
+    lime: "bg-floodlight/15 text-floodlight",
+    turf: "bg-turf/15 text-turf",
+    violet: "bg-violet/20 text-violet",
+  }[iconTone];
   return (
     <section id={id} className={cn("flex flex-col gap-3.5 py-6", !last && "border-b border-[#1B2236]", className)}>
       {(eyebrow || aside) && (
-        <div className="flex items-baseline justify-between gap-3">
-          {eyebrow ? <Eyebrow>{eyebrow}</Eyebrow> : <span />}
-          {aside && <span className="text-xs text-muted-text">{aside}</span>}
+        <div className="flex items-center justify-between gap-3">
+          {eyebrow ? <h2 className="flex min-w-0 items-center gap-2.5 font-display text-[19px] font-extrabold leading-tight text-text">
+            {icon && <span className={cn("flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px]", iconToneClass)}>{icon}</span>}
+            <span className="min-w-0">{eyebrow}</span>
+          </h2> : <span />}
+          {aside && <span className="shrink-0 text-xs text-muted-text">{aside}</span>}
         </div>
       )}
       {children}
@@ -176,7 +186,7 @@ export function GameBar({ durationSeconds, spans, goals, midLabel, startLabel, e
         );
         const style = { left: pct(goal.at), top: goal.mine ? -2 : 0 };
         return goal.href ? (
-          <Link key={index} href={goal.href} aria-label={goal.label} title={goal.label} className="absolute -translate-x-1/2" style={style}>{dot}</Link>
+          <Link key={index} href={goal.href} aria-label={goal.label} title={goal.label} className="absolute z-10 flex h-11 w-11 -translate-x-1/2 items-start justify-center" style={{ ...style, top: -6 }}>{dot}</Link>
         ) : (
           <span key={index} aria-label={goal.label} title={goal.label} className="absolute -translate-x-1/2" style={style}>{dot}</span>
         );
@@ -247,7 +257,7 @@ export function PillToggle<T extends string>({ value, options, onChange }: {
           aria-checked={value === option.value}
           onClick={() => onChange(option.value)}
           className={cn(
-            "min-h-8 rounded-full border px-3 font-display text-[13px] font-semibold",
+            "min-h-11 rounded-full border px-3 font-display text-[13px] font-semibold",
             value === option.value ? "border-floodlight bg-floodlight/10 text-floodlight" : "border-line text-muted-text",
           )}
         >

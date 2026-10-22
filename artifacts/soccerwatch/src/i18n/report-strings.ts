@@ -18,6 +18,15 @@ const ordinalEn = (n: number) => {
 
 const en = {
   eyebrow: "Match report",
+  numbersComplete: "Your numbers",
+  matchForYou: "Your match",
+  scoredAt: (minute: string) => `Scored at ${minute}`,
+  weWon: "We won",
+  weLost: "We lost",
+  draw: "Draw",
+  watchMatch: "Watch the match",
+  shareMatch: "Share my match",
+  goalsHeading: "Match goals",
   minutesLong: (n: number) => `${n} minutes`,
   awaitingScore: "Score not in yet",
   replayCounted: (a: number, b: number) => `Replay counted ${a}–${b}`,
@@ -203,6 +212,15 @@ type ReportStrings = typeof en;
 
 const ar: ReportStrings = {
   eyebrow: "تقرير الماتش",
+  numbersComplete: "أرقامك كاملة",
+  matchForYou: "ماتشك",
+  scoredAt: (minute: string) => `وسجّلت بالدقيقة ${minute}`,
+  weWon: "ربحنا",
+  weLost: "خسرنا",
+  draw: "تعادل",
+  watchMatch: "شوف الماتش",
+  shareMatch: "شارك ماتشي",
+  goalsHeading: "أهداف الماتش",
   minutesLong: (n: number) => arCount(n, "دقيقة وحدة", "دقيقتين", "دقايق", "دقيقة"),
   awaitingScore: "النتيجة لسا ما انحطّت",
   replayCounted: (a: number, b: number) => `ريبلاي عدّ \u2066${a}–${b}\u2069`,
