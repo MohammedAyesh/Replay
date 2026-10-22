@@ -89,7 +89,26 @@ beforeAll(async () => {
       res.write(CLIP_BYTES.subarray(0, 1024));
       return;
     }
-    res.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": String(CLIP_BYTES.length) });
+    const range = req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
+    if (range) {
+      const start = Number(range[1]);
+      const end = Math.min(range[2] ? Number(range[2]) : CLIP_BYTES.length - 1, CLIP_BYTES.length - 1);
+      if (start >= CLIP_BYTES.length || end < start) {
+        res.writeHead(416, { "Content-Range": `bytes */${CLIP_BYTES.length}` });
+        res.end();
+        return;
+      }
+      const part = CLIP_BYTES.subarray(start, end + 1);
+      res.writeHead(206, {
+        "Content-Type": "video/mp4",
+        "Accept-Ranges": "bytes",
+        "Content-Length": String(part.length),
+        "Content-Range": `bytes ${start}-${end}/${CLIP_BYTES.length}`,
+      });
+      res.end(part);
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": String(CLIP_BYTES.length) });
     res.end(CLIP_BYTES);
   });
   await new Promise<void>((resolve) => origin.listen(0, "127.0.0.1", resolve));
@@ -143,6 +162,39 @@ describe("GET /user-clips/:id/download", () => {
     expect(res.headers["content-type"]).toBe("video/mp4");
     expect(res.headers["content-length"]).toBe(String(CLIP_BYTES.length));
     expect(Buffer.compare(res.body as Buffer, CLIP_BYTES)).toBe(0);
+  });
+
+  it("serves an expired clip's retained export with full and ranged playback", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/clip.mp4`);
+    await db.update(userClipsTable).set({ exportStatus: "expired" }).where(eq(userClipsTable.id, clipId));
+    const parseBuffer = (r: any, cb: (error: Error | null, body: any) => void) => {
+      const chunks: Buffer[] = [];
+      r.on("data", (chunk: Buffer) => chunks.push(chunk));
+      r.on("end", () => cb(null, Buffer.concat(chunks)));
+    };
+
+    const full = await request(app).get(`/api/user-clips/${clipId}/playback`).buffer().parse(parseBuffer);
+    expect(full.status).toBe(200);
+    expect(full.body.length).toBe(CLIP_BYTES.length);
+    expect(Buffer.compare(full.body as Buffer, CLIP_BYTES)).toBe(0);
+
+    const range = await request(app).get(`/api/user-clips/${clipId}/playback`)
+      .set("Range", "bytes=100-199").buffer().parse(parseBuffer);
+    expect(range.status).toBe(206);
+    expect(range.headers["content-range"]).toBe(`bytes 100-199/${CLIP_BYTES.length}`);
+    expect(range.body.length).toBe(100);
+    expect(Buffer.compare(range.body as Buffer, CLIP_BYTES.subarray(100, 200))).toBe(0);
+  });
+
+  it("reports an expired clip with no source and no export as unavailable", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, null);
+    await db.update(userClipsTable).set({ exportStatus: "expired" }).where(eq(userClipsTable.id, clipId));
+
+    const res = await request(app).get(`/api/user-clips/${clipId}/export-status`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: "expired" });
   });
 
   it("streams a full export over 32 MiB without a fixed Content-Length", async () => {

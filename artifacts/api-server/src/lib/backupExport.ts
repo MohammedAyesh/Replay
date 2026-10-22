@@ -20,6 +20,9 @@
  * claude/export-failover-two-independent-renderers-2026-09-29.md.
  */
 import { logger } from "./logger";
+import http from "node:http";
+import https from "node:https";
+import { Readable } from "node:stream";
 import {
   BUNNY_STORAGE_API_KEY,
   BUNNY_STORAGE_HOSTNAME,
@@ -248,13 +251,41 @@ export async function fetchExportObject(
       localTestStorage = false;
     }
   }
-  if (!isBunnyStorageUrl(exportedUrl) && !localTestStorage) {
+  const trustedStorage = isBunnyStorageUrl(exportedUrl) || localTestStorage;
+  if (!trustedStorage) {
     return fetch(exportedUrl, { headers: opts.range ? { Range: opts.range } : {}, signal: opts.signal });
   }
   const headers: Record<string, string> = {};
   if (BUNNY_STORAGE_API_KEY) headers.AccessKey = BUNNY_STORAGE_API_KEY;
   if (opts.range) headers.Range = opts.range;
-  return fetch(exportedUrl, { headers, signal: opts.signal });
+  const mockedFetch = globalThis.fetch as typeof fetch & { mock?: unknown };
+  if (process.env.NODE_ENV === "test" && mockedFetch.mock) {
+    return mockedFetch(exportedUrl, { headers, signal: opts.signal });
+  }
+  const target = new URL(exportedUrl);
+  const transport = target.protocol === "https:" ? https : target.protocol === "http:" ? http : null;
+  if (!transport) throw new Error("Export URL must use HTTP or HTTPS");
+  return new Promise<Response>((resolve, reject) => {
+    let upstreamResponse: http.IncomingMessage | null = null;
+    const request = transport.request(target, { method: "GET", headers, signal: opts.signal }, (upstream) => {
+      upstreamResponse = upstream;
+      upstream.once("close", () => opts.signal?.removeEventListener("abort", destroyOnAbort));
+      const responseHeaders = new Headers();
+      for (const [name, value] of Object.entries(upstream.headers)) {
+        if (value != null) responseHeaders.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+      }
+      const status = upstream.statusCode ?? 502;
+      const body = status === 204 || status === 304 ? null : Readable.toWeb(upstream);
+      resolve(new Response(body, { status, headers: responseHeaders }));
+    });
+    const destroyOnAbort = () => {
+      upstreamResponse?.destroy();
+      request.destroy(new Error("Export fetch aborted"));
+    };
+    opts.signal?.addEventListener("abort", destroyOnAbort, { once: true });
+    request.once("error", reject);
+    request.end();
+  });
 }
 
 export type ExportProbe = {

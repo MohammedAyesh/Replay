@@ -100,6 +100,25 @@ import { canCreateClipFromVideo } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
+function readableFromUpstream(
+  body: ReadableStream<Uint8Array>,
+  onReader?: (reader: ReadableStreamDefaultReader<Uint8Array>) => void,
+): Readable {
+  const reader = body.getReader();
+  onReader?.(reader);
+  return Readable.from((async function* () {
+    try {
+      while (true) {
+        const part = await reader.read();
+        if (part.done) return;
+        yield Buffer.from(part.value);
+      }
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  })());
+}
+
 /** Clip IDs currently being rendered — prevents duplicate concurrent jobs. */
 const inFlight = new Set<number>();
 /** Fallback work claimed by this process while a vps1 handoff is settling. */
@@ -1975,7 +1994,13 @@ async function exportStatusFor(
     clip = { ...clip, exportStatus: "pending" };
     // A lost Method A file is re-rendered by Method A (Method B takes over if
     // that fails); a lost Method B file goes straight back to Method B.
-    if (!wasBackup && !primaryActive && isBunnyConfigured() && isBunnyStorageConfigured()) {
+    if (
+      !wasBackup
+      && !primaryActive
+      && BUNNY_VIDEO_GUID_RE.test(clip.videoId)
+      && isBunnyConfigured()
+      && isBunnyStorageConfigured()
+    ) {
       inFlight.add(clip.id);
       startBackgroundExport(clip);
       return { ...base, status: "pending", progress: "fetching", method: "primary" };
@@ -2428,11 +2453,11 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   const abort = new AbortController();
   let upstream: Response | null = null;
   let upstreamNodeStream: Readable | null = null;
+  let upstreamReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   const abortUpstream = () => {
-    logger.info({ clipId, finished: res.writableFinished }, "Download proxy downstream close observed");
     if (!abort.signal.aborted) abort.abort();
     upstreamNodeStream?.destroy();
-    void upstream?.body?.cancel().catch(() => {});
+    void upstreamReader?.cancel().catch(() => {});
   };
   req.on("aborted", abortUpstream);
   req.socket.on("close", abortUpstream);
@@ -2470,7 +2495,10 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
   forwardExportContentLength(res, upstream, false);
 
-  const nodeStream = Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>);
+  const nodeStream = readableFromUpstream(
+    upstream.body as ReadableStream<Uint8Array>,
+    (reader) => { upstreamReader = reader; },
+  );
   upstreamNodeStream = nodeStream;
   try {
     await pipeline(nodeStream, res);
