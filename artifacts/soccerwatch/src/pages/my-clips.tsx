@@ -39,11 +39,14 @@ import {
   formatQuotaLabel,
   exportStepLabel as describeExportStep,
   isQuotaExhausted,
-  reconcileExportState,
   type ExportStatusResponse,
   type DownloadQuota,
 } from "@/lib/downloadQuota";
-import { cachedExportFallback, checkInitialExportStatus } from "@/lib/exportStatusCheck";
+import {
+  cachedExportFallback,
+  checkInitialExportStatus,
+  resolveInitialExportStatus,
+} from "@/lib/exportStatusCheck";
 import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send } from "lucide-react";
 
 /** How long to wait for the branding intro to actually start before skipping it. */
@@ -626,29 +629,27 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         return;
       }
 
-      const next = reconcileExportState(status);
-      if (next.state === "ready" && next.url) {
-        setExportedUrl(next.url);
+      const resolution = resolveInitialExportStatus(status);
+      if (resolution.state === "ready") {
+        setExportedUrl(resolution.url);
         setExportState("ready");
         return;
       }
-      if (next.state === "unavailable") {
+      if (resolution.state === "unavailable") {
         setExportState("unavailable");
         return;
       }
-      if (status.status === "unverified") {
+      if (resolution.state === "idle") {
         setExportState("idle");
         return;
       }
-      if (next.resume) {
-        setExportState("polling");
-        if (next.label) setExportStepLabel(next.label);
-        pollingRef.current = true;
-        void pollUntilSettled(false).catch(() => {
-          pollingRef.current = false;
-          setExportState("idle");
-        });
-      }
+      setExportState("polling");
+      if (resolution.label) setExportStepLabel(resolution.label);
+      pollingRef.current = true;
+      void pollUntilSettled(false).catch(() => {
+        pollingRef.current = false;
+        setExportState("idle");
+      });
     })();
     return () => { cancelled = true; };
   }, [clip.id, clip.exportStatus, clip.exportedUrl, pollUntilSettled]);

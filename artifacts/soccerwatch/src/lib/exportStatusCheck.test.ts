@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cachedExportFallback, checkInitialExportStatus } from "./exportStatusCheck";
+import {
+  cachedExportFallback,
+  checkInitialExportStatus,
+  resolveInitialExportStatus,
+} from "./exportStatusCheck";
 
 function jsonResponse(body: unknown, ok = true): Response {
   return { ok, json: async () => body } as Response;
@@ -53,5 +57,12 @@ describe("initial export-status check", () => {
     const status = await checkInitialExportStatus(async () =>
       jsonResponse({ status: "done", url: "https://cdn.test/clip.mp4" }));
     expect(status).toEqual({ status: "done", url: "https://cdn.test/clip.mp4" });
+  });
+
+  it.each([
+    { status: "error" },
+    { status: "done", url: null },
+  ])("settles $status without a usable URL to idle", (status) => {
+    expect(resolveInitialExportStatus(status)).toEqual({ state: "idle" });
   });
 });
