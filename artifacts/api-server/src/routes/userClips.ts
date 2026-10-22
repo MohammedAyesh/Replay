@@ -74,6 +74,7 @@ import {
   isBackupExportConfigured,
   isBackupExportRef,
   isExportReachable,
+  probeExportObject,
 } from "../lib/backupExport";
 import {
   BACKUP_UNREACHABLE_GIVE_UP_MS,
@@ -844,15 +845,17 @@ async function runBackgroundExport(
         );
       }
       if (classifyPortfolioSourceError(err) === "expired") {
-        // The recording itself is gone from Bunny Stream. Method B reads the
-        // same recording, so there is nothing to fail over to.
-        await db
-          .update(userClipsTable)
-          .set({ exportStatus: "expired" })
-          .where(and(
-            eq(userClipsTable.id, clipId),
-            inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
-          ));
+        const probe = clip.exportedUrl ? await probeExportObject(clip.exportedUrl) : { state: "missing" as const, url: "", bytes: null };
+        if (probe.state === "exists") {
+          await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
+            .where(and(eq(userClipsTable.id, clipId), inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK])));
+        } else if (probe.state === "missing") {
+          await db.update(userClipsTable).set({ exportStatus: "expired" })
+            .where(and(eq(userClipsTable.id, clipId), inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK])));
+        } else {
+          await db.update(userClipsTable).set({ exportStatus: "error" })
+            .where(and(eq(userClipsTable.id, clipId), inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK])));
+        }
       } else {
         await failOverToBackup(clip, overlayUrlForBackup, err, options.exportRevision);
       }
@@ -1051,12 +1054,15 @@ function startMissingExportBackfill(intervalMs = 10 * 60_000): () => void {
           await getBunnyVideoInfo(clip.videoId);
         } catch (err) {
           if (classifyPortfolioSourceError(err) === "expired") {
-            await db.update(userClipsTable)
-              .set({ exportStatus: "expired" })
-              .where(and(
-                eq(userClipsTable.id, clip.id),
-                or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
-              ));
+            const probe = clip.exportedUrl ? await probeExportObject(clip.exportedUrl) : { state: "missing" as const, url: "", bytes: null };
+            if (probe.state !== "unverified") {
+              await db.update(userClipsTable)
+                .set(probe.state === "exists" ? { exportStatus: "done", exportedUrl: probe.url } : { exportStatus: "expired" })
+                .where(and(
+                  eq(userClipsTable.id, clip.id),
+                  or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+                ));
+            }
           } else {
             logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
           }
@@ -1797,6 +1803,26 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Live stream clips cannot be exported. The recording must be uploaded to Bunny Stream first." });
     return;
   }
+  if (clip.exportedUrl) {
+    const probe = await probeExportObject(clip.exportedUrl);
+    if (probe.state === "exists") {
+      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
+        .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+      res.json({ status: "done", url: probe.url });
+      return;
+    }
+    if (probe.state === "unverified") {
+      res.status(503).json({ status: "unverified", reason: "Export availability could not be verified." });
+      return;
+    }
+    if (clip.exportStatus === "expired") {
+      res.status(410).json({ status: "expired", error: "This clip is no longer available." });
+      return;
+    }
+  } else if (clip.exportStatus === "expired") {
+    res.status(410).json({ status: "expired", error: "This clip is no longer available." });
+    return;
+  }
   // Already exported — return the cached URL immediately (no re-render)
   if (clip.exportStatus === "done" && clip.exportedUrl) {
     res.json({ status: "done", url: clip.exportedUrl });
@@ -1923,10 +1949,20 @@ async function exportStatusFor(
     backupStage: null,
   } as const;
 
-  if (clip.exportStatus === "done" && clip.exportedUrl) {
-    if (!opts.verify || await isExportReachable(clip.exportedUrl)) {
-      return { ...base, status: "done", url: clip.exportedUrl };
+  if (clip.exportedUrl && (clip.exportStatus !== "done" || opts.verify)) {
+    const probe = await probeExportObject(clip.exportedUrl);
+    if (probe.state === "exists") {
+      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
+        .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+      return { ...base, status: "done", url: probe.url };
     }
+    if (probe.state === "unverified") {
+      return { ...base, status: "error", reason: "unverified" };
+    }
+    if (clip.exportStatus === "expired") return { ...base, status: "error", reason: "expired" };
+  }
+  if (clip.exportStatus === "done" && clip.exportedUrl) {
+    if (!opts.verify) return { ...base, status: "done", url: clip.exportedUrl };
     // The file is gone (deleted from storage, vps1 retention) or its host is
     // down. Re-render it rather than hand the user a failed download.
     const wasBackup = isBackupExportRef(clip.exportedUrl);
@@ -2288,6 +2324,21 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Export not ready" });
     return;
   }
+  if (clip.exportStatus === "expired") {
+    const probe = await probeExportObject(clip.exportedUrl);
+    if (probe.state === "exists") {
+      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
+        .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+      clip.exportStatus = "done";
+      clip.exportedUrl = probe.url;
+    } else if (probe.state === "missing") {
+      res.status(410).json({ error: "This clip is no longer available.", unavailable: true });
+      return;
+    } else {
+      res.status(503).json({ error: "Export availability could not be verified. Please try again later.", retry: false });
+      return;
+    }
+  }
 
   // ── the free tier's rolling allowance ───────────────────────────────────
   const now = new Date();
@@ -2342,7 +2393,11 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
     // row that fails every download; the client sees "pending" and waits.
     if (!abort.signal.aborted) {
       logger.error({ clipId, status: upstream?.status ?? null }, "Finished export unavailable — re-rendering");
-      await exportStatusFor(clip, { verify: true }).catch(() => {});
+      const recovery = await exportStatusFor(clip, { verify: true }).catch(() => null);
+      if (clip.exportStatus === "expired" && recovery?.reason === "expired") {
+        if (!res.headersSent) res.status(410).json({ error: "This clip is no longer available.", unavailable: true });
+        return;
+      }
       if (!res.headersSent) res.status(503).json({ error: "Your clip is being prepared again. Try in a minute.", retry: true });
     }
     return;

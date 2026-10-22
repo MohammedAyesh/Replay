@@ -236,13 +236,53 @@ export async function fetchExportObject(
       signal: opts.signal ?? AbortSignal.timeout(10 * 60_000),
     });
   }
-  // exported_url is only ever written by this server (Method A's upload), so
-  // it is trusted the way the download route always trusted it: the storage
-  // key goes with it. The control key never does.
+  // Never send the Storage AccessKey to an arbitrary URL from a database row.
+  if (!isBunnyStorageUrl(exportedUrl)) {
+    return fetch(exportedUrl, { headers: opts.range ? { Range: opts.range } : {}, signal: opts.signal });
+  }
   const headers: Record<string, string> = {};
   if (BUNNY_STORAGE_API_KEY) headers.AccessKey = BUNNY_STORAGE_API_KEY;
   if (opts.range) headers.Range = opts.range;
   return fetch(exportedUrl, { headers, signal: opts.signal });
+}
+
+export type ExportProbe = {
+  state: "exists" | "missing" | "unverified";
+  bytes: number | null;
+  url: string;
+};
+
+/** Verify an existing export without downloading its body. 404 is definitive;
+ * auth errors, outages, and missing credentials are deliberately unverified. */
+export async function probeExportObject(exportedUrl: string): Promise<ExportProbe> {
+  let url = exportedUrl;
+  const job = backupJobFromRef(exportedUrl);
+  if (job) {
+    try {
+      const status = await getBackupExportStatus(job);
+      if (status?.status === "ready") url = validatedBackupStorageUrl(status) ?? exportedUrl;
+    } catch {
+      // A control-service outage does not prove that the backup file is gone.
+    }
+  } else if (isBunnyStorageUrl(exportedUrl) && !BUNNY_STORAGE_API_KEY) {
+    return { state: "unverified", bytes: null, url };
+  }
+  if (isBunnyStorageUrl(url) && !BUNNY_STORAGE_API_KEY) {
+    return { state: "unverified", bytes: null, url };
+  }
+
+  try {
+    const res = await fetchExportObject(url, { range: "bytes=0-0", signal: AbortSignal.timeout(15_000) });
+    const range = res.headers.get("content-range")?.match(/\/(\d+)$/);
+    const length = res.headers.get("content-length");
+    const bytes = range ? Number(range[1]) : length && res.status === 200 ? Number(length) : null;
+    await res.body?.cancel().catch(() => {});
+    if (res.status === 200 || res.status === 206) return { state: "exists", bytes, url };
+    if (res.status === 404) return { state: "missing", bytes: null, url };
+    return { state: "unverified", bytes: null, url };
+  } catch {
+    return { state: "unverified", bytes: null, url };
+  }
 }
 
 /**
