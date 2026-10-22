@@ -43,6 +43,7 @@ import {
   type ExportStatusResponse,
   type DownloadQuota,
 } from "@/lib/downloadQuota";
+import { cachedExportFallback, checkInitialExportStatus } from "@/lib/exportStatusCheck";
 import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send } from "lucide-react";
 
 /** How long to wait for the branding intro to actually start before skipping it. */
@@ -89,7 +90,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const [isPlaying, setIsPlaying] = useState(false);
   const [landscape, setLandscape] = useState(() => isLandscape());
   const [exportState, setExportState] = useState<ExportState>(
-    clip.exportedUrl ? "checking" : clip.exportStatus === "expired" ? "unavailable" : "idle"
+    clip.exportedUrl ? "checking" : "idle"
   );
   const [exportedUrl, setExportedUrl] = useState<string | null>(clip.exportedUrl ?? null);
   /** User-friendly step label shown inside the export button while polling. */
@@ -616,42 +617,41 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      try {
-        const res = await fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include" });
-        if (!res.ok || cancelled) return;
-        const status = await res.json() as ExportStatusResponse;
-        if (cancelled) return;
+      const status = await checkInitialExportStatus((signal) =>
+        fetch(`/api/user-clips/${clip.id}/export-status`, { credentials: "include", signal })
+      );
+      if (cancelled) return;
+      if (!status) {
+        setExportState(cachedExportFallback(clip.exportStatus, clip.exportedUrl));
+        return;
+      }
 
-        const next = reconcileExportState(status);
-        if (next.state === "ready" && next.url) {
-          setExportedUrl(next.url);
-          setExportState("ready");
-          return;
-        }
-        if (next.state === "unavailable") {
-          setExportState("unavailable");
-          return;
-        }
-        if (status.status === "unverified") {
+      const next = reconcileExportState(status);
+      if (next.state === "ready" && next.url) {
+        setExportedUrl(next.url);
+        setExportState("ready");
+        return;
+      }
+      if (next.state === "unavailable") {
+        setExportState("unavailable");
+        return;
+      }
+      if (status.status === "unverified") {
+        setExportState("idle");
+        return;
+      }
+      if (next.resume) {
+        setExportState("polling");
+        if (next.label) setExportStepLabel(next.label);
+        pollingRef.current = true;
+        void pollUntilSettled(false).catch(() => {
+          pollingRef.current = false;
           setExportState("idle");
-          return;
-        }
-        if (next.resume) {
-          setExportState("polling");
-          if (next.label) setExportStepLabel(next.label);
-          pollingRef.current = true;
-          void pollUntilSettled(false).catch(() => {
-            pollingRef.current = false;
-            setExportState("idle");
-          });
-        }
-      } catch {
-        // Offline or a transient failure: leave the seeded state as it was
-        // rather than blanking a button the user may be about to press.
+        });
       }
     })();
     return () => { cancelled = true; };
-  }, [clip.id, pollUntilSettled]);
+  }, [clip.id, clip.exportStatus, clip.exportedUrl, pollUntilSettled]);
 
   const handleExport = useCallback(async () => {
     if (exportState === "polling" || exportState === "checking" || exportState === "unavailable") return;
@@ -660,7 +660,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     // This sits before the try/catch below, so an offline tap or an expired
     // Bunny asset used to surface as an unhandled rejection: no toast, no
     // spinner, nothing at all happened.
-    if (exportState === "ready" && exportedUrl) {
+    if ((exportState === "ready" || exportState === "idle") && exportedUrl) {
       try {
         // A "ready" button can be days old. Check the file is still there; if
         // it is not, the server has started re-rendering it and we wait.
