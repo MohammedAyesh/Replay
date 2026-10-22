@@ -237,8 +237,18 @@ export async function fetchExportObject(
       signal: opts.signal ?? AbortSignal.timeout(10 * 60_000),
     });
   }
-  // Never send the Storage AccessKey to an arbitrary URL from a database row.
-  if (!isBunnyStorageUrl(exportedUrl)) {
+  // A loopback server is an allowed Storage stand-in in tests; never send the
+  // production AccessKey to an arbitrary remote URL from a database row.
+  let localTestStorage = false;
+  if (process.env.NODE_ENV === "test") {
+    try {
+      const host = new URL(exportedUrl).hostname;
+      localTestStorage = host === "localhost" || host === "127.0.0.1" || host === "::1";
+    } catch {
+      localTestStorage = false;
+    }
+  }
+  if (!isBunnyStorageUrl(exportedUrl) && !localTestStorage) {
     return fetch(exportedUrl, { headers: opts.range ? { Range: opts.range } : {}, signal: opts.signal });
   }
   const headers: Record<string, string> = {};

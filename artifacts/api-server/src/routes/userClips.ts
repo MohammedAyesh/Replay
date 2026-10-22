@@ -2426,9 +2426,17 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   // a viewer closing the tab leaves the Bunny response body draining into a
   // detached stream for the length of the file.
   const abort = new AbortController();
-  res.on("close", () => abort.abort());
-
   let upstream: Response | null = null;
+  let upstreamNodeStream: Readable | null = null;
+  const abortUpstream = () => {
+    if (!abort.signal.aborted) abort.abort();
+    upstreamNodeStream?.destroy();
+    void upstream?.body?.cancel().catch(() => {});
+  };
+  req.on("aborted", abortUpstream);
+  res.on("close", abortUpstream);
+  res.socket?.on("close", abortUpstream);
+
   try {
     // Either method's file: Bunny Storage for Method A, vps1 for Method B.
     upstream = await fetchExportObject(clip.exportedUrl, { signal: abort.signal });
@@ -2461,6 +2469,7 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   forwardExportContentLength(res, upstream, false);
 
   const nodeStream = Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>);
+  upstreamNodeStream = nodeStream;
   try {
     await pipeline(nodeStream, res);
   } catch (err) {
