@@ -121,6 +121,15 @@ describe("what makes a shot a shot (rec 394)", () => {
     expect(detectedShots([{ type: "shot", t: 100 }], [], pitch, { ball })).toEqual([]);
   });
 
+  it("drops a fast step when its earlier sample is before the look window", () => {
+    const ball: BallPoint[] = [
+      { t: 98.4, p: [10, 10] },
+      { t: 98.6, p: [11.6, 10] },
+      ...Array.from({ length: 17 }, (_, i) => ({ t: 98.7 + i * 0.1, p: [11.6, 10] as [number, number] })),
+    ];
+    expect(detectedShots([{ type: "shot", t: 100 }], [], pitch, { ball })).toEqual([]);
+  });
+
   it("drops events outside in-play spans and treats missing spans as unrestricted", () => {
     expect(detectedShots([{ type: "shot", t: 99.9 }], [], pitch, {
       ball: movingBall(99.9),

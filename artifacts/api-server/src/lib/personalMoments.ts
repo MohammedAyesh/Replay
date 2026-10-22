@@ -19,6 +19,7 @@ import type { ChainEarnedClip } from "./claimChainState";
 import {
   goalContext,
   shotContext,
+  inSpans,
   detectedGoals,
   detectedShots,
   pitchSizeOf,
@@ -41,6 +42,8 @@ export const PERSONAL = {
   maxShots: 5,
   maxDribbles: 6,
   maxPasses: 4,
+  /** a dribble moment is a won take-on over a short run, metres */
+  dribbleMaxMetres: 12,
   /** a pass has to travel this far to be worth a clip, metres */
   longPassMetres: 12,
   /** half the clip, seconds (ensureClaimMomentUserClip cuts +/- 8 s) */
@@ -149,9 +152,10 @@ export function personalMoments(
   const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
   const shots = detectedShots(play.events, play.touches, pitch, shotContext(play));
   const own = playerMoments(parts, play.dribbles, goals, shots);
+  const live = (t: number) => inSpans(play.inPlay, t);
   const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions);
   const passes = playerPlay(play.touches, passEvents(play.touches, pick), parts, Boolean(pick)).passes
-    .filter((p) => p.give && p.completed && p.metres >= PERSONAL.longPassMetres)
+    .filter((p) => p.give && p.completed && p.metres >= PERSONAL.longPassMetres && live(p.t0))
     .sort((a, b) => b.metres - a.metres)
     .slice(0, PERSONAL.maxPasses);
   const follow = (t: number) => followPath(parts, segments, manifest, t);
@@ -163,11 +167,11 @@ export function personalMoments(
     if (own.goals.some((g) => Math.abs(g.t - s.t) < 10)) continue;
     moments.push({ id: `me-shot-${Math.round(s.t)}`, title: `Your shot on target · ${clock(s.t)}`, momentSeconds: s.t, kind: "your-shot", status: "ready", follow: follow(s.t) });
   }
-  // successful dribbles first, then the ones nobody touched after; the best
-  // are the ones past the most people over the longest run
+  // Only won take-ons over short runs make moments; favour the most beaten,
+  // then the longest run.
   const runs = own.dribbles
-    .filter((d) => d.outcome !== "lost")
-    .sort((a, b) => (a.outcome === "won" ? 0 : 1) - (b.outcome === "won" ? 0 : 1) || b.beaten - a.beaten || (b.metres ?? 0) - (a.metres ?? 0))
+    .filter((d) => d.outcome === "won" && d.metres !== null && d.metres <= PERSONAL.dribbleMaxMetres && live(d.t0))
+    .sort((a, b) => b.beaten - a.beaten || b.metres! - a.metres!)
     .slice(0, PERSONAL.maxDribbles);
   for (const d of runs) {
     const t = (d.t0 + d.t1) / 2;

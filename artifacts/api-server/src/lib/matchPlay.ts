@@ -1436,6 +1436,7 @@ export function detectedShots(
       const hasShotStep = ball.some((sample, i) => {
         if (i === 0 || sample.t < from || sample.t > to) return false;
         const previous = ball[i - 1];
+        if (previous.t < from) return false;
         const dt = sample.t - previous.t;
         if (dt <= 0 || dt > SHOT.maxStepSeconds) return false;
         const speed = Math.hypot(sample.p[0] - previous.p[0], sample.p[1] - previous.p[1]) / dt;
