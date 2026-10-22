@@ -35,6 +35,7 @@ import {
   isBackupExportConfigured,
   validatedBackupStorageUrl,
   submitBackupExport,
+  probeExportObject,
   type BackupExportSpec,
   type BackupExportStatus,
 } from "./backupExport";
@@ -206,6 +207,18 @@ async function reconcileUncached(
     }
     case "expired":
     case "error": {
+      if (action === "expired" && clip.exportedUrl) {
+        const exportProbe = await probeExportObject(clip.exportedUrl);
+        if (exportProbe.state === "exists") {
+          await db.update(userClipsTable)
+            .set({ exportStatus: "done", exportedUrl: exportProbe.url })
+            .where(eq(userClipsTable.id, clip.id));
+          return { state: "done", url: exportProbe.url };
+        }
+        if (exportProbe.state === "unverified") {
+          return { state: "unavailable", reason: "Existing export could not be verified", since: Date.now() };
+        }
+      }
       const exportStatus = action === "expired" ? "expired" : "error";
       handedOff.delete(clip.id);
       if (!opts.primaryActive) {

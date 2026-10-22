@@ -39,7 +39,7 @@ import {
   getBunnyVideoReadiness,
   BunnyVideoNotFoundError,
 } from "../lib/bunny";
-import { fetchExportObject, forwardExportContentLength } from "../lib/backupExport";
+import { fetchExportObject, forwardExportContentLength, probeExportObject } from "../lib/backupExport";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import {
@@ -61,6 +61,25 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
   if (!user?.isAdmin) return null;
 
   return userId;
+}
+
+async function expireSourceClipWithoutLosingExport(
+  clip: typeof userClipsTable.$inferSelect,
+): Promise<typeof userClipsTable.$inferSelect> {
+  if (clip.exportedUrl) {
+    const probe = await probeExportObject(clip.exportedUrl);
+    if (probe.state === "exists") {
+      await db.update(userClipsTable)
+        .set({ exportStatus: "done", exportedUrl: probe.url })
+        .where(eq(userClipsTable.id, clip.id));
+      return { ...clip, exportStatus: "done", exportedUrl: probe.url };
+    }
+    if (probe.state === "unverified") return clip;
+  }
+  await db.update(userClipsTable)
+    .set({ exportStatus: "expired" })
+    .where(eq(userClipsTable.id, clip.id));
+  return { ...clip, exportStatus: "expired" };
 }
 
 async function validateAdminRoleChange(
@@ -373,12 +392,10 @@ async function checkAdminClipSource(clipId: number): Promise<{
     }
 
     const reason = `Bunny Stream source is not ready (status ${readiness.status ?? "unknown"}).`;
-    await db.update(userClipsTable)
-      .set({ exportStatus: "expired" })
-      .where(eq(userClipsTable.id, clipId));
+    const updatedClip = await expireSourceClipWithoutLosingExport(clip);
     rememberAdminClipFailure(clipId, reason);
     return {
-      clip: { ...clip, exportStatus: "expired" },
+      clip: updatedClip,
       result: {
         clipId,
         sourceStatus: "expired",
@@ -389,12 +406,10 @@ async function checkAdminClipSource(clipId: number): Promise<{
   } catch (err) {
     if (err instanceof BunnyVideoNotFoundError) {
       const reason = "Bunny Stream source was not found.";
-      await db.update(userClipsTable)
-        .set({ exportStatus: "expired" })
-        .where(eq(userClipsTable.id, clipId));
+      const updatedClip = await expireSourceClipWithoutLosingExport(clip);
       rememberAdminClipFailure(clipId, reason);
       return {
-        clip: { ...clip, exportStatus: "expired" },
+        clip: updatedClip,
         result: {
           clipId,
           sourceStatus: "expired",

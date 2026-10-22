@@ -22,6 +22,7 @@
 import { logger } from "./logger";
 import {
   BUNNY_STORAGE_API_KEY,
+  BUNNY_STORAGE_HOSTNAME,
   BUNNY_STORAGE_ZONE,
   isBunnyStorageUrl,
 } from "./bunny";
@@ -254,35 +255,65 @@ export type ExportProbe = {
 
 /** Verify an existing export without downloading its body. 404 is definitive;
  * auth errors, outages, and missing credentials are deliberately unverified. */
-export async function probeExportObject(exportedUrl: string): Promise<ExportProbe> {
-  let url = exportedUrl;
-  const job = backupJobFromRef(exportedUrl);
-  if (job) {
-    try {
-      const status = await getBackupExportStatus(job);
-      if (status?.status === "ready") url = validatedBackupStorageUrl(status) ?? exportedUrl;
-    } catch {
-      // A control-service outage does not prove that the backup file is gone.
+export async function probeExportObject(
+  exportedUrl: string,
+  options: { fetcher?: typeof fetch; storageApiKey?: string } = {},
+): Promise<ExportProbe> {
+  const fetcher = options.fetcher ?? fetch;
+  const storageKey = options.storageApiKey ?? BUNNY_STORAGE_API_KEY;
+  const inspect = async (url: string): Promise<ExportProbe> => {
+    if (isBunnyStorageUrl(url) && !storageKey) {
+      return { state: "unverified", bytes: null, url };
     }
-  } else if (isBunnyStorageUrl(exportedUrl) && !BUNNY_STORAGE_API_KEY) {
-    return { state: "unverified", bytes: null, url };
+    try {
+      const headers: Record<string, string> = { Range: "bytes=0-0" };
+      if (isBunnyStorageUrl(url) && storageKey) headers.AccessKey = storageKey;
+      const res = await fetcher(url, { headers, signal: AbortSignal.timeout(15_000) });
+      const range = res.headers.get("content-range")?.match(/\/(\d+)$/);
+      const length = res.headers.get("content-length");
+      const bytes = range ? Number(range[1]) : length && res.status === 200 ? Number(length) : null;
+      await res.body?.cancel().catch(() => {});
+      if (res.status === 200 || res.status === 206) return { state: "exists", bytes, url };
+      if (res.status === 404) return { state: "missing", bytes: null, url };
+      return { state: "unverified", bytes: null, url };
+    } catch {
+      return { state: "unverified", bytes: null, url };
+    }
+  };
+
+  const job = backupJobFromRef(exportedUrl);
+  if (!job) return inspect(exportedUrl);
+
+  // Prefer the permanent Storage object, even if an older vps1 status response
+  // omitted storageUrl. The object path is deterministic from the validated job.
+  let storageUrl: string | null = null;
+  try {
+    const status = await getBackupExportStatus(job);
+    if (status?.status === "ready") storageUrl = validatedBackupStorageUrl(status);
+  } catch {
+    // The deterministic object path can still be checked during a control API outage.
   }
-  if (isBunnyStorageUrl(url) && !BUNNY_STORAGE_API_KEY) {
-    return { state: "unverified", bytes: null, url };
+  if (!storageUrl && BUNNY_STORAGE_ZONE) {
+    storageUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/clips/${job}.mp4`;
   }
 
+  const storageResult = storageUrl ? await inspect(storageUrl) : { state: "missing" as const, bytes: null, url: exportedUrl };
+  if (storageResult.state === "exists") return storageResult;
+
+  // The vps1 endpoint remains a valid serving path while Storage is unavailable
+  // or before its copy finishes. It must be verified separately before expiry.
   try {
-    const res = await fetchExportObject(url, { range: "bytes=0-0", signal: AbortSignal.timeout(15_000) });
+    const res = await fetchExportObject(exportedUrl, { range: "bytes=0-0" });
     const range = res.headers.get("content-range")?.match(/\/(\d+)$/);
     const length = res.headers.get("content-length");
     const bytes = range ? Number(range[1]) : length && res.status === 200 ? Number(length) : null;
     await res.body?.cancel().catch(() => {});
-    if (res.status === 200 || res.status === 206) return { state: "exists", bytes, url };
-    if (res.status === 404) return { state: "missing", bytes: null, url };
-    return { state: "unverified", bytes: null, url };
+    if (res.status === 200 || res.status === 206) return { state: "exists", bytes, url: exportedUrl };
+    if (res.status === 404 && storageResult.state === "missing") return { state: "missing", bytes: null, url: exportedUrl };
   } catch {
-    return { state: "unverified", bytes: null, url };
+    // Keep the Storage result below; a failed backup request is not a 404.
   }
+  return { state: "unverified", bytes: null, url: exportedUrl };
 }
 
 /**

@@ -145,7 +145,7 @@ export function exportStepLabel(status: ExportStatusResponse): string {
 }
 
 export interface ExportReconciliation {
-  state: "idle" | "polling" | "ready";
+  state: "idle" | "polling" | "ready" | "unavailable";
   url: string | null;
   /** Button label while polling; null when the state carries its own. */
   label: string | null;
@@ -180,6 +180,9 @@ export function reconcileExportState(status: ExportStatusResponse | null): Expor
       label: exportStepLabel(status),
       resume: true,
     };
+  }
+  if (status.status === "expired" || status.status === "unavailable") {
+    return { state: "unavailable", url: null, label: null, resume: false };
   }
   // "error" and "idle" both land here: the render is not running, so the button
   // goes back to something the user can press.

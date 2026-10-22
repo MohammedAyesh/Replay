@@ -73,7 +73,7 @@ function formatTime(seconds: number): string {
 /*  Player overlay for user-created clips                               */
 /* ------------------------------------------------------------------ */
 
-type ExportState = "idle" | "polling" | "ready" | "error";
+type ExportState = "idle" | "checking" | "polling" | "ready" | "error" | "unavailable";
 
 function isLandscape() {
   return window.innerWidth > window.innerHeight;
@@ -89,7 +89,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const [isPlaying, setIsPlaying] = useState(false);
   const [landscape, setLandscape] = useState(() => isLandscape());
   const [exportState, setExportState] = useState<ExportState>(
-    clip.exportStatus === "done" ? "ready" : "idle"
+    clip.exportedUrl ? "checking" : clip.exportStatus === "expired" ? "unavailable" : "idle"
   );
   const [exportedUrl, setExportedUrl] = useState<string | null>(clip.exportedUrl ?? null);
   /** User-friendly step label shown inside the export button while polling. */
@@ -107,6 +107,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   /** Set to false on unmount to abort the polling loop. */
   const pollingRef = useRef(false);
   const [isLocal, setIsLocal] = useState(false);
+  const serverExportPlayback = exportState === "ready" && !!exportedUrl && !isLocal;
+  const serverExportPlaybackUrl = serverExportPlayback ? `/api/user-clips/${clip.id}/playback` : null;
   /**
    * Two-phase playback: play the academy's branding intro (if this clip has
    * one) before the real clip. Skipped entirely for local blobs — those are
@@ -118,8 +120,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     setPhase(clip.introVideoUrl ? "intro" : "main");
   }, [clip.id, clip.introVideoUrl]);
   useEffect(() => {
-    if (isLocal) setPhase("main");
-  }, [isLocal]);
+    if (isLocal || serverExportPlayback) setPhase("main");
+  }, [isLocal, serverExportPlayback]);
   /**
    * Local blobs are already trimmed+cropped (they start at t=0 and run to clipDuration).
    * localTimingOverride tracks this: when set, use these fractions instead of clip.startTime/endTime
@@ -143,8 +145,8 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   const keyframes = clip.cropPath ?? [];
 
   // Effective timing: use override for local blobs, raw clip fractions for HLS
-  const lStart = isLocal ? (localTimingOverride?.start ?? 0) : clip.startTime;
-  const lEnd   = isLocal ? (localTimingOverride?.end   ?? 1) : clip.endTime;
+  const lStart = isLocal || (exportState === "ready" && !!exportedUrl) ? (localTimingOverride?.start ?? 0) : clip.startTime;
+  const lEnd   = isLocal || (exportState === "ready" && !!exportedUrl) ? (localTimingOverride?.end ?? 1) : clip.endTime;
 
   /* Check IndexedDB for local copy on mount */
   useEffect(() => {
@@ -193,7 +195,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   /* Intro playback — the academy's branding intro, before the real clip. */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || phase !== "intro" || !clip.introVideoUrl || isLocal) return;
+    if (!video || phase !== "intro" || !clip.introVideoUrl || isLocal || serverExportPlayback) return;
 
     let cancelled = false;
     video.pause();
@@ -236,12 +238,37 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       video.removeEventListener("stalled", advanceToMain);
       video.removeEventListener("abort", advanceToMain);
     };
-  }, [phase, clip.id, clip.introVideoUrl, isLocal]);
+  }, [phase, clip.id, clip.introVideoUrl, isLocal, serverExportPlayback]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !serverExportPlaybackUrl || phase !== "main") return;
+    if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+    video.pause();
+    video.src = serverExportPlaybackUrl;
+    video.load();
+    let started = false;
+    const start = () => {
+      if (started || !(video.duration > 0 && Number.isFinite(video.duration))) return;
+      started = true;
+      video.currentTime = 0;
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
+    };
+    video.addEventListener("loadedmetadata", start);
+    video.addEventListener("durationchange", start);
+    return () => {
+      video.removeEventListener("loadedmetadata", start);
+      video.removeEventListener("durationchange", start);
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [serverExportPlaybackUrl, phase]);
 
   /* HLS init — only if no local copy and the intro (if any) has finished */
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !clip.playbackUrl || isLocal || phase !== "main") return;
+    if (!video || !clip.playbackUrl || isLocal || serverExportPlayback || phase !== "main") return;
 
     let didSeek = false;
     function seekToStartAndPlay() {
@@ -272,7 +299,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       video.removeEventListener("durationchange", seekToStartAndPlay);
       if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
     };
-  }, [clip.playbackUrl, clip.startTime, phase, isLocal]);
+  }, [clip.playbackUrl, clip.startTime, phase, isLocal, serverExportPlayback]);
 
   /**
    * Pan loop. Writes the interpolated crop frame straight to the video element's
@@ -286,7 +313,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   useEffect(() => {
     const tick = () => {
       const video = videoRef.current;
-      if (!video || keyframes.length === 0 || isLocal) {
+      if (!video || keyframes.length === 0 || isLocal || serverExportPlayback) {
         rafRef.current = requestAnimationFrame(tick);
         return;
       }
@@ -307,7 +334,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [keyframes, lStart, lEnd, isLocal, clip.aspectRatio]);
+  }, [keyframes, lStart, lEnd, isLocal, serverExportPlayback, clip.aspectRatio]);
 
   /* Auto-stop when clip window ends — read duration live from the element */
   useEffect(() => {
@@ -564,6 +591,11 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         if (deliverWhenDone) await deliverViaProxy();
         return;
       }
+      if (status.status === "expired") {
+        pollingRef.current = false;
+        setExportState("unavailable");
+        return;
+      }
       if (status.status === "error") throw new Error("Both export methods failed");
       // still pending — keep polling
     }
@@ -596,6 +628,14 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
           setExportState("ready");
           return;
         }
+        if (next.state === "unavailable") {
+          setExportState("unavailable");
+          return;
+        }
+        if (status.status === "unverified") {
+          setExportState("idle");
+          return;
+        }
         if (next.resume) {
           setExportState("polling");
           if (next.label) setExportStepLabel(next.label);
@@ -614,7 +654,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   }, [clip.id, pollUntilSettled]);
 
   const handleExport = useCallback(async () => {
-    if (exportState === "polling") return;
+    if (exportState === "polling" || exportState === "checking" || exportState === "unavailable") return;
 
     // Already exported — re-deliver without re-rendering.
     // This sits before the try/catch below, so an offline tap or an expired
@@ -627,6 +667,10 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         const verified = await fetch(`/api/user-clips/${clip.id}/export-status?verify=1`, { credentials: "include" })
           .then((r) => (r.ok ? r.json() as Promise<ExportStatusResponse> : null))
           .catch(() => null);
+        if (verified?.status === "expired") {
+          setExportState("unavailable");
+          return;
+        }
         if (verified && verified.status === "pending") {
           setExportState("polling");
           setExportStepLabel(describeExportStep(verified));
@@ -660,6 +704,10 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       });
 
       if (!startRes.ok) {
+        if (startRes.status === 410) {
+          setExportState("unavailable");
+          return;
+        }
         // Bunny storage not configured — fall back to client-side capture
         const result = await exportClip({
           playbackUrl: clip.playbackUrl,
@@ -729,13 +777,18 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
             <SharedClipVideo
               ref={videoRef}
               className="pointer-events-none"
-              style={isLocal
+              style={isLocal || serverExportPlayback
                 ? { position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain" }
                 : frameToVideoStyle(interpolateFrame(keyframes, 0))}
               playsInline
               loop={false}
               muted={false}
             />
+            {exportState === "unavailable" && (
+              <div role="status" className="absolute inset-0 z-20 flex items-center justify-center bg-black/75 px-6 text-center text-white">
+                This clip is no longer available
+              </div>
+            )}
             {/* Tap to play/pause */}
             <button
               onClick={togglePlay}
@@ -783,11 +836,11 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 
           <div className={`flex items-center gap-3 ${landscape ? "flex-col w-full" : ""}`}>
             {/* Export button */}
-            <button
+            {exportState !== "unavailable" && <button
               onClick={handleExport}
-              disabled={exportState === "polling"}
+              disabled={exportState === "polling" || exportState === "checking"}
               className={`flex items-center justify-center gap-1.5 px-3 h-10 rounded-full text-sm font-semibold transition-all active:scale-95 shrink-0 pointer-events-auto ${
-                exportState === "polling"
+                exportState === "polling" || exportState === "checking"
                   ? "bg-white/20 text-white/60 cursor-not-allowed"
                   : exportState === "ready"
                   ? "bg-turf text-void"
@@ -797,11 +850,13 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
               } ${landscape ? "w-full" : ""}`}
               aria-label={t.export.button}
             >
-              {exportState === "polling"
+                {exportState === "polling" || exportState === "checking"
                 ? <span className="w-4 h-4 shrink-0 rounded-full border-2 border-white/40 border-t-white animate-spin" />
                 : <Download className="w-4 h-4 shrink-0" />}
               <span>
-                {exportState === "polling"
+                {exportState === "checking"
+                  ? "Checking export…"
+                  : exportState === "polling"
                   ? exportStepLabel
                   : exportState === "ready"
                   ? "Download"
@@ -809,7 +864,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
                   ? t.export.error
                   : t.export.button}
               </span>
-            </button>
+            </button>}
 
             {/* The allowance, always visible — see lib/downloadQuota.ts */}
             {quotaLabel && (
