@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, count, and, desc, sql, inArray, ne } from "drizzle-orm";
+import { eq, count, and, desc, sql, inArray, ne, gte, lte, isNotNull } from "drizzle-orm";
 import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable } from "@workspace/db";
 import {
   CheckAdminClipSourceParams,
@@ -13,6 +13,8 @@ import {
   ReclipAdminClipsBody,
   ReclipAdminClipsResponse,
   GetAdminClipPlaybackParams,
+  RepairAdminClipExportsBody,
+  RepairAdminClipExportsResponse,
   type AdminClipPlaybackNotReady,
   UpdateAdParams,
   UpdateAdBody,
@@ -330,6 +332,86 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
   });
 
   res.json(result);
+});
+
+router.post("/admin/clips/export-repair", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const parsed = RepairAdminClipExportsBody.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { action = "dry_run", confirmed, userId, clipIdMin, clipIdMax } = parsed.data;
+  if (clipIdMin !== undefined && clipIdMax !== undefined && clipIdMin > clipIdMax) {
+    res.status(400).json({ error: "clipIdMin must not exceed clipIdMax" }); return;
+  }
+  if ([userId, clipIdMin, clipIdMax].some((value) => value !== undefined && !Number.isInteger(value))) {
+    res.status(400).json({ error: "Filter values must be whole numbers" }); return;
+  }
+  if (action === "apply" && confirmed !== true) {
+    res.status(400).json({ error: "Explicit confirmation is required to apply repairs" }); return;
+  }
+  const filters = [
+    inArray(userClipsTable.exportStatus, ["expired", "error"]),
+    isNotNull(userClipsTable.exportedUrl),
+    ne(userClipsTable.exportedUrl, ""),
+    ...(userId === undefined ? [] : [eq(userClipsTable.userId, userId)]),
+    ...(clipIdMin === undefined ? [] : [gte(userClipsTable.id, clipIdMin)]),
+    ...(clipIdMax === undefined ? [] : [lte(userClipsTable.id, clipIdMax)]),
+  ];
+  const rows = await db.select({
+    clipId: userClipsTable.id,
+    userId: userClipsTable.userId,
+    userName: usersTable.name,
+    userEmail: usersTable.email,
+    title: userClipsTable.title,
+    currentStatus: userClipsTable.exportStatus,
+    exportedUrl: userClipsTable.exportedUrl,
+  }).from(userClipsTable)
+    .innerJoin(usersTable, eq(userClipsTable.userId, usersTable.id))
+    .where(and(...filters))
+    .orderBy(userClipsTable.id)
+    .limit(501);
+  if (rows.length > 500) {
+    res.status(400).json({ error: "More than 500 clips matched; narrow the filters before repairing" }); return;
+  }
+  const results = await inBatches(rows, 5, async (row) => {
+    const originalUrl = row.exportedUrl!;
+    const probe = await probeExportObject(originalUrl);
+    let changed = false;
+    let newStatus = row.currentStatus ?? "error";
+    let newUrl = originalUrl;
+    if (action === "apply" && probe.state === "exists") {
+      const [updated] = await db.update(userClipsTable)
+        .set({ exportStatus: "done", exportedUrl: probe.url })
+        .where(and(
+          eq(userClipsTable.id, row.clipId),
+          inArray(userClipsTable.exportStatus, ["expired", "error"]),
+          eq(userClipsTable.exportedUrl, originalUrl),
+        ))
+        .returning({ id: userClipsTable.id });
+      changed = Boolean(updated);
+      if (changed) {
+        newStatus = "done";
+        newUrl = probe.url;
+        logger.info({ adminId, clipId: row.clipId, oldStatus: row.currentStatus, oldUrl: originalUrl, newUrl }, "Admin repaired expired clip export");
+      }
+    }
+    return {
+      clipId: row.clipId, userId: row.userId, userName: row.userName, userEmail: row.userEmail,
+      title: row.title, currentStatus: row.currentStatus ?? "error", exportedUrl: originalUrl,
+      probe: probe.state, bytes: probe.bytes, changed, newStatus, newUrl,
+    };
+  });
+  const body = {
+    action,
+    results,
+    totals: {
+      exists: results.filter((item) => item.probe === "exists").length,
+      missing: results.filter((item) => item.probe === "missing").length,
+      unverified: results.filter((item) => item.probe === "unverified").length,
+      changed: results.filter((item) => item.changed).length,
+    },
+  };
+  res.json(RepairAdminClipExportsResponse.parse(body));
 });
 
 type AdminClipSourceStatus = "ready" | "expired" | "live" | "unavailable";

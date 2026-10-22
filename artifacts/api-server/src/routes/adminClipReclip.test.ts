@@ -45,6 +45,7 @@ vi.mock("../lib/backupExport", async (importOriginal) => {
   return {
     ...actual,
     fetchExportObject: vi.fn(),
+    probeExportObject: vi.fn(),
   };
 });
 
@@ -81,7 +82,7 @@ import {
   getBunnyVideoReadiness,
   uploadToBunnyStorage,
 } from "../lib/bunny";
-import { fetchExportObject } from "../lib/backupExport";
+import { fetchExportObject, probeExportObject } from "../lib/backupExport";
 import adminRouter from "./admin";
 
 const TAG = `admin_reclip_${Date.now()}`;
@@ -89,6 +90,7 @@ const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 const readiness = vi.mocked(getBunnyVideoReadiness);
 const upload = vi.mocked(uploadToBunnyStorage);
 const exportFetcher = vi.mocked(fetchExportObject);
+const exportProber = vi.mocked(probeExportObject);
 let app: Express;
 let adminId: number;
 let playerId: number;
@@ -126,6 +128,8 @@ beforeEach(() => {
   readiness.mockResolvedValue({ ready: true, status: 4 });
   upload.mockClear();
   exportFetcher.mockReset();
+  exportProber.mockReset();
+  exportProber.mockImplementation(async (url) => ({ state: "missing", bytes: null, url }));
 });
 
 async function createClip(videoId?: string) {
@@ -375,5 +379,60 @@ describe("admin clip re-clipping", () => {
       expect(playback.body.exportStatus).toBe("pending");
       expect(JSON.stringify(playback.body)).not.toContain(internalStatus);
     }
+  });
+
+  it("keeps dry-run repair immutable", async () => {
+    const clip = await createClip();
+    await db.update(userClipsTable).set({ exportStatus: "expired" }).where(eq(userClipsTable.id, clip.id));
+    exportProber.mockResolvedValueOnce({ state: "exists", bytes: 1234, url: clip.exportedUrl! });
+    const response = await request(app).post("/api/admin/clips/export-repair").send({
+      userId: playerId, clipIdMin: clip.id, clipIdMax: clip.id,
+    }).expect(200);
+    expect(response.body).toMatchObject({ action: "dry_run", totals: { exists: 1, changed: 0 } });
+    expect((await db.select().from(userClipsTable).where(eq(userClipsTable.id, clip.id)))[0]?.exportStatus).toBe("expired");
+  });
+
+  it("applies only verified exports and leaves missing or unverified clips untouched", async () => {
+    const exists = await createClip();
+    const missing = await createClip();
+    const unverified = await createClip();
+    await db.update(userClipsTable).set({ exportStatus: "expired" }).where(eq(userClipsTable.id, exists.id));
+    await db.update(userClipsTable).set({ exportStatus: "error" }).where(eq(userClipsTable.id, missing.id));
+    await db.update(userClipsTable).set({ exportStatus: "expired" }).where(eq(userClipsTable.id, unverified.id));
+    exportProber.mockImplementation(async (url) => url === exists.exportedUrl
+      ? { state: "exists", bytes: 88, url }
+      : url === missing.exportedUrl
+        ? { state: "missing", bytes: null, url }
+        : { state: "unverified", bytes: null, url });
+    await request(app).post("/api/admin/clips/export-repair").send({
+      action: "apply", confirmed: true, userId: playerId,
+      clipIdMin: Math.min(exists.id, missing.id, unverified.id),
+      clipIdMax: Math.max(exists.id, missing.id, unverified.id),
+    }).expect(200);
+    const refreshed = await db.select().from(userClipsTable)
+      .where(inArray(userClipsTable.id, [exists.id, missing.id, unverified.id]));
+    expect(refreshed.find((row) => row.id === exists.id)).toMatchObject({ exportStatus: "done", exportedUrl: exists.exportedUrl });
+    expect(refreshed.find((row) => row.id === missing.id)).toMatchObject({ exportStatus: "error", exportedUrl: missing.exportedUrl });
+    expect(refreshed.find((row) => row.id === unverified.id)).toMatchObject({ exportStatus: "expired", exportedUrl: unverified.exportedUrl });
+  });
+
+  it("upgrades a verified vps1 export reference to its Storage URL", async () => {
+    const clip = await createClip();
+    const storageUrl = "https://storage.test/clips/job-123.mp4";
+    await db.update(userClipsTable).set({ exportStatus: "expired", exportedUrl: "vps1-export:job-123" })
+      .where(eq(userClipsTable.id, clip.id));
+    exportProber.mockResolvedValueOnce({ state: "exists", bytes: 400, url: storageUrl });
+    await request(app).post("/api/admin/clips/export-repair").send({
+      action: "apply", confirmed: true, userId: playerId, clipIdMin: clip.id, clipIdMax: clip.id,
+    }).expect(200);
+    const [after] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clip.id));
+    expect(after).toMatchObject({ exportStatus: "done", exportedUrl: storageUrl });
+  });
+
+  it("requires admin authorization and explicit confirmation before apply", async () => {
+    mockedGetLocalUserId.mockResolvedValue(playerId);
+    await request(app).post("/api/admin/clips/export-repair").send({}).expect(403);
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    await request(app).post("/api/admin/clips/export-repair").send({ action: "apply" }).expect(400);
   });
 });

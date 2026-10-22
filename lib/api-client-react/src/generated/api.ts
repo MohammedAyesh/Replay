@@ -86,6 +86,8 @@ import type {
   AdStats,
   AddAcademyRecordingInput,
   AdminAdEntry,
+  AdminClipExportRepairInput,
+  AdminClipExportRepairResponse,
   AdminClipIdsInput,
   AdminClipPlaybackNotReady,
   AdminClipReclipResult,
@@ -12779,6 +12781,76 @@ export const useCheckAdminClipsSources = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getCheckAdminClipsSourcesMutationOptions(options));
+    }
+
+export const getRepairAdminClipExportsUrl = () => {
+
+
+
+
+  return `/api/admin/clips/export-repair`
+}
+
+/**
+ * @summary Preview or repair expired and failed clip exports
+ */
+export const repairAdminClipExports = async (adminClipExportRepairInput: AdminClipExportRepairInput, options?: RequestInit): Promise<AdminClipExportRepairResponse> => {
+
+  return customFetch<AdminClipExportRepairResponse>(getRepairAdminClipExportsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminClipExportRepairInput)
+  }
+);}
+
+
+
+
+export const getRepairAdminClipExportsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repairAdminClipExports>>, TError,{data: BodyType<AdminClipExportRepairInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof repairAdminClipExports>>, TError,{data: BodyType<AdminClipExportRepairInput>}, TContext> => {
+
+const mutationKey = ['repairAdminClipExports'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof repairAdminClipExports>>, {data: BodyType<AdminClipExportRepairInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  repairAdminClipExports(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RepairAdminClipExportsMutationResult = NonNullable<Awaited<ReturnType<typeof repairAdminClipExports>>>
+    export type RepairAdminClipExportsMutationBody = BodyType<AdminClipExportRepairInput>
+    export type RepairAdminClipExportsMutationError = ErrorType<void>
+
+    /**
+ * @summary Preview or repair expired and failed clip exports
+ */
+export const useRepairAdminClipExports = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof repairAdminClipExports>>, TError,{data: BodyType<AdminClipExportRepairInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof repairAdminClipExports>>,
+        TError,
+        {data: BodyType<AdminClipExportRepairInput>},
+        TContext
+      > => {
+      return useMutation(getRepairAdminClipExportsMutationOptions(options));
     }
 
 export const getGetAdminClipPlaybackUrl = (id: number,) => {

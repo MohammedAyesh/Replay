@@ -4810,6 +4810,29 @@ paths:
                 items:
                   $ref: "#/components/schemas/AdminClipSourceCheckResult"
 
+  /admin/clips/export-repair:
+    post:
+      operationId: repairAdminClipExports
+      tags: [admin]
+      summary: Preview or repair expired and failed clip exports
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminClipExportRepairInput"
+      responses:
+        "200":
+          description: Probe results and any applied repairs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminClipExportRepairResponse"
+        "400":
+          description: Invalid filters or missing apply confirmation
+        "403":
+          description: Admin access required
+
   /admin/clips/{id}/playback:
     get:
       operationId: getAdminClipPlayback
@@ -8220,6 +8243,64 @@ components:
           maxItems: 200
           items:
             type: integer
+
+    AdminClipExportRepairInput:
+      type: object
+      properties:
+        action:
+          type: string
+          enum: [dry_run, apply]
+          default: dry_run
+        confirmed:
+          type: boolean
+        userId:
+          type: integer
+          minimum: 1
+        clipIdMin:
+          type: integer
+          minimum: 1
+        clipIdMax:
+          type: integer
+          minimum: 1
+
+    AdminClipExportRepairResult:
+      type: object
+      required: [clipId, userId, userName, userEmail, title, currentStatus, exportedUrl, probe, bytes, changed, newStatus, newUrl]
+      properties:
+        clipId: { type: integer }
+        userId: { type: integer }
+        userName: { type: string }
+        userEmail: { type: string }
+        title: { type: string }
+        currentStatus: { type: string }
+        exportedUrl: { type: string }
+        probe:
+          type: string
+          enum: [exists, missing, unverified]
+        bytes: { type: ["integer", "null"] }
+        changed: { type: boolean }
+        newStatus: { type: string }
+        newUrl: { type: string }
+
+    AdminClipExportRepairResponse:
+      type: object
+      required: [action, results, totals]
+      properties:
+        action:
+          type: string
+          enum: [dry_run, apply]
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdminClipExportRepairResult"
+        totals:
+          type: object
+          required: [exists, missing, unverified, changed]
+          properties:
+            exists: { type: integer }
+            missing: { type: integer }
+            unverified: { type: integer }
+            changed: { type: integer }
 
     AdminClipPlaybackNotReady:
       type: object

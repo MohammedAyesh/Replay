@@ -5603,6 +5603,47 @@ export const CheckAdminClipsSourcesResponse = zod.array(CheckAdminClipsSourcesRe
 
 
 /**
+ * @summary Preview or repair expired and failed clip exports
+ */
+export const repairAdminClipExportsBodyActionDefault = `dry_run`;
+
+
+
+
+export const RepairAdminClipExportsBody = zod.object({
+  "action": zod.enum(['dry_run', 'apply']).default(repairAdminClipExportsBodyActionDefault),
+  "confirmed": zod.boolean().optional(),
+  "userId": zod.number().min(1).optional(),
+  "clipIdMin": zod.number().min(1).optional(),
+  "clipIdMax": zod.number().min(1).optional()
+})
+
+export const RepairAdminClipExportsResponse = zod.object({
+  "action": zod.enum(['dry_run', 'apply']),
+  "results": zod.array(zod.object({
+  "clipId": zod.number(),
+  "userId": zod.number(),
+  "userName": zod.string(),
+  "userEmail": zod.string(),
+  "title": zod.string(),
+  "currentStatus": zod.string(),
+  "exportedUrl": zod.string(),
+  "probe": zod.enum(['exists', 'missing', 'unverified']),
+  "bytes": zod.number().nullable(),
+  "changed": zod.boolean(),
+  "newStatus": zod.string(),
+  "newUrl": zod.string()
+})),
+  "totals": zod.object({
+  "exists": zod.number(),
+  "missing": zod.number(),
+  "unverified": zod.number(),
+  "changed": zod.number()
+})
+})
+
+
+/**
  * @summary Stream a clip's completed export to an admin with byte-range support
  */
 export const GetAdminClipPlaybackParams = zod.object({

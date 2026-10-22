@@ -2673,6 +2673,71 @@ export interface AdminClipIdsInput {
   clipIds: number[];
 }
 
+export type AdminClipExportRepairInputAction = typeof AdminClipExportRepairInputAction[keyof typeof AdminClipExportRepairInputAction];
+
+
+export const AdminClipExportRepairInputAction = {
+  dry_run: 'dry_run',
+  apply: 'apply',
+} as const;
+
+export interface AdminClipExportRepairInput {
+  action?: AdminClipExportRepairInputAction;
+  confirmed?: boolean;
+  /** @minimum 1 */
+  userId?: number;
+  /** @minimum 1 */
+  clipIdMin?: number;
+  /** @minimum 1 */
+  clipIdMax?: number;
+}
+
+export type AdminClipExportRepairResultProbe = typeof AdminClipExportRepairResultProbe[keyof typeof AdminClipExportRepairResultProbe];
+
+
+export const AdminClipExportRepairResultProbe = {
+  exists: 'exists',
+  missing: 'missing',
+  unverified: 'unverified',
+} as const;
+
+export interface AdminClipExportRepairResult {
+  clipId: number;
+  userId: number;
+  userName: string;
+  userEmail: string;
+  title: string;
+  currentStatus: string;
+  exportedUrl: string;
+  probe: AdminClipExportRepairResultProbe;
+  /** @nullable */
+  bytes: number | null;
+  changed: boolean;
+  newStatus: string;
+  newUrl: string;
+}
+
+export type AdminClipExportRepairResponseAction = typeof AdminClipExportRepairResponseAction[keyof typeof AdminClipExportRepairResponseAction];
+
+
+export const AdminClipExportRepairResponseAction = {
+  dry_run: 'dry_run',
+  apply: 'apply',
+} as const;
+
+export type AdminClipExportRepairResponseTotals = {
+  exists: number;
+  missing: number;
+  unverified: number;
+  changed: number;
+};
+
+export interface AdminClipExportRepairResponse {
+  action: AdminClipExportRepairResponseAction;
+  results: AdminClipExportRepairResult[];
+  totals: AdminClipExportRepairResponseTotals;
+}
+
 export interface AdminClipPlaybackNotReady {
   error: 'Export not ready';
   /** The current export status, or missing when the clip does not exist. */
