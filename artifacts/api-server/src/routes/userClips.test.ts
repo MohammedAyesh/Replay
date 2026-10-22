@@ -6,6 +6,7 @@ import {
   db,
   usersTable,
   userClipsTable,
+  userClipAuditEventsTable,
   fieldsTable,
   recordingsTable,
   recordingSchedulesTable,
@@ -529,6 +530,15 @@ describe("DELETE /api/user-clips/:id", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
+    const [event] = await db.select().from(userClipAuditEventsTable)
+      .where(eq(userClipAuditEventsTable.clipId, clipId));
+    expect(event).toMatchObject({
+      clipOwnerId: userAId,
+      actorUserId: userAId,
+      actorRole: "owner",
+      action: "deleted",
+    });
+    await db.delete(userClipAuditEventsTable).where(eq(userClipAuditEventsTable.clipId, clipId));
   });
 
   it("returns 404 for a clip that does not exist", async () => {

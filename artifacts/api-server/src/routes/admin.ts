@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { eq, count, and, desc, sql, inArray, ne, gte, lte, isNotNull } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable } from "@workspace/db";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, userClipAuditEventsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable } from "@workspace/db";
 import {
   CheckAdminClipSourceParams,
   CheckAdminClipSourceResponse,
@@ -720,22 +720,37 @@ router.patch("/admin/clips/:id", async (req, res): Promise<void> => {
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
   const { isHidden, visibility } = req.body as { isHidden?: boolean; visibility?: string };
-  const updates: Partial<typeof userClipsTable.$inferInsert> = {};
-  if (isHidden !== undefined) {
-    updates.isHidden = isHidden;
-    if (!isHidden) {
-      updates.hiddenReason = null;
-    } else {
-      const [current] = await db
-        .select({ hiddenReason: userClipsTable.hiddenReason })
-        .from(userClipsTable)
-        .where(eq(userClipsTable.id, id));
-      updates.hiddenReason = current?.hiddenReason === "deleted" ? "deleted" : "admin";
-    }
-  }
-  if (visibility !== undefined) updates.visibility = visibility;
+  const clip = await db.transaction(async (tx) => {
+    const [current] = await tx.select({
+      id: userClipsTable.id,
+      userId: userClipsTable.userId,
+      isHidden: userClipsTable.isHidden,
+      hiddenReason: userClipsTable.hiddenReason,
+    }).from(userClipsTable).where(eq(userClipsTable.id, id)).for("update");
+    if (!current) return null;
 
-  const [clip] = await db.update(userClipsTable).set(updates).where(eq(userClipsTable.id, id)).returning();
+    const updates: Partial<typeof userClipsTable.$inferInsert> = {};
+    if (isHidden !== undefined) {
+      updates.isHidden = isHidden;
+      updates.hiddenReason = isHidden
+        ? (current.hiddenReason === "deleted" ? "deleted" : "admin")
+        : null;
+    }
+    if (visibility !== undefined) updates.visibility = visibility;
+
+    const [updated] = await tx.update(userClipsTable).set(updates)
+      .where(eq(userClipsTable.id, id)).returning();
+    if (isHidden === false && current.isHidden && current.hiddenReason === "deleted") {
+      await tx.insert(userClipAuditEventsTable).values({
+        clipId: current.id,
+        clipOwnerId: current.userId,
+        actorUserId: adminId,
+        actorRole: "admin",
+        action: "restored",
+      });
+    }
+    return updated;
+  });
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 
   res.json({
@@ -753,11 +768,29 @@ router.delete("/admin/clips/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const [clip] = await db
-    .update(userClipsTable)
-    .set({ isHidden: true, hiddenReason: "deleted" })
-    .where(eq(userClipsTable.id, id))
-    .returning({ id: userClipsTable.id });
+  const clip = await db.transaction(async (tx) => {
+    const [current] = await tx.select({
+      id: userClipsTable.id,
+      userId: userClipsTable.userId,
+      isHidden: userClipsTable.isHidden,
+      hiddenReason: userClipsTable.hiddenReason,
+    }).from(userClipsTable).where(eq(userClipsTable.id, id)).for("update");
+    if (!current) return null;
+    const [updated] = await tx.update(userClipsTable)
+      .set({ isHidden: true, hiddenReason: "deleted" })
+      .where(eq(userClipsTable.id, id))
+      .returning({ id: userClipsTable.id });
+    if (!(current.isHidden && current.hiddenReason === "deleted")) {
+      await tx.insert(userClipAuditEventsTable).values({
+        clipId: current.id,
+        clipOwnerId: current.userId,
+        actorUserId: adminId,
+        actorRole: "admin",
+        action: "deleted",
+      });
+    }
+    return updated;
+  });
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
 
   res.json({ ok: true });

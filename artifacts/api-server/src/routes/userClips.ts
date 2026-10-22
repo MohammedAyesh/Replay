@@ -14,6 +14,7 @@ import {
   recordingsTable,
   academyRecordingsTable,
   clipDownloadsTable,
+  userClipAuditEventsTable,
   brandingAssetsTable,
   footageRequestsTable,
 } from "@workspace/db";
@@ -1356,25 +1357,32 @@ router.delete("/user-clips/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const [existing] = await db
-    .select()
-    .from(userClipsTable)
-    .where(eq(userClipsTable.id, params.data.id));
+  const result = await db.transaction(async (tx) => {
+    const [existing] = await tx.select({
+      id: userClipsTable.id,
+      userId: userClipsTable.userId,
+      isHidden: userClipsTable.isHidden,
+      hiddenReason: userClipsTable.hiddenReason,
+    }).from(userClipsTable).where(eq(userClipsTable.id, params.data.id)).for("update");
+    if (!existing) return "missing" as const;
+    if (existing.userId !== userId) return "forbidden" as const;
 
-  if (!existing) {
-    res.status(404).json({ error: "Clip not found" });
-    return;
-  }
-
-  if (existing.userId !== userId) {
-    res.status(403).json({ error: "Forbidden" });
-    return;
-  }
-
-  await db
-    .update(userClipsTable)
-    .set({ isHidden: true, hiddenReason: "deleted" })
-    .where(and(eq(userClipsTable.id, params.data.id), eq(userClipsTable.userId, userId)));
+    await tx.update(userClipsTable)
+      .set({ isHidden: true, hiddenReason: "deleted" })
+      .where(and(eq(userClipsTable.id, params.data.id), eq(userClipsTable.userId, userId)));
+    if (!(existing.isHidden && existing.hiddenReason === "deleted")) {
+      await tx.insert(userClipAuditEventsTable).values({
+        clipId: existing.id,
+        clipOwnerId: existing.userId,
+        actorUserId: userId,
+        actorRole: "owner",
+        action: "deleted",
+      });
+    }
+    return "deleted" as const;
+  });
+  if (result === "missing") { res.status(404).json({ error: "Clip not found" }); return; }
+  if (result === "forbidden") { res.status(403).json({ error: "Forbidden" }); return; }
 
   res.json({ ok: true });
 });

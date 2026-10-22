@@ -8,6 +8,7 @@ export * from "./likes";
 export * from "./follows";
 export * from "./ads";
 export * from "./userClips";
+export * from "./userClipAuditEvents";
 export * from "./portfolio";
 export * from "./academies";
 export * from "./academyMembers";

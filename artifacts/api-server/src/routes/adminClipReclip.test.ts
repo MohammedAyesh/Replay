@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import request from "supertest";
 import express, { type Express } from "express";
 import { and, eq, inArray } from "drizzle-orm";
-import { clipDownloadsTable, db, userClipsTable, usersTable } from "@workspace/db";
+import { clipDownloadsTable, db, userClipsTable, userClipAuditEventsTable, usersTable } from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
@@ -118,6 +118,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (clipIds.length) await db.delete(userClipAuditEventsTable).where(inArray(userClipAuditEventsTable.clipId, clipIds));
   if (clipIds.length) await db.delete(userClipsTable).where(inArray(userClipsTable.id, clipIds));
   await db.delete(usersTable).where(inArray(usersTable.id, [adminId, playerId]));
 });
@@ -434,5 +435,24 @@ describe("admin clip re-clipping", () => {
     await request(app).post("/api/admin/clips/export-repair").send({}).expect(403);
     mockedGetLocalUserId.mockResolvedValue(adminId);
     await request(app).post("/api/admin/clips/export-repair").send({ action: "apply" }).expect(400);
+  });
+
+  it("records the admin actor for soft-delete and restore actions", async () => {
+    const clip = await createClip();
+    await request(app).delete(`/api/admin/clips/${clip.id}`).expect(200);
+    await request(app).delete(`/api/admin/clips/${clip.id}`).expect(200);
+    await request(app).patch(`/api/admin/clips/${clip.id}`).send({ isHidden: false }).expect(200);
+
+    const events = await db.select().from(userClipAuditEventsTable)
+      .where(eq(userClipAuditEventsTable.clipId, clip.id));
+    expect(events.map((event) => ({
+      owner: event.clipOwnerId,
+      actor: event.actorUserId,
+      actorRole: event.actorRole,
+      action: event.action,
+    }))).toEqual([
+      { owner: playerId, actor: adminId, actorRole: "admin", action: "deleted" },
+      { owner: playerId, actor: adminId, actorRole: "admin", action: "restored" },
+    ]);
   });
 });
