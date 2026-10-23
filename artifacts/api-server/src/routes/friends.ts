@@ -5,6 +5,10 @@ import {
   db, friendshipsTable, matchPlayersTable, matchRoomsTable, usersTable,
   playerIdentificationRequestsTable, claimMatchIdentityBindingsTable, recordingsTable,
 } from "@workspace/db";
+import {
+  ListSentPlayerIdentificationRequestsResponse,
+  WithdrawPlayerIdentificationRequestResponse,
+} from "@workspace/api-zod";
 import { getLocalAccountUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { avatarUrlFor, publicBaseUrl } from "../lib/matchRooms";
 import { acceptedFriendshipBetween, blockedEitherWay, friendshipBetween } from "../lib/friends";
@@ -248,6 +252,34 @@ router.get("/friends/player-identification-requests", async (req, res): Promise<
   })));
 });
 
+router.get("/friends/player-identification-requests/sent", async (req, res): Promise<void> => {
+  const viewer = await account(req, res); if (!viewer) return;
+  const rows = await db.select({
+    request: playerIdentificationRequestsTable,
+    recipientName: usersTable.name,
+    recordingDate: recordingsTable.date,
+    court: recordingsTable.court,
+  }).from(playerIdentificationRequestsTable)
+    .innerJoin(usersTable, eq(usersTable.id, playerIdentificationRequestsTable.recipientUserId))
+    .innerJoin(recordingsTable, eq(recordingsTable.id, playerIdentificationRequestsTable.recordingId))
+    .where(eq(playerIdentificationRequestsTable.requesterUserId, viewer))
+    .orderBy(desc(playerIdentificationRequestsTable.createdAt));
+  res.json(ListSentPlayerIdentificationRequestsResponse.parse(rows.map(({ request, recipientName, recordingDate, court }) => ({
+    id: request.id,
+    recordingId: request.recordingId,
+    recipientUserId: request.recipientUserId,
+    recipientName,
+    recordingDate,
+    court,
+    matchCode: request.matchCode,
+    rosterPlayerId: request.rosterPlayerId,
+    playerName: request.playerName,
+    shirtNumber: request.shirtNumber,
+    status: request.status,
+    createdAt: request.createdAt.toISOString(),
+  }))));
+});
+
 router.post("/friends/player-identification-requests", async (req, res): Promise<void> => {
   const viewer = await account(req, res); if (!viewer) return;
   const parsed = playerSuggestionBody.safeParse(req.body);
@@ -292,6 +324,20 @@ router.post("/friends/player-identification-requests", async (req, res): Promise
   }
   if (!created) { res.status(500).json({ error: "Could not create request" }); return; }
   res.status(201).json({ id: created.id });
+});
+
+router.delete("/friends/player-identification-requests/:id", async (req, res): Promise<void> => {
+  const viewer = await account(req, res); if (!viewer) return;
+  const id = idParam(req, "id");
+  if (!id) { res.status(400).json({ error: "Invalid request id" }); return; }
+  const [withdrawn] = await db.delete(playerIdentificationRequestsTable)
+    .where(and(
+      eq(playerIdentificationRequestsTable.id, id),
+      eq(playerIdentificationRequestsTable.requesterUserId, viewer),
+      eq(playerIdentificationRequestsTable.status, "pending"),
+    )).returning({ id: playerIdentificationRequestsTable.id });
+  if (!withdrawn) { res.status(404).json({ error: "Request not found" }); return; }
+  res.json(WithdrawPlayerIdentificationRequestResponse.parse({ ok: true }));
 });
 
 router.post("/friends/player-identification-requests/:id/respond", async (req, res): Promise<void> => {

@@ -4,6 +4,7 @@ import { recordingsTable } from "./recordings";
 import { usersTable } from "./users";
 
 export type FriendshipStatus = "pending" | "accepted";
+export type PlayerIdentificationRequestStatus = "pending" | "accepted" | "declined";
 
 export const friendshipsTable = pgTable(
   "friendships",
@@ -40,7 +41,7 @@ export const playerIdentificationRequestsTable = pgTable(
     rosterPlayerId: text("roster_player_id").notNull(),
     playerName: text("player_name"),
     shirtNumber: text("shirt_number"),
-    status: text("status").notNull().default("pending"),
+    status: text("status").notNull().default("pending").$type<PlayerIdentificationRequestStatus>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
   },

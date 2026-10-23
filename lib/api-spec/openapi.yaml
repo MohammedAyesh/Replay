@@ -39,12 +39,59 @@ tags:
     description: Owner-only Academy Console finance operations
   - name: claimMatch
     description: Claim Your Match tracking and player identity
+  - name: friends
+    description: Friend and teammate identity requests
   - name: owner
     description: Field owner footage console
   - name: streaming
     description: Social stream controls
 
 paths:
+  /friends/player-identification-requests/sent:
+    get:
+      operationId: listSentPlayerIdentificationRequests
+      tags: [friends]
+      summary: List teammate identity suggestions sent by the current player
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Sent teammate suggestions and their current statuses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SentPlayerIdentificationRequest"
+        "401":
+          description: Unauthenticated
+  /friends/player-identification-requests/{id}:
+    delete:
+      operationId: withdrawPlayerIdentificationRequest
+      tags: [friends]
+      summary: Withdraw a pending teammate identity suggestion
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Suggestion withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayerIdentificationRequestActionResponse"
+        "400":
+          description: Invalid request ID
+        "401":
+          description: Unauthenticated
+        "404":
+          description: Pending suggestion not found or not owned by the requester
   /live/rtmp/status/{cam}:
     get:
       operationId: getStreamingStatus
@@ -9645,6 +9692,44 @@ components:
             - last_admin
         activeFootageRequests:
           type: integer
+
+    SentPlayerIdentificationRequest:
+      type: object
+      required: [id, recordingId, recipientUserId, recipientName, recordingDate, court, matchCode, rosterPlayerId, playerName, shirtNumber, status, createdAt]
+      properties:
+        id:
+          type: integer
+        recordingId:
+          type: integer
+        recipientUserId:
+          type: integer
+        recipientName:
+          type: string
+        recordingDate:
+          type: ["string", "null"]
+        court:
+          type: ["string", "null"]
+        matchCode:
+          type: ["string", "null"]
+        rosterPlayerId:
+          type: string
+        playerName:
+          type: ["string", "null"]
+        shirtNumber:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [pending, accepted, declined]
+        createdAt:
+          type: string
+          format: date-time
+
+    PlayerIdentificationRequestActionResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
 
   securitySchemes:
     clerkSession:

@@ -4,7 +4,7 @@ import express, { type Express } from "express";
 import { and, eq, inArray, or } from "drizzle-orm";
 import {
   db, fieldsTable, friendshipsTable, footageRequestsTable, matchPlayersTable, matchRoomsTable,
-  userBlocksTable, usersTable,
+  playerIdentificationRequestsTable, recordingsTable, userBlocksTable, usersTable,
 } from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -25,6 +25,8 @@ const tag = `friends_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 const ids: number[] = [];
 const roomIds: number[] = [];
 const requestIds: number[] = [];
+const fieldIds: number[] = [];
+const recordingIds: number[] = [];
 let ownedPlaceholder: number | null = null;
 let app: Express;
 let owner: number;
@@ -66,6 +68,12 @@ afterAll(async () => {
   await db.delete(matchPlayersTable).where(inArray(matchPlayersTable.matchId, roomIds));
   await db.delete(matchRoomsTable).where(inArray(matchRoomsTable.id, roomIds));
   await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds));
+  await db.delete(playerIdentificationRequestsTable).where(or(
+    inArray(playerIdentificationRequestsTable.requesterUserId, ids),
+    inArray(playerIdentificationRequestsTable.recipientUserId, ids),
+  ));
+  await db.delete(recordingsTable).where(inArray(recordingsTable.id, recordingIds));
+  await db.delete(fieldsTable).where(inArray(fieldsTable.id, fieldIds));
   await db.delete(userBlocksTable).where(or(inArray(userBlocksTable.blockerId, ids), inArray(userBlocksTable.blockedId, ids)));
   await db.delete(friendshipsTable).where(or(inArray(friendshipsTable.userLowId, ids), inArray(friendshipsTable.userHighId, ids)));
   await db.delete(usersTable).where(inArray(usersTable.id, ids));
@@ -73,6 +81,56 @@ afterAll(async () => {
 });
 
 describe("friends API", () => {
+  it("lists sent teammate suggestions with status and lets only the requester withdraw a pending one", async () => {
+    expect((await request(app).get("/api/friends/player-identification-requests/sent")).status).toBe(401);
+    expect((await request(app).delete("/api/friends/player-identification-requests/1")).status).toBe(401);
+
+    const [field] = await db.insert(fieldsTable).values({
+      name: `Suggestion field ${tag}`,
+      location: "Test",
+    }).returning({ id: fieldsTable.id });
+    fieldIds.push(field.id);
+    const [recording] = await db.insert(recordingsTable).values({
+      fieldId: field.id,
+      court: "1",
+      date: "2026-10-01",
+      timeSlot: "10:00",
+      duration: "00:30:00",
+    }).returning({ id: recordingsTable.id });
+    recordingIds.push(recording.id);
+
+    const inserted = await db.insert(playerIdentificationRequestsTable).values([
+      { recordingId: recording.id, requesterUserId: owner, recipientUserId: friend, rosterPlayerId: "pending", playerName: "Pending player" },
+      { recordingId: recording.id, requesterUserId: owner, recipientUserId: friend, rosterPlayerId: "accepted", playerName: "Accepted player", status: "accepted", respondedAt: new Date() },
+      { recordingId: recording.id, requesterUserId: owner, recipientUserId: other, rosterPlayerId: "declined", playerName: "Declined player", status: "declined", respondedAt: new Date() },
+    ]).returning({ id: playerIdentificationRequestsTable.id, status: playerIdentificationRequestsTable.status });
+    const pending = inserted.find((row) => row.status === "pending")!;
+    const accepted = inserted.find((row) => row.status === "accepted")!;
+
+    const sent = await request(app).get("/api/friends/player-identification-requests/sent").set(as(owner));
+    expect(sent.status).toBe(200);
+    expect(sent.body).toHaveLength(3);
+    expect(sent.body.map((row: { status: string }) => row.status).sort()).toEqual(["accepted", "declined", "pending"]);
+    expect(sent.body.find((row: { id: number }) => row.id === pending.id)).toMatchObject({
+      recipientUserId: friend,
+      recipientName: expect.stringContaining("friend"),
+      recordingId: recording.id,
+      court: "1",
+      playerName: "Pending player",
+    });
+    expect((await request(app).get("/api/friends/player-identification-requests").set(as(friend))).body)
+      .toHaveLength(1);
+
+    expect((await request(app).delete(`/api/friends/player-identification-requests/${pending.id}`).set(as(friend))).status).toBe(404);
+    expect((await request(app).delete(`/api/friends/player-identification-requests/${accepted.id}`).set(as(owner))).status).toBe(404);
+    expect((await request(app).delete("/api/friends/player-identification-requests/not-a-number").set(as(owner))).status).toBe(400);
+    expect((await request(app).delete(`/api/friends/player-identification-requests/${pending.id}`).set(as(owner)))
+      .body).toEqual({ ok: true });
+    expect((await request(app).get("/api/friends/player-identification-requests").set(as(friend))).body).toEqual([]);
+    const afterWithdrawal = await request(app).get("/api/friends/player-identification-requests/sent").set(as(owner));
+    expect(afterWithdrawal.body.map((row: { status: string }) => row.status).sort()).toEqual(["accepted", "declined"]);
+  });
+
   it("protects the player-request inbox and requires the sender's own confirmed claim", async () => {
     expect((await request(app).get("/api/friends/player-identification-requests")).status).toBe(401);
     expect((await request(app).post("/api/friends/player-identification-requests").send({})).status).toBe(401);

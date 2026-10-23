@@ -9,6 +9,41 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary List teammate identity suggestions sent by the current player
+ */
+export const ListSentPlayerIdentificationRequestsResponseItem = zod.object({
+  "id": zod.number(),
+  "recordingId": zod.number(),
+  "recipientUserId": zod.number(),
+  "recipientName": zod.string(),
+  "recordingDate": zod.string().nullable(),
+  "court": zod.string().nullable(),
+  "matchCode": zod.string().nullable(),
+  "rosterPlayerId": zod.string(),
+  "playerName": zod.string().nullable(),
+  "shirtNumber": zod.string().nullable(),
+  "status": zod.enum(['pending', 'accepted', 'declined']),
+  "createdAt": zod.coerce.date()
+})
+export const ListSentPlayerIdentificationRequestsResponse = zod.array(ListSentPlayerIdentificationRequestsResponseItem)
+
+
+/**
+ * @summary Withdraw a pending teammate identity suggestion
+ */
+
+
+
+export const WithdrawPlayerIdentificationRequestParams = zod.object({
+  "id": zod.coerce.number().min(1)
+})
+
+export const WithdrawPlayerIdentificationRequestResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
+/**
  * @summary Get social streaming status for an authorized camera
  */
 export const GetStreamingStatusParams = zod.object({

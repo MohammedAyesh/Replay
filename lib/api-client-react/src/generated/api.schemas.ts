@@ -3720,6 +3720,39 @@ export interface AccountDeletionError {
   activeFootageRequests?: number;
 }
 
+export type SentPlayerIdentificationRequestStatus = typeof SentPlayerIdentificationRequestStatus[keyof typeof SentPlayerIdentificationRequestStatus];
+
+
+export const SentPlayerIdentificationRequestStatus = {
+  pending: 'pending',
+  accepted: 'accepted',
+  declined: 'declined',
+} as const;
+
+export interface SentPlayerIdentificationRequest {
+  id: number;
+  recordingId: number;
+  recipientUserId: number;
+  recipientName: string;
+  /** @nullable */
+  recordingDate: string | null;
+  /** @nullable */
+  court: string | null;
+  /** @nullable */
+  matchCode: string | null;
+  rosterPlayerId: string;
+  /** @nullable */
+  playerName: string | null;
+  /** @nullable */
+  shirtNumber: string | null;
+  status: SentPlayerIdentificationRequestStatus;
+  createdAt: string;
+}
+
+export interface PlayerIdentificationRequestActionResponse {
+  ok: boolean;
+}
+
 export type GetAdminAnalysisJobQuoteParams = {
 /**
  * @exclusiveMinimum 0

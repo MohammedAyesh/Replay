@@ -23,6 +23,8 @@ import {
   useResetFriendLink,
   usePlayerIdentificationRequests,
   useRespondPlayerIdentificationRequest,
+  useSentPlayerIdentificationRequests,
+  useWithdrawPlayerIdentificationRequest,
   type FriendUser,
 } from "@/lib/friends-api";
 import { shareOrCopy } from "@/lib/match-api";
@@ -43,6 +45,8 @@ export default function FriendsPage() {
   const remove = useRemoveFriend();
   const playerRequests = usePlayerIdentificationRequests(signedIn);
   const respondPlayerRequest = useRespondPlayerIdentificationRequest();
+  const sentPlayerRequests = useSentPlayerIdentificationRequests(signedIn);
+  const withdrawPlayerRequest = useWithdrawPlayerIdentificationRequest();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [tab, setTab] = useState<Tab>("friends");
@@ -150,11 +154,12 @@ export default function FriendsPage() {
       </header>
 
       <section className="mb-4 rounded-2xl border border-line bg-surface p-3">
-        <h2 className="font-display text-base font-bold">{copy.locale === "ar" ? "تأكيد هوية لاعب" : "Player identity requests"}</h2>
+        <h2 className="font-display text-base font-bold">{copy.playerIdentityRequests}</h2>
+        <h3 className="mt-3 text-sm font-semibold text-muted-text">{copy.incomingPlayerSuggestions}</h3>
         {playerRequests.isLoading ? <LoadingRow label={copy.title} /> : playerRequests.isError ? (
           <ErrorState message={copy.error} retryLabel={copy.retry} onRetry={() => void playerRequests.refetch()} />
         ) : !playerRequests.data?.length ? (
-          <p className="mt-2 text-sm text-muted-text">{copy.locale === "ar" ? "ما في طلبات لتأكيد لاعب." : "No player identity requests yet."}</p>
+          <p className="mt-2 text-sm text-muted-text">{copy.noIncomingPlayerSuggestions}</p>
         ) : (
           <div className="mt-3 flex flex-col gap-2">
             {playerRequests.data.map((request) => (
@@ -182,6 +187,49 @@ export default function FriendsPage() {
                 </div>
               </article>
             ))}
+          </div>
+        )}
+        <h3 className="mt-5 text-sm font-semibold text-muted-text">{copy.sentPlayerSuggestions}</h3>
+        {sentPlayerRequests.isLoading ? <LoadingRow label={copy.sentPlayerSuggestions} /> : sentPlayerRequests.isError ? (
+          <ErrorState message={copy.error} retryLabel={copy.retry} onRetry={() => void sentPlayerRequests.refetch()} />
+        ) : !sentPlayerRequests.data?.length ? (
+          <p className="mt-2 text-sm text-muted-text">{copy.noSentPlayerSuggestions}</p>
+        ) : (
+          <div className="mt-3 flex flex-col gap-2">
+            {sentPlayerRequests.data.map((request) => {
+              const statusLabel = request.status === "accepted" ? copy.suggestionAccepted
+                : request.status === "declined" ? copy.suggestionDeclined : copy.suggestionPending;
+              return (
+                <article key={request.id} className="flex items-center gap-3 rounded-xl border border-line bg-void p-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{request.recipientName}</p>
+                    <p className="mt-1 truncate text-xs text-muted-text">
+                      {[request.court, request.recordingDate].filter(Boolean).join(" · ")}
+                      {(request.shirtNumber || request.playerName) && (
+                        <> · {request.shirtNumber ? `#${request.shirtNumber}` : request.playerName}</>
+                      )}
+                    </p>
+                    <span className={cn(
+                      "mt-2 inline-flex rounded-full px-2 py-1 text-[10px] font-semibold",
+                      request.status === "accepted" ? "bg-turf/15 text-turf" : "bg-raised text-muted-text",
+                    )}>{statusLabel}</span>
+                  </div>
+                  {request.status === "pending" && (
+                    <button
+                      type="button"
+                      disabled={withdrawPlayerRequest.isPending}
+                      onClick={() => void runRequestAction(
+                        () => withdrawPlayerRequest.mutateAsync(request.id),
+                        copy.suggestionWithdrawn,
+                      )}
+                      className="min-h-11 shrink-0 rounded-full border border-line px-3 text-xs font-semibold text-muted-text disabled:opacity-50"
+                    >
+                      {copy.withdrawSuggestion}
+                    </button>
+                  )}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>

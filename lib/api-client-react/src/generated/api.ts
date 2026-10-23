@@ -158,6 +158,7 @@ import type {
   OwnerRequest,
   OwnerRequestInput,
   PatchAdInput,
+  PlayerIdentificationRequestActionResponse,
   PortfolioView,
   ProfileInput,
   PublicPlayerStats,
@@ -165,6 +166,7 @@ import type {
   Recording,
   ReplaceTrackingBundleBodyTwo,
   ResolveClaimMatchDisputeInput,
+  SentPlayerIdentificationRequest,
   ShareLinkResult,
   StreamingStartInput,
   StreamingStopInput,
@@ -207,6 +209,153 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getListSentPlayerIdentificationRequestsUrl = () => {
+
+
+
+
+  return `/api/friends/player-identification-requests/sent`
+}
+
+/**
+ * @summary List teammate identity suggestions sent by the current player
+ */
+export const listSentPlayerIdentificationRequests = async ( options?: RequestInit): Promise<SentPlayerIdentificationRequest[]> => {
+
+  return customFetch<SentPlayerIdentificationRequest[]>(getListSentPlayerIdentificationRequestsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSentPlayerIdentificationRequestsQueryKey = () => {
+    return [
+    `/api/friends/player-identification-requests/sent`
+    ] as const;
+    }
+
+
+export const getListSentPlayerIdentificationRequestsQueryOptions = <TData = Awaited<ReturnType<typeof listSentPlayerIdentificationRequests>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSentPlayerIdentificationRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSentPlayerIdentificationRequestsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSentPlayerIdentificationRequests>>> = ({ signal }) => listSentPlayerIdentificationRequests({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSentPlayerIdentificationRequests>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSentPlayerIdentificationRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof listSentPlayerIdentificationRequests>>>
+export type ListSentPlayerIdentificationRequestsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List teammate identity suggestions sent by the current player
+ */
+
+export function useListSentPlayerIdentificationRequests<TData = Awaited<ReturnType<typeof listSentPlayerIdentificationRequests>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSentPlayerIdentificationRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSentPlayerIdentificationRequestsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getWithdrawPlayerIdentificationRequestUrl = (id: number,) => {
+
+
+
+
+  return `/api/friends/player-identification-requests/${id}`
+}
+
+/**
+ * @summary Withdraw a pending teammate identity suggestion
+ */
+export const withdrawPlayerIdentificationRequest = async (id: number, options?: RequestInit): Promise<PlayerIdentificationRequestActionResponse> => {
+
+  return customFetch<PlayerIdentificationRequestActionResponse>(getWithdrawPlayerIdentificationRequestUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getWithdrawPlayerIdentificationRequestMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPlayerIdentificationRequest>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof withdrawPlayerIdentificationRequest>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['withdrawPlayerIdentificationRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof withdrawPlayerIdentificationRequest>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  withdrawPlayerIdentificationRequest(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type WithdrawPlayerIdentificationRequestMutationResult = NonNullable<Awaited<ReturnType<typeof withdrawPlayerIdentificationRequest>>>
+
+    export type WithdrawPlayerIdentificationRequestMutationError = ErrorType<void>
+
+    /**
+ * @summary Withdraw a pending teammate identity suggestion
+ */
+export const useWithdrawPlayerIdentificationRequest = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof withdrawPlayerIdentificationRequest>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof withdrawPlayerIdentificationRequest>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getWithdrawPlayerIdentificationRequestMutationOptions(options));
+    }
 
 export const getGetStreamingStatusUrl = (cam: 'camera1' | 'camera2',) => {
 

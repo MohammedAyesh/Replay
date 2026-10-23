@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { SentPlayerIdentificationRequest as SentPlayerIdentificationRequestContract } from "@workspace/api-client-react";
 import { apiBase, matchKey, myMatchesKey } from "@/lib/match-api";
 
 export type FriendUser = {
@@ -31,6 +32,7 @@ export type PlayerIdentificationRequest = {
   shirtNumber: string | null;
   createdAt: string;
 };
+export type SentPlayerIdentificationRequest = SentPlayerIdentificationRequestContract;
 export type FriendMutationResult = { requestId?: number; status?: "pending" | "accepted"; ok?: boolean };
 export type InviteFriendsResult = {
   invited: Array<{ userId: number; name: string; playerId: number; inviteUrl: string }>;
@@ -205,6 +207,19 @@ export function usePlayerIdentificationRequests(enabled = true) {
     queryFn: () => call<PlayerIdentificationRequest[]>("/friends/player-identification-requests"),
     enabled,
     staleTime: 15_000,
+    refetchInterval: enabled ? 15_000 : false,
+    refetchOnWindowFocus: "always",
+    retry: false,
+  });
+}
+
+export function useSentPlayerIdentificationRequests(enabled = true) {
+  return useQuery({
+    queryKey: ["friends", "player-identification-requests", "sent"],
+    queryFn: () => call<SentPlayerIdentificationRequest[]>("/friends/player-identification-requests/sent"),
+    enabled,
+    staleTime: 15_000,
+    refetchInterval: enabled ? 15_000 : false,
     refetchOnWindowFocus: "always",
     retry: false,
   });
@@ -220,6 +235,16 @@ export function useSendPlayerIdentificationRequest() {
       method: "POST",
       body: json(body),
     }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["friends", "player-identification-requests"] });
+    },
+  });
+}
+
+export function useWithdrawPlayerIdentificationRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => call<{ ok: true }>(`/friends/player-identification-requests/${id}`, { method: "DELETE" }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["friends", "player-identification-requests"] }),
   });
 }
