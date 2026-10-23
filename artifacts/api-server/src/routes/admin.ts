@@ -1,8 +1,9 @@
 import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, count, and, desc, sql, inArray, ne, gte, lte, isNotNull } from "drizzle-orm";
-import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, userClipAuditEventsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable } from "@workspace/db";
+import { eq, count, and, desc, sql, inArray, ne, gte, lte, isNotNull, like, or } from "drizzle-orm";
+import { z } from "zod/v4";
+import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, userClipAuditEventsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable, footageRequestsTable } from "@workspace/db";
 import {
   CheckAdminClipSourceParams,
   CheckAdminClipSourceResponse,
@@ -40,7 +41,10 @@ import {
   uploadClipIntroToBunnyStorage,
   getBunnyVideoReadiness,
   BunnyVideoNotFoundError,
+  getBunnyVideoInfo,
+  getBunnyPlaybackUrl,
 } from "../lib/bunny";
+import { extractBunnyVideoId } from "../lib/publicFootage";
 import { fetchExportObject, forwardExportContentLength, probeExportObject } from "../lib/backupExport";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
@@ -54,6 +58,70 @@ import multer from "multer";
 import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 
 const router: IRouter = Router();
+
+const replaceRecordingVideoBody = z.object({
+  videoId: z.string().trim().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+  apply: z.boolean().optional().default(false),
+});
+
+type VideoReferenceChange = {
+  table: "recordings" | "clips" | "footage_requests" | "user_clips";
+  rowId: number;
+  field: "video_url" | "bunny_video_id" | "bunny_playback_url" | "video_id";
+  oldValue: string;
+  newValue: string;
+};
+
+async function collectVideoReferenceChanges(executor: any, recordingId: number, oldId: string, newId: string): Promise<VideoReferenceChange[]> {
+  const [target] = await executor.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId));
+  if (!target) throw new Error("Recording not found");
+  // A Bunny GUID may be imported into more than one recording row (for example,
+  // one recording per linked academy/session). Keep those rows on the same
+  // source video so a swap and its reverse remain exact.
+  const recordings = (await executor.select().from(recordingsTable)
+    .where(like(recordingsTable.videoUrl, `%${oldId}%`)))
+    .filter((row: typeof target) => extractBunnyVideoId(row.videoUrl)?.toLowerCase() === oldId.toLowerCase());
+  const recordingIds = recordings.map((row: typeof target) => row.id);
+  const changes: VideoReferenceChange[] = [];
+  for (const recording of recordings) {
+    const newPlaybackUrl = recording.videoUrl.includes(oldId)
+      ? recording.videoUrl.replace(oldId, newId)
+      : getBunnyPlaybackUrl(newId);
+    changes.push({ table: "recordings", rowId: recording.id, field: "video_url", oldValue: recording.videoUrl, newValue: newPlaybackUrl });
+  }
+
+  const clipRows = await executor.select({
+    id: clipsTable.id, bunnyVideoId: clipsTable.bunnyVideoId, bunnyPlaybackUrl: clipsTable.bunnyPlaybackUrl,
+  }).from(clipsTable).where(inArray(clipsTable.recordingId, recordingIds));
+  for (const clip of clipRows) {
+    const clipUsesOldId = clip.bunnyVideoId?.toLowerCase() === oldId.toLowerCase();
+    if (clipUsesOldId) changes.push({
+      table: "clips", rowId: clip.id, field: "bunny_video_id", oldValue: oldId, newValue: newId,
+    });
+    if (clip.bunnyPlaybackUrl && (clip.bunnyPlaybackUrl.includes(oldId) || clipUsesOldId)) {
+      changes.push({
+        table: "clips", rowId: clip.id, field: "bunny_playback_url",
+        oldValue: clip.bunnyPlaybackUrl,
+        newValue: clip.bunnyPlaybackUrl.includes(oldId)
+          ? clip.bunnyPlaybackUrl.replace(oldId, newId)
+          : getBunnyPlaybackUrl(newId),
+      });
+    }
+  }
+
+  const requests = await executor.select({ id: footageRequestsTable.id, videoId: footageRequestsTable.videoId })
+    .from(footageRequestsTable).where(eq(footageRequestsTable.videoId, oldId));
+  for (const row of requests) changes.push({
+    table: "footage_requests", rowId: row.id, field: "video_id", oldValue: oldId, newValue: newId,
+  });
+
+  const ownerClips = await executor.select({ id: userClipsTable.id, videoId: userClipsTable.videoId })
+    .from(userClipsTable).where(eq(userClipsTable.videoId, oldId));
+  for (const row of ownerClips) changes.push({
+    table: "user_clips", rowId: row.id, field: "video_id", oldValue: oldId, newValue: newId,
+  });
+  return changes;
+}
 
 async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<number | null> {
   const userId = await getLocalUserId(req);
@@ -1419,6 +1487,123 @@ router.delete("/admin/schedules/:id", async (req, res): Promise<void> => {
 // every request. The copy here had drifted -- it still reported a
 // per-recording pitch model, which is no longer the calibration in use.
 // Removed rather than fixed, because two of them is the actual bug.
+
+router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const recordingId = Number(req.params.id);
+  if (!Number.isSafeInteger(recordingId) || recordingId <= 0) {
+    res.status(400).json({ error: "Invalid recording id" }); return;
+  }
+  const parsed = replaceRecordingVideoBody.safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: "A valid Bunny video id is required" }); return; }
+  if (!BUNNY_API_KEY || !BUNNY_LIBRARY_ID || !BUNNY_CDN_HOSTNAME) {
+    res.status(503).json({ error: "Bunny is not configured" }); return;
+  }
+
+  const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId));
+  if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
+  const oldVideoId = extractBunnyVideoId(recording.videoUrl);
+  if (!oldVideoId) { res.status(409).json({ error: "Recording does not point to a Bunny Stream video" }); return; }
+  const newVideoId = parsed.data.videoId;
+  if (newVideoId === oldVideoId.toLowerCase()) {
+    res.status(409).json({ error: "The new video id is already assigned to this recording" }); return;
+  }
+  const targetRecordingRows = (await db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable)
+    .where(like(recordingsTable.videoUrl, `%${newVideoId}%`)))
+    .filter((row) => extractBunnyVideoId(row.videoUrl)?.toLowerCase() === newVideoId.toLowerCase());
+  const [targetClip] = await db.select({ id: clipsTable.id }).from(clipsTable).where(or(
+    eq(clipsTable.bunnyVideoId, newVideoId),
+    like(clipsTable.bunnyPlaybackUrl, `%${newVideoId}%`),
+  )).limit(1);
+  const [targetRequest] = await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable)
+    .where(eq(footageRequestsTable.videoId, newVideoId)).limit(1);
+  const [targetUserClip] = await db.select({ id: userClipsTable.id }).from(userClipsTable)
+    .where(eq(userClipsTable.videoId, newVideoId)).limit(1);
+  if (targetRecordingRows.length || targetClip || targetRequest || targetUserClip) {
+    res.status(409).json({
+      error: "New video id is already referenced; choose an unassigned Bunny video to keep replacement reversible",
+    });
+    return;
+  }
+
+  try {
+    const [currentVideo, targetVideo, targetReadiness] = await Promise.all([
+      getBunnyVideoInfo(oldVideoId),
+      getBunnyVideoInfo(newVideoId),
+      getBunnyVideoReadiness(newVideoId),
+    ]);
+    if (targetReadiness.status !== 4) {
+      res.status(409).json({ error: "New Bunny video must be ready (status 4)", status: targetReadiness.status });
+      return;
+    }
+    if (Math.abs(currentVideo.duration - targetVideo.duration) > 2) {
+      res.status(409).json({
+        error: "Video length must be within 2 seconds of the current video",
+        currentDuration: currentVideo.duration,
+        newDuration: targetVideo.duration,
+      });
+      return;
+    }
+  } catch (error: unknown) {
+    if (error instanceof BunnyVideoNotFoundError) {
+      res.status(404).json({ error: "Bunny video not found in the configured library", videoId: error.message.split(": ").at(-1) });
+      return;
+    }
+    throw error;
+  }
+
+  if (!parsed.data.apply) {
+    try {
+      const changes = await collectVideoReferenceChanges(db, recordingId, oldVideoId, newVideoId);
+      res.json({
+        mode: "dry_run",
+        recordingId,
+        oldVideoId,
+        newVideoId,
+        changes,
+      });
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "Recording not found") {
+        res.status(404).json({ error: "Recording not found" }); return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  const changes = await db.transaction(async (tx) => {
+    const [current] = await tx.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId)).for("update");
+    if (!current) throw new Error("Recording not found");
+    if (extractBunnyVideoId(current.videoUrl)?.toLowerCase() !== oldVideoId.toLowerCase()) {
+      throw new Error("Recording video changed during replacement preview");
+    }
+    const plan = await collectVideoReferenceChanges(tx, recordingId, oldVideoId, newVideoId);
+    for (const change of plan) {
+      if (change.table === "recordings") {
+        await tx.update(recordingsTable).set({ videoUrl: change.newValue }).where(eq(recordingsTable.id, change.rowId));
+      } else if (change.table === "clips" && change.field === "bunny_video_id") {
+        await tx.update(clipsTable).set({ bunnyVideoId: change.newValue }).where(eq(clipsTable.id, change.rowId));
+      } else if (change.table === "clips" && change.field === "bunny_playback_url") {
+        await tx.update(clipsTable).set({ bunnyPlaybackUrl: change.newValue }).where(eq(clipsTable.id, change.rowId));
+      } else if (change.table === "footage_requests") {
+        await tx.update(footageRequestsTable).set({ videoId: change.newValue }).where(eq(footageRequestsTable.id, change.rowId));
+      } else if (change.table === "user_clips") {
+        await tx.update(userClipsTable).set({ videoId: change.newValue }).where(eq(userClipsTable.id, change.rowId));
+      }
+    }
+    return plan;
+  });
+  req.log?.info({
+    adminId,
+    recordingId,
+    oldVideoId,
+    newVideoId,
+    changedAt: new Date().toISOString(),
+    changedFields: changes.length,
+  }, "Admin replaced recording Bunny video");
+  res.json({ mode: "applied", recordingId, oldVideoId, newVideoId, changes });
+});
 
 router.patch("/admin/recordings/:id", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);

@@ -248,6 +248,22 @@ interface AdminRecording {
   identityMapMatchesBundle?: boolean;
 }
 
+interface VideoReplacementChange {
+  table: string;
+  rowId: number;
+  field: string;
+  oldValue: string;
+  newValue: string;
+}
+
+interface VideoReplacementResult {
+  mode: "dry_run" | "applied";
+  recordingId: number;
+  oldVideoId: string;
+  newVideoId: string;
+  changes: VideoReplacementChange[];
+}
+
 interface ClaimDispute {
   id: number;
   recordingId: number;
@@ -5687,8 +5703,144 @@ function TrackingBundleUpload({
   );
 }
 
+function ReplaceVideoAction({
+  recording,
+  onApplied,
+}: {
+  recording: AdminRecording;
+  onApplied: (recordingId: number, videoUrl: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [videoId, setVideoId] = useState("");
+  const [preview, setPreview] = useState<VideoReplacementResult | null>(null);
+  const [applied, setApplied] = useState<VideoReplacementResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const close = () => {
+    if (busy) return;
+    setOpen(false);
+    setPreview(null);
+    setApplied(null);
+    setVideoId("");
+    setError("");
+  };
+  const previewChanges = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await apiFetch(`/admin/recordings/${recording.id}/replace-video`, {
+        method: "POST",
+        body: JSON.stringify({ videoId }),
+      }) as VideoReplacementResult;
+      setPreview(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Preview failed");
+    }
+    setBusy(false);
+  };
+  const applyChanges = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await apiFetch(`/admin/recordings/${recording.id}/replace-video`, {
+        method: "POST",
+        body: JSON.stringify({ videoId, apply: true }),
+      }) as VideoReplacementResult;
+      setApplied(result);
+      const updatedUrl = result.changes.find((change) => change.table === "recordings" && change.field === "video_url")?.newValue;
+      if (updatedUrl) onApplied(recording.id, updatedUrl);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Replacement failed");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        data-testid={`button-replace-video-${recording.id}`}
+        className="mt-2 rounded-lg border border-amber-700/60 px-2.5 py-1.5 text-xs font-semibold text-amber-300 hover:bg-amber-950/30"
+      >
+        Replace video
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 p-4" onMouseDown={(event) => {
+          if (event.target === event.currentTarget) close();
+        }}>
+          <section role="dialog" aria-modal="true" aria-labelledby={`replace-video-title-${recording.id}`}
+            className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-zinc-700 bg-zinc-950 p-5 text-white shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 id={`replace-video-title-${recording.id}`} className="text-lg font-bold">Replace video</h2>
+                <p className="mt-1 text-xs text-zinc-400">Recording {recording.id} · {recording.date} · {recording.timeSlot}</p>
+              </div>
+              <button type="button" onClick={close} aria-label="Close" className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {!preview && !applied && (
+              <div className="mt-4 space-y-3">
+                <label className="block text-sm font-medium text-zinc-200">
+                  New Bunny video ID
+                  <input value={videoId} onChange={(event) => setVideoId(event.target.value.trim())}
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                    className="mt-1.5 w-full rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2.5 font-mono text-sm text-white outline-none focus:border-amber-500" />
+                </label>
+                <p className="text-xs text-zinc-400">Preview checks the configured Bunny library, readiness, duration, and every database reference. It does not change anything.</p>
+                {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+                <button type="button" disabled={!videoId || busy} onClick={() => void previewChanges()}
+                  className="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-black disabled:opacity-50">
+                  {busy ? "Checking…" : "Preview"}
+                </button>
+              </div>
+            )}
+            {preview && !applied && (
+              <div className="mt-4 space-y-4">
+                <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-3 text-xs">
+                  <p><span className="text-zinc-400">Old video:</span> <code className="break-all">{preview.oldVideoId}</code></p>
+                  <p className="mt-1"><span className="text-zinc-400">New video:</span> <code className="break-all">{preview.newVideoId}</code></p>
+                </div>
+                <p className="text-sm font-semibold">Database changes to apply ({preview.changes.length})</p>
+                <div className="max-h-56 space-y-2 overflow-y-auto">
+                  {preview.changes.map((change, index) => (
+                    <div key={`${change.table}-${change.rowId}-${change.field}-${index}`} className="rounded-lg border border-zinc-800 p-2.5 text-[11px]">
+                      <p className="font-semibold text-zinc-200">{change.table} · row {change.rowId} · {change.field}</p>
+                      <p className="mt-1 break-all text-zinc-400">Old: {change.oldValue}</p>
+                      <p className="mt-0.5 break-all text-emerald-300">New: {change.newValue}</p>
+                    </div>
+                  ))}
+                </div>
+                {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => { setPreview(null); setError(""); }}
+                    className="rounded-xl border border-zinc-700 px-4 py-2.5 text-sm text-zinc-200">Back</button>
+                  <button type="button" disabled={busy} onClick={() => void applyChanges()}
+                    className="rounded-xl bg-amber-400 px-4 py-2.5 text-sm font-bold text-black disabled:opacity-50">
+                    {busy ? "Replacing…" : "Confirm replacement"}
+                  </button>
+                </div>
+              </div>
+            )}
+            {applied && (
+              <div className="mt-4 space-y-3">
+                <p role="status" className="text-sm font-semibold text-emerald-300">Video replaced successfully.</p>
+                <p className="text-xs text-zinc-400">Old video ID (use this to reverse the replacement):</p>
+                <code className="block break-all rounded-xl border border-zinc-800 bg-zinc-900 p-3 text-sm text-white">{applied.oldVideoId}</code>
+                <button type="button" onClick={close} className="rounded-xl bg-zinc-800 px-4 py-2.5 text-sm font-semibold">Done</button>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
+
 function FieldScheduleSection({
-  fieldId, fieldName, recordings, schedules, onSchedulesChange, onVisibilityChange,
+  fieldId, fieldName, recordings, schedules, onSchedulesChange, onVisibilityChange, onVideoReplaced,
 }: {
   fieldId: number;
   fieldName: string;
@@ -5696,6 +5848,7 @@ function FieldScheduleSection({
   schedules: AdminSchedule[];
   onSchedulesChange: (updated: AdminSchedule[]) => void;
   onVisibilityChange: (recordingId: number, isVisible: boolean) => Promise<void>;
+  onVideoReplaced: (recordingId: number, videoUrl: string) => void;
 }) {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [month, setMonth] = useState(() => {
@@ -5767,11 +5920,10 @@ function FieldScheduleSection({
             Claim Your Match bundles
           </p>
           {recordings.map((recording) => (
-            <TrackingBundleUpload
-              key={recording.id}
-              recording={recording}
-              onVisibilityChange={onVisibilityChange}
-            />
+            <div key={recording.id}>
+              <TrackingBundleUpload recording={recording} onVisibilityChange={onVisibilityChange} />
+              <ReplaceVideoAction recording={recording} onApplied={onVideoReplaced} />
+            </div>
           ))}
         </div>
         <p className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">
@@ -5934,6 +6086,18 @@ function RecordingsTab() {
     }
   };
 
+  const updateRecordingVideo = (recordingId: number, videoUrl: string) => {
+    const recording = recordings.find((item) => item.id === recordingId);
+    setRecordings((current) => current.map((item) => item.id === recordingId ? { ...item, videoUrl } : item));
+    if (recording) {
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: getGetFieldQueryKey(recording.fieldId) }),
+        queryClient.invalidateQueries({ queryKey: getGetFieldVideosQueryKey(recording.fieldId) }),
+        queryClient.invalidateQueries({ queryKey: getGetFieldRecordingsQueryKey(recording.fieldId) }),
+      ]);
+    }
+  };
+
   const fieldGroups = useMemo(() => {
     const map = new Map<number, { fieldId: number; fieldName: string; recordings: AdminRecording[] }>(
       fields.map((field) => [
@@ -6019,6 +6183,7 @@ function RecordingsTab() {
             recordings={fieldRecs}
             schedules={schedulesByField.get(fieldId) ?? []}
             onVisibilityChange={updateRecordingVisibility}
+            onVideoReplaced={updateRecordingVideo}
             onSchedulesChange={(updated) =>
               setSchedules((prev) => [
                 ...prev.filter((s) => s.fieldId !== fieldId),
