@@ -38,6 +38,7 @@ import {
 } from "@workspace/api-client-react";
 
 import { useAuth } from "@/lib/auth";
+import { useFriends, useSendPlayerIdentificationRequest } from "@/lib/friends-api";
 import { useGameCopy, type GameStrings } from "@/i18n/game-strings";
 import { GameMedia, type MediaHandle, type MediaView, type TapHit } from "@/components/game-claim/GameMedia";
 import { Btn, Chip, ChunkTimeline, Crop, Eyebrow, GameTimeline, Lede, ProgressRail, Row, Section, Stat, Title } from "@/components/game-claim/bits";
@@ -351,6 +352,8 @@ export function GameClaim({
   matches, matchWindow = null, continuation,
 }: Props) {
   const queryClient = useQueryClient();
+  const friendsQuery = useFriends();
+  const sendPlayerSuggestion = useSendPlayerIdentificationRequest();
   const [, setLocation] = useLocation();
   const [, bump] = useReducer((x: number) => x + 1, 0);
   const [ver, setVer] = useState(0);
@@ -882,6 +885,14 @@ export function GameClaim({
       return;
     }
     const availableRoster = await loadRoster();
+    const suggestedPlayerId = new URLSearchParams(window.location.search).get("suggestedPlayer");
+    const suggestedPlayer = suggestedPlayerId
+      ? availableRoster.find((player) => player.id === suggestedPlayerId)
+      : undefined;
+    if (suggestedPlayer) {
+      pickRosterPlayer(suggestedPlayer);
+      return;
+    }
     if (availableRoster.length) {
       go("roster");
       return;
@@ -1691,6 +1702,12 @@ export function GameClaim({
     );
   } else if (S.step === "done") {
     body = <DoneScreen ctx={ctx} copy={copy} elapsed={elapsed}
+      recordingId={recordingId}
+      rosterPlayers={rosterPlayers}
+      friends={friendsQuery.data?.friends ?? []}
+      matchCode={matches.find((match) => matchChoices.includes(match.code))?.code ?? null}
+      sendSuggestion={(input) => sendPlayerSuggestion.mutateAsync(input)}
+      suggestionPending={sendPlayerSuggestion.isPending}
       onStats={() => go("stats")}
       onReport={reportMatchCode ? () => void openMatchReport() : null}
       continuation={continuation && (!matchChoices.length || matchChoices.includes(continuation.matchCode)) ? continuation : null}
@@ -2205,9 +2222,13 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
 
 /* ------------------------------------------------------------------- done */
 
-function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuation, onContinue }: {
+function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuation, onContinue, recordingId, rosterPlayers, friends, matchCode, sendSuggestion, suggestionPending }: {
   ctx: Ctx; copy: GameStrings; elapsed: number; onStats: () => void; onReport: (() => void) | null; onAgain: () => void;
   continuation: ServerGame["continuation"]; onContinue: () => void;
+  recordingId: number; rosterPlayers: MatchRosterPlayer[]; friends: Array<{ userId: number; name: string }>;
+  matchCode: string | null;
+  sendSuggestion: (input: { recordingId: number; recipientUserId: number; rosterPlayerId: string; playerName?: string | null; shirtNumber?: string | null; matchCode?: string | null }) => Promise<unknown>;
+  suggestionPending: boolean;
 }) {
   const tt = totals(ctx);
   const mo = ctx.game.matchOffset;
@@ -2237,6 +2258,14 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuati
         })}
       </div>
       <p className="border-s-2 border-violet ps-2.5 text-xs text-muted-text">{copy.done.note}</p>
+      <TeammateSuggestionForm
+        recordingId={recordingId}
+        rosterPlayers={rosterPlayers}
+        friends={friends}
+        matchCode={matchCode}
+        sendSuggestion={sendSuggestion}
+        pending={suggestionPending}
+      />
       {/* Finishing leads to the match report (it now shows the player's
           stats). Without a known match the in-flow stats stay primary. */}
       <div className="flex flex-col gap-2.5">
@@ -2251,5 +2280,75 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuati
         </button>
       </div>
     </div>
+  );
+}
+
+function TeammateSuggestionForm({
+  recordingId, rosterPlayers, friends, matchCode, sendSuggestion, pending,
+}: {
+  recordingId: number;
+  rosterPlayers: MatchRosterPlayer[];
+  friends: Array<{ userId: number; name: string }>;
+  matchCode: string | null;
+  sendSuggestion: (input: { recordingId: number; recipientUserId: number; rosterPlayerId: string; playerName?: string | null; shirtNumber?: string | null; matchCode?: string | null }) => Promise<unknown>;
+  pending: boolean;
+}) {
+  const [playerId, setPlayerId] = useState("");
+  const [friendId, setFriendId] = useState("");
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+  const selected = rosterPlayers.find((player) => player.id === playerId);
+  const isArabic = document.documentElement.dir === "rtl";
+  const label = (player: MatchRosterPlayer) => [
+    player.name || (isArabic ? "لاعب" : "Player"),
+    player.number ? `#${player.number}` : "",
+  ].filter(Boolean).join(" · ");
+
+  if (!friends.length || !rosterPlayers.length) return null;
+  return (
+    <section className="rounded-2xl border border-line bg-surface p-4">
+      <h3 className="font-display text-base font-bold">{isArabic ? "بتعرف مين من أصحابك؟" : "Recognize a teammate?"}</h3>
+      <p className="mt-1 text-xs text-muted-text">{isArabic
+        ? "اقترح اللاعب على صاحبك. هو اللي بأكد هويته وبكمل اختياره."
+        : "Suggest a player to a friend. They confirm it and complete their own claim."}</p>
+      {sent ? <p role="status" className="mt-3 text-sm font-semibold text-turf">{isArabic ? "انبعث الطلب لصاحبك." : "Request sent to your friend."}</p> : (
+        <div className="mt-3 flex flex-col gap-2">
+          <label className="text-xs font-semibold text-muted-text">
+            {isArabic ? "اللاعب" : "Player"}
+            <select value={playerId} onChange={(event) => setPlayerId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-void px-3 text-sm text-text">
+              <option value="">{isArabic ? "اختار لاعب" : "Choose a player"}</option>
+              {rosterPlayers.map((player) => <option key={player.id} value={player.id}>{label(player)}</option>)}
+            </select>
+          </label>
+          <label className="text-xs font-semibold text-muted-text">
+            {isArabic ? "صاحبك" : "Friend"}
+            <select value={friendId} onChange={(event) => setFriendId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-void px-3 text-sm text-text">
+              <option value="">{isArabic ? "اختار صاحب" : "Choose a friend"}</option>
+              {friends.map((friend) => <option key={friend.userId} value={friend.userId}>{friend.name}</option>)}
+            </select>
+          </label>
+          {error && <p role="alert" className="text-xs text-red-400">{error}</p>}
+          <button type="button" disabled={!playerId || !friendId || pending} onClick={async () => {
+            if (!selected) return;
+            setError("");
+            try {
+              await sendSuggestion({
+                recordingId,
+                recipientUserId: Number(friendId),
+                rosterPlayerId: selected.id,
+                playerName: selected.name,
+                shirtNumber: selected.number == null ? null : String(selected.number),
+                matchCode,
+              });
+              setSent(true);
+            } catch (cause) {
+              setError(cause instanceof Error ? cause.message : (isArabic ? "ما قدرنا نبعت الطلب." : "Couldn't send the request."));
+            }
+          }} className="min-h-11 rounded-full bg-turf px-4 text-sm font-bold text-void disabled:opacity-50">
+            {pending ? (isArabic ? "جاري الإرسال…" : "Sending…") : (isArabic ? "اطلب منه التأكيد" : "Ask them to confirm")}
+          </button>
+        </div>
+      )}
+    </section>
   );
 }

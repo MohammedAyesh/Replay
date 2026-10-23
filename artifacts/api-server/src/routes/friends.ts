@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import {
   db, friendshipsTable, matchPlayersTable, matchRoomsTable, usersTable,
+  playerIdentificationRequestsTable, claimMatchIdentityBindingsTable, recordingsTable,
 } from "@workspace/db";
 import { getLocalAccountUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { avatarUrlFor, publicBaseUrl } from "../lib/matchRooms";
@@ -13,6 +14,14 @@ const router = Router();
 const codeAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 const requestTimes = new Map<number, number[]>();
 const requestBody = z.object({ userId: z.number().int().positive() });
+const playerSuggestionBody = z.object({
+  recordingId: z.number().int().positive(),
+  recipientUserId: z.number().int().positive(),
+  rosterPlayerId: z.string().min(1).max(120),
+  playerName: z.string().max(120).nullable().optional(),
+  shirtNumber: z.string().max(24).nullable().optional(),
+  matchCode: z.string().max(24).nullable().optional(),
+});
 
 async function account(req: Request, res: Response): Promise<number | null> {
   const id = await getLocalAccountUserId(req);
@@ -212,6 +221,100 @@ router.post("/friends/link/:code/accept", async (req, res): Promise<void> => {
   if (existing) await db.update(friendshipsTable).set({ status: "accepted", respondedAt: new Date() }).where(eq(friendshipsTable.id, existing.id));
   else await db.insert(friendshipsTable).values({ userLowId: Math.min(viewer, target.id), userHighId: Math.max(viewer, target.id), requestedBy: viewer, status: "accepted", respondedAt: new Date() });
   res.status(201).json({ status: "accepted" });
+});
+
+router.get("/friends/player-identification-requests", async (req, res): Promise<void> => {
+  const viewer = await account(req, res); if (!viewer) return;
+  const rows = await db.select({
+    request: playerIdentificationRequestsTable,
+    requesterName: usersTable.name,
+    recordingDate: recordingsTable.date,
+    court: recordingsTable.court,
+  }).from(playerIdentificationRequestsTable)
+    .innerJoin(usersTable, eq(usersTable.id, playerIdentificationRequestsTable.requesterUserId))
+    .innerJoin(recordingsTable, eq(recordingsTable.id, playerIdentificationRequestsTable.recordingId))
+    .where(and(eq(playerIdentificationRequestsTable.recipientUserId, viewer), eq(playerIdentificationRequestsTable.status, "pending")));
+  res.json(rows.map(({ request, requesterName, recordingDate, court }) => ({
+    id: request.id,
+    recordingId: request.recordingId,
+    requesterName,
+    recordingDate,
+    court,
+    matchCode: request.matchCode,
+    rosterPlayerId: request.rosterPlayerId,
+    playerName: request.playerName,
+    shirtNumber: request.shirtNumber,
+    createdAt: request.createdAt.toISOString(),
+  })));
+});
+
+router.post("/friends/player-identification-requests", async (req, res): Promise<void> => {
+  const viewer = await account(req, res); if (!viewer) return;
+  const parsed = playerSuggestionBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid player suggestion" }); return; }
+  const body = parsed.data;
+  if (body.recipientUserId === viewer) { res.status(400).json({ error: "Cannot suggest yourself" }); return; }
+  const [recipient] = await db.select().from(usersTable).where(eq(usersTable.id, body.recipientUserId));
+  if (!recipient || !validTarget(recipient)) { res.status(404).json({ error: "Friend not found" }); return; }
+  if (await blockedEitherWay(viewer, body.recipientUserId)) {
+    res.status(403).json({ error: "Blocked", reason: "blocked" }); return;
+  }
+  if (!(await acceptedFriendshipBetween(viewer, body.recipientUserId))) {
+    res.status(403).json({ error: "Accepted friendship required" }); return;
+  }
+  const [binding] = await db.select({ state: claimMatchIdentityBindingsTable.state })
+    .from(claimMatchIdentityBindingsTable)
+    .where(and(
+      eq(claimMatchIdentityBindingsTable.userId, viewer),
+      eq(claimMatchIdentityBindingsTable.recordingId, body.recordingId),
+      eq(claimMatchIdentityBindingsTable.state, "confirmed"),
+    ));
+  if (!binding) { res.status(403).json({ error: "Find yourself in this match before suggesting a teammate" }); return; }
+  const [recording] = await db.select({ id: recordingsTable.id }).from(recordingsTable)
+    .where(eq(recordingsTable.id, body.recordingId));
+  if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
+  let created: { id: number } | undefined;
+  try {
+    [created] = await db.insert(playerIdentificationRequestsTable).values({
+      recordingId: body.recordingId,
+      requesterUserId: viewer,
+      recipientUserId: body.recipientUserId,
+      rosterPlayerId: body.rosterPlayerId,
+      playerName: body.playerName?.trim() || null,
+      shirtNumber: body.shirtNumber?.trim() || null,
+      matchCode: body.matchCode?.trim() || null,
+    }).returning({ id: playerIdentificationRequestsTable.id });
+  } catch (error: unknown) {
+    if ((error as { code?: string })?.code === "23505") {
+      res.status(409).json({ error: "This request is already waiting" }); return;
+    }
+    throw error;
+  }
+  if (!created) { res.status(500).json({ error: "Could not create request" }); return; }
+  res.status(201).json({ id: created.id });
+});
+
+router.post("/friends/player-identification-requests/:id/respond", async (req, res): Promise<void> => {
+  const viewer = await account(req, res); if (!viewer) return;
+  const id = idParam(req, "id");
+  const response = z.object({ decision: z.enum(["accept", "decline"]) }).safeParse(req.body);
+  if (!id || !response.success) { res.status(400).json({ error: "Invalid response" }); return; }
+  const [updated] = await db.update(playerIdentificationRequestsTable)
+    .set({ status: response.data.decision === "accept" ? "accepted" : "declined", respondedAt: new Date() })
+    .where(and(
+      eq(playerIdentificationRequestsTable.id, id),
+      eq(playerIdentificationRequestsTable.recipientUserId, viewer),
+      eq(playerIdentificationRequestsTable.status, "pending"),
+    )).returning();
+  if (!updated) { res.status(404).json({ error: "Request not found" }); return; }
+  res.json({
+    ok: true,
+    ...(response.data.decision === "accept" ? {
+      recordingId: updated.recordingId,
+      matchCode: updated.matchCode,
+      rosterPlayerId: updated.rosterPlayerId,
+    } : {}),
+  });
 });
 
 export default router;

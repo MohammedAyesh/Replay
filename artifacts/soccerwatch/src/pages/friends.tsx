@@ -21,6 +21,8 @@ import {
   useFriendSuggestions,
   useRemoveFriend,
   useResetFriendLink,
+  usePlayerIdentificationRequests,
+  useRespondPlayerIdentificationRequest,
   type FriendUser,
 } from "@/lib/friends-api";
 import { shareOrCopy } from "@/lib/match-api";
@@ -39,6 +41,8 @@ export default function FriendsPage() {
   const accept = useAcceptFriendRequest();
   const decline = useDeclineFriendRequest();
   const remove = useRemoveFriend();
+  const playerRequests = usePlayerIdentificationRequests(signedIn);
+  const respondPlayerRequest = useRespondPlayerIdentificationRequest();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [tab, setTab] = useState<Tab>("friends");
@@ -144,6 +148,43 @@ export default function FriendsPage() {
           <span className="sm:hidden">{copy.share}</span>
         </button>
       </header>
+
+      <section className="mb-4 rounded-2xl border border-line bg-surface p-3">
+        <h2 className="font-display text-base font-bold">{copy.locale === "ar" ? "تأكيد هوية لاعب" : "Player identity requests"}</h2>
+        {playerRequests.isLoading ? <LoadingRow label={copy.title} /> : playerRequests.isError ? (
+          <ErrorState message={copy.error} retryLabel={copy.retry} onRetry={() => void playerRequests.refetch()} />
+        ) : !playerRequests.data?.length ? (
+          <p className="mt-2 text-sm text-muted-text">{copy.locale === "ar" ? "ما في طلبات لتأكيد لاعب." : "No player identity requests yet."}</p>
+        ) : (
+          <div className="mt-3 flex flex-col gap-2">
+            {playerRequests.data.map((request) => (
+              <article key={request.id} className="rounded-xl border border-line bg-void p-3">
+                <p className="text-sm font-semibold">{copy.locale === "ar"
+                  ? `${request.requesterName} بقترح إنك إنت اللاعب ${request.shirtNumber ? `رقم ${request.shirtNumber}` : request.playerName ?? ""}`
+                  : `${request.requesterName} thinks you may be ${request.shirtNumber ? `player #${request.shirtNumber}` : request.playerName ?? "this player"}`}</p>
+                <p className="mt-1 text-xs text-muted-text">{[request.court, request.recordingDate].filter(Boolean).join(" · ")}</p>
+                <p className="mt-2 text-xs text-muted-text">{copy.locale === "ar"
+                  ? "القبول بيفتح مراجعة اللاعب؛ هويتك ما بتنربط إلا لما تكمل اختيارك."
+                  : "Accept to review this player. They won't be linked to you unless you complete your own claim."}</p>
+                <div className="mt-3 flex gap-2">
+                  <button type="button" disabled={respondPlayerRequest.isPending} onClick={async () => {
+                    try {
+                      const result = await respondPlayerRequest.mutateAsync({ id: request.id, decision: "accept" });
+                      if (result.recordingId && result.rosterPlayerId) {
+                        const query = new URLSearchParams();
+                        if (result.matchCode) query.set("match", result.matchCode);
+                        query.set("suggestedPlayer", result.rosterPlayerId);
+                        setLocation(`/find/${result.recordingId}?${query}`);
+                      }
+                    } catch { showError(new Error("request")); }
+                  }} className="min-h-11 rounded-full bg-floodlight px-4 text-xs font-bold text-void disabled:opacity-50">{copy.locale === "ar" ? "راجع اللاعب" : "Review player"}</button>
+                  <button type="button" disabled={respondPlayerRequest.isPending} onClick={() => void respondPlayerRequest.mutateAsync({ id: request.id, decision: "decline" }).catch(() => showError(new Error("request")))} className="min-h-11 rounded-full border border-line px-4 text-xs font-semibold text-muted-text disabled:opacity-50">{copy.locale === "ar" ? "مش أنا" : "Not me"}</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       <div className="mb-4 flex items-center justify-between gap-2 rounded-2xl border border-line bg-surface px-3">
         <p className="min-w-0 truncate py-3 text-xs text-muted-text">{friendLink.isError ? copy.error : copy.friendLinkShareHelp}</p>

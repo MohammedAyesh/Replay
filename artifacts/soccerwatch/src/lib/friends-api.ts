@@ -19,6 +19,18 @@ export type FriendsData = {
 export type FriendSuggestion = FriendUser & { matchesTogether: number };
 export type PublicFriendLink = FriendUser;
 export type FriendLink = { code: string; url: string };
+export type PlayerIdentificationRequest = {
+  id: number;
+  recordingId: number;
+  requesterName: string;
+  recordingDate: string | null;
+  court: string | null;
+  matchCode: string | null;
+  rosterPlayerId: string;
+  playerName: string | null;
+  shirtNumber: string | null;
+  createdAt: string;
+};
 export type FriendMutationResult = { requestId?: number; status?: "pending" | "accepted"; ok?: boolean };
 export type InviteFriendsResult = {
   invited: Array<{ userId: number; name: string; playerId: number; inviteUrl: string }>;
@@ -184,6 +196,43 @@ export function useInviteFriends(code: string) {
       body: json({ userIds }),
     }),
     onSuccess: () => invalidateFriendViews(queryClient, code),
+  });
+}
+
+export function usePlayerIdentificationRequests(enabled = true) {
+  return useQuery({
+    queryKey: ["friends", "player-identification-requests"],
+    queryFn: () => call<PlayerIdentificationRequest[]>("/friends/player-identification-requests"),
+    enabled,
+    staleTime: 15_000,
+    refetchOnWindowFocus: "always",
+    retry: false,
+  });
+}
+
+export function useSendPlayerIdentificationRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      recordingId: number; recipientUserId: number; rosterPlayerId: string;
+      playerName?: string | null; shirtNumber?: string | null; matchCode?: string | null;
+    }) => call<{ id: number }>("/friends/player-identification-requests", {
+      method: "POST",
+      body: json(body),
+    }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["friends", "player-identification-requests"] }),
+  });
+}
+
+export function useRespondPlayerIdentificationRequest() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, decision }: { id: number; decision: "accept" | "decline" }) =>
+      call<{ ok: true; recordingId?: number; matchCode?: string | null; rosterPlayerId?: string }>(
+        `/friends/player-identification-requests/${id}/respond`,
+        { method: "POST", body: json({ decision }) },
+      ),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["friends", "player-identification-requests"] }),
   });
 }
 

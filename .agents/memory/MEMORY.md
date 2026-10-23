@@ -63,3 +63,4 @@
 - [Follow-ball smoothing](follow-ball-smoothing.md) — preserve time symmetry and enforce speed limits after bidirectional filtering; causal dead zones add visible lag.
 - [Orval path and query parameters](orval-path-query-collision.md) — operations combining path and query params can generate colliding `*Params` exports; verify codegen after contract changes.
 - [Bunny export proxy cancellation](bunny-export-proxy-cancellation.md) — keep Storage credentials server-side and tie client disconnects to an abortable upstream HTTP stream.
+- [Teammate identity confirmation](teammate-identity-confirmation.md) — a friend must confirm through their own `/find` claim; the requester never binds another account's identity.

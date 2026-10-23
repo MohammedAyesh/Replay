@@ -73,6 +73,30 @@ afterAll(async () => {
 });
 
 describe("friends API", () => {
+  it("protects the player-request inbox and requires the sender's own confirmed claim", async () => {
+    expect((await request(app).get("/api/friends/player-identification-requests")).status).toBe(401);
+    expect((await request(app).post("/api/friends/player-identification-requests").send({})).status).toBe(401);
+
+    const [pair] = await db.insert(friendshipsTable).values({
+      userLowId: Math.min(owner, other),
+      userHighId: Math.max(owner, other),
+      requestedBy: owner,
+      status: "accepted",
+    }).returning({ id: friendshipsTable.id });
+    const rejected = await request(app).post("/api/friends/player-identification-requests")
+      .set(as(owner))
+      .send({
+        recordingId: 1,
+        recipientUserId: other,
+        rosterPlayerId: "candidate-1",
+        playerName: "Player",
+      });
+    expect(rejected.status).toBe(403);
+    expect(rejected.body.error).toContain("Find yourself");
+    expect((await request(app).get("/api/friends/player-identification-requests").set(as(other))).body).toEqual([]);
+    await db.delete(friendshipsTable).where(eq(friendshipsTable.id, pair.id));
+  });
+
   it("requires auth and supports request, addressee accept, listing, and removal", async () => {
     expect((await request(app).get("/api/friends")).status).toBe(401);
     expect((await request(app).get("/api/friends/suggestions").set(as(guest))).status).toBe(401);
