@@ -13,6 +13,7 @@ import type { ClaimMatchClipGroup } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
+import { markSeen, ownerOf } from "@/lib/first-time";
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useToast } from "@/hooks/use-toast";
@@ -479,6 +480,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
       triggerDownload(blob, filename);
     }
     onDownloaded?.();
+    markSeen(ownerOf(user), "home.first-clip.shared.v1");
     setLocalTimingOverride({ start: 0, end: 1 });
     setIsLocal(true);
     const localUrl = createLocalBlobUrl(record);
@@ -493,7 +495,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
         video.play().then(() => setIsPlaying(true)).catch(() => {});
       }, { once: true });
     }
-  }, [clip, user?.id, onDownloaded]);
+  }, [clip, user, onDownloaded]);
 
   /**
    * Deliver the server-rendered MP4 to the device via a native anchor download.
@@ -530,10 +532,11 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     document.body.removeChild(a);
     toast({ title: t.export.done, description: "Your download has started." });
     onDownloaded?.();
+    markSeen(ownerOf(user), "home.first-clip.shared.v1");
     // The server has just spent a slot; re-read rather than decrement locally,
     // so a repeat download (which costs nothing) does not show a phantom loss.
     setTimeout(refreshQuota, 1200);
-  }, [clip, toast, t, onDownloaded, quota, locale, refreshQuota]);
+  }, [clip, toast, t, onDownloaded, quota, locale, refreshQuota, user]);
 
   /**
    * Poll until this clip's export settles.
@@ -921,7 +924,8 @@ export default function MyClips() {
   const { t } = useTranslation();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<Tab>("saved");
+  // Open where the player's clips are: the ones he cut himself.
+  const [tab, setTab] = useState<Tab>("created");
   const [activeClip, setActiveClip] = useState<UserClip | null>(null);
   const [localClips, setLocalClips] = useState<LocalClipRecord[]>([]);
   const [localLoading, setLocalLoading] = useState(true);
@@ -987,7 +991,9 @@ export default function MyClips() {
   }
 
   const savedCount = localClips.length;
-  const createdCount = userClips?.length ?? 0;
+  // Clips Replay cut from his match moments live only under Moments.
+  const createdClips = (userClips ?? []).filter((clip) => !clip.isMatchMoment);
+  const createdCount = createdClips.length;
   const matchMomentCount = matchMomentGroups?.reduce((total, group) => total + group.clips.length, 0) ?? 0;
 
   return (
@@ -1087,7 +1093,7 @@ export default function MyClips() {
               transition={{ duration: 0.2 }}
             >
               <CreatedTab
-                clips={userClips}
+                clips={userClips ? createdClips : undefined}
                 isLoading={userClipsLoading}
                 onPlay={setActiveClip}
               />
@@ -1320,7 +1326,7 @@ function SavedTab({
           <Download className="w-8 h-8 text-muted-foreground" />
         </motion.div>
         <p className="text-muted-foreground">{t.myClips.noClipsYet}</p>
-        <p className="text-sm text-muted-foreground mt-1">{document.documentElement.lang === "ar" ? "افتح ماتشك، قص لقطتك، وبتلاقيها هون." : "Open your match, cut your moment, and it lands here."}</p>
+        <p className="text-sm text-muted-foreground mt-1">{document.documentElement.lang === "ar" ? "المقاطع اللي بتنزّلها على هالتلفون بتلاقيها هون. المقاطع اللي بتقصّها تحت «قصّيتها»." : "Clips you download to this phone land here. Clips you cut are under Created."}</p>
         <Link href="/matches">
           <Button variant="ghost" className="mt-6 text-primary font-semibold">{t.myClips.goToWatch}</Button>
         </Link>

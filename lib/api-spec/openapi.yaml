@@ -6203,6 +6203,9 @@ components:
           type: ["string", "null"]
         liveClipPartial:
           type: boolean
+        isMatchMoment:
+          type: boolean
+          description: True for clips Replay cut automatically after the player found himself in a match; they belong under My Clips → Moments, not Created.
 
     MatchLiveStatusResponse:
       type: object

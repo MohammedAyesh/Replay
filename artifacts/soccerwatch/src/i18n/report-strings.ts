@@ -43,7 +43,7 @@ const en = {
   half: "Half",
 
   watchFull: "Watch the full match",
-  keptUntil: (date: string) => `Kept until ${date}`,
+  keptUntil: (date: string) => `Full match here until ${date}. Clips you cut stay for good.`,
   processing: "Full time. The footage is being prepared.",
   processingDesc: "It usually takes 15–20 minutes after the whistle.",
   expired: "This footage has expired. The report stays.",
@@ -237,7 +237,7 @@ const ar: ReportStrings = {
   half: "بين الشوطين",
 
   watchFull: "شوف الماتش كامل",
-  keptUntil: (date: string) => `محفوظ لغاية ${date}`,
+  keptUntil: (date: string) => `الماتش كامل موجود لغاية ${date}. المقاطع اللي بتقصّها بتضل.`,
   processing: "انتهى الماتش. عم نجهّز الفيديو.",
   processingDesc: "عادةً بياخد من 15 لـ 20 دقيقة بعد الصافرة.",
   expired: "الفيديو انتهت مدته. التقرير باقي.",

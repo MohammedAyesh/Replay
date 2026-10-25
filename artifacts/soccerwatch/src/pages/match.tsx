@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
+import { AnimatePresence } from "framer-motion";
+import { CoachBubble } from "@/components/explainers/CoachBubble";
+import { useExplainerCopy } from "@/i18n/explainer-strings";
+import { useFirstTime } from "@/lib/first-time";
 import {
   ArrowLeft,
   CalendarPlus,
@@ -29,6 +33,7 @@ import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel
 import { MatchCompetitionAwardsRow, MatchStats } from "@/components/match/MatchStats";
 import { FindYourselfCard, Scoreboard } from "@/components/match/Scoreboard";
 import { MatchReport } from "@/components/match/report/MatchReport";
+import { FreeMatchRoomCard } from "@/components/free-match/FreeMatch";
 import {
   PhaseChip,
   PitchBoard,
@@ -93,6 +98,7 @@ import {
   type MatchReplay,
   type MatchRoom,
   type TeamSide,
+  useMyMatches,
 } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
 
@@ -145,6 +151,8 @@ export default function MatchPage() {
   const room = useMemo(() => (realRoom && preview ? previewRoom(realRoom, preview) : realRoom), [realRoom, preview]);
   const now = useServerNow(room?.serverNow);
   const join = useJoinMatch(code);
+  // Only the player who booked this match has free-match progress on it.
+  const myMatches = useMyMatches(Boolean(user) && !isGuest && Boolean(realRoom?.booking?.mine));
   const replay = useMatchReplay(code, Boolean(room) && ["processing", "ready", "expired"].includes(room!.phase));
   const [tab, setTab] = useState<Tab | null>(null);
   const autoJoinDone = useRef(false);
@@ -239,6 +247,11 @@ export default function MatchPage() {
     if (result === "failed") window.open(whatsappLink(inviteText), "_blank", "noopener");
   };
 
+  // The booker's free-match progress on this match (from Home's data, which the server keeps current).
+  const freeMatchCard = !preview && myMatches.data?.freeMatch
+    ? <FreeMatchRoomCard status={myMatches.data.freeMatch} code={room.code} onShare={() => void onShare()} />
+    : null;
+
   // After the whistle the match is one scroll (the report), not tabs.
   if (!preview && ["processing", "ready", "expired"].includes(room.phase)) {
     const showRsvp = room.phase !== "expired" && (!room.me || room.me.rsvp === "invited");
@@ -257,6 +270,7 @@ export default function MatchPage() {
           slots={{
             rsvp: showRsvp ? <RsvpCard room={room} copy={copy} onRsvp={onRsvp} busy={join.isPending} signedIn={Boolean(user) && !isGuest} /> : null,
             booking: room.booking ? <BookingPaymentCard room={room} copy={copy} /> : null,
+            freeMatch: freeMatchCard,
             lockedStats: <StatsTab room={room} copy={copy} />,
             teams: <TeamsTab room={room} copy={copy} colors={colors} names={names} />,
             invite: canInvite ? <InviteCard room={room} copy={copy} inviteText={inviteText} onShare={onShare} /> : null,
@@ -294,6 +308,7 @@ export default function MatchPage() {
       )}
       <div className="px-4">
         <RsvpCard room={room} copy={copy} onRsvp={onRsvp} busy={join.isPending} signedIn={Boolean(user) && !isGuest} />
+        {freeMatchCard && <div className="mt-4">{freeMatchCard}</div>}
       </div>
 
       {tabs.length > 1 && (
@@ -411,8 +426,15 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
 }) {
   const [, setLocation] = useLocation();
   const post = ["processing", "ready", "expired"].includes(room.phase);
+  const explainerCopy = useExplainerCopy();
+  // First visit to a match page before or during the game: point at Share,
+  // the way the squad gets in.
+  const [showInviteCoach, dismissInviteCoach] = useFirstTime(
+    "match-page.invite.v1",
+    !post && room.phase !== "cancelled" && room.phase !== "failed",
+  );
   return (
-    <section className="relative overflow-hidden">
+    <section className={cn("relative", showInviteCoach ? "z-30" : "overflow-hidden")}>
       <div className="absolute inset-0">
         {room.field.imageUrl ? (
           <img src={room.field.imageUrl} alt="" className="h-full w-full object-cover opacity-40" />
@@ -432,9 +454,37 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
                 <CalendarPlus className="h-4 w-4" />
               </a>
             )}
-            <button type="button" onClick={onShare} aria-label={copy.share} className="flex h-10 items-center gap-1.5 rounded-full border border-line bg-surface/80 px-3.5 text-sm font-semibold backdrop-blur">
-              <Share2 className="h-4 w-4" />{copy.share}
-            </button>
+            <span className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  if (showInviteCoach) dismissInviteCoach();
+                  onShare();
+                }}
+                aria-label={copy.share}
+                className={cn(
+                  "flex h-10 items-center gap-1.5 rounded-full border bg-surface/80 px-3.5 text-sm font-semibold backdrop-blur",
+                  showInviteCoach ? "border-floodlight ring-4 ring-floodlight/20" : "border-line",
+                )}
+              >
+                <Share2 className="h-4 w-4" />{copy.share}
+              </button>
+              <AnimatePresence>
+                {showInviteCoach && (
+                  <CoachBubble
+                    testId="coach-match-invite"
+                    arrow="up"
+                    arrowOffset="calc(100% - 44px)"
+                    step={explainerCopy.stepOf(1, 1)}
+                    actionLabel={explainerCopy.gotIt}
+                    onAction={dismissInviteCoach}
+                    className="end-0 top-12 w-[min(17rem,calc(100vw-2rem))]"
+                  >
+                    {explainerCopy.match.invite}
+                  </CoachBubble>
+                )}
+              </AnimatePresence>
+            </span>
           </div>
         </div>
 
@@ -485,6 +535,7 @@ function RsvpCard({ room, copy, onRsvp, busy, signedIn }: {
             </div>
           )}
           <RsvpButtons copy={copy} onRsvp={onRsvp} busy={busy} />
+          {!post && <RsvpWhy />}
         </div>
       );
     }
@@ -530,9 +581,16 @@ function RsvpCard({ room, copy, onRsvp, busy, signedIn }: {
         </div>
       )}
       <RsvpButtons copy={copy} onRsvp={(r) => { setEditing(false); onRsvp(r); }} busy={busy} />
+      {!post && <RsvpWhy />}
       {!signedIn && <p className="mt-2 text-center text-[11px] text-muted-text">{copy.signInToJoinDesc}</p>}
     </div>
   );
+}
+
+/** Why answering matters: the video and your own numbers come with "I'm in". */
+function RsvpWhy() {
+  const explainerCopy = useExplainerCopy();
+  return <p className="mt-2 text-center text-[12px] font-medium text-turf">{explainerCopy.match.rsvpWhy}</p>;
 }
 
 function RsvpButtons({ copy, onRsvp, busy }: { copy: MatchStrings; onRsvp: (r: JoinInput["rsvp"]) => void; busy: boolean }) {

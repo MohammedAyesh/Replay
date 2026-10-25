@@ -857,6 +857,8 @@ export interface UserClip {
   /** @nullable */
   liveClipError?: string | null;
   liveClipPartial: boolean;
+  /** True for clips Replay cut automatically after the player found himself in a match; they belong under My Clips → Moments, not Created. */
+  isMatchMoment?: boolean;
 }
 
 export interface MatchLiveStatusResponse {

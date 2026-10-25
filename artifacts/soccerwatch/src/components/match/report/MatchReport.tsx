@@ -54,6 +54,8 @@ export type MatchReportSlots = {
   invite: ReactNode;
   /** score and games editor, phase previews: captain and owner only */
   captainTools: ReactNode;
+  /** the free-match challenge, for the player who booked this match */
+  freeMatch?: ReactNode;
 };
 
 /**
@@ -94,6 +96,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
       <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
       <FlaggedMoments room={room} copy={copy} r={r} />
 
+      {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}
       {slots.booking && <div className="pt-4">{slots.booking}</div>}
       {slots.rsvp && <div className="pt-4">{slots.rsvp}</div>}
 

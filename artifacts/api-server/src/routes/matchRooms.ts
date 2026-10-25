@@ -68,6 +68,7 @@ import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRo
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, playerMatchForm } from "../lib/matchStatsCache";
 import { canViewMatchPlayerRows } from "../lib/matchStatsRules";
 import { loadStatTiles } from "../lib/homeStatTileLoad";
+import { freeMatchStatus } from "../lib/freeMatch";
 
 const router: IRouter = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
@@ -685,7 +686,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     return;
   }
   if (user.isGuest) {
-    res.json({ upcoming: [], live: [], recent: [], invites: [], personalForm: null, personalFormPending: false, statTile: null, statTiles: [] });
+    res.json({ upcoming: [], live: [], recent: [], invites: [], personalForm: null, personalFormPending: false, statTile: null, statTiles: [], freeMatch: null });
     return;
   }
   const memberRooms = await roomsForUser(user.id);
@@ -866,6 +867,11 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     logger.warn({ userId: user.id, err: error }, "Could not choose the home stat tiles");
     return [];
   });
+  // The free-match challenge: where his newest CliQ booking has got, and any free match he can use.
+  const freeMatch = await freeMatchStatus(user.id).catch((error) => {
+    logger.warn({ userId: user.id, err: error }, "Could not work out the free match");
+    return null;
+  });
   res.json({
     live: active.filter((i) => i.phase === "live").sort(byStart),
     upcoming: upcomingItems,
@@ -881,6 +887,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     personalFormPending: queuedFills > 0,
     statTile: statTiles[0] ?? null,
     statTiles,
+    freeMatch,
   });
 });
 

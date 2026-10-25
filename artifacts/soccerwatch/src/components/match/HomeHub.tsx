@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Camera, CalendarPlus, ChevronRight, ChevronLeft, CirclePlus, Loader2, Play, Smartphone, Target } from "lucide-react";
 import { useListUserClips, getListUserClipsQueryKey } from "@workspace/api-client-react";
+import { FreeMatchHomeCard } from "@/components/free-match/FreeMatch";
+import { FirstClipChecklist } from "@/components/home/FirstClipChecklist";
 import { StatCarousel } from "@/components/home/StatCarousel";
 import { MatchCard } from "@/components/match/MatchCard";
 import { PlayerAvatar } from "@/components/match/bits";
@@ -62,7 +64,9 @@ export function HomeHub() {
   const invites = data?.invites.slice(0, 3) ?? [];
   const voting = data?.recent.filter((m) => m.voteOpen) ?? [];
   const recent = (data?.recent ?? []).filter((m) => !m.voteOpen).slice(0, 3);
-  const myClips = (clips.data ?? []).slice(0, 4);
+  // Moments Replay cut for him live under My Clips → Moments, not here.
+  const createdClips = (clips.data ?? []).filter((clip) => !clip.isMatchMoment);
+  const myClips = createdClips.slice(0, 4);
   // The most impressive things Replay can tell this player right now, best first, chosen by the server.
   const tiles = data?.statTiles ?? (data?.statTile ? [data.statTile] : []);
   const statTile = tiles.length ? <StatCarousel tiles={tiles} /> : null;
@@ -80,6 +84,8 @@ export function HomeHub() {
           )}
         </div>
       </div>
+
+      {data && clips.data && <FirstClipChecklist matches={data} clips={createdClips} now={now} />}
 
       {matches.isLoading ? (
         <div className="h-48 animate-pulse rounded-3xl bg-surface" />
@@ -108,6 +114,7 @@ export function HomeHub() {
         </section>
       )}
       {!matches.isLoading && !hero && statTile}
+      {data?.freeMatch && <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} />}
 
       {invites.length > 0 && (
         <Section title={copy.invites}>

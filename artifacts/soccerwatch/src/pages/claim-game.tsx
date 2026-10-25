@@ -1258,12 +1258,6 @@ export function GameClaim({
   /* -------------------------------------------------------------- render */
 
   const elapsed = t0.current ? ((S.step === "done" || S.step === "stats") && S.elapsed ? S.elapsed : now - t0.current) : S.elapsed;
-  const meter = (
-    <div dir="ltr" className="flex gap-4 font-display text-base font-semibold tabular-nums text-text">
-      <span><small className="me-1 font-sans text-[10px] font-medium uppercase tracking-wider text-muted-text">{copy.common.time}</small>{mmss(elapsed / 1000)}</span>
-      <span><small className="me-1 font-sans text-[10px] font-medium uppercase tracking-wider text-muted-text">{copy.common.taps}</small>{S.taps}</span>
-    </div>
-  );
   const span = (k: number) => {
     const c = chunkMeta(ctx, k);
     return `\u2066${mmss(c.start + game.matchOffset)}–${mmss(c.start + c.dur + game.matchOffset)}\u2069`;
@@ -1754,8 +1748,9 @@ export function GameClaim({
     ? { step: Math.max(1, playableOrder.indexOf(S.k) + 1), of: playableOrder.length }
     : null;
 
+  // No time/taps meter on screen: it read like a race clock. S.taps is still counted.
   return (
-    <Shell meter={meter} copy={copy} onBack={exit} progress={progress}>
+    <Shell copy={copy} onBack={exit} progress={progress}>
       {staleState && !staleNoticeDismissed && (
         <div role="status" aria-live="polite" className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
           <p className="text-sm leading-6 text-muted-text">{copy.common.staleStateNotice}</p>
@@ -2251,10 +2246,8 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuati
       <Eyebrow>{copy.done.eyebrow}</Eyebrow>
       <Title>{copy.done.title}</Title>
       <GameTimeline ctx={ctx} />
-      <div className="grid grid-cols-3 gap-2.5">
+      <div className="grid grid-cols-1 gap-2.5">
         <Stat value={mmss(tt.fs)} label={copy.done.found(mmss(Math.max(tt.ip - tt.os, 0)))} />
-        <Stat value={mmss(elapsed / 1000)} label={copy.done.timeTaken} />
-        <Stat value={ctx.S.taps} label={copy.done.taps} />
       </div>
       <div className="flex flex-col gap-1.5">
         {ctx.game.chunks.map((c) => {

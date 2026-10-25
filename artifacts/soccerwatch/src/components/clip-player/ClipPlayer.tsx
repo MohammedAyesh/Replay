@@ -11,19 +11,20 @@ import {
   Minimize,
   Pause,
   Play,
-  SkipBack,
-  SkipForward,
+  MoveHorizontal,
   Square,
   X,
 } from "lucide-react";
 import Hls from "hls.js";
 import type { TimelineFragment } from "@/components/HlsPlayer";
-import { FrameSizeSlider } from "@/components/panorama/FrameSizeSlider";
+import { CoachBubble } from "@/components/explainers/CoachBubble";
 import { SkipFlash } from "@/components/skip-flash";
 import { usePanoramaFrame, maxZoomFor } from "@/hooks/use-panorama-frame";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { useToast } from "@/hooks/use-toast";
 import { useTranslation } from "@/i18n";
+import { useExplainerCopy } from "@/i18n/explainer-strings";
+import { useFirstTime } from "@/lib/first-time";
 import { useClientSettings } from "@/lib/client-settings";
 import { useFullscreenVideo } from "@/lib/fullscreen-video";
 import {
@@ -497,6 +498,7 @@ export function ClipPlayer({
 
   const onFramePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     handleFramePointerMove(event, () => {
+      if (showLookCoach) dismissLookCoach();
       if (isFollowingBall && !manualTookControl.current) {
         manualTookControl.current = true;
         setFollowPreference(false);
@@ -521,6 +523,17 @@ export function ClipPlayer({
   const [playbackDiagnostic, setPlaybackDiagnostic] = useState<string | null>(null);
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
+  const explainerCopy = useExplainerCopy();
+  // First-time coach marks: how to look around, then how clipping works.
+  const coachReady = playbackUiState === "ready" && clipMode === "idle";
+  const [showLookCoach, dismissLookCoach] = useFirstTime("clip-player.look-around.v1", coachReady);
+  const [showRecordCoach, dismissRecordCoach] = useFirstTime("clip-player.record.v1", coachReady && !showLookCoach);
+  const coachVisible = showLookCoach || showRecordCoach;
+  // Home's "Get your first clip" ticks "Watch your match" once a video has played here.
+  const [notWatchedYet, markWatched] = useFirstTime("home.first-clip.watched.v1", playbackUiState === "ready");
+  useEffect(() => {
+    if (notWatchedYet) markWatched();
+  }, [notWatchedYet, markWatched]);
   const [clipEndTime, setClipEndTime] = useState(0);
   const [clipTitle, setClipTitle] = useState("");
   const [isSavingClip, setIsSavingClip] = useState(false);
@@ -625,11 +638,19 @@ export function ClipPlayer({
     if (seekRequest.play && element.paused) void element.play().catch(() => undefined);
   }, [seekRequest]);
 
+  const coachVisibleRef = useRef(false);
   const resetControlsTimer = useCallback(() => {
     setShowControls(true);
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
-    controlsTimerRef.current = setTimeout(() => setShowControls(false), 4000);
+    controlsTimerRef.current = setTimeout(() => {
+      if (!coachVisibleRef.current) setShowControls(false);
+    }, 4000);
   }, []);
+  useEffect(() => {
+    coachVisibleRef.current = coachVisible;
+    if (coachVisible) setShowControls(true);
+    else resetControlsTimer();
+  }, [coachVisible, resetControlsTimer]);
 
   const commitSeekPosition = useCallback((value: number) => {
     const element = videoRef.current;
@@ -1225,6 +1246,7 @@ export function ClipPlayer({
   };
 
   const startRecording = () => {
+    if (showRecordCoach) dismissRecordCoach();
     if (!canSave && !isLiveDvr) {
       const now = videoRef.current?.currentTime ?? 0;
       requireAuth(buildDraft(now, now + 0.1, [{ t: 0, ...computeCropRect() }], clipTitle || title));
@@ -1619,277 +1641,207 @@ export function ClipPlayer({
       <AnimatePresence>
         {showControls && clipMode === "idle" && playbackUiState === "ready" && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 z-20 flex flex-col pointer-events-none">
-            <div className="flex items-center justify-between px-4 pt-safe pt-4 pointer-events-auto">
+            <div className="flex items-center justify-between px-4 pt-safe pt-4">
               {onClose ? (
-                <button onClick={onClose} className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                  <X className="w-5 h-5 text-white" />
+                <button
+                  type="button"
+                  aria-label="Close video"
+                  onClick={onClose}
+                  className="pointer-events-auto flex h-10 w-10 items-center justify-center rounded-full bg-black/40 backdrop-blur-sm"
+                >
+                  <X className="h-5 w-5 text-white" />
                 </button>
               ) : <span />}
-              <div className="flex items-center gap-2">
+            </div>
+            <div className="flex-1" />
+            {/* Everything lives on one line: play, timeline, time, speed, frame shape, fullscreen, clip. */}
+            <div
+              className="pointer-events-auto border-t border-white/10 bg-black/75 px-2.5 pt-2 backdrop-blur-md"
+              style={{ paddingBottom: "max(0.6rem, env(safe-area-inset-bottom))" }}
+            >
+              <div
+                role="group"
+                aria-label="Playback and clip controls"
+                data-testid="player-control-row"
+                className="flex min-w-0 items-center gap-1.5"
+              >
                 <button
+                  type="button"
+                  onClick={togglePlay}
+                  aria-label={isPlaying ? "Pause" : "Play"}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white text-black"
+                >
+                  {isPlaying ? <Pause className="h-4 w-4 fill-black" /> : <Play className="h-4 w-4 fill-black" />}
+                </button>
+                {isLiveDvr && liveRange ? (
+                  <>
+                    <input
+                      type="range"
+                      min={liveRange.startUtcMs}
+                      max={liveRange.endUtcMs}
+                      step={1000}
+                      value={Math.max(liveRange.startUtcMs, Math.min(liveRange.endUtcMs, liveUtcMs ?? liveRange.endUtcMs))}
+                      aria-label="Live DVR position in Amman local time"
+                      onChange={(event) => seekToUtc(Number(event.target.value))}
+                      className="h-1 min-w-0 flex-1 accent-primary"
+                    />
+                    <span className="w-11 shrink-0 text-center font-mono text-[10px] text-white/80">
+                      {formatAmmanClock(liveUtcMs)}
+                    </span>
+                    {liveUtcMs != null && liveRange.endUtcMs - liveUtcMs > 8_000 && (
+                      <button
+                        type="button"
+                        onClick={() => seekToUtc(liveRange.endUtcMs)}
+                        className="h-8 shrink-0 rounded-full bg-live px-2.5 text-[10px] font-bold text-white"
+                      >
+                        Live
+                      </button>
+                    )}
+                  </>
+                ) : !isLive && duration > 0 ? (
+                  <>
+                    <div className="relative flex min-w-0 flex-1 items-center">
+                      {timelineBands && timelineBands.length > 0 && (
+                        <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-[calc(50%+5px)] h-[3px] overflow-hidden rounded-full">
+                          {timelineBands.map((band, index) => {
+                            const from = Math.min(100, Math.max(0, (band.from / duration) * 100));
+                            const to = Math.min(100, Math.max(0, (band.to / duration) * 100));
+                            return to > from ? (
+                              <span
+                                key={index}
+                                className="absolute inset-y-0"
+                                style={{ insetInlineStart: `${from}%`, width: `${to - from}%`, background: band.color }}
+                              />
+                            ) : null;
+                          })}
+                        </div>
+                      )}
+                      {timelineMarkers && timelineMarkers.length > 0 && (
+                        <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-1/2 z-10 h-0">
+                          {timelineMarkers.map((marker, index) => (
+                            <span
+                              key={index}
+                              title={marker.label}
+                              className={cn("absolute w-[3px] -translate-y-1/2 rounded-full", marker.emphasis ? "h-3.5" : "h-2 opacity-80")}
+                              style={{
+                                insetInlineStart: `calc(${Math.min(100, Math.max(0, (marker.at / duration) * 100))}% - 1.5px)`,
+                                background: marker.color,
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                      <input
+                        type="range"
+                        min={0}
+                        max={duration}
+                        step={0.1}
+                        value={currentTime}
+                        aria-label="Video position"
+                        onPointerDown={(event) => {
+                          beginSeekDrag(seekDragStateRef.current, parseFloat(event.currentTarget.value));
+                          event.currentTarget.setPointerCapture(event.pointerId);
+                        }}
+                        onPointerUp={(event) => finishSeekSliderDrag(parseFloat(event.currentTarget.value))}
+                        onPointerCancel={(event) => finishSeekSliderDrag(parseFloat(event.currentTarget.value))}
+                        onChange={(event) => {
+                          handleSeekSliderChange(parseFloat(event.currentTarget.value));
+                        }}
+                        className="relative h-1 min-w-0 flex-1 accent-primary"
+                      />
+                    </div>
+                    <span
+                      className="w-11 shrink-0 text-center text-[11px] tabular-nums text-white/85"
+                      title={`${formatDuration(currentTime)} / ${formatDuration(duration)}`}
+                    >
+                      {formatDuration(currentTime)}
+                    </span>
+                  </>
+                ) : (
+                  <div className="flex-1" />
+                )}
+                <button
+                  type="button"
+                  data-testid="playback-speed"
+                  aria-label={explainerCopy.player.speed(playbackRate)}
+                  title="1/2/3: 0.25× / 0.5× / 1×"
+                  disabled={isLive && !isLiveDvr}
+                  onClick={() => {
+                    const cycle = [1, 0.5, 0.25];
+                    const index = cycle.findIndex((rate) => Math.abs(rate - playbackRate) < 0.01);
+                    setPlaybackRate(cycle[(index + 1) % cycle.length]);
+                    resetControlsTimer();
+                  }}
+                  className={cn(
+                    "h-10 shrink-0 rounded-full border px-2 text-[11px] font-bold tabular-nums text-white disabled:opacity-40",
+                    Math.abs(playbackRate - 1) < 0.01 ? "border-white/20 bg-white/10" : "border-primary bg-primary/20",
+                  )}
+                >
+                  {playbackRate}×
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Frame shape ${selectedRatio}`}
                   onClick={() => applyFrameChange(selectedRatio === "16:9" ? 1 : frameZoomRef.current, selectedRatio === "16:9" ? "9:16" : "16:9")}
-                  className="px-3 py-1.5 rounded-full bg-black/40 backdrop-blur-sm text-white text-xs font-bold"
+                  className="h-10 shrink-0 rounded-full border border-white/20 bg-white/10 px-2 text-[11px] font-bold text-white"
                 >
                   {selectedRatio}
                 </button>
-                <button onClick={toggleFullscreen} className="w-10 h-10 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center">
-                  {isFullscreen ? <Minimize className="w-4 h-4 text-white" /> : <Maximize className="w-4 h-4 text-white" />}
+                <button
+                  type="button"
+                  onClick={toggleFullscreen}
+                  aria-label={isFullscreen ? "Exit full screen" : "Full screen"}
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/10"
+                >
+                  {isFullscreen ? <Minimize className="h-4 w-4 text-white" /> : <Maximize className="h-4 w-4 text-white" />}
+                </button>
+                <button
+                  type="button"
+                  data-testid="button-record-clip"
+                  onClick={startRecording}
+                  aria-label={t.clipping.record}
+                  className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-primary px-3 text-xs font-bold text-primary-foreground"
+                >
+                  <Circle className="h-3.5 w-3.5 fill-live text-live" />
+                  {explainerCopy.player.clip}
                 </button>
               </div>
-            </div>
-
-            <div className="flex-1 flex items-center justify-center gap-8 pointer-events-auto">
-              <button onClick={() => seek(-10)} disabled={isLive && !isLiveDvr} className="w-12 h-12 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center disabled:opacity-40">
-                <SkipBack className="w-5 h-5 text-white" />
-              </button>
-              <button onClick={togglePlay} className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-sm flex items-center justify-center">
-                {isPlaying ? <Pause className="w-7 h-7 text-white fill-white" /> : <Play className="w-7 h-7 text-white fill-white" />}
-              </button>
-              <button onClick={() => seek(10)} disabled={isLive && !isLiveDvr} className="w-12 h-12 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center disabled:opacity-40">
-                <SkipForward className="w-5 h-5 text-white" />
-              </button>
-            </div>
-
-            <div
-              className={cn(
-                "px-4 pointer-events-auto",
-                singleRowToolbar
-                  ? "space-y-2 border-t border-white/15 bg-black/70 py-2 backdrop-blur-md"
-                  : "space-y-3",
-              )}
-              style={{
-                paddingBottom: singleRowToolbar
-                  ? "max(0.75rem, env(safe-area-inset-bottom))"
-                  : "max(1.5rem, env(safe-area-inset-bottom))",
-              }}
-            >
-              {!isLive && duration > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className="text-white text-xs tabular-nums w-10 text-end">{formatDuration(currentTime)}</span>
-                  <div className="relative flex flex-1 items-center">
-                  {timelineBands && timelineBands.length > 0 && (
-                    <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-[calc(50%+5px)] h-[3px] overflow-hidden rounded-full">
-                      {timelineBands.map((band, index) => {
-                        const from = Math.min(100, Math.max(0, (band.from / duration) * 100));
-                        const to = Math.min(100, Math.max(0, (band.to / duration) * 100));
-                        return to > from ? (
-                          <span
-                            key={index}
-                            className="absolute inset-y-0"
-                            style={{ insetInlineStart: `${from}%`, width: `${to - from}%`, background: band.color }}
-                          />
-                        ) : null;
-                      })}
-                    </div>
-                  )}
-                  {timelineMarkers && timelineMarkers.length > 0 && (
-                    <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-1/2 z-10 h-0">
-                      {timelineMarkers.map((marker, index) => (
-                        <span
-                          key={index}
-                          title={marker.label}
-                          className={cn("absolute w-[3px] -translate-y-1/2 rounded-full", marker.emphasis ? "h-3.5" : "h-2 opacity-80")}
-                          style={{
-                            insetInlineStart: `calc(${Math.min(100, Math.max(0, (marker.at / duration) * 100))}% - 1.5px)`,
-                            background: marker.color,
-                          }}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <input
-                    type="range"
-                    min={0}
-                    max={duration}
-                    step={0.1}
-                    value={currentTime}
-                    onPointerDown={(event) => {
-                      beginSeekDrag(seekDragStateRef.current, parseFloat(event.currentTarget.value));
-                      event.currentTarget.setPointerCapture(event.pointerId);
-                    }}
-                    onPointerUp={(event) => finishSeekSliderDrag(parseFloat(event.currentTarget.value))}
-                    onPointerCancel={(event) => finishSeekSliderDrag(parseFloat(event.currentTarget.value))}
-                    onChange={(event) => {
-                      handleSeekSliderChange(parseFloat(event.currentTarget.value));
-                    }}
-                    className="relative flex-1 accent-primary h-1"
-                  />
-                  </div>
-                  <span className="text-white text-xs tabular-nums w-10">{formatDuration(duration)}</span>
-                </div>
-              )}
-              {isLiveDvr && liveRange && (
-                <div className="flex items-center gap-2">
-                  <span className="w-14 text-end font-mono text-[10px] text-white/80">
-                    {formatAmmanClock(liveUtcMs)}
-                  </span>
-                  <input
-                    type="range"
-                    min={liveRange.startUtcMs}
-                    max={liveRange.endUtcMs}
-                    step={1000}
-                    value={Math.max(liveRange.startUtcMs, Math.min(liveRange.endUtcMs, liveUtcMs ?? liveRange.endUtcMs))}
-                    aria-label="Live DVR position in Amman local time"
-                    onChange={(event) => seekToUtc(Number(event.target.value))}
-                    className="flex-1 accent-primary h-1"
-                  />
-                  <span className="w-14 font-mono text-[10px] text-white/80">
-                    {formatAmmanClock(liveRange.endUtcMs)}
-                  </span>
-                  {liveUtcMs != null && liveRange.endUtcMs - liveUtcMs > 8_000 && (
-                    <button
-                      type="button"
-                      onClick={() => seekToUtc(liveRange.endUtcMs)}
-                      className="rounded-full bg-live px-2.5 py-1 text-[10px] font-bold text-white"
-                    >
-                      Live
-                    </button>
-                  )}
-                </div>
-              )}
-              <div
-                role="group"
-                aria-label="Playback and clip editing controls"
-                className={singleRowToolbar ? "flex min-w-0 items-center gap-2" : "space-y-2"}
-              >
-                <div
-                  className={singleRowToolbar
-                    ? "flex min-w-0 flex-1 touch-pan-x items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-                    : "space-y-2"}
-                >
-                <div
-                  role="group"
-                  aria-label="Frame stepping"
-                  data-testid="player-step-controls"
-                  className={singleRowToolbar ? "flex shrink-0 gap-1" : "grid grid-cols-6 gap-1"}
-                >
-                  {([
-                    { label: "−1 s", seconds: -1, testId: "step-back-one-second" },
-                    { label: "−2 frames", seconds: -2 * FRAME_DURATION_SECONDS, testId: "step-back-two-frames" },
-                    { label: "−1 frame", seconds: -FRAME_DURATION_SECONDS, testId: "step-back-one-frame", repeat: true },
-                    { label: "+1 frame", seconds: FRAME_DURATION_SECONDS, testId: "step-forward-one-frame", repeat: true },
-                    { label: "+2 frames", seconds: 2 * FRAME_DURATION_SECONDS, testId: "step-forward-two-frames" },
-                    { label: "+1 s", seconds: 1, testId: "step-forward-one-second" },
-                  ]).map(({ label, seconds, testId, repeat }) => (
-                    <button
-                      key={testId}
-                      type="button"
-                      data-testid={testId}
-                      aria-label={label}
-                      title={repeat ? `${label}; hold to repeat` : label}
-                      disabled={isLive && !isLiveDvr}
-                      onPointerDown={repeat ? (event) => startFrameRepeat(event, seconds) : undefined}
-                      onPointerUp={repeat ? stopFrameRepeat : undefined}
-                      onPointerCancel={repeat ? stopFrameRepeat : undefined}
-                      onLostPointerCapture={repeat ? stopFrameRepeat : undefined}
-                      onClick={repeat
-                        ? (event) => { if (event.detail === 0) stepVideoBy(seconds); }
-                        : () => stepVideoBy(seconds)}
-                      className={cn(
-                        "touch-manipulation rounded-lg border border-white/20 bg-black/50 font-semibold leading-tight text-white disabled:opacity-40",
-                        singleRowToolbar
-                          ? "min-h-11 shrink-0 whitespace-nowrap px-1.5 text-[10px]"
-                          : "min-h-12 min-w-0 px-1 text-[10px] sm:px-2 sm:text-xs",
-                      )}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <div className={cn(
-                  "items-center",
-                  singleRowToolbar
-                    ? "flex shrink-0 flex-nowrap gap-1"
-                    : "flex flex-wrap justify-center gap-1.5",
-                )}>
-                  {PLAYBACK_SPEEDS.map((rate, index) => (
-                    <button
-                      key={rate}
-                      type="button"
-                      data-testid={`playback-speed-${index + 1}`}
-                      aria-label={`Playback speed ${rate} times`}
-                      aria-pressed={Math.abs(playbackRate - rate) < 0.01}
-                      title={`${rate}× (key ${index + 1})`}
-                      onClick={() => {
-                        setPlaybackRate(rate);
-                        resetControlsTimer();
-                      }}
-                      className={cn(
-                        singleRowToolbar
-                          ? "min-h-11 min-w-11 shrink-0 rounded-lg border px-2 text-[11px] font-bold"
-                          : "min-h-11 min-w-14 rounded-lg border px-3 text-xs font-bold",
-                        Math.abs(playbackRate - rate) < 0.01
-                          ? "border-primary bg-primary/20 text-white"
-                          : "border-white/20 bg-black/50 text-white",
-                      )}
-                    >
-                      {rate}×
-                    </button>
-                  ))}
-                <label className={cn(
-                  "flex min-h-11 shrink-0 items-center rounded-lg border border-white/20 bg-black/50 font-semibold text-white",
-                  singleRowToolbar ? "gap-1 px-2 text-[11px]" : "gap-2 px-3 text-xs",
-                )}>
-                  <span>Look</span>
-                  <select
-                    aria-label="Video look filter"
-                    value={look}
-                    onChange={(event) => {
-                      setLook(event.target.value as typeof look);
-                      resetControlsTimer();
-                    }}
-                    className="bg-transparent text-white outline-none"
-                  >
-                    <option value="original" className="bg-black">Original</option>
-                    <option value="warm" className="bg-black">Warm</option>
-                    <option value="cinematic" className="bg-black">Cinematic</option>
-                    <option value="noir" className="bg-black">Noir</option>
-                  </select>
-                </label>
-              </div>
-                {singleRowToolbar && (
-                  <FrameSizeSlider
-                    zoom={frameZoom}
-                    frame={displayedFrame}
-                    maxZoom={maxZoomFor(selectedRatio)}
-                    inline
-                    onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)}
-                  />
-                )}
-                </div>
-                {singleRowToolbar && (
-                  <button
-                    onClick={startRecording}
-                    className="flex h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-primary px-3 text-xs font-bold text-primary-foreground"
-                  >
-                  <Circle className="w-4 h-4 fill-primary-foreground" />
-                  {t.clipping.record}
-                </button>
-                )}
-              </div>
-              {!singleRowToolbar && (
-                <>
-                  <p className="hidden text-center text-[10px] text-white/50 sm:block">
-                    ←/→: 1 frame · ,/.: 2 frames · Shift+←/→: 1 s · 1/2/3: 0.25×/0.5×/1×
-                  </p>
-                  <div className="flex justify-center">
-                    <FrameSizeSlider
-                      zoom={frameZoom}
-                      frame={displayedFrame}
-                      maxZoom={maxZoomFor(selectedRatio)}
-                      onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)}
-                    />
-                  </div>
-                  <div className="flex justify-center">
-                    <button onClick={startRecording} className="flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-sm font-bold text-primary-foreground">
-                      <Circle className="h-4 w-4 fill-primary-foreground" />
-                      {t.clipping.record}
-                    </button>
-                  </div>
-                </>
-              )}
             </div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showLookCoach && showControls && (
+          <CoachBubble
+            key="coach-look"
+            testId="coach-look-around"
+            arrow="none"
+            step={explainerCopy.stepOf(1, 2)}
+            actionLabel={explainerCopy.next}
+            onAction={dismissLookCoach}
+            className="inset-x-4 top-[24%] mx-auto max-w-sm"
+          >
+            <span className="mb-1.5 flex items-center gap-2" aria-hidden="true">
+              <MoveHorizontal className="h-5 w-5" />
+            </span>
+            {explainerCopy.player.lookAround}
+          </CoachBubble>
+        )}
+        {showRecordCoach && showControls && (
+          <CoachBubble
+            key="coach-record"
+            testId="coach-record"
+            arrow="down"
+            arrowOffset="calc(100% - 34px)"
+            step={explainerCopy.stepOf(2, 2)}
+            actionLabel={explainerCopy.gotIt}
+            onAction={dismissRecordCoach}
+            className="end-2 w-[min(18.5rem,calc(100%-1rem))]"
+            style={{ bottom: "calc(max(0.6rem, env(safe-area-inset-bottom)) + 3.6rem)" }}
+          >
+            {explainerCopy.player.record}
+          </CoachBubble>
         )}
       </AnimatePresence>
 
@@ -1905,7 +1857,6 @@ export function ClipPlayer({
             </div>
             <div className="flex-1" />
             <div className="px-4 pointer-events-auto flex flex-col items-center gap-3" style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}>
-              <FrameSizeSlider zoom={frameZoom} frame={displayedFrame} maxZoom={maxZoomFor(selectedRatio)} compact onChange={(zoom) => applyFrameChange(zoom, selectedRatioRef.current)} />
               <button onClick={() => stopRecording()} className="flex items-center gap-2 px-5 py-2.5 rounded-full border border-line bg-transparent text-text font-bold text-sm hover:bg-raised">
                 <Square className="w-4 h-4 fill-text" />
                 {t.clipping.stopRecording}

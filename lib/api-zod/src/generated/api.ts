@@ -4689,7 +4689,8 @@ export const CreateUserClipResponse = zod.object({
   "matchCode": zod.string().nullish(),
   "liveClipStatus": zod.string().nullish(),
   "liveClipError": zod.string().nullish(),
-  "liveClipPartial": zod.boolean()
+  "liveClipPartial": zod.boolean(),
+  "isMatchMoment": zod.boolean().optional().describe('True for clips Replay cut automatically after the player found himself in a match; they belong under My Clips → Moments, not Created.')
 })
 
 
@@ -4728,7 +4729,8 @@ export const ListUserClipsResponseItem = zod.object({
   "matchCode": zod.string().nullish(),
   "liveClipStatus": zod.string().nullish(),
   "liveClipError": zod.string().nullish(),
-  "liveClipPartial": zod.boolean()
+  "liveClipPartial": zod.boolean(),
+  "isMatchMoment": zod.boolean().optional().describe('True for clips Replay cut automatically after the player found himself in a match; they belong under My Clips → Moments, not Created.')
 })
 export const ListUserClipsResponse = zod.array(ListUserClipsResponseItem)
 
@@ -4789,7 +4791,8 @@ export const UpdateUserClipResponse = zod.object({
   "matchCode": zod.string().nullish(),
   "liveClipStatus": zod.string().nullish(),
   "liveClipError": zod.string().nullish(),
-  "liveClipPartial": zod.boolean()
+  "liveClipPartial": zod.boolean(),
+  "isMatchMoment": zod.boolean().optional().describe('True for clips Replay cut automatically after the player found himself in a match; they belong under My Clips → Moments, not Created.')
 })
 
 

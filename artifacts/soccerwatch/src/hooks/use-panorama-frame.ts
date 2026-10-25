@@ -103,9 +103,27 @@ export function usePanoramaFrame() {
     setFrameOrigin({ x: centered.x, y: centered.y });
   }, []);
 
+  // Two fingers on the frame pinch-zoom it; one finger pans it.
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef({ active: false, startDistance: 0, startZoom: 1 });
+
+  const pointerDistance = () => {
+    const [a, b] = [...pointersRef.current.values()];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+  };
+
   const handleFramePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
+    pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pointersRef.current.size === 2) {
+      const distance = pointerDistance();
+      pinchRef.current = { active: distance > 0, startDistance: distance, startZoom: frameZoomRef.current };
+      dragRef.current.active = false;
+      draggedRef.current = true;
+      return;
+    }
+    if (pointersRef.current.size > 2) return;
     draggedRef.current = false;
     dragRef.current = {
       active: true,
@@ -117,6 +135,20 @@ export function usePanoramaFrame() {
   }, []);
 
   const handleFramePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>, onDragStart?: () => void) => {
+    if (pointersRef.current.has(event.pointerId)) {
+      pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    }
+    if (pinchRef.current.active) {
+      const distance = pointerDistance();
+      if (distance > 0 && pinchRef.current.startDistance > 0) {
+        onDragStart?.();
+        applyFrameChange(
+          pinchRef.current.startZoom * (distance / pinchRef.current.startDistance),
+          selectedRatioRef.current,
+        );
+      }
+      return;
+    }
     if (!dragRef.current.active || !frameBoxRef.current) return;
     const box = frameBoxRef.current;
     if (!(box.clientWidth > 0) || !(box.clientHeight > 0)) return;
@@ -133,16 +165,17 @@ export function usePanoramaFrame() {
       dragRef.current.originX - (rawX / box.clientWidth) * current.w,
       dragRef.current.originY - (rawY / box.clientHeight) * current.h,
     );
-  }, [readFrame, setOrigin]);
+  }, [applyFrameChange, readFrame, setOrigin]);
 
   const handleFramePointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (dragRef.current.active) {
-      try {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      } catch {
-        // The browser may release capture before pointerup.
-      }
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {
+      // The browser may release capture before pointerup.
     }
+    pointersRef.current.delete(event.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current.active = false;
+    // Lifting one finger of a pinch must not turn the other into a pan jump.
     dragRef.current.active = false;
   }, []);
 

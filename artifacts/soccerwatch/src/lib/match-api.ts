@@ -244,6 +244,47 @@ export type MyMatches = {
   statTile?: StatTile | null;
   /** Home's stats carousel, most impressive first (statTile is its first slide). */
   statTiles?: StatTile[];
+  /** The free-match challenge; null for guests or when it couldn't be worked out. */
+  freeMatch?: FreeMatchStatus | null;
+};
+
+export type FreeMatchFriend = { userId: number; name: string; avatarUrl: string | null; found: boolean };
+export type FreeMatchAttempt = {
+  code: string;
+  fieldName: string;
+  startMs: number;
+  endMs: number;
+  phase: MatchPhase;
+  paid: boolean;
+  payPending: boolean;
+  findRecordingId: number | null;
+  bookerFound: boolean;
+  friendsFound: number;
+  friends: FreeMatchFriend[];
+  deadline: string | null;
+  /** Already earned this month's free match: this booking can't earn another. */
+  capped: boolean;
+};
+export type FreeMatchReward = {
+  id: number;
+  freeHours: number;
+  worthFils: number;
+  expiresAt: string;
+  sourceCode: string | null;
+  thanks: string[];
+  usedCode: string | null;
+  status: "available" | "used";
+};
+export type FreeMatchStatus = {
+  enabled: boolean;
+  friendsRequired: number;
+  freeHours: number;
+  useWithinDays: number;
+  deadlineDays: number;
+  pricePerHourFils: number;
+  attempt: FreeMatchAttempt | null;
+  reward: FreeMatchReward | null;
+  latestEarned: FreeMatchReward | null;
 };
 
 export type MatchClip = {
@@ -560,10 +601,18 @@ export type BookingFields = {
   /** Admin → Settings → Bookings: "Players can pay at the field". */
   payAtField: boolean;
   cliqAlias: string;
+  /** Signed-in players only: the free-match challenge and any free match they can use. */
+  freeMatch?: {
+    enabled: boolean;
+    friendsRequired: number;
+    freeHours: number;
+    reward: { id: number; freeHours: number; expiresAt: string } | null;
+  } | null;
 };
 export type BookingResult = {
   code: string; requestId: number; amountFils: number; reference: string; cliqAlias: string;
-  startLocal: string; endLocal: string; fieldName: string; method: PayMethod; status: string;
+  startLocal: string; endLocal: string; fieldName: string; method: PayMethod | "free"; status: string;
+  freeMatch?: boolean;
 };
 
 export function useBookingFields() {
@@ -582,10 +631,11 @@ export function useTakenSlots(fieldId: number | null, date: string | null) {
 export function useCreateBooking() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { fieldId: number; startLocal: string; endLocal: string; title?: string | null; payWith?: PayMethod }) =>
+    mutationFn: (body: { fieldId: number; startLocal: string; endLocal: string; title?: string | null; payWith?: PayMethod; useFreeMatch?: boolean }) =>
       call<BookingResult>("/bookings", { method: "POST", body: json(body) }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["booking-taken"] });
+      void qc.invalidateQueries({ queryKey: ["booking-fields"] });
       void qc.invalidateQueries({ queryKey: myMatchesKey });
     },
   });

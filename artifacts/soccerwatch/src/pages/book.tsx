@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation, useSearch } from "wouter";
-import { ArrowLeft, Banknote, BarChart3, Check, ChevronRight, Clock, Loader2, MapPin, Share2, Timer, Users } from "lucide-react";
+import { ArrowLeft, Banknote, BarChart3, Check, ChevronRight, Clock, Gift, Loader2, MapPin, Share2, Timer, Users } from "lucide-react";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import { useToast } from "@/hooks/use-toast";
+import { useExplainerCopy } from "@/i18n/explainer-strings";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { useAuth } from "@/lib/auth";
 import {
@@ -58,6 +59,7 @@ export default function BookPage() {
   const copy = useMatchCopy();
   const b = copy.book;
   const ar = copy.locale === "ar";
+  const free = useExplainerCopy().free;
   const { toast } = useToast();
   const search = useSearch();
   const [, setLocation] = useLocation();
@@ -76,6 +78,8 @@ export default function BookPage() {
   const [title, setTitle] = useState("");
   const [payWith, setPayWith] = useState<PayMethod>("cliq");
   const [result, setResult] = useState<BookingResult | null>(null);
+  // A free match he earned is used by default; he can switch it off to keep it for later.
+  const [useFree, setUseFree] = useState(true);
 
   const fields = fieldsQuery.data?.fields ?? [];
   useEffect(() => {
@@ -125,9 +129,17 @@ export default function BookPage() {
   }, [date, duration, fieldId, taken.data]);
 
   const pricePerHour = fieldsQuery.data?.pricePerHourFils ?? 2000;
-  const payAtField = Boolean(fieldsQuery.data?.payAtField);
+  const freeMatch = fieldsQuery.data?.freeMatch ?? null;
+  const reward = freeMatch?.reward ?? null;
+  const usingFree = Boolean(reward) && useFree;
+  const fullPriceFils = Math.max(1, Math.ceil(duration / 60)) * pricePerHour;
+  // A free match covers its hours; longer bookings pay the extra hours only.
+  const priceFils = usingFree ? Math.max(0, Math.ceil(duration / 60) - reward!.freeHours) * pricePerHour : fullPriceFils;
+  const nothingToPay = usingFree && priceFils === 0;
+  // The challenge only counts CliQ bookings that didn't use a free match.
+  const countsForFreeMatch = Boolean(freeMatch?.enabled) && !usingFree;
+  const payAtField = Boolean(fieldsQuery.data?.payAtField) && !nothingToPay;
   const method: PayMethod = payAtField ? payWith : "cliq";
-  const priceFils = Math.max(1, Math.ceil(duration / 60)) * pricePerHour;
   const field = fields.find((f) => f.id === fieldId) ?? null;
   const ready = Boolean(field && start != null);
   const busyNow = create.isPending;
@@ -148,7 +160,7 @@ export default function BookPage() {
     }
     const win = windowFor(date, start, duration);
     try {
-      const r = await create.mutateAsync({ fieldId: field.id, ...win, title: title.trim() || null, payWith: method });
+      const r = await create.mutateAsync({ fieldId: field.id, ...win, title: title.trim() || null, payWith: method, useFreeMatch: usingFree || undefined });
       setResult(r);
       window.scrollTo?.({ top: 0 });
     } catch (error) {
@@ -161,19 +173,27 @@ export default function BookPage() {
     return (
       <Page ar={ar}>
         <div className="flex items-center gap-2 text-turf"><Check className="h-5 w-5" /><span className="text-sm font-bold">{b.summary}</span></div>
-        <h1 className="mt-1 font-display text-3xl font-bold">{result.method === "field" ? b.fieldTitle : b.payTitle}</h1>
+        <h1 className="mt-1 font-display text-3xl font-bold">{result.method === "free" ? free.applied : result.method === "field" ? b.fieldTitle : b.payTitle}</h1>
         <p className="mt-1 text-sm text-muted-text">
           {result.fieldName} · {dayLabel(result.startLocal.slice(0, 10))} · {result.startLocal.slice(11)}–{result.endLocal.slice(11)}
         </p>
         <div className="mt-5 rounded-3xl border border-line bg-surface p-4">
-          {result.method === "field"
+          {result.method === "free" ? (
+            <div className="flex items-center gap-3" data-testid="booking-free-done">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-floodlight text-void"><Gift className="h-5 w-5" /></span>
+              <span className="min-w-0">
+                <span className="block text-sm font-bold">{free.noPayment}</span>
+                <span className="block text-xs text-muted-text">{free.anyPitch}</span>
+              </span>
+            </div>
+          ) : result.method === "field"
             ? <FieldPaymentPanel amountFils={result.amountFils} reference={result.reference} />
             : <PaymentPanel amountFils={result.amountFils} cliqAlias={result.cliqAlias} reference={result.reference} />}
         </div>
         <Link href={`/m/${result.code}`} className="mt-5 flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void">
           {b.openMatch}<ChevronRight className="h-4 w-4 rtl:rotate-180" />
         </Link>
-        {result.method !== "field" && <p className="mt-2 text-center text-xs text-muted-text">{b.payLater}</p>}
+        {result.method === "cliq" && <p className="mt-2 text-center text-xs text-muted-text">{b.payLater}</p>}
       </Page>
     );
   }
@@ -292,8 +312,39 @@ export default function BookPage() {
         <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={60} placeholder={b.namePlaceholder} className="mt-1 min-h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-text outline-none focus:border-turf" />
       </label>
 
+      {reward && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={useFree}
+          onClick={() => setUseFree((v) => !v)}
+          data-testid="toggle-free-match"
+          className={cn("mt-6 flex w-full items-center gap-3 rounded-3xl border p-4 text-start transition-colors", useFree ? "border-floodlight/50 bg-floodlight/10" : "border-line bg-surface")}
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-floodlight text-void"><Gift className="h-5 w-5" /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold">{useFree ? free.applied : free.useFree}</span>
+            <span className="block text-xs text-muted-text">
+              {free.appliedSub(reward.freeHours, new Intl.DateTimeFormat(ar ? "ar-JO" : "en-GB", { day: "numeric", month: "short", timeZone: "Asia/Amman" }).format(new Date(reward.expiresAt)))}
+            </span>
+          </span>
+          <span className={cn("relative h-6 w-11 shrink-0 rounded-full transition-colors", useFree ? "bg-floodlight" : "bg-raised")} aria-hidden>
+            <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-void transition-[inset-inline-start]", useFree ? "start-[22px]" : "start-0.5")} />
+          </span>
+        </button>
+      )}
+      {countsForFreeMatch && method === "cliq" && (
+        <div className="mt-6 flex items-center gap-3 rounded-2xl border border-floodlight/30 bg-floodlight/5 px-4 py-3" data-testid="free-match-book-banner">
+          <Gift className="h-5 w-5 shrink-0 text-floodlight" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-bold">{free.bookBanner}</span>
+            <span className="block font-mono text-[10.5px] uppercase tracking-wider text-muted-text">{free.bookBannerStep(2, 5)}</span>
+          </span>
+        </div>
+      )}
+
       {/* summary + pay */}
-      <section className="mt-6 rounded-3xl border border-line bg-surface p-4">
+      <section className={cn("rounded-3xl border border-line bg-surface p-4", reward || (countsForFreeMatch && method === "cliq") ? "mt-3" : "mt-6")}>
         {ready ? (
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
@@ -301,10 +352,23 @@ export default function BookPage() {
               <p className="text-xs text-muted-text">{dayLabel(date)} · <span dir="ltr">{hhmm(start!)}–{hhmm(start! + duration)}</span></p>
               <p className="mt-0.5 text-[11px] text-muted-text">{b.perHour(formatJod(pricePerHour))}</p>
             </div>
-            <span className="font-mono text-2xl font-bold" dir="ltr">{formatJod(priceFils)} JOD</span>
+            {nothingToPay ? (
+              <span className="flex flex-col items-end">
+                <span className="font-mono text-sm text-muted-text line-through" dir="ltr">{formatJod(fullPriceFils)} JOD</span>
+                <span className="font-display text-2xl font-extrabold text-floodlight">{free.freeTotal}</span>
+              </span>
+            ) : (
+              <span className="flex flex-col items-end">
+                {usingFree && <span className="font-mono text-sm text-muted-text line-through" dir="ltr">{formatJod(fullPriceFils)} JOD</span>}
+                <span className="font-mono text-2xl font-bold" dir="ltr">{formatJod(priceFils)} JOD</span>
+              </span>
+            )}
           </div>
         ) : (
           <p className="text-sm text-muted-text">{b.pickAll}</p>
+        )}
+        {ready && usingFree && (
+          <p className="mt-3 text-xs leading-5 text-muted-text">{free.noPaymentLead(reward!.freeHours, formatJod(pricePerHour))}</p>
         )}
         {payAtField && (
           <div className="mt-4" role="radiogroup" aria-label={b.payHow}>
@@ -320,13 +384,16 @@ export default function BookPage() {
                     {m === "field" ? b.payFieldLabel : b.payCliqLabel}
                   </span>
                   <span className="text-[11px] leading-4 text-muted-text">{m === "field" ? b.payFieldDesc(formatJod(priceFils)) : b.payCliqDesc}</span>
+                  {countsForFreeMatch && (m === "cliq"
+                    ? <span className="mt-0.5 rounded-full bg-floodlight/15 px-2 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wider text-floodlight">{free.cliqCounts}</span>
+                    : <span className="mt-0.5 text-[10.5px] leading-4 text-muted-text/80">{free.fieldDoesntCount}</span>)}
                 </button>
               ))}
             </div>
           </div>
         )}
         <button type="button" disabled={!ready || busyNow || isLoading} onClick={() => void submit()} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-floodlight text-base font-bold text-void disabled:opacity-40">
-          {busyNow ? <><Loader2 className="h-4 w-4 animate-spin" />{b.booking}</> : method === "field" ? b.bookPayField(formatJod(priceFils)) : b.bookAndPay(formatJod(priceFils))}
+          {busyNow ? <><Loader2 className="h-4 w-4 animate-spin" />{b.booking}</> : nothingToPay ? free.bookFree : method === "field" ? b.bookPayField(formatJod(priceFils)) : b.bookAndPay(formatJod(priceFils))}
         </button>
       </section>
 

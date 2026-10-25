@@ -17,6 +17,7 @@ import {
   userClipAuditEventsTable,
   brandingAssetsTable,
   footageRequestsTable,
+  claimMatchProgressTable,
 } from "@workspace/db";
 import {
   CreateUserClipBody,
@@ -1303,6 +1304,19 @@ router.get("/user-clips", async (req, res): Promise<void> => {
     ))
     .orderBy(desc(userClipsTable.createdAt));
 
+  // Clips Replay cut from the player's own match moments (after Find yourself)
+  // live under My Clips → Moments; mark them so Created shows only his own cuts.
+  const momentRows = await db
+    .select({ earnedClips: claimMatchProgressTable.earnedClips })
+    .from(claimMatchProgressTable)
+    .where(eq(claimMatchProgressTable.userId, userId));
+  const momentClipIds = new Set<number>();
+  for (const row of momentRows) {
+    for (const clip of row.earnedClips ?? []) {
+      if (typeof clip.userClipId === "number") momentClipIds.add(clip.userClipId);
+    }
+  }
+
   // Intro is intentionally suppressed in all playback responses — it appears
   // only in downloaded export files. Skip the intro DB queries entirely.
 
@@ -1336,6 +1350,7 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       liveClipStatus: row.liveClipStatus ?? null,
       liveClipError: row.liveClipError ?? null,
       liveClipPartial: row.liveClipPartial,
+      isMatchMoment: momentClipIds.has(row.id),
       introVideoUrl: null,
     };
   });

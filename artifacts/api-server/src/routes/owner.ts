@@ -26,6 +26,7 @@ import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
+import { availableReward, releaseRewardForMatch, spendReward } from "../lib/freeMatch";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -1894,6 +1895,15 @@ router.get("/bookings/fields", async (req, res): Promise<void> => {
     enabled: commerce.bookingEnabled,
     payAtField: commerce.payAtField,
     cliqAlias: commerce.cliqAlias,
+    freeMatch: viewer && !viewer.isGuest ? await (async () => {
+      const reward = await availableReward(viewer.id).catch(() => null);
+      return {
+        enabled: commerce.freeMatchEnabled,
+        friendsRequired: commerce.freeMatchFriendsRequired,
+        freeHours: commerce.freeMatchHours,
+        reward: reward ? { id: reward.id, freeHours: reward.freeHours, expiresAt: reward.expiresAt.toISOString() } : null,
+      };
+    })() : null,
   });
 });
 
@@ -1929,6 +1939,8 @@ const playerBookingSchema = z.object({
   title: z.string().trim().max(60).nullable().optional(),
   /** cliq: the recording waits for the transfer. field: locked in now, cash at the field. */
   payWith: z.enum(["cliq", "field"]).optional(),
+  /** Spend the player's free match on this booking: its free hours cost nothing. */
+  useFreeMatch: z.boolean().optional(),
 });
 
 /** Bookings a player holds without having paid: CliQ ones waiting, plus pay-at-field ones not yet collected. */
@@ -1992,6 +2004,11 @@ router.post("/bookings", async (req, res): Promise<void> => {
     return;
   }
   const payWith = body.data.payWith ?? "cliq";
+  const reward = body.data.useFreeMatch ? await availableReward(user.id) : null;
+  if (body.data.useFreeMatch && !reward) {
+    res.status(409).json({ error: "You don't have a free match to use" });
+    return;
+  }
   if (payWith === "field" && !commerce.payAtField) {
     res.status(400).json({ error: "Paying at the field isn't available right now. Pay by CliQ instead." });
     return;
@@ -2013,7 +2030,10 @@ router.post("/bookings", async (req, res): Promise<void> => {
     return;
   }
 
-  const amountFils = bookingPriceFils(durationSeconds, commerce.playerBookingFilsPerHour);
+  // A free match covers its free hours; anything longer is paid as usual, per started hour.
+  const amountFils = reward
+    ? Math.max(0, Math.ceil(durationSeconds / 3600) - reward.freeHours) * commerce.playerBookingFilsPerHour
+    : bookingPriceFils(durationSeconds, commerce.playerBookingFilsPerHour);
   const [created] = await db.insert(footageRequestsTable).values({
     fieldId: field.id,
     cameraId: field.cameraId,
@@ -2041,23 +2061,35 @@ router.post("/bookings", async (req, res): Promise<void> => {
     rsvpAt: new Date(),
     shirtNumber: user.shirtNumber ?? null,
   }).onConflictDoNothing();
-  const reference = `RB${room.code}-${randomToken(3).toUpperCase()}`;
+  if (reward && !(await spendReward(reward.id, user.id, room.id))) {
+    // Spent a moment ago by another tap: undo this booking rather than charge for it.
+    await db.update(footageRequestsTable).set({ status: "cancelled", message: "Free match already used", updatedAt: new Date() })
+      .where(eq(footageRequestsTable.id, created.id));
+    res.status(409).json({ error: "You don't have a free match to use" });
+    return;
+  }
+  const fullyFree = Boolean(reward) && amountFils === 0;
+  const method = fullyFree ? "free" : payWith;
+  const reference = `${fullyFree ? "RF" : "RB"}${room.code}-${randomToken(3).toUpperCase()}`;
   await db.insert(statUnlocksTable).values({
     userId: user.id,
     matchId: room.id,
     kind: "booking",
     amountFils,
     reference,
-    method: payWith,
+    method,
+    // Nothing to collect on a fully free booking.
+    ...(fullyFree ? { status: "paid", confirmedAt: new Date() } : {}),
   });
-  // Pay at the field: the recording is locked in now; staff collect the cash on the day.
-  const activated = payWith === "field" ? await activatePaidBooking(created.id) : null;
+  // Pay at the field, or nothing to pay: the recording is locked in now.
+  const activated = payWith === "field" || fullyFree ? await activatePaidBooking(created.id) : null;
   res.status(201).json({
     code: room.code,
     requestId: created.id,
     amountFils,
     reference,
-    method: payWith,
+    method,
+    freeMatch: Boolean(reward),
     status: activated?.status ?? created.status,
     cliqAlias: commerce.cliqAlias,
     startLocal: created.startLocal,
@@ -2091,8 +2123,12 @@ router.delete("/bookings/:id", async (req, res): Promise<void> => {
       eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"),
       eq(statUnlocksTable.method, "field"), eq(statUnlocksTable.status, "pending"),
     )) : [];
+    // A fully free booking (a free match, nothing extra) can be dropped the same way; the free match comes back.
+    const [freePayment] = room && !fieldPayment ? await db.select().from(statUnlocksTable).where(and(
+      eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.method, "free"),
+    )) : [];
     const beforeKickoff = ammanLocalEpoch(row.startLocal) > ammanLocalEpoch(getAmmanNow().local);
-    if (!fieldPayment || !beforeKickoff || !["queued", "scheduled"].includes(row.status)) {
+    if ((!fieldPayment && !freePayment) || !beforeKickoff || !["queued", "scheduled"].includes(row.status)) {
       res.status(409).json({ error: "Only unpaid bookings can be cancelled here, before kick-off" });
       return;
     }
@@ -2120,6 +2156,10 @@ router.delete("/bookings/:id", async (req, res): Promise<void> => {
   if (room) {
     await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
       .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.status, "pending")));
+    await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
+      .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.method, "free")));
+    // A booking that spent a free match gives it back.
+    await releaseRewardForMatch(room.id);
   }
   res.status(204).send();
 });
@@ -2178,8 +2218,13 @@ export async function activatePaidBooking(requestId: number): Promise<{ status: 
 }
 
 export async function cancelUnpaidBooking(requestId: number): Promise<void> {
-  await db.update(footageRequestsTable).set({ status: "cancelled", message: "Payment not received", updatedAt: new Date() })
-    .where(and(eq(footageRequestsTable.id, requestId), eq(footageRequestsTable.status, "awaiting_payment")));
+  const cancelled = await db.update(footageRequestsTable).set({ status: "cancelled", message: "Payment not received", updatedAt: new Date() })
+    .where(and(eq(footageRequestsTable.id, requestId), eq(footageRequestsTable.status, "awaiting_payment")))
+    .returning({ id: footageRequestsTable.id });
+  if (!cancelled.length) return;
+  const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, requestId));
+  // The extra hours on a free match were never paid: the free match comes back.
+  if (room) await releaseRewardForMatch(room.id);
 }
 
 
