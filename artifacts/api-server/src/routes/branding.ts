@@ -1,9 +1,11 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { and, eq } from "drizzle-orm";
+import fs from "fs";
 import {
   db,
   brandingAssetsTable,
+  brandingProfilesTable,
   usersTable,
   academiesTable,
   fieldsTable,
@@ -15,6 +17,10 @@ import { logger } from "../lib/logger";
 import { isBunnyStorageConfigured, uploadBufferToBunnyStorage } from "../lib/bunny";
 import { getOutputDims } from "../lib/ffmpegExport";
 import { overlayFits } from "../lib/brandingAssets";
+import { BRANDING_PRESETS, presetCrestPath } from "../lib/clipBranding/assets";
+import { lookFor, presetFileFromUrl } from "../lib/clipBranding/plan";
+import { PREVIEW_DIMS, renderPreviewMp4, renderPreviewPng } from "../lib/clipBranding/preview";
+import { END_SCREEN_KINDS, OVERLAY_STYLES, type EndScreenKind } from "../lib/clipBranding/types";
 
 /**
  * Uploading and listing the branding burned into exported clips.
@@ -117,8 +123,21 @@ router.get("/admin/branding", async (req, res): Promise<void> => {
   const portrait = getOutputDims(true);
   try {
     const rows = await db.select().from(brandingAssetsTable);
+    // A missing profiles table (the code is deployed, the publish that creates
+    // it is not) must not take the uploaded branding down with it.
+    let profiles: Array<typeof brandingProfilesTable.$inferSelect> = [];
+    let profilesReady = true;
+    try {
+      profiles = await db.select().from(brandingProfilesTable);
+    } catch (err) {
+      if (!isMissingBrandingSchema(err)) throw err;
+      profilesReady = false;
+    }
     res.json({
       schemaReady: true,
+      profilesReady,
+      profiles: profiles.map(profileJson),
+      presets: BRANDING_PRESETS.map((p) => ({ key: p.key, label: p.label, source: p.source })),
       storageReady: isBunnyStorageConfigured(),
       outputSizes: { landscape, portrait },
       assets: rows.map((row) => ({
@@ -133,11 +152,252 @@ router.get("/admin/branding", async (req, res): Promise<void> => {
     if (!isMissingBrandingSchema(err)) throw err;
     res.json({
       schemaReady: false,
+      profilesReady: false,
+      profiles: [],
+      presets: BRANDING_PRESETS.map((p) => ({ key: p.key, label: p.label, source: p.source })),
       message: SCHEMA_MISSING,
       storageReady: isBunnyStorageConfigured(),
       outputSizes: { landscape, portrait },
       assets: [],
     });
+  }
+});
+
+// Registered before the /:kind routes below, which would otherwise take
+// /profile, /crest, /preset and /preview as a branding kind.
+// ── Branding profiles: the look the export draws itself ─────────────────────
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+const PROFILE_SCHEMA_MISSING =
+  "The branding_profiles table has not been created in this database yet. " +
+  "In development run: pnpm --filter @workspace/db run push. In production it is created by the next Publish from the Replit website.";
+
+function profileJson(row: typeof brandingProfilesTable.$inferSelect) {
+  return {
+    ...row,
+    crestPreset: presetFileFromUrl(row.crestUrl) ? row.crestUrl!.slice("preset:".length) : null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function cleanText(value: unknown, max: number): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, max);
+  return trimmed || null;
+}
+
+async function scopeName(scopeType: BrandingScopeType, scopeId: number): Promise<string> {
+  if (scopeType === "global") return "Replay";
+  const table = scopeType === "academy" ? academiesTable : fieldsTable;
+  const [row] = await db.select({ name: table.name }).from(table).where(eq(table.id, scopeId));
+  return row?.name ?? "";
+}
+
+async function upsertProfile(
+  scope: { scopeType: BrandingScopeType; scopeId: number },
+  values: Partial<typeof brandingProfilesTable.$inferInsert>,
+  adminId: number,
+) {
+  const nameEn = values.nameEn ?? (await scopeName(scope.scopeType, scope.scopeId));
+  const [saved] = await db
+    .insert(brandingProfilesTable)
+    .values({ ...values, nameEn, scopeType: scope.scopeType, scopeId: scope.scopeId, updatedBy: adminId })
+    .onConflictDoUpdate({
+      target: [brandingProfilesTable.scopeType, brandingProfilesTable.scopeId],
+      set: { ...values, updatedBy: adminId, updatedAt: new Date() },
+    })
+    .returning();
+  return saved;
+}
+
+/** PUT /admin/branding/profile — JSON: scope plus the profile fields. */
+router.put("/admin/branding/profile", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const scope = parseScope(body.scope);
+  if (!scope) { res.status(400).json({ error: 'scope must be "global", "academy:<id>" or "field:<id>"' }); return; }
+  if (!(await scopeExists(scope.scopeType, scope.scopeId))) {
+    res.status(404).json({ error: `No such ${scope.scopeType}: ${scope.scopeId}` });
+    return;
+  }
+  const nameEn = cleanText(body.nameEn, 40);
+  if (!nameEn) { res.status(400).json({ error: "The English name is required." }); return; }
+  const primaryColor = typeof body.primaryColor === "string" && HEX.test(body.primaryColor) ? body.primaryColor.toUpperCase() : null;
+  if (!primaryColor) { res.status(400).json({ error: "The main colour must look like #F4CF1F." }); return; }
+  const accentRaw = body.accentColor;
+  if (accentRaw && !(typeof accentRaw === "string" && HEX.test(accentRaw))) {
+    res.status(400).json({ error: "The second colour must look like #3DB54A, or be empty." });
+    return;
+  }
+  try {
+    const saved = await upsertProfile(scope, {
+      nameEn,
+      nameAr: cleanText(body.nameAr, 60),
+      taglineAr: cleanText(body.taglineAr, 60),
+      primaryColor,
+      accentColor: accentRaw ? String(accentRaw).toUpperCase() : null,
+      bookingPhone: cleanText(body.bookingPhone, 30),
+      instagram: cleanText(body.instagram, 40)?.replace(/^@/, "") ?? null,
+      showPlayerNames: body.showPlayerNames === true,
+    }, adminId);
+    logger.info({ scope, adminId }, "Branding profile saved");
+    res.json(profileJson(saved));
+  } catch (err) {
+    if (isMissingBrandingSchema(err)) { res.status(503).json({ error: PROFILE_SCHEMA_MISSING }); return; }
+    throw err;
+  }
+});
+
+/** DELETE /admin/branding/profile?scope=… */
+router.delete("/admin/branding/profile", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+  const scope = parseScope(req.query.scope);
+  if (!scope) { res.status(400).json({ error: 'scope must be "global", "academy:<id>" or "field:<id>"' }); return; }
+  try {
+    await db.delete(brandingProfilesTable).where(and(
+      eq(brandingProfilesTable.scopeType, scope.scopeType),
+      eq(brandingProfilesTable.scopeId, scope.scopeId),
+    ));
+    logger.info({ scope, adminId }, "Branding profile removed");
+    res.json({ ok: true });
+  } catch (err) {
+    if (isMissingBrandingSchema(err)) { res.status(503).json({ error: PROFILE_SCHEMA_MISSING }); return; }
+    throw err;
+  }
+});
+
+/** PUT /admin/branding/crest — multipart `asset` (transparent PNG) + `scope`. */
+router.put("/admin/branding/crest", uploadAsset.single("asset"), async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+  const scope = parseScope((req.body as Record<string, unknown>)?.scope);
+  if (!scope) { res.status(400).json({ error: 'scope must be "global", "academy:<id>" or "field:<id>"' }); return; }
+  if (!(await scopeExists(scope.scopeType, scope.scopeId))) {
+    res.status(404).json({ error: `No such ${scope.scopeType}: ${scope.scopeId}` });
+    return;
+  }
+  const file = req.file;
+  if (!file?.buffer?.length) { res.status(400).json({ error: "Attach the crest as the 'asset' field." }); return; }
+  if (file.size > MAX_OVERLAY_BYTES) { res.status(400).json({ error: "A crest must be under 8 MB." }); return; }
+  const size = readPngSize(file.buffer);
+  if (!size) { res.status(400).json({ error: "A crest must be a PNG with a transparent background." }); return; }
+  if (!isBunnyStorageConfigured()) {
+    res.status(503).json({ error: "Bunny Storage is not configured, so a crest cannot be stored." });
+    return;
+  }
+  const scopeKey = scope.scopeType === "global" ? "global" : `${scope.scopeType}-${scope.scopeId}`;
+  try {
+    const crestUrl = await uploadBufferToBunnyStorage(file.buffer, `branding/${scopeKey}/crest-${Date.now()}.png`, "image/png");
+    const saved = await upsertProfile(scope, { crestUrl, crestWidth: size.width, crestHeight: size.height }, adminId);
+    res.json(profileJson(saved));
+  } catch (err) {
+    if (isMissingBrandingSchema(err)) { res.status(503).json({ error: PROFILE_SCHEMA_MISSING }); return; }
+    logger.error({ err, scope }, "Could not store the crest");
+    res.status(502).json({ error: "Could not store the crest." });
+  }
+});
+
+/**
+ * POST /admin/branding/preset — JSON { scope, preset }. Fills the profile from
+ * a real venue's public branding, bundled with the server (no upload needed).
+ */
+router.post("/admin/branding/preset", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const scope = parseScope(body.scope);
+  if (!scope) { res.status(400).json({ error: 'scope must be "global", "academy:<id>" or "field:<id>"' }); return; }
+  if (!(await scopeExists(scope.scopeType, scope.scopeId))) {
+    res.status(404).json({ error: `No such ${scope.scopeType}: ${scope.scopeId}` });
+    return;
+  }
+  const preset = BRANDING_PRESETS.find((p) => p.key === body.preset);
+  if (!preset) { res.status(400).json({ error: "Unknown preset." }); return; }
+  try {
+    const crest = readPngSize(await fs.promises.readFile(presetCrestPath(preset)));
+    const saved = await upsertProfile(scope, {
+      nameEn: preset.nameEn,
+      nameAr: preset.nameAr,
+      taglineAr: preset.taglineAr,
+      primaryColor: preset.primaryColor,
+      accentColor: preset.accentColor,
+      bookingPhone: preset.bookingPhone,
+      instagram: preset.instagram,
+      showPlayerNames: preset.showPlayerNames,
+      crestUrl: `preset:${preset.crestFile}`,
+      crestWidth: crest?.width ?? null,
+      crestHeight: crest?.height ?? null,
+    }, adminId);
+    logger.info({ scope, adminId, preset: preset.key }, "Branding preset applied");
+    res.json(profileJson(saved));
+  } catch (err) {
+    if (isMissingBrandingSchema(err)) { res.status(503).json({ error: PROFILE_SCHEMA_MISSING }); return; }
+    throw err;
+  }
+});
+
+/** GET /admin/branding/preset-crest/:file — a bundled crest, for the console. */
+router.get("/admin/branding/preset-crest/:file", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req))) { unauthenticatedResponse(res, req); return; }
+  const file = presetFileFromUrl(`preset:${String(req.params.file)}`);
+  if (!file) { res.status(404).end(); return; }
+  res.type("png").sendFile(file);
+});
+
+/**
+ * GET /admin/branding/preview?scope=…&what=player|match|academy|signOff|cornerCrest|broadcastBar|academyFrame
+ *     &aspect=9:16|16:9&format=png|mp4&seconds=3&blur=22&dim=50
+ *
+ * The scope's real look over real footage, with sample numbers.
+ */
+router.get("/admin/branding/preview", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req))) { unauthenticatedResponse(res, req); return; }
+  const scope = parseScope(req.query.scope);
+  if (!scope) { res.status(400).json({ error: 'scope must be "global", "academy:<id>" or "field:<id>"' }); return; }
+  const what = String(req.query.what ?? "signOff");
+  const isKind = (END_SCREEN_KINDS as readonly string[]).includes(what);
+  const isOverlay = (OVERLAY_STYLES as readonly string[]).includes(what) && what !== "uploaded";
+  if (!isKind && !isOverlay) { res.status(400).json({ error: "Unknown preview." }); return; }
+  const dims = PREVIEW_DIMS[req.query.aspect === "16:9" ? "16:9" : "9:16"];
+  const num = (v: unknown, lo: number, hi: number, d: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
+  };
+  const seconds = num(req.query.seconds, 2, 6, 3);
+  const blur = num(req.query.blur, 0, 40, 22);
+  const dim = num(req.query.dim, 0, 90, 50) / 100;
+
+  const temps: string[] = [];
+  try {
+    const look = await lookFor({
+      academyId: scope.scopeType === "academy" ? scope.scopeId : null,
+      fieldId: scope.scopeType === "field" ? scope.scopeId : null,
+    }, temps);
+    if (!look) { res.status(404).json({ error: "Nothing to preview yet: give this venue a name first." }); return; }
+    if (req.query.format === "mp4" && isKind) {
+      // The console bumps `v` whenever the look is saved, so a new crest of the
+      // same size is not served from the cache.
+      const lookKey = JSON.stringify({
+        ...look,
+        crest: look.crest ? `${look.crest.width}x${look.crest.height}` : null,
+        scope,
+        v: String(req.query.v ?? ""),
+      });
+      const file = await renderPreviewMp4({ look, lookKey, kind: what as EndScreenKind, dims, seconds, blur, dim });
+      res.type("mp4").sendFile(file);
+      return;
+    }
+    const png = await renderPreviewPng({ look, what: what as never, dims, blur, dim });
+    res.setHeader("Cache-Control", "no-store");
+    res.type("png").send(png);
+  } catch (err) {
+    logger.error({ err, scope, what }, "Branding preview failed");
+    res.status(500).json({ error: "Could not render the preview." });
+  } finally {
+    for (const t of temps) fs.unlink(t, () => {});
   }
 });
 

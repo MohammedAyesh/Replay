@@ -6,6 +6,7 @@ import os from "os";
 import { logger } from "./logger";
 import { BUNNY_STORAGE_API_KEY, isBunnyStorageUrl } from "./bunny";
 import { buildOverlayFilterComplex } from "./brandingAssets";
+import { applyEndScreen, endScreenStart, type EndScreenJob } from "./clipBranding/endScreenVideo";
 import {
   EXPORT_SOURCE_WIDTH,
   EXPORT_SOURCE_HEIGHT,
@@ -142,6 +143,12 @@ export interface FfmpegExportOptions {
   endCardUrl?: string;
   /** Referer for fetching either branding asset. */
   brandingReferer?: string;
+  /**
+   * A drawn end screen over the clip's last seconds (lib/clipBranding). The
+   * main encode puts a keyframe where it starts so only the tail is re-encoded.
+   * Any failure exports the clip without it.
+   */
+  endScreen?: EndScreenJob;
 }
 
 
@@ -1068,7 +1075,9 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   //
   // Only done when there is an intro: the plain export path keeps the source's
   // own audio parameters and costs no extra probe.
-  const willConcat = !!options.introUrl || !!options.endCardUrl;
+  // The end screen's tail is joined the same way, so it needs the same audio spec.
+  const willConcat = !!options.introUrl || !!options.endCardUrl || !!options.endScreen;
+  const endStart = options.endScreen ? endScreenStart(clipDuration, options.endScreen.seconds) : null;
   let mainHasAudio = true;
   try {
     if (willConcat) {
@@ -1151,6 +1160,9 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     // the branding end card encode to the same constant so every concat works.
     ...EXPORT_ENCODE_ARGS.video,
     ...EXPORT_ENCODE_ARGS.audio,
+    // A keyframe exactly where the end screen starts, so the clip up to it can
+    // be stream-copied rather than encoded twice.
+    ...(endStart !== null ? ["-force_key_frames", endStart.toFixed(3)] : []),
     // With an overlay present the video comes from the filter graph's [v] label
     // (mapped above) and the silent track has moved to input 2. Leaving this as
     // a bare 1:a:0 would map the overlay PNG as audio and fail the render.
@@ -1211,16 +1223,49 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
         return;
       }
       logger.info({ tmpPath }, "FFmpeg render complete");
-      withBookends(
-        tmpPath,
-        is9to16,
-        options.introUrl,
-        options.introReferer,
-        options.endCardUrl,
-        options.brandingReferer,
-      ).then(resolve, reject);
+      // With an end screen the main encode always carries an audio track
+      // (willConcat above adds silence when the source has none).
+      withEndScreen(tmpPath, is9to16, options.endScreen, endStart, true)
+        .then((mainPath) => withBookends(
+          mainPath,
+          is9to16,
+          options.introUrl,
+          options.introReferer,
+          options.endCardUrl,
+          options.brandingReferer,
+        ))
+        .then(resolve, reject);
     });
   });
+}
+
+/**
+ * Lay the drawn end screen over the rendered clip. Like the bookends, it is
+ * branding: a failure is logged and the clip goes out without it.
+ */
+async function withEndScreen(
+  mainPath: string,
+  is9to16: boolean,
+  job: EndScreenJob | undefined,
+  start: number | null,
+  hasAudio: boolean,
+): Promise<string> {
+  if (!job) return mainPath;
+  try {
+    const out = await applyEndScreen({
+      mainPath,
+      dims: getOutputDims(is9to16),
+      job,
+      start,
+      encode: EXPORT_ENCODE_ARGS,
+      hasAudio,
+    });
+    cleanupTempFile(mainPath);
+    return out;
+  } catch (err) {
+    logger.error({ err, kind: job.spec.kind }, "End screen failed — exporting the clip without it");
+    return mainPath;
+  }
 }
 
 /** Delete a temp file produced by renderClip, ignoring errors. */

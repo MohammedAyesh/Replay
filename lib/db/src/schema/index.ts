@@ -34,6 +34,7 @@ export * from "./clipDownloads";
 export * from "./settingsRules";
 export * from "./settingsDefaults";
 export * from "./brandingAssets";
+export * from "./brandingProfiles";
 export * from "./analysisJobs";
 export * from "./fieldOwners";
 export * from "./footageRequests";

@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vites
 import request from "supertest";
 import express, { type Express } from "express";
 import { eq, inArray } from "drizzle-orm";
-import { db, usersTable, fieldsTable, academiesTable, brandingAssetsTable } from "@workspace/db";
+import { db, usersTable, fieldsTable, academiesTable, brandingAssetsTable, brandingProfilesTable } from "@workspace/db";
 
 vi.mock("../lib/bunny", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/bunny")>();
@@ -101,6 +101,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupAssets();
+  await db.delete(brandingProfilesTable).where(inArray(brandingProfilesTable.scopeId, [0, fieldId, academyId]));
   await db.delete(academiesTable).where(eq(academiesTable.id, academyId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
   await db.delete(usersTable).where(inArray(usersTable.id, [adminId, plainId]));
@@ -192,5 +193,76 @@ describe("uploading branding", () => {
     const res = await request(app).put("/api/admin/branding/watermark")
       .field("scope", "global").attach("asset", png(10, 10), "x.png");
     expect(res.status).toBe(400);
+  });
+});
+
+describe("drawn branding profiles", () => {
+  beforeEach(async () => {
+    await db.delete(brandingProfilesTable).where(inArray(brandingProfilesTable.scopeId, [0, fieldId, academyId]));
+  });
+
+  it("saves a field's look and lists it", async () => {
+    const res = await request(app).put("/api/admin/branding/profile").send({
+      scope: `field:${fieldId}`, nameEn: "Jordan Galaxy", nameAr: "ملاعب جوردن جلاكسي",
+      primaryColor: "#f4cf1f", accentColor: "", bookingPhone: "07 9920 4098", instagram: "@jordangalaxy",
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ scopeType: "field", scopeId: fieldId, primaryColor: "#F4CF1F", accentColor: null, instagram: "jordangalaxy" });
+    const list = await request(app).get("/api/admin/branding").expect(200);
+    expect(list.body.profilesReady).toBe(true);
+    expect(list.body.profiles.map((p: { scopeId: number }) => p.scopeId)).toContain(fieldId);
+    expect(list.body.presets.map((p: { key: string }) => p.key)).toEqual(expect.arrayContaining(["jordan-galaxy", "jufa"]));
+  });
+
+  it("refuses a look without a name or with a malformed colour", async () => {
+    await request(app).put("/api/admin/branding/profile").send({ scope: "global", nameEn: "", primaryColor: "#F4CF1F" }).expect(400);
+    await request(app).put("/api/admin/branding/profile").send({ scope: "global", nameEn: "X", primaryColor: "yellow" }).expect(400);
+    await request(app).put("/api/admin/branding/profile").send({ scope: "academy:999999", nameEn: "X", primaryColor: "#F4CF1F" }).expect(404);
+  });
+
+  it("applies a real venue's preset with its bundled crest", async () => {
+    const res = await request(app).post("/api/admin/branding/preset").send({ scope: `academy:${academyId}`, preset: "jufa" });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ nameEn: "JUFA", primaryColor: "#2B3DA8", crestPreset: "jufa-crest.png", showPlayerNames: false });
+    const crest = await request(app).get(`/api/admin/branding/preset-crest/${res.body.crestPreset}`);
+    expect(crest.status).toBe(200);
+    expect(crest.headers["content-type"]).toContain("image/png");
+    await request(app).get("/api/admin/branding/preset-crest/..%2F..%2Fpackage.json").expect(404);
+    await request(app).post("/api/admin/branding/preset").send({ scope: "global", preset: "nope" }).expect(400);
+  });
+
+  it("removes a look", async () => {
+    await request(app).post("/api/admin/branding/preset").send({ scope: "global", preset: "jordan-galaxy" }).expect(200);
+    await request(app).delete("/api/admin/branding/profile?scope=global").expect(200);
+    expect(await db.select().from(brandingProfilesTable).where(eq(brandingProfilesTable.scopeType, "global"))).toHaveLength(0);
+  });
+
+  it("stores an uploaded crest against the scope", async () => {
+    const res = await request(app).put("/api/admin/branding/crest")
+      .field("scope", `field:${fieldId}`).attach("asset", png(300, 320), "crest.png");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ crestWidth: 300, crestHeight: 320, crestPreset: null });
+    expect(res.body.crestUrl).toContain(`branding/field-${fieldId}/crest-`);
+    // Nothing landed in the uploaded-overlay table.
+    expect(await db.select().from(brandingAssetsTable)).toHaveLength(0);
+  });
+
+  it("renders a preview of each end screen and overlay", async () => {
+    await request(app).post("/api/admin/branding/preset").send({ scope: `field:${fieldId}`, preset: "jordan-galaxy" }).expect(200);
+    for (const what of ["player", "match", "academy", "signOff", "cornerCrest", "broadcastBar", "academyFrame"]) {
+      const res = await request(app).get(`/api/admin/branding/preview?scope=field:${fieldId}&what=${what}&aspect=9:16`)
+        .buffer(true).parse((r, cb) => { const parts: Buffer[] = []; r.on("data", (c: Buffer) => parts.push(c)); r.on("end", () => cb(null, Buffer.concat(parts))); });
+      expect(res.status, what).toBe(200);
+      expect(res.headers["content-type"]).toContain("image/png");
+      expect((res.body as Buffer).readUInt32BE(16)).toBe(608);
+    }
+    await request(app).get(`/api/admin/branding/preview?scope=field:${fieldId}&what=uploaded`).expect(400);
+  }, 60_000);
+
+  it("refuses a plain user", async () => {
+    mockedGetLocalUserId.mockResolvedValue(plainId);
+    await request(app).put("/api/admin/branding/profile").send({ scope: "global", nameEn: "X", primaryColor: "#F4CF1F" }).expect(401);
+    await request(app).post("/api/admin/branding/preset").send({ scope: "global", preset: "jufa" }).expect(401);
+    await request(app).get("/api/admin/branding/preview?scope=global&what=signOff").expect(401);
   });
 });

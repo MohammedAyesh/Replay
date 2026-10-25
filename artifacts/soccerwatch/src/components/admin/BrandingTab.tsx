@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import ClipBrandingPanel, { type BrandingPresetInfo, type BrandingProfile } from "./ClipBrandingPanel";
 
 /**
  * The overlay and end card burned into exported clips.
@@ -71,6 +72,9 @@ export default function BrandingTab() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [scope, setScope] = useState<{ type: ScopeType; id: number }>({ type: "global", id: 0 });
+  const [profiles, setProfiles] = useState<BrandingProfile[]>([]);
+  const [presets, setPresets] = useState<BrandingPresetInfo[]>([]);
+  const [profilesReady, setProfilesReady] = useState(true);
   const inputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const load = useCallback(async () => {
@@ -78,6 +82,9 @@ export default function BrandingTab() {
       const data = await api("/admin/branding");
       setAssets(data.assets ?? []);
       setSizes(data.outputSizes ?? null);
+      setProfiles(data.profiles ?? []);
+      setPresets(data.presets ?? []);
+      setProfilesReady(data.profilesReady !== false);
       setNotice(
         data.schemaReady === false
           ? (data.message ?? "The branding table is missing.")
@@ -123,6 +130,11 @@ export default function BrandingTab() {
     },
     [assets, scope],
   );
+
+  const scopeLabel =
+    scope.type === "global"
+      ? "every venue"
+      : (scope.type === "field" ? fields : academies).find((x) => x.id === scope.id)?.name ?? `${scope.type} ${scope.id}`;
 
   async function upload(kind: Kind, file: File) {
     setBusy(kind);
@@ -206,6 +218,23 @@ export default function BrandingTab() {
             {academies.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </div>
+      </div>
+
+      <ClipBrandingPanel
+        scope={scope}
+        scopeLabel={scopeLabel}
+        profiles={profiles}
+        presets={presets}
+        profilesReady={profilesReady}
+        reload={load}
+      />
+
+      <div className="pt-2">
+        <p className="text-text text-sm font-semibold">Uploaded files</p>
+        <p className="text-muted-text text-xs mt-0.5">
+          The older way: your own PNG and video. The uploaded overlay is used only while the overlay
+          is set to "Uploaded PNG"; the uploaded end card is skipped whenever the end screen is on.
+        </p>
       </div>
 
       {(["overlay", "endCard"] as Kind[]).map((kind) => {

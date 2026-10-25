@@ -52,6 +52,7 @@ import {
 import { classifyPortfolioSourceError } from "../lib/portfolioPlayback";
 import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
+import { planClipBranding } from "../lib/clipBranding/plan";
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
 import { logger } from "../lib/logger";
 import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
@@ -800,12 +801,29 @@ async function runBackgroundExport(
       const bufStartFraction = Math.max(0, adjustedOffsetSec / bufferedDuration);
       const bufEndFraction = Math.min(1, (adjustedOffsetSec + clipDuration) / bufferedDuration);
 
-      const branding = await resolveBrandingForClip(
-        clip.academyId,
-        await fieldIdForClip(clipId),
-        { academyId: clip.academyId, fieldId: await fieldIdForClip(clipId) },
-      );
+      const clipFieldId = await fieldIdForClip(clipId);
+      const brandingCtx = { academyId: clip.academyId, fieldId: clipFieldId, userId: clip.userId };
+      const branding = await resolveBrandingForClip(clip.academyId, clipFieldId, brandingCtx);
       overlayUrlForBackup = branding.overlayUrl ?? null;
+
+      // Drawn branding (Admin → Branding): a generated overlay replaces the
+      // uploaded one, and a drawn end screen replaces the uploaded end card.
+      // Planning never throws; anything it cannot do it leaves out.
+      const drawn = await planClipBranding(
+        {
+          id: clip.id,
+          userId: clip.userId,
+          academyId: clip.academyId,
+          matchCode: clip.matchCode,
+          footageRequestId: clip.footageRequestId,
+        },
+        clipFieldId,
+        clip.aspectRatio === "9:16",
+        brandingCtx,
+      );
+      assetTmpFiles.push(...drawn.temps);
+      if (drawn.overlayPath) branding.overlayUrl = undefined;
+      if (drawn.endScreen) branding.endCardUrl = undefined;
 
       // Every branding asset is fetched here, with its own timeout and its own
       // HTTP status in the log, before FFmpeg starts. FFmpeg then only reads
@@ -819,9 +837,15 @@ async function runBackgroundExport(
       for (const [remote, local] of [[introUrl, introPath], [branding.overlayUrl, overlayPath], [branding.endCardUrl, endCardPath]] as const) {
         if (local && local !== remote) assetTmpFiles.push(local);
       }
-      if (overlayPath || endCardPath || introPath) {
+      if (overlayPath || endCardPath || introPath || drawn.overlayPath || drawn.endScreen) {
         logger.info(
-          { clipId, intro: !!introPath, overlay: !!overlayPath, endCard: !!endCardPath },
+          {
+            clipId,
+            intro: !!introPath,
+            overlay: drawn.overlayPath ? "drawn" : !!overlayPath,
+            endCard: !!endCardPath,
+            endScreen: drawn.endScreen?.spec.kind ?? null,
+          },
           "Branding this export",
         );
       }
@@ -837,13 +861,14 @@ async function runBackgroundExport(
         aspectRatio: clip.aspectRatio,
         title: clip.title,
       };
-      const branded = !!(introPath || overlayPath || endCardPath);
+      const branded = !!(introPath || overlayPath || endCardPath || drawn.overlayPath || drawn.endScreen);
       try {
         tmpPath = await renderClip({
           ...renderOptions,
           introUrl: introPath ?? undefined,
-          overlayUrl: overlayPath ?? undefined,
+          overlayUrl: drawn.overlayPath ?? overlayPath ?? undefined,
           endCardUrl: endCardPath ?? undefined,
+          endScreen: drawn.endScreen ?? undefined,
         });
       } catch (renderErr) {
         if (!branded) throw renderErr;

@@ -36,6 +36,9 @@ async function buildAll() {
       "better-sqlite3",
       "sqlite3",
       "canvas",
+      // Native Skia binding: loads its platform package by name at runtime.
+      "@napi-rs/canvas",
+      "@napi-rs/*",
       "bcrypt",
       "argon2",
       "fsevents",
