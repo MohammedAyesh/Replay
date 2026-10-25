@@ -13,6 +13,7 @@ import { Router, type IRouter } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
+import { CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } from "../lib/backupExport";
 
 const router: IRouter = Router();
 
@@ -54,6 +55,17 @@ const MANIFEST_TIMEOUT_MS = Number(process.env.HLS_PROXY_MANIFEST_TIMEOUT_MS ?? 
 
 const PROGRESSIVE_MP4_RANGE_BYTES = 4 * 1024 * 1024;
 const MIN_PROGRESSIVE_MP4_RANGE_BYTES = 64 * 1024;
+/**
+ * The most one progressive-MP4 response may carry. The Replit host rejects any
+ * response whose Content-Length is over 32 MiB, and play_720p.mp4 for a whole
+ * match runs to hundreds of MB. A <video> element that asked for `bytes=N-`
+ * accepts a shorter 206 and asks for the next range itself, so every ranged
+ * response is capped here and labelled with an honest Content-Range.
+ */
+export const PROGRESSIVE_MP4_RESPONSE_MAX_BYTES = Math.min(
+  16 * 1024 * 1024,
+  CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES,
+);
 type ProgressiveMp4RangePolicy = { maxBytes: number };
 
 type ParsedContentRange = { start: number; end: number; total: number };
@@ -138,10 +150,13 @@ function streamProgressiveMp4(
   hostname: string,
   signal: AbortSignal,
   rangePolicy: ProgressiveMp4RangePolicy,
+  /** Exclusive end of the bytes this response promised (at most `total`). */
+  stopAt: number = initialRange.total,
 ): Readable {
   return Readable.from((async function* () {
     let response = initialResponse;
     let range = initialRange;
+    let position = initialRange.start;
     while (true) {
       if (
         response.status !== 206
@@ -153,16 +168,28 @@ function streamProgressiveMp4(
       const body = Readable.fromWeb(
         response.body as import("stream/web").ReadableStream<Uint8Array>,
       );
-      for await (const chunk of body) yield chunk;
+      for await (const chunk of body) {
+        const buf = chunk as Buffer;
+        const room = stopAt - position;
+        if (buf.length >= room) {
+          // An upstream window can run past the promised end (windows have a
+          // minimum size); never send more than Content-Length said.
+          if (room > 0) yield buf.subarray(0, room);
+          body.destroy();
+          return;
+        }
+        position += buf.length;
+        yield buf;
+      }
 
       const nextStart = range.end + 1;
-      if (nextStart >= range.total) return;
+      if (nextStart >= range.total || nextStart >= stopAt) return;
 
       response = await fetchProgressiveMp4Range(
         raw,
         hostname,
         nextStart,
-        range.total,
+        stopAt,
         signal,
         rangePolicy,
       );
@@ -323,16 +350,29 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
     const { hostname } = new URL(raw);
     const isProgressiveMp4 = isProgressiveMp4Fallback(raw);
     const range = req.header("range");
-    const openEndedRange = range?.trim().match(/^bytes=(\d+)-$/i) ?? null;
-    const progressiveMp4Request = isProgressiveMp4 && (!range || openEndedRange)
+    const singleRange = range?.trim().match(/^bytes=(\d+)-(\d*)$/i) ?? null;
+    const requestedStart = singleRange ? Number(singleRange[1]) : 0;
+    const requestedEnd = singleRange && singleRange[2] ? Number(singleRange[2]) : null;
+    // Small bounded ranges are forwarded to Bunny untouched. Open-ended ranges,
+    // and bounded ones too large for one response, go through the windowed
+    // path below, which caps the response under the host's length limit.
+    const smallBoundedRange = requestedEnd != null
+      && requestedEnd >= requestedStart
+      && requestedEnd - requestedStart + 1 <= PROGRESSIVE_MP4_RESPONSE_MAX_BYTES;
+    const progressiveMp4Request = isProgressiveMp4 && (!range || (singleRange && !smallBoundedRange))
       ? {
-          start: openEndedRange ? Number(openEndedRange[1]) : 0,
+          start: requestedStart,
+          requestedEnd,
           clientRequestedRange: Boolean(range),
         }
       : null;
     if (
       progressiveMp4Request
-      && (!Number.isSafeInteger(progressiveMp4Request.start) || progressiveMp4Request.start < 0)
+      && (
+        !Number.isSafeInteger(progressiveMp4Request.start)
+        || progressiveMp4Request.start < 0
+        || (requestedEnd != null && (!Number.isSafeInteger(requestedEnd) || requestedEnd < requestedStart))
+      )
     ) {
       res.set("Accept-Ranges", "bytes").status(416).send("Invalid byte range");
       return;
@@ -351,7 +391,7 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
         raw,
         hostname,
         progressiveMp4Request.start,
-        null,
+        progressiveMp4Request.requestedEnd == null ? null : progressiveMp4Request.requestedEnd + 1,
         abort.signal,
         progressiveMp4RangePolicy,
       );
@@ -405,11 +445,29 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
       res.set("Cache-Control", "public, max-age=300");
       res.set("Access-Control-Allow-Origin", "*");
       res.set("Accept-Ranges", "bytes");
-      res.set("Content-Length", String(firstRange.total - firstRange.start));
+      let stopAt = firstRange.total;
       if (progressiveMp4Request.clientRequestedRange) {
-        res.set("Content-Range", `bytes ${firstRange.start}-${firstRange.total - 1}/${firstRange.total}`);
+        // A bounded 206: never more than PROGRESSIVE_MP4_RESPONSE_MAX_BYTES and
+        // never past what the client asked for. The player requests the next
+        // range itself when it needs it.
+        const lastByte = Math.min(
+          firstRange.total - 1,
+          progressiveMp4Request.requestedEnd ?? Number.MAX_SAFE_INTEGER,
+          firstRange.start + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1,
+        );
+        stopAt = lastByte + 1;
+        res.set("Content-Length", String(stopAt - firstRange.start));
+        res.set("Content-Range", `bytes ${firstRange.start}-${lastByte}/${firstRange.total}`);
         res.status(206);
       } else {
+        // No Range at all: send the whole file, but declare its length only
+        // when it is under the host's limit. Otherwise Node streams it chunked.
+        const fullLength = firstRange.total - firstRange.start;
+        if (fullLength <= CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES) {
+          res.set("Content-Length", String(fullLength));
+        } else {
+          res.removeHeader("Content-Length");
+        }
         res.removeHeader("Content-Range");
         res.status(200);
       }
@@ -421,6 +479,7 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
           hostname,
           abort.signal,
           progressiveMp4RangePolicy,
+          stopAt,
         ),
         res,
       );

@@ -18,7 +18,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserRecord: vi.fn().mockResolvedValue({ id: 1, isAdmin: true, isGuest: false }),
 }));
 
-import router from "./hlsProxy";
+import router, { PROGRESSIVE_MP4_RESPONSE_MAX_BYTES } from "./hlsProxy";
 
 const UPSTREAM = "https://vz-test.b-cdn.net/abc/1080p/video.m3u8";
 const LIVE_UPSTREAM = "https://replayjo.b-cdn.net/camera1/index.m3u8";
@@ -198,6 +198,110 @@ describe("hls-proxy manifest cache", () => {
       `bytes=0-${MP4_RANGE_BYTES - 1}`,
       `bytes=${MP4_RANGE_BYTES}-${MP4_RANGE_BYTES + MIN_MP4_RANGE_BYTES - 1}`,
     ]);
+  });
+
+  /** Answers any bounded Range for a file of `total` bytes, like Bunny does. */
+  function serveMp4Ranges(total: number) {
+    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
+      const match = new Headers(init?.headers).get("Range")?.match(/^bytes=(\d+)-(\d+)$/);
+      if (!match) return new Response("unbounded range refused", { status: 400 });
+      const start = Number(match[1]);
+      if (start >= total) {
+        return new Response("", { status: 416, headers: { "Content-Range": `bytes */${total}` } });
+      }
+      const end = Math.min(Number(match[2]), total - 1);
+      return mp4Range(start, end, total, (start / MP4_RANGE_BYTES) & 0xff);
+    });
+  }
+
+  it("caps an open-ended range on a whole-match MP4 to a bounded 206 under the host's 32 MiB limit", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const total = 1_200_000_000; // a whole match: well over 1 GB
+    serveMp4Ranges(total);
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", "bytes=0-");
+
+    expect(res.status).toBe(206);
+    expect(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES).toBeLessThanOrEqual(30 * 1024 * 1024);
+    expect(res.headers["content-length"]).toBe(String(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES));
+    expect(res.headers["content-range"]).toBe(`bytes 0-${PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${total}`);
+    expect(res.body).toHaveLength(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
+    // Only the windows needed for this response were fetched, not the match.
+    expect(fetchMock).toHaveBeenCalledTimes(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES / MP4_RANGE_BYTES);
+  });
+
+  it("serves the next bounded window when the player continues from the middle of the file", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const total = 1_200_000_000;
+    const start = 600_000_000;
+    serveMp4Ranges(total);
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", `bytes=${start}-`);
+
+    expect(res.status).toBe(206);
+    expect(res.headers["content-range"])
+      .toBe(`bytes ${start}-${start + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${total}`);
+    expect(Number(res.headers["content-length"])).toBe(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
+    expect(res.body).toHaveLength(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
+  });
+
+  it("caps an oversized bounded range and honours a final short range exactly", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const total = 1_200_000_000;
+    serveMp4Ranges(total);
+
+    const big = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", "bytes=100-999999999");
+    expect(big.status).toBe(206);
+    expect(big.headers["content-range"])
+      .toBe(`bytes 100-${100 + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${total}`);
+    expect(big.body).toHaveLength(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
+
+    fetchMock.mockClear();
+    const tail = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", `bytes=${total - 10}-`);
+    expect(tail.status).toBe(206);
+    expect(tail.headers["content-range"]).toBe(`bytes ${total - 10}-${total - 1}/${total}`);
+    expect(tail.headers["content-length"]).toBe("10");
+    expect(tail.body).toHaveLength(10);
+  });
+
+  it("streams a no-Range request for a file over the limit without a Content-Length", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const total = 40 * 1024 * 1024 + 5;
+    serveMp4Ranges(total);
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-length"]).toBeUndefined();
+    expect(res.headers["transfer-encoding"]).toBe("chunked");
+    expect(res.body).toHaveLength(total);
+  });
+
+  it("answers 416 for an open-ended range past the end of the MP4", async () => {
+    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    serveMp4Ranges(1000);
+
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url })
+      .set("Range", "bytes=5000-");
+
+    expect(res.status).toBe(416);
+    expect(res.headers["content-range"]).toBe("bytes */1000");
   });
 
   it("backs off to smaller bounded ranges when Bunny rejects the preferred chunk size", async () => {
