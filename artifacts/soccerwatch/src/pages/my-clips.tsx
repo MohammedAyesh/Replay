@@ -48,7 +48,11 @@ import {
   checkInitialExportStatus,
   resolveInitialExportStatus,
 } from "@/lib/exportStatusCheck";
-import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send } from "lucide-react";
+import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send, Clapperboard, Film } from "lucide-react";
+import { EndScreenSheet } from "@/components/end-screen/EndScreenSheet";
+import { ReelsTab } from "@/components/reels/ReelsTab";
+import { useReelCopy } from "@/i18n/reel-strings";
+import { endScreenApi } from "@/lib/end-screen";
 
 /** How long to wait for the branding intro to actually start before skipping it. */
 const INTRO_START_TIMEOUT_MS = 4000;
@@ -144,7 +148,24 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
   /** True while the user is dragging the scrub handle — suppresses timeupdate overwrites. */
   const seekDraggingRef = useRef(false);
   const { t, locale } = useTranslation();
+  const reelCopy = useReelCopy();
+  const queryClient = useQueryClient();
   const quotaLabel = useMemo(() => formatQuotaLabel(quota, locale), [quota, locale]);
+  /**
+   * The end screen button shows only when the venue adds one to this clip
+   * (Admin → Branding); the player then picks the card and its numbers.
+   */
+  const [endScreenAvailable, setEndScreenAvailable] = useState(false);
+  const [endScreenOpen, setEndScreenOpen] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setEndScreenAvailable(false);
+    if (clip.id <= 0 || clip.matchCode && !clip.playbackUrl) return;
+    endScreenApi.clipOptions(clip.id)
+      .then((o) => { if (!cancelled) setEndScreenAvailable(o.enabled); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [clip.id, clip.matchCode, clip.playbackUrl]);
   const { toast } = useToast();
   const { user } = useAuth();
   const keyframes = clip.cropPath ?? [];
@@ -810,6 +831,20 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
               <X className="w-5 h-5" />
             </button>
           </div>
+
+          {/* End screen — top-right, only when the venue adds one */}
+          {endScreenAvailable && (
+            <div className={`absolute ${landscape ? "top-3 right-3" : "top-safe right-0 pt-3 px-3"} z-30 pointer-events-none`}>
+              <button
+                onClick={() => setEndScreenOpen(true)}
+                className="flex h-10 items-center gap-1.5 rounded-full bg-black/60 px-3.5 text-sm font-semibold text-white backdrop-blur-md pointer-events-auto active:scale-95 transition-transform"
+                data-testid="open-end-screen"
+              >
+                <Clapperboard className="h-4 w-4" aria-hidden />
+                {reelCopy.endScreen}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Controls panel — bottom bar in portrait, side rail in landscape */}
@@ -903,6 +938,24 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
           </div>
           </div>
 
+          {endScreenOpen && (
+            <EndScreenSheet
+              open={endScreenOpen}
+              onOpenChange={setEndScreenOpen}
+              target={{ mode: "clip", clipId: clip.id }}
+              onSaved={(result) => {
+                const remade = result?.rerender === "rerendering" || result?.rerender === "queued";
+                toast({
+                  title: reelCopy.saved,
+                  description: remade ? reelCopy.remaking : result?.rerender === "expired" ? reelCopy.expiredNote : undefined,
+                });
+                // The published file stays until the new one lands; the list
+                // picks up the new export when it is ready.
+                void queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+              }}
+            />
+          )}
+
           {/* Quality tip chip — sits below the button row in both orientations */}
           <div className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/10 text-[10px] text-white/50 drop-shadow ${landscape ? "w-full" : ""}`}>
             {t.myClips.qualityTip}
@@ -917,11 +970,12 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
 /*  Main page                                                           */
 /* ------------------------------------------------------------------ */
 
-type Tab = "saved" | "created" | "moments";
+type Tab = "saved" | "created" | "moments" | "reels";
 
 export default function MyClips() {
   const { isGuest, user } = useAuth();
   const { t } = useTranslation();
+  const reelCopy = useReelCopy();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   // Open where the player's clips are: the ones he cut himself.
@@ -1006,61 +1060,37 @@ export default function MyClips() {
       >
         <h1 className="mb-4 px-0 font-display text-2xl font-bold text-foreground">{t.myClips.title}</h1>
 
-        {/* Tabs */}
-        <div className="-mx-1 flex rounded-full border border-border bg-card p-1">
-          <button
-            onClick={() => setTab("saved")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-semibold transition-colors ${
-              tab === "saved"
-                ? "bg-primary text-primary-foreground shadow-[0_0_18px_hsl(var(--primary)/0.18)]"
-                : "text-muted-foreground"
-            }`}
-          >
-            {t.myClips.tabSaved}
-            {savedCount > 0 && (
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                tab === "saved" ? "bg-black/10 text-primary-foreground" : "bg-muted text-muted-foreground"
-              }`}>
-                {savedCount}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setTab("created")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-semibold transition-colors ${
-              tab === "created"
-                ? "bg-primary text-primary-foreground shadow-[0_0_18px_hsl(var(--primary)/0.18)]"
-                : "text-muted-foreground"
-            }`}
-          >
-            <Scissors className="w-3.5 h-3.5" />
-            {t.myClips.tabCreated}
-            {createdCount > 0 && (
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                tab === "created" ? "bg-black/10 text-primary-foreground" : "bg-muted text-muted-foreground"
-              }`}>
-                {createdCount}
-              </span>
-            )}
-          </button>
-          <button
-            onClick={() => setTab("moments")}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2.5 text-sm font-semibold transition-colors ${
-              tab === "moments"
-                ? "bg-primary text-primary-foreground shadow-[0_0_18px_hsl(var(--primary)/0.18)]"
-                : "text-muted-foreground"
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            {t.myClips.tabMoments}
-            {matchMomentCount > 0 && (
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] ${
-                tab === "moments" ? "bg-black/10 text-primary-foreground" : "bg-muted text-muted-foreground"
-              }`}>
-                {matchMomentCount}
-              </span>
-            )}
-          </button>
+        {/* Tabs — four fit a 360 px phone: icon + short label, count only when there is room */}
+        <div className="-mx-1 flex rounded-full border border-border bg-card p-1" role="tablist">
+          {([
+            { key: "saved", label: t.myClips.tabSaved, icon: Bookmark, count: savedCount },
+            { key: "created", label: t.myClips.tabCreated, icon: Scissors, count: createdCount },
+            { key: "moments", label: t.myClips.tabMoments, icon: Sparkles, count: matchMomentCount },
+            { key: "reels", label: reelCopy.tabReels, icon: Film, count: 0 },
+          ] as const).map(({ key, label, icon: Icon, count }) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={tab === key}
+              onClick={() => setTab(key)}
+              data-testid={`tab-${key}`}
+              className={`flex min-w-0 flex-1 items-center justify-center gap-1 rounded-full px-1 py-2.5 text-[13px] font-semibold transition-colors ${
+                tab === key
+                  ? "bg-primary text-primary-foreground shadow-[0_0_18px_hsl(var(--primary)/0.18)]"
+                  : "text-muted-foreground"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
+              <span className="truncate">{label}</span>
+              {count > 0 && (
+                <span className={`hidden rounded-full px-1.5 py-0.5 text-[10px] min-[400px]:inline ${
+                  tab === key ? "bg-black/10 text-primary-foreground" : "bg-muted text-muted-foreground"
+                }`}>
+                  {count}
+                </span>
+              )}
+            </button>
+          ))}
         </div>
       </motion.div>
 
@@ -1097,6 +1127,16 @@ export default function MyClips() {
                 isLoading={userClipsLoading}
                 onPlay={setActiveClip}
               />
+            </motion.div>
+          ) : tab === "reels" ? (
+            <motion.div
+              key="reels"
+              initial={{ opacity: 0, x: 10 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 10 }}
+              transition={{ duration: 0.2 }}
+            >
+              <ReelsTab clips={userClips} clipsLoading={userClipsLoading} />
             </motion.div>
           ) : (
             <motion.div
