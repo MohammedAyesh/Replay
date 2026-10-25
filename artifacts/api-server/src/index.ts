@@ -1,7 +1,11 @@
 import app from "./app";
+import { pool } from "@workspace/db";
 import { logger } from "./lib/logger";
+import { attachPostgresIdleErrorListener } from "./lib/postgresPoolErrors";
 import { startOwnerStatusSync } from "./routes/owner";
 import { backfillMatchRooms } from "./lib/matchRooms";
+
+attachPostgresIdleErrorListener(pool, logger);
 
 const rawPort = process.env["PORT"];
 
