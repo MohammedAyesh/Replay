@@ -14,15 +14,20 @@ import {
   type TrackingManifest,
 } from "@workspace/db";
 
-const { spawnMock, loadPlayMock, getLocalUserIdMock } = vi.hoisted(() => ({
+const { spawnMock, loadPlayMock, getLocalUserIdMock, selectExportSourceMock } = vi.hoisted(() => ({
   spawnMock: vi.fn(),
   loadPlayMock: vi.fn(),
   getLocalUserIdMock: vi.fn(),
+  selectExportSourceMock: vi.fn(),
 }));
 
 vi.mock("node:child_process", () => ({ spawn: spawnMock }));
 vi.mock("../lib/matchPlayLoad", () => ({ loadRecordingPlay: loadPlayMock }));
 vi.mock("../lib/clerkUserBridge", () => ({ getLocalUserId: getLocalUserIdMock }));
+vi.mock("../lib/exportSource", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/exportSource")>()),
+  selectExportSource: selectExportSourceMock,
+}));
 
 import router, { clampCropRect, runFfmpeg } from "./adminRecordingDebug";
 import { claimIdentityId } from "./claimChain";
@@ -163,6 +168,7 @@ describe("admin recording tracker debug API", () => {
       identityId: identityId(),
       userId: playerId,
       userName: `${TAG} Player`,
+      color: expect.any(String),
       parts: [{ trackId: "s0:t1", fromFrame: 0, toFrame: 5 }],
     }]);
     expect(response.body.boxes[0]).toMatchObject({
@@ -180,6 +186,43 @@ describe("admin recording tracker debug API", () => {
       .get(`/api/admin/recordings/${recordingId}/debug/frame?t=1`);
     expect(response.status).toBe(404);
     await db.insert(recordingTrackingBundlesTable).values({ recordingId, manifest });
+  });
+
+  it("seeks the video by vo while drawing the overlays at t", async () => {
+    getLocalUserIdMock.mockResolvedValueOnce(adminId);
+    setPlayFixture();
+    selectExportSourceMock.mockResolvedValueOnce({ url: "https://example.test/playlist.m3u8" });
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: PassThrough;
+      stderr: PassThrough;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.kill = vi.fn();
+    spawnMock.mockImplementationOnce(() => {
+      queueMicrotask(() => {
+        child.stdout.end(Buffer.from([0xff, 0xd8, 0xff]));
+        child.emit("close", 0);
+      });
+      return child;
+    });
+
+    const response = await request(app)
+      .get(`/api/admin/recordings/${recordingId}/debug/frame?t=1&vo=0.5`);
+
+    expect(response.status).toBe(200);
+    const args = spawnMock.mock.calls[0][1] as string[];
+    expect(args.slice(args.indexOf("-ss"), args.indexOf("-ss") + 2)).toEqual(["-ss", "1.5"]);
+    expect(args.join(" ")).toContain("drawbox=x=47:y=97");
+    expect(args.join(" ")).toContain("drawbox=x=51:y=51");
+  });
+
+  it("rejects video offsets outside the supported range", async () => {
+    getLocalUserIdMock.mockResolvedValueOnce(adminId);
+    const response = await request(app)
+      .get(`/api/admin/recordings/${recordingId}/debug/frame?t=1&vo=5.01`);
+    expect(response.status).toBe(400);
   });
 
   it("clamps requested crop rectangles inside the 3840×1080 source", () => {

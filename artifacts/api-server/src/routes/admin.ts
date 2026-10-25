@@ -408,11 +408,19 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
     .from(userClipsTable)
     .innerJoin(usersTable, eq(userClipsTable.userId, usersTable.id))
     .orderBy(desc(userClipsTable.createdAt));
+  const recordings = await db.select({
+    id: recordingsTable.id,
+    videoUrl: recordingsTable.videoUrl,
+  }).from(recordingsTable);
 
   const result = rows.map((row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
+    const recordingId = recordings.find((recording) =>
+      recording.videoUrl.includes(row.videoId),
+    )?.id ?? null;
     return {
       id: row.id,
+      recordingId,
       userId: row.userId,
       videoId: row.videoId,
       title: row.title,

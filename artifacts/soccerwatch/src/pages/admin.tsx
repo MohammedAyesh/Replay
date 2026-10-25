@@ -7064,6 +7064,14 @@ export default function Admin() {
             )}
           </button>
         ))}
+        <button
+          type="button"
+          onClick={() => setLocation("/admin/debug")}
+          data-testid="link-admin-debug"
+          className="px-4 py-3 text-sm font-semibold transition-colors relative whitespace-nowrap flex-shrink-0 text-muted-text hover:text-text"
+        >
+          Debug
+        </button>
       </div>
 
       {/* Content */}

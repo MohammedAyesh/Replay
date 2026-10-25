@@ -32,6 +32,7 @@ type ClaimView = {
   identityId: string;
   userId: number;
   userName: string;
+  color: string;
   parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
 };
 
@@ -59,6 +60,19 @@ function parseSecond(value: unknown): number | null {
   if (typeof value !== "string" || value.trim() === "") return null;
   const second = Number(value);
   return Number.isFinite(second) && second >= 0 ? second : null;
+}
+
+function parseVideoOffset(value: unknown): number | null {
+  if (value === undefined) return 0;
+  if (typeof value !== "string" || value.trim() === "") return null;
+  const offset = Number(value);
+  return Number.isFinite(offset) && offset >= -5 && offset <= 5 ? offset : null;
+}
+
+function parseOverlayToggle(value: unknown): boolean | null {
+  if (value === undefined || value === "1") return true;
+  if (value === "0") return false;
+  return null;
 }
 
 function roundTime(frame: number, fps: number): number {
@@ -279,7 +293,15 @@ function claimsForWindow(
     const parts = (identity?.parts ?? []).filter((part) =>
       part.toFrame / play.fps >= from && part.fromFrame / play.fps <= to,
     ).map(({ trackId, fromFrame, toFrame }) => ({ trackId, fromFrame, toFrame }));
-    if (parts.length) claims.push({ identityId, userId, userName, parts });
+    if (parts.length) {
+      claims.push({
+        identityId,
+        userId,
+        userName,
+        color: COLOR_PALETTE[Math.abs(identityId.charCodeAt(6)) % COLOR_PALETTE.length] ?? "lime",
+        parts,
+      });
+    }
   }
   return claims;
 }
@@ -306,7 +328,13 @@ function boxesForClaims(
         seenBuckets.add(bucket);
         boxes.push([roundTime(box.frame, play.fps), box.x, box.y, box.w, box.h]);
       }
-      if (boxes.length) result.push({ identityId: claim.identityId, userName: claim.userName, trackId: part.trackId, boxes });
+      if (boxes.length) result.push({
+        identityId: claim.identityId,
+        userName: claim.userName,
+        color: claim.color,
+        trackId: part.trackId,
+        boxes,
+      });
     }
   }
   return result;
@@ -333,7 +361,7 @@ function claimantBoxesAtFrame(
       overlays.push({
         box: nearest,
         name: claim.userName,
-        color: COLOR_PALETTE[Math.abs(claim.identityId.charCodeAt(6)) % COLOR_PALETTE.length] ?? "lime",
+      color: claim.color,
       });
     }
   }
@@ -411,6 +439,13 @@ router.get("/admin/recordings/:id/debug/frame", async (req, res): Promise<void> 
     res.status(400).json({ error: "A valid t parameter is required" });
     return;
   }
+  const videoOffset = parseVideoOffset(req.query.vo);
+  const showBall = parseOverlayToggle(req.query.ball);
+  const showClaims = parseOverlayToggle(req.query.claims);
+  if (videoOffset === null || showBall === null || showClaims === null) {
+    res.status(400).json({ error: "vo must be between -5 and 5; ball and claims must be 0 or 1" });
+    return;
+  }
   const loaded = await loadDebugRecording(recordingId);
   if (!loaded) {
     res.status(404).json({ error: "Recording or tracking bundle not found" });
@@ -421,11 +456,11 @@ router.get("/admin/recordings/:id/debug/frame", async (req, res): Promise<void> 
   const points = loaded.play.sidecars.flatMap((sidecar) => (sidecar?.ball ?? []).map(([f, x, y]) => ({ frame: f, x, y })))
     .sort((a, b) => a.frame - b.frame);
   const claims = claimsForWindow(loaded.play, loaded.usersById, recordingId, second, second);
-  const boxOverlays = claimantBoxesAtFrame(loaded.play, claims, frame);
-  const ball = interpolateBall(points, frame, loaded.play.fps);
+  const boxOverlays = showClaims ? claimantBoxesAtFrame(loaded.play, claims, frame) : [];
+  const ball = showBall ? interpolateBall(points, frame, loaded.play.fps) : null;
   const filter = buildFilter(crop, ball, boxOverlays);
-  const seekSecond = second + (loaded.play.manifest.videoStartSeconds ?? 0);
-  const cacheKey = `${req.originalUrl}:${loaded.bundleUpdatedAt}`;
+  const seekSecond = Math.max(0, second + videoOffset + (loaded.play.manifest.videoStartSeconds ?? 0));
+  const cacheKey = `${req.originalUrl}:vo=${videoOffset}:${loaded.bundleUpdatedAt}`;
   let bytes = getCachedFrame(cacheKey);
   try {
     if (!bytes) {

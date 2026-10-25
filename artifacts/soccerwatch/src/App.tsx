@@ -22,6 +22,7 @@ import Profile from "@/pages/profile";
 import MyClips from "@/pages/my-clips";
 import Account from "@/pages/account";
 import Admin from "@/pages/admin";
+import AdminDebug from "@/pages/admin-debug";
 import AdminSetup from "@/pages/admin-setup";
 import Onboarding from "@/pages/onboarding";
 import NotFound from "@/pages/not-found";
@@ -589,6 +590,7 @@ function AppRouter() {
         <Route path="/terms"><LegalPage doc="terms" /></Route>
         <Route path="/delete-account" component={DeleteAccountPage} />
         <Route path="/admin" component={Admin} />
+        <Route path="/admin/debug" component={AdminDebug} />
         <Route path="/admin/setup" component={AdminSetup} />
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />
         <Route component={NotFound} />
