@@ -430,7 +430,16 @@ def render(job, spec, attempt):
         raise Permanent("empty window after clamping to the %.1fs recording" % duration)
     if clip_dur > MAX_CLIP_SECONDS:
         raise Permanent("clip is %ds, longer than the %ds limit" % (clip_dur, MAX_CLIP_SECONDS))
-    n_frames = int(math.ceil(clip_dur * FPS - 1e-6))
+
+    # The app's drawn end screen (Admin -> Branding), if the spec carries one.
+    # It plays after the clip, over the footage that follows it (2026-10-25):
+    # render that much further, with a keyframe at the clip's end.
+    es = endscreen.validate(spec.get("endScreen")) if endscreen else None
+    es_start = endscreen.start_for(clip_dur) if es else None
+    run_on = endscreen.run_on(end, duration, es["seconds"]) if es else 0.0
+    render_dur = clip_dur + run_on
+    key_args = ["-force_key_frames", "%.3f" % es_start] if es and run_on > 0 else []
+    n_frames = int(math.ceil(render_dur * FPS - 1e-6))
 
     kfs = clean_keyframes(spec.get("cropPath"), is_916)
     rects = [rect_px(sample(kfs, (i / FPS) / clip_dur if clip_dur > 1e-6 else 0.0))
@@ -456,7 +465,7 @@ def render(job, spec, attempt):
     # so the plain form's accuracy depends on which streams are read. Measured
     # 2026-09-29. The coarse -ss only has to land somewhere before the target.
     t0 = start_pts + start
-    t1 = t0 + clip_dur
+    t1 = t0 + render_dur
     coarse = ["-ss", "%.3f" % max(0.0, start - 8.0)] if start > 8.0 else []
 
     os.makedirs(WORK_DIR, exist_ok=True)
@@ -468,7 +477,7 @@ def render(job, spec, attempt):
             os.unlink(p)
 
     save_state(job, status="fetching", stage="Fetching source", progress=5,
-               source={"variant": variant, "duration": duration, "start": start, "end": end})
+               source={"variant": variant, "duration": duration, "start": start, "end": end, "runOn": run_on})
     # Audio is fetched while the video renders; it is small and joins at the mux.
     aud = subprocess.Popen(
         [FFMPEG, "-nostdin", "-v", "error", *http_input_args(), *coarse, "-copyts", "-i", variant,
@@ -478,12 +487,6 @@ def render(job, spec, attempt):
     _CHILDREN.append(aud)
 
     overlay = load_overlay(spec.get("overlayUrl"), out_w, out_h, job)
-
-    # The app's drawn end screen (Admin -> Branding), if the spec carries one:
-    # the encode gets a keyframe where the card starts so the head can be copied.
-    es = endscreen.validate(spec.get("endScreen")) if endscreen else None
-    es_start = endscreen.start_for(clip_dur, es["seconds"]) if es else None
-    key_args = ["-force_key_frames", "%.3f" % es_start] if es_start is not None else []
 
     save_state(job, status="encoding", stage="Rendering", progress=8)
     dec = subprocess.Popen(
@@ -496,7 +499,7 @@ def render(job, spec, attempt):
     enc = subprocess.Popen(
         [FFMPEG, "-nostdin", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
          "-s", "%dx%d" % (out_w, out_h), "-r", str(FPS), "-i", "pipe:0",
-         "-map", "0:v:0", "-t", "%.3f" % clip_dur,
+         "-map", "0:v:0", "-t", "%.3f" % render_dur,
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
          "-r", str(FPS), *key_args, "-an", "-y", video_path],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -611,7 +614,7 @@ def render(job, spec, attempt):
                 else ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"])
     mux = subprocess.run(
         [FFMPEG, "-nostdin", "-v", "error", "-i", video_path, *audio_in,
-         "-map", "0:v:0", "-map", "1:a:0", "-t", "%.3f" % clip_dur,
+         "-map", "0:v:0", "-map", "1:a:0", "-t", "%.3f" % render_dur,
          "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
          "-movflags", "+faststart", "-y", tmp_out],
         capture_output=True, text=True, timeout=300)
@@ -623,20 +626,26 @@ def render(job, spec, attempt):
     dur = float(info.get("format", {}).get("duration", 0) or 0)
     if not vid or vid[0].get("width") != out_w or vid[0].get("height") != out_h:
         raise RuntimeError("output geometry wrong: %s" % vid)
-    if abs(dur - clip_dur) > 0.6:
-        raise RuntimeError("output is %.2fs, expected %.2fs" % (dur, clip_dur))
+    if abs(dur - render_dur) > 0.6:
+        raise RuntimeError("output is %.2fs, expected %.2fs" % (dur, render_dur))
 
     end_screen = None
     if es:
         try:
             save_state(job, progress=97, stage="Adding the end screen")
-            branded = endscreen.apply(tmp_out, es, es_start, clip_dur, out_w, out_h, WORK_DIR, job,
+            branded = endscreen.apply(tmp_out, es, es_start, out_w, out_h, WORK_DIR, job,
                                       FFMPEG, FFPROBE, http_get, STORAGE_KEY)
             os.replace(branded, tmp_out)
             end_screen = es["kind"] or "card"
-            dur = float(probe(tmp_out).get("format", {}).get("duration", 0) or 0)
         except Exception as e:  # noqa: BLE001 -- branding must never cost a clip
             log(job, "end screen unavailable (%s) -- exporting without it" % e)
+            if run_on > 0:
+                # Without the card the run-on seconds are not what he chose.
+                try:
+                    os.replace(endscreen.trim_to(tmp_out, es_start, WORK_DIR, job, FFMPEG), tmp_out)
+                except Exception as e2:  # noqa: BLE001
+                    log(job, "could not trim the run-on footage (%s) -- exporting it as rendered" % e2)
+        dur = float(probe(tmp_out).get("format", {}).get("duration", 0) or 0)
 
     final = os.path.join(OUT_DIR, job + ".mp4")
     os.replace(tmp_out, final)

@@ -1,31 +1,33 @@
 """
-End screen for Method B (vps1) -- the same end screen the app draws, laid over
-the last seconds of a finished render.
+End screen for Method B (vps1) -- the same end screen the app draws, played
+after the clip over the footage that follows it.
 
 The app draws the card itself (crest, names, stats, QR) with the code its own
 exports use, encodes it as a short VP9 video with an alpha channel and uploads
 it to Bunny Storage; the job spec carries its URL. This module only does what
 needs the clip:
 
-  1. the render forces a keyframe where the card starts (start_for());
-  2. the head is stream-copied up to that keyframe with the segment muxer;
-  3. the tail is re-encoded: blurred (quarter-size gblur faded in over the sharp
-     frame), the card laid on top, the clip's sound ducked to 30%;
-  4. head + tail are joined with the concat demuxer.
+  1. the render runs on past the clip's end by up to the card's length
+     (run_on()) and forces a keyframe at the end (start_for());
+  2. the clip is stream-copied up to that keyframe with the segment muxer;
+  3. the tail is re-encoded: the run-on footage (its last frame held if the
+     recording ends first) blurred (quarter-size gblur faded in over the sharp
+     frame), the card laid on top, the sound ducked to 30%;
+  4. clip + tail are joined with the concat demuxer.
 
-A clip too short to cover gets the card after its last frame instead (the last
-frame is held). Every failure raises; render.py catches it and keeps the plain
-clip, because branding must never cost a clip.
+The clip the player chose is never covered (Mohammed, 2026-10-25). Every
+failure raises; render.py catches it, trims the run-on footage off and keeps
+the plain clip, because branding must never cost a clip.
 
 Kept in step with artifacts/api-server/src/lib/clipBranding/endScreenVideo.ts.
-Added 2026-10-25.
+Added 2026-10-25; "after the clip" the same evening.
 """
+import math
 import os
 import subprocess
 import urllib.parse
 
 FPS = 30
-MIN_OVERLAP_CLIP_SECONDS = 6.0
 RAMP = 0.4
 MAX_CARD_BYTES = 25 * 1024 * 1024
 # The same encode as render.py's main pass, so the concat demuxer can join the
@@ -69,12 +71,17 @@ def validate(raw):
     }
 
 
-def start_for(clip_dur, seconds):
-    """Where the card begins inside the clip, or None when it is appended."""
-    if clip_dur < max(MIN_OVERLAP_CLIP_SECONDS, seconds + 3):
-        return None
-    # Whole frames, so the forced keyframe and the cut land on the same frame.
-    return round((clip_dur - seconds) * FPS) / FPS
+def start_for(clip_dur):
+    """Where the card begins: the clip's end, on a frame boundary, so the
+    forced keyframe and the cut land on the same frame."""
+    return max(0.0, round(clip_dur * FPS) / FPS)
+
+
+def run_on(clip_end, source_duration, seconds):
+    """How much footage after the clip the render includes for the card."""
+    left = source_duration - clip_end if math.isfinite(source_duration) else 0.0
+    r = max(0.0, min(seconds, left))
+    return 0.0 if r < 1.0 / FPS else math.floor(r * FPS) / FPS
 
 
 def fetch_card(url, dest, http_get, storage_key):
@@ -107,21 +114,22 @@ def _duration(ffprobe, path):
         raise RuntimeError("could not probe %s: %s" % (path, r.stderr.strip()[-200:]))
 
 
-def _render_tail(ffmpeg, main, card, out, es, start, appended, out_w, out_h):
+def _render_tail(ffmpeg, main, card, out, es, start, held, duration, out_w, out_h):
     portrait = out_h > out_w
     scale = out_w / (1080.0 if portrait else 1920.0)
     sigma = max(0.5, es["blur"] * scale)
     s = "%.3f" % es["seconds"]
-    seek = max(0.0, start - 0.1) if appended else start
-    if appended:
-        # The last frame, held for the whole card.
-        video_in = ("[0:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=%s,"
-                    "trim=duration=%s,setpts=PTS-STARTPTS" % (s, s))
+    # A held card seeks just before the end so there is a last frame to hold.
+    seek = max(0.0, duration - 0.1) if held else start
+    # Whatever footage follows, then its last frame held, cut to the card's length.
+    video_in = ("[0:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=%s,"
+                "trim=duration=%s,setpts=PTS-STARTPTS" % (s, s))
+    if held:
         audio = "[2:a]atrim=duration=%s,asetpts=PTS-STARTPTS[a]" % s
     else:
-        video_in = "[0:v]setpts=PTS-STARTPTS,trim=duration=%s,setpts=PTS-STARTPTS" % s
-        # The clip's sound carries on, ducked to 30% as the card lands.
-        audio = ("[0:a]asetpts=PTS-STARTPTS,atrim=duration=%s,"
+        # The match's sound carries on, ducked to 30% as the card lands, and
+        # goes quiet if the recording ends first.
+        audio = ("[0:a]asetpts=PTS-STARTPTS,apad,atrim=duration=%s,"
                  "volume='if(lt(t,%s),1-0.7*t/%s,0.3)':eval=frame[a]" % (s, RAMP, RAMP))
     graph = ";".join([
         "%s,fps=%d,format=yuv420p,split=2[sharp][toblur]" % (video_in, FPS),
@@ -173,13 +181,21 @@ def _cut_head(ffmpeg, main, start, work_dir, stem):
             pass
 
 
-def apply(main, es, start, clip_dur, out_w, out_h, work_dir, stem, ffmpeg, ffprobe, http_get, storage_key):
-    """Return the path of `main` with the end screen. Raises on any failure."""
+def trim_to(main, start, work_dir, stem, ffmpeg):
+    """`main` cut back to `start` (a forced keyframe): the run-on footage off."""
+    return _cut_head(ffmpeg, os.path.abspath(main), start, os.path.abspath(work_dir), stem + ".trim")
+
+
+def apply(main, es, start, out_w, out_h, work_dir, stem, ffmpeg, ffprobe, http_get, storage_key):
+    """Return the path of `main` (the clip, plus any run-on footage after
+    `start`) with the end screen after the clip. Raises on any failure."""
     # Absolute paths: the concat demuxer resolves relative entries against the
     # list file's own folder, not the working directory.
     main = os.path.abspath(main)
     work_dir = os.path.abspath(work_dir)
-    appended = start is None
+    duration = _duration(ffprobe, main)
+    held = start >= duration - 1.0 / FPS
+    start = min(start, duration)
     card = os.path.join(work_dir, stem + ".card.webm")
     tail = os.path.join(work_dir, stem + ".tail.mp4")
     lst = os.path.join(work_dir, stem + ".concat.txt")
@@ -187,15 +203,15 @@ def apply(main, es, start, clip_dur, out_w, out_h, work_dir, stem, ffmpeg, ffpro
     temps = [card, tail, lst]
     try:
         fetch_card(es["cardUrl"], card, http_get, storage_key)
-        _render_tail(ffmpeg, main, card, tail, es, clip_dur if appended else start, appended, out_w, out_h)
+        _render_tail(ffmpeg, main, card, tail, es, start, held, duration, out_w, out_h)
         head = main
-        if not appended:
+        if not held:
             head = _cut_head(ffmpeg, main, start, work_dir, stem)
             temps.append(head)
         with open(lst, "w") as f:
             f.write("file '%s'\nfile '%s'\n" % (head, tail))
         _run(ffmpeg, ["-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", "-movflags", "+faststart", out])
-        want = clip_dur + (es["seconds"] if appended else 0.0)
+        want = (duration if held else start) + es["seconds"]
         got = _duration(ffprobe, out)
         if abs(got - want) > 0.35:
             raise RuntimeError("end screen output is %.2fs, expected %.2fs" % (got, want))
