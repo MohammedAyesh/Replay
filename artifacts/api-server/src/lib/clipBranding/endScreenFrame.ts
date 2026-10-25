@@ -523,12 +523,15 @@ function drawCta(ctx: SKRSContext2D, spec: EndScreen, tt: number, portrait: bool
   const w = portrait ? 896 : 1040;
   const h = portrait ? 150 : 140;
   const y = (portrait ? 1340 : 860) + (1 - p) * 40;
+  // The QR is taller than the bar on portrait, where the export is only 608 px
+  // wide: at 210 design units it is ~118 px, about 3.5 px per module.
+  const qrSize = portrait ? 210 : 140;
   const label =
     // The QR opens this clip's share card, so the line promises only that.
     spec.kind === "academy" ? "للأهل: شوفوا الكليب" : "شوف الكليب";
   ctx.save();
   ctx.globalAlpha = p;
-  const qr = h;
+  const qr = qrSize;
   const barW = w - qr - 16;
   ctx.fillStyle = FLOODLIGHT;
   roundRect(ctx, x, y, barW, h, 6);
@@ -547,6 +550,7 @@ function drawCta(ctx: SKRSContext2D, spec: EndScreen, tt: number, portrait: bool
   const lw = ctx.measureText(label).width;
   drawArrowLeft(ctx, labelRight - lw - 54, y + h / 2 + 2, 36, VOID);
   ctx.textBaseline = "alphabetic";
+  // Top-aligned with the bar, so a taller QR grows into the empty space below.
   drawQr(ctx, spec.link, x + barW + 16, y, qr);
   ctx.restore();
 }

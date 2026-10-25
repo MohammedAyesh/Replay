@@ -46,6 +46,8 @@ const exportMocks = vi.hoisted(() => ({
   uploadToBunnyStorage: vi.fn(async (_path: string, clipId: number) =>
     `https://storage.test/clips/${clipId}.mp4`,
   ),
+  uploadBufferToBunnyStorage: vi.fn(async (_buf: Buffer, remotePath: string) => `https://cdn.test/${remotePath}`),
+  storageConfigured: false,
 }));
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -60,7 +62,8 @@ vi.mock("../lib/bunny", async (importOriginal) => {
   return {
     ...actual,
     isBunnyConfigured: () => exportMocks.primaryEnabled,
-    isBunnyStorageConfigured: () => exportMocks.primaryEnabled,
+    isBunnyStorageConfigured: () => exportMocks.primaryEnabled || exportMocks.storageConfigured,
+    uploadBufferToBunnyStorage: exportMocks.uploadBufferToBunnyStorage,
     getBunnyVideoInfo: exportMocks.getBunnyVideoInfo,
     uploadToBunnyStorage: exportMocks.uploadToBunnyStorage,
   };
@@ -93,6 +96,8 @@ const TAG = `fo_${Date.now()}`;
 type Job = { status: string; errorKind?: string | null; progress: number; submissions: number; retried: number };
 const jobs = new Map<string, Job>();
 const seen: { method: string; url: string; key: string | undefined; range: string | undefined }[] = [];
+/** Bodies POSTed to /export/clip, by clip id. */
+const submitted = new Map<number, Record<string, unknown>>();
 /** What the fake vps1 should do with the NEXT new job for a given clip id. */
 const script = new Map<number, "ready" | "running" | "permanent" | "transient-then-ready">();
 const unreachableSubmit = new Set<number>();
@@ -121,6 +126,7 @@ beforeAll(async () => {
       req.on("data", (c) => { raw += c; });
       req.on("end", () => {
         const body = JSON.parse(raw);
+        if (!submitted.has(body.clipId)) submitted.set(body.clipId, body);
         if (unreachableSubmit.has(body.clipId)) { send(503, { error: "offline" }); return; }
         const job = jobFor(body.clipId);
         let j = jobs.get(job);
@@ -194,6 +200,7 @@ beforeEach(() => {
   exportMocks.getBunnyVideoInfo.mockClear();
   exportMocks.resolveExportSource.mockClear();
   exportMocks.uploadToBunnyStorage.mockClear();
+  exportMocks.uploadBufferToBunnyStorage.mockClear();
   useLiveRenderSettings(async () => ({
     concurrency: 1,
     yieldToArchive: false,
@@ -201,12 +208,16 @@ beforeEach(() => {
   }));
 });
 
-async function clip(exportStatus: string | null, plan?: "ready" | "running" | "permanent" | "transient-then-ready") {
+async function clip(
+  exportStatus: string | null,
+  plan?: "ready" | "running" | "permanent" | "transient-then-ready",
+  aspectRatio: "16:9" | "9:16" = "16:9",
+) {
   const [row] = await db
     .insert(userClipsTable)
     .values({
       userId: ownerId, videoId: VIDEO, title: "Roman Goal", startTime: "0.763406", endTime: "0.765336",
-      cropPath: [{ t: 0, x: 0.5, y: 0, w: 0.5, h: 1 }], aspectRatio: "16:9", visibility: "private",
+      cropPath: [{ t: 0, x: 0.5, y: 0, w: 0.5, h: 1 }], aspectRatio, visibility: "private",
       exportStatus, exportedUrl: null,
     })
     .returning({ id: userClipsTable.id });
@@ -217,6 +228,15 @@ async function clip(exportStatus: string | null, plan?: "ready" | "running" | "p
 const status = (id: number, q = "") => request(app).get(`/api/user-clips/${id}/export-status${q}`);
 const rowOf = async (id: number) => (await db.select().from(userClipsTable).where(eq(userClipsTable.id, id)))[0];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+async function submittedBody(id: number, timeoutMs = 20_000): Promise<Record<string, unknown>> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    const body = submitted.get(id);
+    if (body) return body;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`clip ${id} was never submitted to vps1`);
+}
 
 async function waitForExportStatus(id: number, expected: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
@@ -356,36 +376,70 @@ describe("Method A overflow to vps1", () => {
     }
   });
 
-  it("keeps a clip with drawn branding local instead of overflowing to vps1", async () => {
+  it("hands vps1 the drawn overlay and end screen when the venue has them on", async () => {
     exportMocks.primaryEnabled = true;
-    const { settingsDefaultsTable } = await import("@workspace/db");
+    const { settingsDefaultsTable, brandingProfilesTable } = await import("@workspace/db");
     const { invalidateSettingsCache } = await import("../lib/settings");
-    await db.insert(settingsDefaultsTable).values({ key: "branding.endScreenEnabled", value: true })
-      .onConflictDoUpdate({ target: settingsDefaultsTable.key, set: { value: true } });
+    const keys = ["branding.endScreenEnabled", "branding.overlayStyle"];
+    await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, keys));
+    await db.insert(settingsDefaultsTable).values([
+      { key: keys[0], value: true },
+      { key: keys[1], value: "cornerCrest" },
+    ]);
+    const [profile] = await db.insert(brandingProfilesTable).values({
+      scopeType: "global", scopeId: 0, nameEn: "JORDAN GALAXY", primaryColor: "#F4CF1F",
+      crestUrl: "preset:jordan-galaxy-crest.png",
+    }).returning();
     invalidateSettingsCache();
     const gate = deferred<void>();
     const localBlocker = renderQueue.run("branded-overflow-blocker", () => gate.promise);
     await tick();
 
     try {
-      const id = await clip(null);
+      const id = await clip(null, "running", "9:16");
       const res = await request(app).post(`/api/user-clips/${id}/export`);
       expect(res.body.status).toBe("pending");
-      await tick();
-      expect((await rowOf(id)).exportStatus).toBe("pending");
-      expect(seen.some((entry) => entry.url === "/export/clip")).toBe(false);
-      expect(exportMocks.renderClip).not.toHaveBeenCalled();
+      await waitForExportStatus(id, "pending_vps1_overflow");
 
-      gate.resolve();
-      await localBlocker;
-      await waitForExportStatus(id, "done");
-      expect(exportMocks.renderClip).toHaveBeenCalledTimes(1);
-      expect(seen.some((entry) => entry.url === "/export/clip")).toBe(false);
+      const body = await submittedBody(id);
+      // Origin URLs: vps1 sends its Storage key only to the Storage origin.
+      expect(String(body.overlayUrl)).toMatch(/^https:\/\/[^/]*storage\.bunnycdn\.com\/(.+\/)?branding\/drawn\/[0-9a-f]{40}\.png$/);
+      const endScreen = body.endScreen as Record<string, unknown>;
+      expect(endScreen).toMatchObject({ seconds: 3, blur: 22, dim: 0.5, kind: "signOff" });
+      expect(String(endScreen.cardUrl)).toMatch(/\/branding\/endscreens\/[0-9a-f]{40}\.(webm|mov)$/);
+      // The card was drawn once, however often the failover polled.
+      const cardUploads = exportMocks.uploadBufferToBunnyStorage.mock.calls.filter(([, p]) => String(p).includes("endscreens/"));
+      await status(id);
+      await status(id);
+      expect(exportMocks.uploadBufferToBunnyStorage.mock.calls.filter(([, p]) => String(p).includes("endscreens/")))
+        .toHaveLength(cardUploads.length);
+      expect(cardUploads).toHaveLength(1);
+      expect(exportMocks.renderClip).not.toHaveBeenCalled();
     } finally {
       gate.resolve();
       await localBlocker;
-      await db.delete(settingsDefaultsTable).where(eq(settingsDefaultsTable.key, "branding.endScreenEnabled"));
+      await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, keys));
+      await db.delete(brandingProfilesTable).where(eq(brandingProfilesTable.id, profile.id));
       invalidateSettingsCache();
+    }
+  }, 60_000);
+
+  it("hands vps1 plain clips unchanged while drawn branding is off", async () => {
+    exportMocks.primaryEnabled = true;
+    const gate = deferred<void>();
+    const localBlocker = renderQueue.run("plain-overflow-blocker", () => gate.promise);
+    await tick();
+    try {
+      const id = await clip(null, "running");
+      await request(app).post(`/api/user-clips/${id}/export`);
+      await waitForExportStatus(id, "pending_vps1_overflow");
+      const body = await submittedBody(id);
+      expect(body.overlayUrl ?? null).toBeNull();
+      expect("endScreen" in body).toBe(false);
+      expect(exportMocks.uploadBufferToBunnyStorage).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      await localBlocker;
     }
   });
 

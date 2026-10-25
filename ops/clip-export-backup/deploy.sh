@@ -1,18 +1,20 @@
 #!/bin/bash
 # Install Method B (backup clip exporter) on vps1. Idempotent. 2026-09-29.
-# Expects the payload next to it:  clip_export_api.py  clip_export/{render.py,cleanup.sh,canary.sh}
+# Expects the payload next to it:  clip_export_api.py  clip_export/{render.py,endscreen.py,to_storage.py,cleanup.sh,canary.sh}
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
 TS=$(date +%Y%m%d-%H%M%S)
 
 install -d -m 755 /opt/replay/clip_export /opt/replay/exports /opt/replay/exports/work /opt/replay/jobs/clipexport
 install -m 755 "$SRC/clip_export/render.py"  /opt/replay/clip_export/render.py
+install -m 755 "$SRC/clip_export/endscreen.py" /opt/replay/clip_export/endscreen.py
+install -m 755 "$SRC/clip_export/to_storage.py" /opt/replay/clip_export/to_storage.py
 install -m 755 "$SRC/clip_export/cleanup.sh" /opt/replay/clip_export/cleanup.sh
 install -m 755 "$SRC/clip_export/canary.sh"  /opt/replay/clip_export/canary.sh
 install -m 644 "$SRC/clip_export_api.py"     /opt/replay/clip_export_api.py
 
 # Syntax and imports under the interpreter that will run them.
-/opt/replay/venv/bin/python -m py_compile /opt/replay/clip_export/render.py /opt/replay/clip_export_api.py
+/opt/replay/venv/bin/python -m py_compile /opt/replay/clip_export/render.py /opt/replay/clip_export/endscreen.py /opt/replay/clip_export_api.py
 /opt/replay/venv/bin/python -c "import numpy, cv2, fastapi; print('deps ok', numpy.__version__, cv2.__version__)"
 
 # Wire the router into the control API: two lines after the VAR router, once.

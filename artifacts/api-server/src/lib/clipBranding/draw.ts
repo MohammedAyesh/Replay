@@ -218,7 +218,9 @@ const qrCache = new Map<string, { size: number; data: Uint8Array }>();
 function qrModules(text: string): { size: number; data: Uint8Array } {
   let hit = qrCache.get(text);
   if (!hit) {
-    const code = QRCode.create(text, { errorCorrectionLevel: "M" });
+    // Level L: the fewest modules, so each is as large as possible on a 608 px
+    // wide export. The tile is drawn flat on white, so damage is not the risk.
+    const code = QRCode.create(text, { errorCorrectionLevel: "L" });
     hit = { size: code.modules.size, data: code.modules.data as unknown as Uint8Array };
     if (qrCache.size > 200) qrCache.clear();
     qrCache.set(text, hit);
@@ -229,7 +231,8 @@ function qrModules(text: string): { size: number; data: Uint8Array } {
 /** A real, scannable QR code on a white tile. */
 export function drawQr(ctx: SKRSContext2D, text: string, x: number, y: number, size: number): void {
   const { size: n, data } = qrModules(text);
-  const pad = size * 0.08;
+  // A quiet zone of ~2 modules: scanners need the white margin.
+  const pad = size * 0.11;
   ctx.save();
   ctx.fillStyle = "#FFFFFF";
   roundRect(ctx, x, y, size, size, size * 0.05);

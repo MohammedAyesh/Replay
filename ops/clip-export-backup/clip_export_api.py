@@ -4,7 +4,7 @@ Method B clip export -- control API routes (x-api-key), included by control.py.
   POST   /export/clip                 submit (idempotent per clip + parameters)
   GET    /export/clip/{job}           status
   GET    /export/clip/{job}/file      the MP4 (Range supported)
-  DELETE /export/clip/{job}           refused; exports and job state are retained
+  DELETE /export/clip/{job}           remove output + state
   GET    /export/health               can this method take work right now?
 
 Each render runs in its own transient systemd unit (clipexport-<job>), so a
@@ -88,15 +88,17 @@ def _public(st):
         "progress": st.get("progress", 0),
         "error": st.get("error"),
         "errorKind": st.get("errorKind"),
-        "storageUrl": st.get("storageUrl") if isinstance(st.get("storageUrl"), str) else None,
         "attempt": st.get("attempt"),
         "createdAt": st.get("createdAt"),
         "updatedAt": st.get("updatedAt"),
         "finishedAt": st.get("finishedAt"),
         "renderSeconds": st.get("renderSeconds"),
-        "output": {k: out.get(k) for k in ("bytes", "duration", "width", "height", "hasAudio", "branded")}
+        "output": {k: out.get(k) for k in ("bytes", "duration", "width", "height", "hasAudio", "branded", "endScreen")}
         if out else None,
         "running": _unit_active(st["job"]) if st.get("job") else False,
+        # Permanent copy in Bunny Storage (to_storage.py), same zone and folder as
+        # Method A exports. Absent until the copy is verified.
+        "storageUrl": (st.get("storage") or {}).get("url"),
     }
 
 
@@ -115,8 +117,8 @@ def _launch(job):
 def job_id(spec):
     # Branding is deliberately not part of the identity: it is best effort, and
     # two callers that resolved it differently must still land on the same job.
-    # An explicit revision is used only for replacement renders, so they never
-    # reuse or overwrite an older permanent export.
+    # An explicit revision is used only for replacement renders (admin re-clips),
+    # so they never reuse or overwrite an older permanent export. 2026-10-25.
     identity = {k: spec.get(k) for k in
                 ("videoId", "startTime", "endTime", "cropPath", "aspectRatio")}
     if spec.get("exportRevision"):
@@ -138,6 +140,10 @@ def submit(body: dict = Body(...), x_api_key: str = Header(None)):
             "aspectRatio": "9:16" if body.get("aspectRatio") == "9:16" else "16:9",
             "title": str(body.get("title") or "")[:120],
             "overlayUrl": body.get("overlayUrl") or None,
+            # The app's drawn end screen: a card video in Bunny Storage plus its
+            # timing. Best effort; render.py validates it again. 2026-10-25.
+            "endScreen": body.get("endScreen") if isinstance(body.get("endScreen"), dict)
+            and len(json.dumps(body.get("endScreen"))) < 2000 else None,
         }
         export_revision = body.get("exportRevision")
         if export_revision is not None:
@@ -218,9 +224,13 @@ def file(job: str, x_api_key: str = Header(None)):
 def delete(job: str, x_api_key: str = Header(None)):
     _auth(x_api_key)
     _valid_job(job)
-    # vps1-export URLs are durable references.  In particular, do not stop a
-    # render or remove either its finished MP4 or the state needed to serve it.
-    raise HTTPException(405, "finished clip exports and job records are retained permanently")
+    subprocess.run(["systemctl", "stop", _unit(job)], capture_output=True)
+    for p in (os.path.join(OUT_DIR, job + ".mp4"), os.path.join(JOBS_DIR, job + ".json")):
+        try:
+            os.unlink(p)
+        except OSError:
+            pass
+    return {"deleted": job}
 
 
 @router.get("/export/health")

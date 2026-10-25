@@ -52,7 +52,8 @@ import {
 import { classifyPortfolioSourceError } from "../lib/portfolioPlayback";
 import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
-import { clipWantsDrawnBranding, planClipBranding } from "../lib/clipBranding/plan";
+import { planClipBranding } from "../lib/clipBranding/plan";
+import { backupBrandingFor } from "../lib/clipBranding/backup";
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
 import { logger } from "../lib/logger";
 import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
@@ -85,6 +86,7 @@ import {
   notePrimaryStarted,
   reconcileBackup,
   startExportFailoverSweep,
+  setBackupBrandingProvider,
   startBackupStorageUrlUpgradeSweep,
   type BackupOutcome,
 } from "../lib/exportFailover";
@@ -561,11 +563,7 @@ function startBackgroundExport(
       return;
     }
 
-    // Drawn branding (Admin → Branding) is drawn only by this server's renderer,
-    // so a clip that should carry it waits for a local slot instead of
-    // overflowing to vps1. A local render that fails still fails over there:
-    // a clip without its end screen is better than no clip.
-    if (isBackupExportConfigured() && !(await keepsDrawnBrandingLocal(clip))) {
+    if (isBackupExportConfigured()) {
       const handoff = await tryOverflowHandoff(clip, admission.snapshot, exportOptions);
       if (handoff !== "local") {
         if (!localFallbackOwned.has(clipId)) inFlight.delete(clipId);
@@ -579,13 +577,6 @@ function startBackgroundExport(
     logger.error({ err, clipId }, "Could not choose a clip export renderer — queuing locally");
     queueLocalBackgroundExport(clip, exportOptions);
   });
-}
-
-async function keepsDrawnBrandingLocal(clip: typeof import("@workspace/db").userClipsTable.$inferSelect): Promise<boolean> {
-  const fieldId = await fieldIdForClip(clip.id).catch(() => null);
-  const wants = await clipWantsDrawnBranding({ academyId: clip.academyId, fieldId, userId: clip.userId });
-  if (wants) logger.info({ clipId: clip.id }, "Local render slots busy — clip waits locally because it carries drawn branding");
-  return wants;
 }
 
 async function tryOverflowHandoff(
@@ -1025,6 +1016,25 @@ async function overlayUrlForClip(clip: typeof userClipsTable.$inferSelect): Prom
     return null;
   }
 }
+
+// Clips handed to vps1 carry the same drawn branding an export here would:
+// this side draws the overlay and the end screen's card, vps1 composites them.
+setBackupBrandingProvider(async (clip, uploadedOverlayUrl, exportRevision) => {
+  const fieldId = await fieldIdForClip(clip.id).catch(() => null);
+  return backupBrandingFor(
+    {
+      id: clip.id,
+      userId: clip.userId,
+      academyId: clip.academyId,
+      matchCode: clip.matchCode,
+      footageRequestId: clip.footageRequestId,
+    },
+    clip.aspectRatio === "9:16",
+    fieldId,
+    uploadedOverlayUrl,
+    exportRevision,
+  );
+});
 
 // Rows orphaned by a restart, by another autoscale instance, or by a hung
 // render are picked up here even when nobody is polling.

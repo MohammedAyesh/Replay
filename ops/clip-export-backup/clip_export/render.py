@@ -21,22 +21,36 @@ Launched by clip_export_api.py in its own transient systemd unit.
 
 Written 2026-09-29 after five consecutive production export failures caused by
 the branding overlay returning 401 from Bunny Storage.
+
+2026-09-29 (evening): two changes, both measured on a real 16 s clip.
+  - How many renders run at once is decided from the box's measured idle CPU
+    (see "admission" below) instead of a fixed two, first come first served.
+  - The render is pipelined: the decoder, the warp and the encoder run in
+    parallel threads instead of lock-step over 64 KB pipes, the audio is fetched
+    while the video renders, and the source lookup is cached per video.
+    Same 16 s clip, same box: 46.5 s -> 13.9 s, byte-identical MP4 (bench/prof.py).
 """
 import fcntl
 import json
 import math
 import os
+import queue
 import re
 import select
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
 
+try:
+    import endscreen  # clip_export/endscreen.py, added 2026-10-25
+except Exception:  # noqa: BLE001 -- branding must never stop a render
+    endscreen = None
 import cv2
 import numpy as np
 
@@ -51,11 +65,24 @@ JOBS_DIR = os.path.join(_ROOT, "jobs") if _ROOT else "/opt/replay/jobs/clipexpor
 OUT_DIR = os.path.join(_ROOT, "exports") if _ROOT else "/opt/replay/exports"
 WORK_DIR = os.path.join(OUT_DIR, "work")
 LOCK_DIR = os.path.join(_ROOT, "lock") if _ROOT else "/run/lock"
-SLOTS = 2
+SRC_CACHE_DIR = os.path.join(WORK_DIR, "srccache")
+SRC_CACHE_TTL = 3600
 SLOT_WAIT_SEC = 3600
 MIN_FREE_GB = 15
 MAX_ATTEMPTS = 3
 READ_STALL_SEC = 120
+PIPE_DEPTH = 4  # frames buffered between decoder -> warp -> encoder
+
+# ---- admission defaults; /opt/replay/clip_export/slots.json overrides any of them
+TUNING_FILE = os.environ.get("CLIP_EXPORT_TUNING", "/opt/replay/clip_export/slots.json")
+ADMISSION_DEFAULTS = {
+    "minSlots": 1,          # always this many, however busy the box is (renders are nice 10)
+    "maxSlots": 6,          # never more, however idle
+    "coresPerRender": 2.5,  # what one render needs; measured, see bench/
+    "settleSec": 8,         # a render admitted this recently is counted as if already running
+    "minMemGB": 3.0,        # MemAvailable below this admits nothing beyond minSlots
+    "sampleSec": 2.0,       # /proc/stat sampling window
+}
 
 FFMPEG = "/usr/bin/ffmpeg"
 FFPROBE = "/usr/bin/ffprobe"
@@ -123,13 +150,48 @@ def log(job, msg):
 
 # ------------------------------------------------------------------------ source
 
-def http_get(url, headers=None, timeout=30):
-    req = urllib.request.Request(url, headers={"Referer": REFERER, "User-Agent": UA, **(headers or {})})
+def http_get(url, headers=None, timeout=30, referer=True):
+    base = {"Referer": REFERER, "User-Agent": UA} if referer else {"User-Agent": UA}
+    req = urllib.request.Request(url, headers={**base, **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
 
+def _cache_path(video_id):
+    return os.path.join(SRC_CACHE_DIR, "%s.json" % video_id)
+
+
 def resolve_source(video_id):
+    """resolve_source_uncached, remembered per video for an hour.
+
+    A burst of clips from one match (the usual shape: a player saves all their
+    moments at once) otherwise re-reads two playlists and runs two ffprobes over
+    HTTP for every clip. Only a fully verified result is cached, and a finished
+    recording's playlist does not change.
+    """
+    if not re.fullmatch(r"[0-9a-fA-F-]{16,64}", video_id or ""):
+        raise Permanent("bad video id %r" % video_id)
+    path = _cache_path(video_id)
+    try:
+        if time.time() - os.path.getmtime(path) < SRC_CACHE_TTL:
+            with open(path) as f:
+                c = json.load(f)
+            return c["variant"], float(c["duration"]), float(c["startPts"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    variant, duration, start_pts = resolve_source_uncached(video_id)
+    try:
+        os.makedirs(SRC_CACHE_DIR, exist_ok=True)
+        tmp = path + ".%d.tmp" % os.getpid()
+        with open(tmp, "w") as f:
+            json.dump({"variant": variant, "duration": duration, "startPts": start_pts}, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return variant, duration, start_pts
+
+
+def resolve_source_uncached(video_id):
     """Find the variant that DECLARES 3840x1080 and its total duration.
 
     Rendition labels on this library do not identify geometry (the same "1080p"
@@ -272,9 +334,11 @@ def load_overlay(url, out_w, out_h, job):
     try:
         headers = {}
         host = urllib.parse.urlparse(url).hostname or ""
-        if host == "storage.bunnycdn.com" and STORAGE_KEY:
+        if host.endswith("storage.bunnycdn.com") and STORAGE_KEY:  # incl. regional hosts
             headers["AccessKey"] = STORAGE_KEY
-        data = http_get(url, headers=headers, timeout=20)
+        # No Stream Referer here: Bunny Storage answers 401 to a request that
+        # carries the iframe.mediadelivery.net Referer, even with a valid key.
+        data = http_get(url, headers=headers, timeout=20, referer=False)
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_UNCHANGED)
         if img is None or img.ndim != 3 or img.shape[2] != 4:
             log(job, "overlay is not an RGBA image -- exporting unbranded")
@@ -313,7 +377,43 @@ def http_input_args():
             "-rw_timeout", "30000000"]
 
 
+def _put(q, item, stop):
+    """queue.put that gives up once `stop` is set, so no thread blocks forever."""
+    while not stop.is_set():
+        try:
+            q.put(item, timeout=0.5)
+            return True
+        except queue.Full:
+            continue
+    return False
+
+
+def _get(q, stop):
+    while True:
+        try:
+            return q.get(timeout=0.5)
+        except queue.Empty:
+            if stop.is_set():
+                return None
+
+
+_CHILDREN = []  # ffmpeg processes of the current attempt
+
+
+def _reap_children():
+    """Kill whatever a failed attempt left running (e.g. the parallel audio fetch)."""
+    for p in _CHILDREN:
+        try:
+            if p.poll() is None:
+                p.kill()
+            p.wait(timeout=10)
+        except Exception:  # noqa: BLE001
+            pass
+    _CHILDREN.clear()
+
+
 def render(job, spec, attempt):
+    _reap_children()
     is_916 = spec.get("aspectRatio") == "9:16"
     out_w, out_h = output_dims(is_916)
 
@@ -361,24 +461,29 @@ def render(job, spec, attempt):
 
     os.makedirs(WORK_DIR, exist_ok=True)
     audio_path = os.path.join(WORK_DIR, job + ".m4a")
+    video_path = os.path.join(WORK_DIR, job + ".v.mp4")
     tmp_out = os.path.join(WORK_DIR, job + ".mp4")
-    for p in (audio_path, tmp_out):
+    for p in (audio_path, video_path, tmp_out):
         if os.path.exists(p):
             os.unlink(p)
 
-    # Audio first: small, and it proves the source window is reachable.
-    save_state(job, status="fetching", stage="Fetching audio", progress=5,
+    save_state(job, status="fetching", stage="Fetching source", progress=5,
                source={"variant": variant, "duration": duration, "start": start, "end": end})
-    a = subprocess.run(
+    # Audio is fetched while the video renders; it is small and joins at the mux.
+    aud = subprocess.Popen(
         [FFMPEG, "-nostdin", "-v", "error", *http_input_args(), *coarse, "-copyts", "-i", variant,
          "-vn", "-map", "0:a:0?", "-af", "atrim=start=%.4f:end=%.4f,asetpts=PTS-STARTPTS" % (t0, t1),
          "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2", "-y", audio_path],
-        capture_output=True, text=True, timeout=600)
-    has_audio = a.returncode == 0 and os.path.exists(audio_path) and os.path.getsize(audio_path) > 1000
-    if not has_audio:
-        log(job, "no usable audio (%s) -- adding a silent track" % (a.stderr.strip()[-200:] or "none"))
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    _CHILDREN.append(aud)
 
     overlay = load_overlay(spec.get("overlayUrl"), out_w, out_h, job)
+
+    # The app's drawn end screen (Admin -> Branding), if the spec carries one:
+    # the encode gets a keyframe where the card starts so the head can be copied.
+    es = endscreen.validate(spec.get("endScreen")) if endscreen else None
+    es_start = endscreen.start_for(clip_dur, es["seconds"]) if es else None
+    key_args = ["-force_key_frames", "%.3f" % es_start] if es_start is not None else []
 
     save_state(job, status="encoding", stage="Rendering", progress=8)
     dec = subprocess.Popen(
@@ -388,36 +493,72 @@ def render(job, spec, attempt):
          % (t0, t1 + 0.2, FPS, bw, bh, x0, y0),
          "-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
-    audio_in = (["-i", audio_path] if has_audio
-                else ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"])
     enc = subprocess.Popen(
         [FFMPEG, "-nostdin", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
-         "-s", "%dx%d" % (out_w, out_h), "-r", str(FPS), "-i", "pipe:0", *audio_in,
-         "-map", "0:v:0", "-map", "1:a:0", "-t", "%.3f" % clip_dur,
+         "-s", "%dx%d" % (out_w, out_h), "-r", str(FPS), "-i", "pipe:0",
+         "-map", "0:v:0", "-t", "%.3f" % clip_dur,
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
-         "-r", str(FPS), "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
-         "-movflags", "+faststart", "-y", tmp_out],
+         "-r", str(FPS), *key_args, "-an", "-y", video_path],
         stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+    _CHILDREN.extend([dec, enc])
 
-    buf = bytearray(frame_bytes)
-    view = memoryview(buf)
+    # Three stages in parallel: reader (decoder pipe -> q_in), this thread
+    # (warp), writer (q_out -> encoder pipe). Before this they ran lock-step,
+    # each blocked on the others through 64 KB pipes carrying 6-12 MB frames.
+    stop = threading.Event()
+    q_in = queue.Queue(maxsize=PIPE_DEPTH)
+    q_out = queue.Queue(maxsize=PIPE_DEPTH)
+    errs = {}
+
+    def reader():
+        try:
+            for i in range(n_frames):
+                buf = bytearray(frame_bytes)
+                view = memoryview(buf)
+                filled = 0
+                while filled < frame_bytes:
+                    if stop.is_set():
+                        return
+                    ready, _, _ = select.select([dec.stdout], [], [], READ_STALL_SEC)
+                    if not ready:
+                        raise RuntimeError("source stalled for %ds at frame %d" % (READ_STALL_SEC, i))
+                    n = dec.stdout.readinto(view[filled:])
+                    if not n:
+                        break
+                    filled += n
+                if filled < frame_bytes:
+                    return
+                if not _put(q_in, buf, stop):
+                    return
+        except Exception as e:  # noqa: BLE001
+            errs["reader"] = e
+        finally:
+            _put(q_in, None, stop)
+
+    def writer():
+        try:
+            while True:
+                item = _get(q_out, stop)
+                if item is None:
+                    return
+                enc.stdin.write(item)
+        except Exception as e:  # noqa: BLE001 -- e.g. BrokenPipe when the encoder died
+            errs["writer"] = e
+            stop.set()
+
+    rt = threading.Thread(target=reader, name="reader", daemon=True)
+    wt = threading.Thread(target=writer, name="writer", daemon=True)
+    rt.start()
+    wt.start()
+
     got = 0
     try:
-        for i in range(n_frames):
-            filled = 0
-            while filled < frame_bytes:
-                ready, _, _ = select.select([dec.stdout], [], [], READ_STALL_SEC)
-                if not ready:
-                    raise RuntimeError("source stalled for %ds at frame %d" % (READ_STALL_SEC, i))
-                n = dec.stdout.readinto(view[filled:])
-                if not n:
-                    break
-                filled += n
-            if filled < frame_bytes:
+        while got < n_frames:
+            buf = _get(q_in, stop)
+            if buf is None or "writer" in errs:
                 break
-            got += 1
             src = np.frombuffer(buf, np.uint8).reshape(bh, bw, 3)
-            rx, ry, rw, rh = rects[i]
+            rx, ry, rw, rh = rects[got]
             sx, sy = out_w / rw, out_h / rh
             m = np.array([[sx, 0.0, -(rx - x0) * sx], [0.0, sy, -(ry - y0) * sy]], np.float32)
             interp = cv2.INTER_AREA if sx < 1 else cv2.INTER_LINEAR
@@ -426,10 +567,15 @@ def render(job, spec, attempt):
             if overlay is not None:
                 premul, inv = overlay
                 frame = ((frame.astype(np.uint16) * inv + premul) // 255).astype(np.uint8)
-            enc.stdin.write(frame.tobytes())
-            if i % 30 == 0:
-                save_state(job, progress=8 + int(87 * i / max(1, n_frames)))
+            if not _put(q_out, np.ascontiguousarray(frame), stop):
+                break
+            got += 1
+            if got % 30 == 0:
+                save_state(job, progress=8 + int(85 * got / max(1, n_frames)))
+        _put(q_out, None, stop)
+        wt.join(timeout=600)
     finally:
+        stop.set()
         try:
             enc.stdin.close()
         except Exception:  # noqa: BLE001
@@ -437,13 +583,40 @@ def render(job, spec, attempt):
         dec.kill()
         dec_err = (dec.stderr.read() or b"").decode("utf-8", "replace")[-600:]
         dec.wait()
+        rt.join(timeout=10)
     enc_rc = enc.wait(timeout=600)
     enc_err = (enc.stderr.read() or b"").decode("utf-8", "replace")[-600:]
 
+    if "reader" in errs:
+        raise errs["reader"]
+    if "writer" in errs:
+        raise RuntimeError("encoder pipe failed (%s): %s" % (errs["writer"], enc_err.strip()))
     if got < n_frames - 3:
         raise RuntimeError("source ended early: %d of %d frames (%s)" % (got, n_frames, dec_err.strip()))
     if enc_rc != 0:
         raise RuntimeError("encoder exited %s: %s" % (enc_rc, enc_err.strip()))
+
+    # Join the audio (fetched in parallel) to the finished video.
+    save_state(job, progress=95, stage="Finishing")
+    try:
+        aud_rc = aud.wait(timeout=600)
+    except subprocess.TimeoutExpired:
+        aud.kill()
+        aud_rc = -1
+    aud_err = (aud.stderr.read() or b"").decode("utf-8", "replace")[-200:]
+    has_audio = aud_rc == 0 and os.path.exists(audio_path) and os.path.getsize(audio_path) > 1000
+    if not has_audio:
+        log(job, "no usable audio (%s) -- adding a silent track" % (aud_err.strip() or "none"))
+    audio_in = (["-i", audio_path] if has_audio
+                else ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"])
+    mux = subprocess.run(
+        [FFMPEG, "-nostdin", "-v", "error", "-i", video_path, *audio_in,
+         "-map", "0:v:0", "-map", "1:a:0", "-t", "%.3f" % clip_dur,
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+         "-movflags", "+faststart", "-y", tmp_out],
+        capture_output=True, text=True, timeout=300)
+    if mux.returncode != 0:
+        raise RuntimeError("mux failed: %s" % mux.stderr.strip()[-300:])
 
     info = probe(tmp_out)
     vid = [s for s in info.get("streams", []) if s.get("codec_type") == "video"]
@@ -453,47 +626,235 @@ def render(job, spec, attempt):
     if abs(dur - clip_dur) > 0.6:
         raise RuntimeError("output is %.2fs, expected %.2fs" % (dur, clip_dur))
 
+    end_screen = None
+    if es:
+        try:
+            save_state(job, progress=97, stage="Adding the end screen")
+            branded = endscreen.apply(tmp_out, es, es_start, clip_dur, out_w, out_h, WORK_DIR, job,
+                                      FFMPEG, FFPROBE, http_get, STORAGE_KEY)
+            os.replace(branded, tmp_out)
+            end_screen = es["kind"] or "card"
+            dur = float(probe(tmp_out).get("format", {}).get("duration", 0) or 0)
+        except Exception as e:  # noqa: BLE001 -- branding must never cost a clip
+            log(job, "end screen unavailable (%s) -- exporting without it" % e)
+
     final = os.path.join(OUT_DIR, job + ".mp4")
     os.replace(tmp_out, final)
-    if os.path.exists(audio_path):
-        os.unlink(audio_path)
+    for p in (audio_path, video_path):
+        if os.path.exists(p):
+            os.unlink(p)
     return {"path": final, "bytes": os.path.getsize(final), "duration": round(dur, 3),
             "width": out_w, "height": out_h, "frames": got, "hasAudio": has_audio,
-            "branded": overlay is not None}
+            "branded": overlay is not None or end_screen is not None, "endScreen": end_screen}
 
 
-# ------------------------------------------------------------------------- slots
+# --------------------------------------------------------------------- admission
+# How many renders run at once is decided from what the box is doing, not a
+# fixed number. vps1 also runs live, VAR and booking pulls; renders run at nice
+# 10 so those always come first, and a render only starts when the measured idle
+# CPU can hold one more.
+#
+#  - Waiters form a FIFO: one ticket per waiting job, ordered by the job's
+#    submission time. Only the oldest live ticket may ask for admission.
+#  - The decision is taken under one admission lock, so two waiters can never
+#    both see the same idle cores.
+#  - A render admitted less than settleSec ago may not have ramped up yet, so it
+#    is subtracted from the measured idle cores as if it were already running.
+#  - minSlots always run, however busy the box is: an export is never starved.
+#  - A running render holds one of maxSlots flock files, as before, so the
+#    count survives crashes (the kernel drops a dead process's lock).
 
-def acquire_slot(job):
-    deadline = time.time() + SLOT_WAIT_SEC
-    announced = False
-    while time.time() < deadline:
-        for i in range(SLOTS):
-            fd = os.open(os.path.join(LOCK_DIR, "clipexport-slot%d.lock" % i), os.O_CREAT | os.O_RDWR)
+def tuning():
+    cfg = dict(ADMISSION_DEFAULTS)
+    try:
+        with open(TUNING_FILE) as f:
+            over = json.load(f)
+        for k, v in over.items():
+            if k in cfg and isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0:
+                cfg[k] = v
+    except (OSError, ValueError, AttributeError):
+        pass
+    cfg["minSlots"] = max(1, int(cfg["minSlots"]))
+    cfg["maxSlots"] = max(cfg["minSlots"], int(cfg["maxSlots"]))
+    return cfg
+
+
+def cpu_idle_fraction(sample_sec):
+    def read():
+        with open("/proc/stat") as f:
+            vals = [int(v) for v in f.readline().split()[1:9]]
+        return vals[3] + vals[4], sum(vals)  # idle + iowait, total (user..steal)
+    i0, t0 = read()
+    time.sleep(sample_sec)
+    i1, t1 = read()
+    return max(0.0, min(1.0, (i1 - i0) / max(1, t1 - t0)))
+
+
+def mem_available_gb():
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / 1048576.0
+    except OSError:
+        pass
+    return 99.0
+
+
+def admit_decision(rendering, recent, idle_cores, mem_gb, cfg):
+    """Pure: may one more render start? -> (bool, reason)."""
+    if rendering >= cfg["maxSlots"]:
+        return False, "at the %d-render cap" % cfg["maxSlots"]
+    if rendering < cfg["minSlots"]:
+        return True, "below the minimum of %d" % cfg["minSlots"]
+    if mem_gb < cfg["minMemGB"]:
+        return False, "only %.1f GB memory available" % mem_gb
+    spare = idle_cores - recent * cfg["coresPerRender"]
+    if spare >= cfg["coresPerRender"]:
+        return True, "%.1f cores idle" % spare
+    return False, "%.1f cores idle, a render needs %.1f" % (max(0.0, spare), cfg["coresPerRender"])
+
+
+def _slot_path(i):
+    return os.path.join(LOCK_DIR, "clipexport-slot%d.lock" % i)
+
+
+def _probe_slots(n):
+    """(number of slot locks held by others, fd of the first free slot or None)."""
+    held, free_fd = 0, None
+    for i in range(n):
+        fd = os.open(_slot_path(i), os.O_CREAT | os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            held += 1
+            continue
+        if free_fd is None:
+            free_fd = fd  # keep it locked: it is ours if we are admitted
+        else:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+    return held, free_fd
+
+
+def _queue_dir():
+    d = os.path.join(LOCK_DIR, "clipexport-queue")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _live_tickets():
+    d = _queue_dir()
+    out = []
+    for name in sorted(os.listdir(d)):
+        path = os.path.join(d, name)
+        try:
+            pid = int(open(path).read().strip() or 0)
+        except (OSError, ValueError):
+            pid = 0
+        if pid and _pid_alive(pid):
+            out.append(name)
+        else:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                return fd
-            except BlockingIOError:
-                os.close(fd)
-        if not announced:
-            save_state(job, status="queued", stage="Waiting for a render slot", progress=1)
-            announced = True
-        time.sleep(3)
-    raise RuntimeError("no render slot free for %ds" % SLOT_WAIT_SEC)
+                os.unlink(path)
+            except OSError:
+                pass
+    return out
+
+
+def _recent_admits(settle):
+    path = os.path.join(LOCK_DIR, "clipexport-admits.json")
+    now = time.time()
+    try:
+        with open(path) as f:
+            ts = [t for t in json.load(f) if now - float(t) < settle]
+    except (OSError, ValueError, TypeError):
+        ts = []
+    return ts, path
+
+
+def acquire_slot(job, created_at):
+    deadline = time.time() + SLOT_WAIT_SEC
+    ticket = "%017.6f-%s" % (created_at, job)
+    tpath = os.path.join(_queue_dir(), ticket)
+    with open(tpath, "w") as f:
+        f.write(str(os.getpid()))
+    admit_fd = os.open(os.path.join(LOCK_DIR, "clipexport-admit.lock"), os.O_CREAT | os.O_RDWR)
+    last_stage = last_reason = None
+    try:
+        while time.time() < deadline:
+            cfg = tuning()
+            tickets = _live_tickets()
+            ahead = tickets.index(ticket) if ticket in tickets else 0
+            reason = None
+            if ahead == 0:
+                try:
+                    fcntl.flock(admit_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    reason = "another render is being admitted"
+                else:
+                    try:
+                        held, free_fd = _probe_slots(cfg["maxSlots"])
+                        recent, rpath = _recent_admits(cfg["settleSec"])
+                        if free_fd is None:
+                            ok, reason = False, "at the %d-render cap" % cfg["maxSlots"]
+                        else:
+                            idle = cpu_idle_fraction(cfg["sampleSec"]) * (os.cpu_count() or 1)
+                            ok, reason = admit_decision(held, len(recent), idle, mem_available_gb(), cfg)
+                        if ok:
+                            tmp = rpath + ".tmp"
+                            with open(tmp, "w") as f:
+                                json.dump(recent + [time.time()], f)
+                            os.replace(tmp, rpath)
+                            log(job, "admitted (%s; %d rendering when checked)" % (reason, held))
+                            return free_fd
+                        if free_fd is not None:
+                            fcntl.flock(free_fd, fcntl.LOCK_UN)
+                            os.close(free_fd)
+                    finally:
+                        fcntl.flock(admit_fd, fcntl.LOCK_UN)
+            stage = ("Waiting for a render slot (%d ahead)" % ahead) if ahead else \
+                "Waiting for a render slot (server busy)"
+            if reason and reason != last_reason:
+                log(job, "waiting: %s" % reason)
+                last_reason = reason
+            if stage != last_stage:
+                save_state(job, status="queued", stage=stage, progress=1)
+                last_stage = stage
+            time.sleep(2 if ahead == 0 else 3)
+        raise RuntimeError("no render slot free for %ds" % SLOT_WAIT_SEC)
+    finally:
+        os.close(admit_fd)
+        try:
+            os.unlink(tpath)
+        except OSError:
+            pass
 
 
 def main():
     job = sys.argv[1]
     if not re.fullmatch(r"[A-Za-z0-9_-]{4,80}", job):
         sys.exit("bad job id")
-    spec = load_state(job)["spec"]
+    st0 = load_state(job)
+    spec = st0["spec"]
     save_state(job, status="queued", stage="Starting", progress=0, pid=os.getpid(),
                startedAt=time.time(), error=None, errorKind=None, lastError=None, output=None)
     try:
         os.nice(10)  # live and VAR transcodes on this box come first
     except OSError:
         pass
-    slot = acquire_slot(job)
+    slot = acquire_slot(job, float(st0.get("createdAt") or time.time()))
     try:
         if free_gb(OUT_DIR) < MIN_FREE_GB:
             save_state(job, status="failed", stage="Server disk low", error="disk: %.1f GB free" % free_gb(OUT_DIR),
@@ -519,6 +880,7 @@ def main():
                 log(job, "permanent: %s" % e)
                 return 1
             except Exception as e:  # noqa: BLE001
+                _reap_children()
                 last = "%s: %s" % (type(e).__name__, e)
                 log(job, "attempt %d failed: %s\n%s" % (attempt, last, traceback.format_exc()))
                 save_state(job, stage="Retrying (attempt %d failed)" % attempt, lastError=last)
@@ -531,4 +893,13 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    if rc == 0 and not _ROOT:
+        # Permanent copy in Bunny Storage, after the render slot is released.
+        # Best effort: the 10-minute to_storage.py --all sweep retries failures.
+        try:
+            subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "to_storage.py"),
+                            sys.argv[1]], timeout=1200)
+        except Exception:  # noqa: BLE001
+            pass
+    sys.exit(rc)

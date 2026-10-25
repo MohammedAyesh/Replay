@@ -98,10 +98,49 @@ export function primaryRunningForMs(clipId: number): number | null {
   return at == null ? null : Date.now() - at;
 }
 
+/**
+ * Drawn branding for a clip handed to vps1 (overlay PNG + end screen card),
+ * registered by the clip routes. Kept as a hook so this module stays free of
+ * the drawing code and its dependencies.
+ */
+export type BackupBrandingProvider = (
+  clip: ClipRow,
+  uploadedOverlayUrl: string | null,
+  exportRevision?: string,
+) => Promise<{ overlayUrl: string | null; endScreen: BackupExportSpec["endScreen"] }>;
+
+let brandingProvider: BackupBrandingProvider | null = null;
+const BRANDING_TIMEOUT_MS = 25_000;
+
+export function setBackupBrandingProvider(provider: BackupBrandingProvider | null): void {
+  brandingProvider = provider;
+}
+
+async function brandingFor(
+  clip: ClipRow,
+  overlayUrl: string | null,
+  exportRevision?: string,
+): Promise<{ overlayUrl: string | null; endScreen: BackupExportSpec["endScreen"] }> {
+  if (!brandingProvider) return { overlayUrl, endScreen: null };
+  const provider = brandingProvider;
+  try {
+    // Branding never holds a hand-off up for long: past the timeout vps1 gets
+    // the uploaded overlay and no end screen, as before drawn branding existed.
+    return await Promise.race([
+      provider(clip, overlayUrl, exportRevision),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out")), BRANDING_TIMEOUT_MS).unref?.()),
+    ]);
+  } catch (err) {
+    logger.warn({ err, clipId: clip.id }, "Drawn branding for vps1 unavailable — handing over without it");
+    return { overlayUrl, endScreen: null };
+  }
+}
+
 export function backupSpecFor(
   clip: ClipRow,
   overlayUrl?: string | null,
   exportRevision?: string,
+  endScreen?: BackupExportSpec["endScreen"],
 ): BackupExportSpec {
   return {
     clipId: clip.id,
@@ -113,6 +152,7 @@ export function backupSpecFor(
     title: clip.title,
     overlayUrl: overlayUrl ?? null,
     ...(exportRevision ? { exportRevision } : {}),
+    ...(endScreen ? { endScreen } : {}),
   };
 }
 
@@ -148,7 +188,8 @@ async function reconcileUncached(
   clip: ClipRow,
   opts: { overlayUrl?: string | null; primaryActive?: boolean; exportRevision?: string },
 ): Promise<BackupOutcome> {
-  const spec = backupSpecFor(clip, opts.overlayUrl, opts.exportRevision);
+  const branding = await brandingFor(clip, opts.overlayUrl ?? null, opts.exportRevision);
+  const spec = backupSpecFor(clip, branding.overlayUrl, opts.exportRevision, branding.endScreen);
   let status: BackupExportStatus;
   try {
     status = await submitBackupExport(spec);

@@ -90,6 +90,11 @@ export type BackupExportSpec = {
   overlayUrl?: string | null;
   /** Makes an intentional re-clip a distinct, permanent vps1 export object. */
   exportRevision?: string;
+  /**
+   * The drawn end screen (Admin → Branding): a card video in Bunny Storage plus
+   * its timing. vps1 composites it like an export here; older vps1 code ignores it.
+   */
+  endScreen?: { cardUrl: string; seconds: number; blur: number; dim: number; kind: string } | null;
 };
 
 function controlBase(): string {

@@ -25,7 +25,9 @@ export const PREVIEW_DIMS: Record<"9:16" | "16:9", Dims> = {
 };
 
 export function sampleEndScreen(kind: EndScreenKind, look: BrandLook): EndScreen {
-  const common = { look, dateLabel: "SAT 24 OCT · 22:00", link: `${publicBase()}/m/SAMPLE` };
+  // A link of the same length as a real share card, so the preview's QR has
+  // the density an export's will.
+  const common = { look, dateLabel: "SAT 24 OCT · 22:00", link: `${publicBase()}/s/1234/0123456789abcdef0123` };
   switch (kind) {
     case "player":
       return {

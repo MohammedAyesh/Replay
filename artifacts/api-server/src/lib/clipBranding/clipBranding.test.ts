@@ -309,3 +309,24 @@ describe("planClipBranding", () => {
     }
   });
 });
+
+describe("encodeCard (the card handed to vps1)", () => {
+  it("is a small VP9 video whose card is opaque and whose footage area stays transparent", async () => {
+    const { encodeCard } = await import("./backup");
+    const card = await encodeCard({ spec: sampleEndScreen("player", LOOK), seconds: 3, blur: 22, dim: 0.5 }, { w: 608, h: 1080 });
+    expect(card.ext).toBe("webm");
+    expect(card.buffer.length).toBeLessThan(2_000_000);
+    const file = path.join(work, "card.webm");
+    fs.writeFileSync(file, card.buffer);
+    const count = execFileSync("ffprobe", ["-v", "error", "-count_frames", "-select_streams", "v:0",
+      "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", file]).toString().trim();
+    expect(Number(count)).toBe(90);
+    // The last frame through libvpx (the decoder that keeps alpha), as RGBA.
+    const rgba = execFileSync("ffmpeg", ["-v", "error", "-c:v", "libvpx-vp9", "-i", file, "-vf", "select=eq(n\\,89)",
+      "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", "-"], { maxBuffer: 10 * 1024 * 1024 });
+    const alphaAt = (x: number, y: number) => rgba[(y * 608 + x) * 4 + 3];
+    expect(alphaAt(300, 100)).toBeGreaterThan(240); // the venue band
+    expect(alphaAt(300, 1000)).toBeLessThan(200); // footage shows through, only dimmed
+  }, 60_000);
+});
+

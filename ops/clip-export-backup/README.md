@@ -17,6 +17,19 @@ The only shared dependency is the recording on Bunny Stream — the footage exis
 when both methods have failed. Method A throwing, being lost (restart / another autoscale
 instance), hanging past 12 min, or not being configured all hand the clip to Method B.
 
+## Drawn branding (2026-10-25)
+The app's drawn overlay and end screen (Admin → Branding) reach this renderer as URLs in the
+job spec: `overlayUrl` (a PNG, as before) and `endScreen` `{cardUrl, seconds, blur, dim, kind}`,
+a short VP9-with-alpha card the app draws and puts in Bunny Storage
+(`branding/drawn/`, `branding/endscreens/`, content-addressed). `clip_export/endscreen.py`
+lays the card over the last seconds (blur, duck, head stream-copied up to a forced keyframe),
+mirroring `artifacts/api-server/src/lib/clipBranding/endScreenVideo.ts`. Branding is not part
+of the job id, and any failure keeps the plain clip. `exportRevision` (admin re-clips) is part
+of the job id, so a re-clip never reuses an older export.
+
+These files match what runs on vps1 as of 2026-10-25 (render.py was 883 lines there; this
+folder had been behind it).
+
 ## Deploy / update
 Copy this folder to vps1 and run `bash deploy.sh`. It installs to `/opt/replay/clip_export/`,
 adds two lines to `control.py` (backup taken), a cron file, and restarts `replay-control`

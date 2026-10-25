@@ -55,6 +55,10 @@ function spawnFfmpeg(args: string[], timeoutMs: number): {
   done: Promise<void>;
 } {
   const proc = spawn("ffmpeg", args, { stdio: ["pipe", "ignore", "pipe"] });
+  // If FFmpeg exits while frames are still being written, the next write fails
+  // with EPIPE. Without a listener that is an uncaught error that takes the
+  // whole API server down; `done` already reports the failure.
+  proc.stdin?.on("error", () => {});
   let stderr = "";
   proc.stderr?.on("data", (d: Buffer) => { stderr = (stderr + d.toString()).slice(-6000); });
   const done = new Promise<void>((resolve, reject) => {
