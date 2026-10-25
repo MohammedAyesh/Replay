@@ -191,6 +191,7 @@ describe("admin recording tracker debug API", () => {
   it("seeks the video by vo while drawing the overlays at t", async () => {
     getLocalUserIdMock.mockResolvedValueOnce(adminId);
     setPlayFixture();
+    manifest.videoStartSeconds = 10;
     selectExportSourceMock.mockResolvedValueOnce({ url: "https://example.test/playlist.m3u8" });
     const child = new EventEmitter() as EventEmitter & {
       stdout: PassThrough;
@@ -210,10 +211,17 @@ describe("admin recording tracker debug API", () => {
 
     const response = await request(app)
       .get(`/api/admin/recordings/${recordingId}/debug/frame?t=1&vo=0.5`);
+    manifest.videoStartSeconds = 0;
 
     expect(response.status).toBe(200);
     const args = spawnMock.mock.calls[0][1] as string[];
-    expect(args.slice(args.indexOf("-ss"), args.indexOf("-ss") + 2)).toEqual(["-ss", "1.5"]);
+    const inputIndex = args.indexOf("-i");
+    const firstSeekIndex = args.indexOf("-ss");
+    const secondSeekIndex = args.indexOf("-ss", firstSeekIndex + 1);
+    expect(args.slice(firstSeekIndex, firstSeekIndex + 2)).toEqual(["-ss", "5.5"]);
+    expect(args.slice(secondSeekIndex, secondSeekIndex + 2)).toEqual(["-ss", "6"]);
+    expect(firstSeekIndex).toBeLessThan(inputIndex);
+    expect(secondSeekIndex).toBeGreaterThan(inputIndex);
     expect(args.join(" ")).toContain("drawbox=x=47:y=97");
     expect(args.join(" ")).toContain("drawbox=x=51:y=51");
   });

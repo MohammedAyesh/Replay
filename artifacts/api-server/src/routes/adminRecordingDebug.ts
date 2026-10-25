@@ -482,10 +482,13 @@ router.get("/admin/recordings/:id/debug/frame", async (req, res): Promise<void> 
         res.status(404).json({ error: "1080p Bunny HLS rendition unavailable" });
         return;
       }
+      const coarseSeek = Math.max(0, seekSecond - 6);
+      const preciseSeek = seekSecond - coarseSeek;
       const args = [
-        "-nostdin", "-loglevel", "error", "-ss", String(Math.max(0, seekSecond)),
+        "-nostdin", "-loglevel", "error", "-ss", String(coarseSeek),
         "-headers", "Referer: https://iframe.mediadelivery.net/\r\n",
-        "-i", renditionUrl, "-frames:v", "1", "-an", "-vf", filter,
+        "-i", renditionUrl, "-ss", String(preciseSeek),
+        "-frames:v", "1", "-an", "-vf", filter,
         "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
       ];
       bytes = await withFrameSlot(() => runFfmpeg(args));
