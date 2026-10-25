@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, claimMomentChecksTable } from "@workspace/db";
 import type { ClaimedPart } from "./matchPlay";
+import { isMissingRelationError } from "./settings";
 
 export type MomentVerdict = "yes" | "no" | "skip";
 export type MomentCheck = { verdict: MomentVerdict; cut: ClaimedPart | null };
@@ -20,8 +21,11 @@ export async function momentChecksFor(userId: number, recordingId: number): Prom
         : null;
       out.set(r.momentId, { verdict: r.verdict, cut });
     }
-  } catch {
-    // the table arrives with migration 0039; until then nobody has answered
+  } catch (error) {
+    // The table arrives with migration 0039; until then nobody has answered.
+    // Any other failure must not read as "no answers": a claim re-sync would
+    // then drop his "not me" cuts and bring back held-back moments.
+    if (!isMissingRelationError(error)) throw error;
   }
   return out;
 }

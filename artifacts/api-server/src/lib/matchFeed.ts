@@ -266,7 +266,9 @@ function cacheFingerprints(
       // 2: the cached row also carries the timeline extras the Home tiles use.
       // 3: top speed measured per piece on 0.5 s medians (it read ~0 before).
       // 4: goals timed at the ball's entry into the mouth, one per restart.
-      version: 4,
+      // 5: goals count only once a player confirms them; own goals; dribbles
+      //    need the beaten man within 3 m, passes over 30 m/s are tracker jumps.
+      version: 5,
       matchId,
       matchPlayerId: player.id,
       userId: player.userId,
@@ -977,6 +979,27 @@ export function replaySideForGoal(
  * 19 Sep game its inferred goals had to be merged to stop one kick-off
  * counting two or three times.
  */
+/**
+ * Two recordings of the same stretch (the same footage analysed twice, e.g.
+ * S9L9ZF's 401 and 402) find the same chances. Show each once: the copy
+ * players have answered on, else the first recording's.
+ */
+export function oneChanceEach(goals: ReplayGoal[]): ReplayGoal[] {
+  const STATUS_RANK = { confirmed: 3, rejected: 2, open: 1 } as const;
+  const better = (a: ReplayGoal, b: ReplayGoal) =>
+    STATUS_RANK[a.status] !== STATUS_RANK[b.status] ? STATUS_RANK[a.status] > STATUS_RANK[b.status]
+      : a.confirmedBy.length + a.rejectedBy.length !== b.confirmedBy.length + b.rejectedBy.length
+        ? a.confirmedBy.length + a.rejectedBy.length > b.confirmedBy.length + b.rejectedBy.length
+        : a.recordingId < b.recordingId;
+  const kept: ReplayGoal[] = [];
+  for (const g of [...goals].sort((a, b) => a.atSeconds - b.atSeconds)) {
+    const twin = kept.findIndex((k) => k.recordingId !== g.recordingId && Math.abs(k.atSeconds - g.atSeconds) <= 2);
+    if (twin < 0) kept.push(g);
+    else if (better(g, kept[twin])) kept[twin] = g;
+  }
+  return kept.sort((a, b) => a.atSeconds - b.atSeconds);
+}
+
 export async function matchReplay(ctx: RoomContext, viewerUserId: number | null = null): Promise<{
   recordings: number[];
   /**
@@ -1038,7 +1061,7 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
       shots = shots ? [shots[0] + n[0], shots[1] + n[1]] : n;
     }
   }
-  goals.sort((a, b) => a.atSeconds - b.atSeconds);
+  const review = oneChanceEach(goals);
   // linkPlays splits each recording into windows; the flow wants its whole share.
   const shares = new Map<number, RecordingFlowInput>();
   for (const { link, play } of plays) {
@@ -1057,7 +1080,7 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
     }
   }
   // only goals a player confirmed are offered as the score
-  const counted = goals.filter((g) => g.status === "confirmed");
+  const counted = review.filter((g) => g.status === "confirmed");
   const sided = counted.filter((g) => g.side);
   const suggested = ctx.room.teamCount < 3 && counted.length && sided.length === counted.length
     ? { a: sided.filter((g) => g.side === "A").length, b: sided.filter((g) => g.side === "B").length }
@@ -1065,7 +1088,7 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
   return {
     recordings: [...new Set(plays.map((p) => p.link.recordingId))],
     goals: counted,
-    review: goals,
+    review,
     shots: ctx.room.teamCount < 3 ? shots : null,
     suggested,
     flow: matchFlow([...shares.values()]),

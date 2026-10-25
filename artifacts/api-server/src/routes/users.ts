@@ -136,7 +136,8 @@ function timestampForFingerprint(value: Date | string | null | undefined): strin
  * go on serving numbers from the grid it replaced, silently and forever.
  */
 /** Bumped when what a cached statistic contains changes, so every cached row is rebuilt once. */
-const PUBLIC_STATS_VERSION = "dribbles-1";
+// dribbles-2 (2026-10-25): the beaten man must come within 3 m, no backward runs past men already behind.
+const PUBLIC_STATS_VERSION = "dribbles-2";
 // The match window is part of the input (below), so setting or clearing it
 // rebuilds the affected rows without a version bump for everyone else.
 

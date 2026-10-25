@@ -35,7 +35,12 @@ const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
 /** The rendered MP4 the fake storage origin serves. Big enough to span chunks. */
 const CLIP_BYTES = crypto.randomBytes(512 * 1024);
-const STORAGE_KEY = process.env.BUNNY_STORAGE_API_KEY ?? "";
+// The storage key is read when lib/bunny loads, so set one before any import:
+// without it nothing sends an AccessKey and this file's header check fails.
+const STORAGE_KEY = vi.hoisted(() => {
+  process.env.BUNNY_STORAGE_API_KEY ||= "test-storage-key";
+  return process.env.BUNNY_STORAGE_API_KEY;
+});
 
 let origin: http.Server;
 let originUrl: string;

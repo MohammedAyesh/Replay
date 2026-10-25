@@ -15,8 +15,9 @@
  * goal (credited to the attacking side, to no player) when that touch was the
  * defending side's (matchPlay.credit, the minimap's attacking direction).
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, recordingGoalVotesTable } from "@workspace/db";
+import { isMissingRelationError } from "./settings";
 import {
   creditGoalAt,
   detectedGoals,
@@ -40,7 +41,15 @@ export const GOAL_REVIEW = {
   eventMergeSeconds: 10,
   /** a vote belongs to the candidate within this of its time, seconds */
   voteMatchSeconds: 3,
+  /**
+   * Two goals cannot come this close together (the ball has to be fetched and
+   * play restarted), so confirmed chances closer than this are one goal: a
+   * saved shot and its rebound, or a shot and the detector's goal, seconds.
+   */
+  confirmedMinGap: 15,
 } as const;
+
+const SOURCE_RANK: Record<GoalCandidate["source"], number> = { goal: 3, event: 2, shot: 1 };
 
 export type GoalVerdict = "goal" | "not_goal";
 export type GoalVote = { atTenths: number; userId: number; verdict: GoalVerdict };
@@ -115,9 +124,29 @@ export function reviewGoals(
     const list = v.verdict === "goal" ? best.confirmedBy : best.rejectedBy;
     if (!list.includes(v.userId)) list.push(v.userId);
   }
-  const all = [...reviewed, ...orphans.values()];
+  const all = [...reviewed, ...orphans.values()].sort((a, b) => a.t - b.t);
   for (const c of all) c.status = c.confirmedBy.length ? "confirmed" : c.rejectedBy.length ? "rejected" : "open";
-  return all.sort((a, b) => a.t - b.t);
+  // One goal, however many of its chances were confirmed: keep the chance with
+  // the most "goal" votes (then the detector's over an event over a shot, then
+  // the later strike), and set the others aside.
+  let cluster: ReviewedGoal[] = [];
+  const settle = () => {
+    if (cluster.length > 1) {
+      const keep = cluster.reduce((best, c) =>
+        c.confirmedBy.length !== best.confirmedBy.length ? (c.confirmedBy.length > best.confirmedBy.length ? c : best)
+          : SOURCE_RANK[c.source] !== SOURCE_RANK[best.source] ? (SOURCE_RANK[c.source] > SOURCE_RANK[best.source] ? c : best)
+            : c.t > best.t ? c : best);
+      for (const c of cluster) if (c !== keep) c.status = "rejected";
+    }
+    cluster = [];
+  };
+  for (const c of all) {
+    if (c.status !== "confirmed") continue;
+    if (cluster.length && c.t - cluster[cluster.length - 1].t > GOAL_REVIEW.confirmedMinGap) settle();
+    cluster.push(c);
+  }
+  settle();
+  return all;
 }
 
 /** The goals that count: the candidates a player confirmed. */
@@ -148,9 +177,12 @@ export async function goalVotesFor(recordingIds: number[]): Promise<Map<number, 
       userId: recordingGoalVotesTable.userId,
       verdict: recordingGoalVotesTable.verdict,
     }).from(recordingGoalVotesTable).where(inArray(recordingGoalVotesTable.recordingId, ids));
-  } catch {
-    // before the table exists (the first publish after this change), nobody has confirmed anything
-    return out;
+  } catch (error) {
+    // Before the table exists nobody has confirmed anything. Any other failure
+    // (a dropped connection) must not read as "no goals": that would be saved
+    // into the stats cache and re-sync claims without their goals.
+    if (isMissingRelationError(error)) return out;
+    throw error;
   }
   for (const r of rows) {
     if (r.verdict !== "goal" && r.verdict !== "not_goal") continue;
@@ -163,18 +195,23 @@ export async function goalVotesFor(recordingIds: number[]): Promise<Map<number, 
 
 /** Cast, change or (verdict null) take back one player's verdict on one candidate. */
 export async function setGoalVote(recordingId: number, atTenths: number, userId: number, verdict: GoalVerdict | null, matchId: number | null): Promise<void> {
-  if (verdict === null) {
-    await db.delete(recordingGoalVotesTable).where(and(
+  // His earlier verdict on this chance may sit at a slightly different moment
+  // (a re-analysis moved the candidate, and votes match within
+  // voteMatchSeconds), so clear whatever he said near it, then save the new one.
+  const reach = GOAL_REVIEW.voteMatchSeconds * 10;
+  await db.transaction(async (tx) => {
+    await tx.delete(recordingGoalVotesTable).where(and(
       eq(recordingGoalVotesTable.recordingId, recordingId),
-      eq(recordingGoalVotesTable.atTenths, atTenths),
       eq(recordingGoalVotesTable.userId, userId),
+      gte(recordingGoalVotesTable.atTenths, atTenths - reach),
+      lte(recordingGoalVotesTable.atTenths, atTenths + reach),
     ));
-    return;
-  }
-  await db.insert(recordingGoalVotesTable)
-    .values({ recordingId, atTenths, userId, verdict, matchId })
-    .onConflictDoUpdate({
-      target: [recordingGoalVotesTable.recordingId, recordingGoalVotesTable.atTenths, recordingGoalVotesTable.userId],
-      set: { verdict, matchId, updatedAt: new Date() },
-    });
+    if (verdict === null) return;
+    await tx.insert(recordingGoalVotesTable)
+      .values({ recordingId, atTenths, userId, verdict, matchId })
+      .onConflictDoUpdate({
+        target: [recordingGoalVotesTable.recordingId, recordingGoalVotesTable.atTenths, recordingGoalVotesTable.userId],
+        set: { verdict, matchId, updatedAt: new Date() },
+      });
+  });
 }

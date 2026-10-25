@@ -26,6 +26,7 @@ import { DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 import { publicExportStatus } from "../lib/userClipExportState";
 import { acceptedFriendshipBetween } from "../lib/friends";
 import { activatePaidBooking, cancelUnpaidBooking } from "./owner";
+import { mayConfirmGoalsInRoom } from "../lib/goalRights";
 import { loadCommerce, type Commerce } from "../lib/commerce";
 import {
   ammanLocalInstant,
@@ -685,8 +686,7 @@ router.get("/m/:code/replay", async (req, res): Promise<void> => {
 
 /** Anyone playing in the match, its captain, the field's owner or an admin may say whether a chance was a goal. */
 async function canConfirmGoals(user: LocalUser, ctx: RoomContext): Promise<boolean> {
-  if (isPlaying(await playerForUser(ctx.room.id, user.id))) return true;
-  return canManage(user, ctx);
+  return mayConfirmGoalsInRoom(user, ctx.room);
 }
 
 const goalVoteSchema = z.object({

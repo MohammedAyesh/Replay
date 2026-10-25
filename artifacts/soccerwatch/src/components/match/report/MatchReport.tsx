@@ -26,6 +26,7 @@ import { cameraGaps, clock, minuteMark, metricValue, formatMetric, standings, ra
 import { cn } from "@/lib/utils";
 import { findPath } from "@/lib/find-nav";
 import { GameBar, Num, Section, visibleColour } from "./ReportParts";
+import { GoalReviewBox } from "@/components/match/GoalReview";
 import {
   Disclosure,
   EveryoneSection,
@@ -94,6 +95,8 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
       <TitleBlock room={room} copy={copy} r={r} now={now} colors={colors} names={names} replay={replay} meId={meId} me={me} players={players ?? []} stats={stats} durationSeconds={durationSeconds} onShare={onShare} findRecordingId={findRecordingId} canFind={canFind} />
       <TimelineBlock room={room} r={r} colors={colors} replay={replay} me={me} meId={meId} durationSeconds={durationSeconds} />
       <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
+      {/* "Was it a goal?": after the whistle the scoreboard is gone, so the players answer here */}
+      {replay?.canVoteGoals && <GoalReviewBox room={room} copy={copy} colors={colors} names={names} replay={replay} className="pt-4" />}
       <FlaggedMoments room={room} copy={copy} r={r} />
 
       {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}

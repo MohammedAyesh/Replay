@@ -46,4 +46,24 @@ describe("goal review: anyone confirms", () => {
     const r = reviewGoals(close, [vote(103.5, 7, "goal")], creditAt);
     expect(r.map((g) => g.status)).toEqual(["open", "confirmed"]);
   });
+
+  it("counts one goal when a saved shot and its rebound are both confirmed: the later strike", () => {
+    const rebound = [cand(2399, "shot"), cand(2404, "shot"), cand(4922, "shot")];
+    const r = reviewGoals(rebound, [vote(2399, 7, "goal"), vote(2404, 8, "goal"), vote(4922, 7, "goal")], creditAt);
+    expect(r.filter((g) => g.status === "confirmed").map((g) => g.t)).toEqual([2404, 4922]);
+    expect(r.find((g) => g.t === 2399)?.status).toBe("rejected");
+  });
+
+  it("keeps the chance more players confirmed, then the detector's over a shot", () => {
+    const votes = [vote(2399, 7, "goal"), vote(2399, 9, "goal"), vote(2404, 8, "goal")];
+    const r = reviewGoals([cand(2399, "shot"), cand(2404, "shot")], votes, creditAt);
+    expect(r.filter((g) => g.status === "confirmed").map((g) => g.t)).toEqual([2399]);
+    const r2 = reviewGoals([cand(2399, "goal"), cand(2404, "shot")], [vote(2399, 7, "goal"), vote(2404, 8, "goal")], creditAt);
+    expect(r2.filter((g) => g.status === "confirmed").map((g) => g.t)).toEqual([2399]);
+  });
+
+  it("still counts two goals 20 s apart", () => {
+    const r = reviewGoals([cand(2399, "shot"), cand(2419, "shot")], [vote(2399, 7, "goal"), vote(2419, 7, "goal")], creditAt);
+    expect(r.filter((g) => g.status === "confirmed")).toHaveLength(2);
+  });
 });

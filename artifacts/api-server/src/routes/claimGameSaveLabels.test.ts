@@ -54,6 +54,8 @@ vi.mock("./claimMatch", () => ({
 
 vi.mock("../lib/matchPlayLoad", () => ({ loadRecordingPlay: vi.fn() }));
 vi.mock("../lib/matchFeed", () => ({ joinMatchesFromClaim: vi.fn() }));
+// "Is this you?" answers: none saved for this claim
+vi.mock("../lib/momentChecks", () => ({ momentChecksFor: vi.fn(async () => new Map()) }));
 
 import claimGameRouter from "./claimGame";
 

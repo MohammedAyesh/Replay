@@ -18,6 +18,7 @@ import { loadRecordingPlay, type RecordingPlay } from "../lib/matchPlayLoad";
 import { personalMoments } from "../lib/personalMoments";
 import { clipPartsToMatchWindow, readMatchWindow } from "../lib/matchWindow";
 import { goalVotesFor, reviewedGoalsOf, setGoalVote } from "../lib/goalReview";
+import { goalVoteRights } from "../lib/goalRights";
 import { kitOfParts, seedTeams, sideOfKit, type ClaimedPart } from "../lib/matchPlay";
 import {
   CHECK,
@@ -123,7 +124,10 @@ router.get("/recordings/:id/claim-match/check-deck", async (req, res): Promise<v
     const own = kitOfParts(parts, play.sidecars, play.fps);
     const pick = own ? seedTeams(own, play.kitOptions, play.bib ?? null) : null;
     const ball = play.sidecars.flatMap((sc) => sc?.ball ?? []);
-    for (const g of goalCardsFor(reviewed, ctx.userId, answeredKeys)) {
+    // Only someone in the match may say a chance was a goal (the same rule as
+    // the match page); anyone else gets just his own "Is this you?" cards.
+    const mayVote = await goalVoteRights(ctx.userId, ctx.recordingId);
+    for (const g of goalCardsFor(reviewed.filter((c) => mayVote(c.t)), ctx.userId, answeredKeys)) {
       const from = Math.max(0, g.t - CHECK.goalBefore), to = g.t + CHECK.goalAfter;
       const side = pick ? sideOfKit(g.kit, pick) : null;
       cards.push({
@@ -171,8 +175,13 @@ router.post("/recordings/:id/claim-match/check-deck/answer", async (req, res): P
       const key = Number(cardId.slice(5));
       const play = await loadRecordingPlay(ctx.recordingId);
       const votes = (await goalVotesFor([ctx.recordingId])).get(ctx.recordingId) ?? [];
-      if (!play || !Number.isSafeInteger(key) || !reviewedGoalsOf(play, votes).some((g) => g.key === key)) {
+      const chance = play && Number.isSafeInteger(key) ? reviewedGoalsOf(play, votes).find((g) => g.key === key) : undefined;
+      if (!chance) {
         res.status(404).json({ error: "No such chance" });
+        return;
+      }
+      if (!(await goalVoteRights(ctx.userId, ctx.recordingId))(chance.t)) {
+        res.status(403).json({ error: "Only players in this match can confirm goals" });
         return;
       }
       if (verdict === "skip") await saveMomentCheck(ctx.userId, ctx.recordingId, cardId, "skip", null);
