@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bibKit, bibObservedKits, bibPick, isBibKit, passEvents, seedTeams, sideOfKit, type Lab, type Touch } from "./matchPlay";
+import { bibKit, bibObservedKits, bibPick, isBibKit, kitDistance, passEvents, seedTeams, sideOfKit, teamDribbles, type Dribble, type Lab, type Touch } from "./matchPlay";
 
 // Shirt colours measured on recording 401 (yellow bibs against a no-bib side in
 // whatever they wore), seconds on camera as the bundle's kits carry them.
@@ -90,6 +90,20 @@ describe("match rooms when one side wears bibs", () => {
     const bib = bibKit(bibMatch)!;
     expect(bibPick(bib, roomWhite, roomDark)).toBeNull();
     expect(bibPick(null, roomWhite, roomDark)).toBeNull();
+  });
+
+  it("sides dribbles on the bib line, as touches, shots and goals are", () => {
+    const bib = bibKit(bibMatch)!;
+    const pick = bibPick(bib, roomDark, bib.lab)!;
+    // a white shirt is nearer the bib colour than the dark side's, but is not in a bib
+    expect(kitDistance(NO_BIB.white6, pick.b)).toBeLessThan(kitDistance(NO_BIB.white6, pick.a));
+    const kits = new Map<string, Lab>([["white", NO_BIB.white6], ["pink", NO_BIB.pink10], ["bib", YELLOW[3]]]);
+    const dribble = (trackId: string, outcome: Dribble["outcome"]) => ({ trackId, outcome }) as Dribble;
+    const sides = teamDribbles([dribble("white", "won"), dribble("pink", "lost"), dribble("bib", "won")], kits, pick);
+    expect(sides).toEqual({ total: [2, 1], won: [1, 1], lost: [1, 0] });
+    for (const id of kits.keys()) {
+      expect(teamDribbles([dribble(id, "won")], kits, pick).total[1]).toBe(sideOfKit(kits.get(id)!, pick));
+    }
   });
 
   it("would have put the white shirt with the bibs by plain colour distance", () => {

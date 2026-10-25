@@ -1067,7 +1067,8 @@ export function teamDribbles(dribbles: Dribble[], kits: Map<string, Lab>, pick: 
   for (const d of dribbles) {
     const kit = kits.get(d.trackId);
     if (!kit) continue;
-    const side = kitDistance(kit, pick.a) <= kitDistance(kit, pick.b) ? 0 : 1;
+    // the bib line when one side wears bibs, as touches, passes, shots and goals are sided
+    const side = sideOfPick(kit, pick);
     total[side]++;
     if (d.outcome === "won") won[side]++;
     else if (d.outcome === "lost") lost[side]++;
