@@ -10,25 +10,26 @@ import { drawEndScreenFrame } from "./endScreenFrame";
 import type { Dims, EndScreen } from "./types";
 
 /**
- * Puts an end screen over the last seconds of a rendered clip.
+ * Puts an end screen after a rendered clip, over the footage that follows it.
  *
- * The footage keeps playing underneath: a blurred copy of it fades in over the
- * sharp one (ffmpeg's gblur, faded in), and the card is drawn frame by frame in
- * Node and laid over that as raw RGBA. The card being ordinary 2D canvas code is
- * the point — easing, count-ups, Arabic shaping and a real QR code are all one
- * function, and the same function draws the console's preview.
+ * The clip the player chose is never covered: the export renders a few seconds
+ * past his end point, and the card plays over those (Mohammed, 2026-10-25: "the
+ * recording should keep going for more seconds and add the branding at the
+ * end"). A blurred copy of that footage fades in over the sharp one (ffmpeg's
+ * gblur, faded in), and the card is drawn frame by frame in Node and laid over
+ * it as raw RGBA. The card being ordinary 2D canvas code is the point —
+ * easing, count-ups, Arabic shaping and a real QR code are all one function,
+ * and the same function draws the console's preview.
  *
- * Only the tail is re-encoded. The main render puts a keyframe exactly where the
- * end screen starts (see endScreenStart), so the head is a stream copy and the
+ * Only the tail is re-encoded. The main render puts a keyframe exactly at the
+ * clip's end (see endScreenStart), so the clip itself is a stream copy and the
  * two halves join with the concat demuxer like the intro and end card do.
  *
- * A clip too short to give up its last seconds gets the card appended instead,
- * over its last frame frozen and blurred: the moment itself is never covered.
+ * When the recording stops before the card does (a clip at the very end of an
+ * hour), the last frame is held for the rest of it.
  */
 
 export const FPS = 30;
-/** Clips shorter than this keep every frame; the card is appended. */
-export const MIN_OVERLAP_CLIP_SECONDS = 6;
 
 export type EndScreenJob = {
   spec: EndScreen;
@@ -41,13 +42,20 @@ export type EndScreenJob = {
 };
 
 /**
- * Where the end screen begins inside the main clip, or null when it is
- * appended. The main encode forces a keyframe here so the head can be copied.
+ * Where the end screen begins: the end of the clip the player chose, on a
+ * frame boundary. The main encode forces a keyframe here so the clip can be
+ * copied, and renders up to `seconds` of footage past it for the card.
  */
-export function endScreenStart(clipDuration: number, seconds: number): number | null {
-  if (clipDuration < Math.max(MIN_OVERLAP_CLIP_SECONDS, seconds + 3)) return null;
-  // Whole frames, so the keyframe and the cut land on the same frame.
-  return Math.round((clipDuration - seconds) * FPS) / FPS;
+export function endScreenStart(clipDuration: number): number {
+  return Math.max(0, Math.round(clipDuration * FPS) / FPS);
+}
+
+/** How much footage past the clip the export renders for the card. */
+export function endScreenRunOn(clipEndSec: number, sourceDuration: number, seconds: number): number {
+  const left = Number.isFinite(sourceDuration) ? sourceDuration - clipEndSec : 0;
+  // Less than a frame is nothing: the card then holds the last frame.
+  const runOn = Math.max(0, Math.min(seconds, left));
+  return runOn < 1 / FPS ? 0 : Math.floor(runOn * FPS) / FPS;
 }
 
 function spawnFfmpeg(args: string[], timeoutMs: number): {
@@ -183,19 +191,22 @@ export async function ffmpegWithCard(args: string[], job: EndScreenJob, dims: Di
 }
 
 /**
- * Render the card over `background` (the clip's tail, or its frozen last frame)
- * to an MP4 encoded with the shared export spec.
+ * Render the card over the footage after `start` (held on its last frame when
+ * it runs out) to an MP4 encoded with the shared export spec. Always exactly
+ * `job.seconds` long.
  */
 async function renderTail(options: {
   mainPath: string;
   dims: Dims;
   job: EndScreenJob;
   start: number;
-  appended: boolean;
+  /** No footage after `start`: the card holds the clip's last frame. */
+  held: boolean;
+  duration: number;
   encode: { video: string[]; audio: string[] };
   hasAudio: boolean;
 }): Promise<string> {
-  const { mainPath, dims, job, start, appended, encode } = options;
+  const { mainPath, dims, job, start, held, encode } = options;
   const out = path.join(os.tmpdir(), `soccerwatch-endscreen-${randomUUID()}.mp4`);
   const portrait = dims.h > dims.w;
   const scale = dims.w / (portrait ? 1080 : 1920);
@@ -204,12 +215,12 @@ async function renderTail(options: {
   const ramp = 0.4;
 
   // Seek on the input (accurate when transcoding) rather than trimming in the
-  // graph, so a long clip is not decoded from its first frame.
-  const seekTo = appended ? Math.max(0, start - 0.1) : start;
-  const videoIn = appended
-    // The last frame, held for the whole card.
-    ? `[0:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${S},trim=duration=${S},setpts=PTS-STARTPTS`
-    : `[0:v]setpts=PTS-STARTPTS,trim=duration=${S},setpts=PTS-STARTPTS`;
+  // graph, so a long clip is not decoded from its first frame. A held card
+  // seeks just before the end so there is a last frame to hold.
+  const seekTo = held ? Math.max(0, options.duration - 0.1) : start;
+  // Whatever footage follows, then its last frame held, cut to the card's length.
+  const videoIn =
+    `[0:v]setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop_duration=${S},trim=duration=${S},setpts=PTS-STARTPTS`;
   const filter = [
     `${videoIn},fps=${FPS},format=yuv420p,split=2[sharp][toblur]`,
     // Blurred at a quarter of the size and scaled back: the same look for a
@@ -222,10 +233,11 @@ async function renderTail(options: {
     `[sharp][blurred]overlay=0:0[bg]`,
     `[1:v]format=rgba[card]`,
     `[bg][card]overlay=0:0:format=auto:shortest=1,format=yuv420p[v]`,
-    appended || !options.hasAudio
+    held || !options.hasAudio
       ? `[2:a]atrim=duration=${S},asetpts=PTS-STARTPTS[a]`
-      // The clip's sound carries on, ducked to 30% as the card lands.
-      : `[0:a]asetpts=PTS-STARTPTS,atrim=duration=${S},` +
+      // The match's sound carries on, ducked to 30% as the card lands, and
+      // goes quiet if the recording ends first.
+      : `[0:a]asetpts=PTS-STARTPTS,apad,atrim=duration=${S},` +
         `volume='if(lt(t,${ramp}),1-0.7*t/${ramp},0.3)':eval=frame[a]`,
   ].join(";");
 
@@ -262,7 +274,7 @@ async function renderTail(options: {
  * footage jumps back two frames where the end screen begins. The segment muxer
  * splits on the keyframe itself, so the head ends on the frame before it.
  */
-async function cutHead(mainPath: string, start: number, temps: string[]): Promise<string> {
+export async function cutHead(mainPath: string, start: number, temps: string[]): Promise<string> {
   const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "soccerwatch-endscreen-head-"));
   try {
     await runFfmpeg([
@@ -300,23 +312,24 @@ async function concat(parts: string[]): Promise<string> {
 }
 
 /**
- * Apply the end screen to `mainPath` and return the new file. Throws on any
- * failure; the caller decides that a clip without its end screen is still a
- * clip (renderClip does, and exports `mainPath` unchanged).
+ * Apply the end screen to `mainPath` and return the new file: the clip up to
+ * `start`, then the card for `job.seconds` over whatever footage follows.
+ * Throws on any failure; the caller decides that a clip without its end screen
+ * is still a clip (renderClip does, and trims the run-on footage off).
  */
 export async function applyEndScreen(options: {
   mainPath: string;
   dims: Dims;
   job: EndScreenJob;
-  /** From endScreenStart(), the same value the main encode keyed on. */
-  start: number | null;
+  /** The clip's end inside mainPath: endScreenStart(), the value the main encode keyed on. */
+  start: number;
   encode: { video: string[]; audio: string[] };
   hasAudio: boolean;
 }): Promise<string> {
   const { mainPath, job, encode } = options;
   const duration = await probeDuration(mainPath);
-  const appended = options.start === null || options.start >= duration - 0.5;
-  const start = appended ? duration : options.start!;
+  const held = options.start >= duration - 1 / FPS;
+  const start = Math.min(options.start, duration);
   const temps: string[] = [];
   try {
     const tail = await renderTail({
@@ -324,18 +337,19 @@ export async function applyEndScreen(options: {
       dims: options.dims,
       job,
       start,
-      appended,
+      held,
+      duration,
       encode,
       hasAudio: options.hasAudio,
     });
     temps.push(tail);
 
-    let head = mainPath;
-    if (!appended) {
-      head = await cutHead(mainPath, start, temps);
-    }
+    const head = held ? mainPath : await cutHead(mainPath, start, temps);
     const final = await concat([head, tail]);
-    logger.info({ kind: job.spec.kind, appended, start, seconds: job.seconds }, "End screen applied");
+    logger.info(
+      { kind: job.spec.kind, start, runOn: held ? 0 : Math.min(job.seconds, duration - start), seconds: job.seconds },
+      "End screen applied",
+    );
     return final;
   } finally {
     for (const t of temps) fs.unlink(t, () => {});

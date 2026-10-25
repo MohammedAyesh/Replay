@@ -6,7 +6,7 @@ import os from "os";
 import { logger } from "./logger";
 import { BUNNY_STORAGE_API_KEY, isBunnyStorageUrl } from "./bunny";
 import { buildOverlayFilterComplex } from "./brandingAssets";
-import { applyEndScreen, endScreenStart, type EndScreenJob } from "./clipBranding/endScreenVideo";
+import { applyEndScreen, cutHead, endScreenRunOn, endScreenStart, type EndScreenJob } from "./clipBranding/endScreenVideo";
 import {
   EXPORT_SOURCE_WIDTH,
   EXPORT_SOURCE_HEIGHT,
@@ -144,9 +144,10 @@ export interface FfmpegExportOptions {
   /** Referer for fetching either branding asset. */
   brandingReferer?: string;
   /**
-   * A drawn end screen over the clip's last seconds (lib/clipBranding). The
-   * main encode puts a keyframe where it starts so only the tail is re-encoded.
-   * Any failure exports the clip without it.
+   * A drawn end screen after the clip (lib/clipBranding), over the footage
+   * that follows its end. The main encode runs on past the end and puts a
+   * keyframe there, so only the tail is re-encoded. Any failure exports the
+   * clip without it, cut back to its own end.
    */
   endScreen?: EndScreenJob;
 }
@@ -1077,7 +1078,12 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // own audio parameters and costs no extra probe.
   // The end screen's tail is joined the same way, so it needs the same audio spec.
   const willConcat = !!options.introUrl || !!options.endCardUrl || !!options.endScreen;
-  const endStart = options.endScreen ? endScreenStart(clipDuration, options.endScreen.seconds) : null;
+  // The end screen plays after the clip, over the footage that follows it:
+  // render that much further (whatever the source has, up to the card's
+  // length) with a keyframe at the clip's end.
+  const endStart = options.endScreen ? endScreenStart(clipDuration) : null;
+  const runOn = options.endScreen ? endScreenRunOn(endSec, totalDuration, options.endScreen.seconds) : 0;
+  const renderDuration = clipDuration + runOn;
   let mainHasAudio = true;
   try {
     if (willConcat) {
@@ -1148,8 +1154,8 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     ...(needsSilentTrack
       ? ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
       : []),
-    // Clip duration
-    "-t", String(clipDuration),
+    // Clip duration, plus the footage the end screen plays over
+    "-t", String(renderDuration),
     // pad -> crop pan -> scale, all built together so black bars survive
     ...(overlayScriptPath
       ? ["-filter_complex_script", overlayScriptPath, "-map", "[v]"]
@@ -1162,7 +1168,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
     ...EXPORT_ENCODE_ARGS.audio,
     // A keyframe exactly where the end screen starts, so the clip up to it can
     // be stream-copied rather than encoded twice.
-    ...(endStart !== null ? ["-force_key_frames", endStart.toFixed(3)] : []),
+    ...(endStart !== null && runOn > 0 ? ["-force_key_frames", endStart.toFixed(3)] : []),
     // With an overlay present the video comes from the filter graph's [v] label
     // (mapped above) and the silent track has moved to input 2. Leaving this as
     // a bare 1:a:0 would map the overlay PNG as audio and fail the render.
@@ -1225,7 +1231,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
       logger.info({ tmpPath }, "FFmpeg render complete");
       // With an end screen the main encode always carries an audio track
       // (willConcat above adds silence when the source has none).
-      withEndScreen(tmpPath, is9to16, options.endScreen, endStart, true)
+      withEndScreen(tmpPath, is9to16, options.endScreen, endStart, runOn, true)
         .then(({ path: mainPath, applied }) => withBookends(
           mainPath,
           is9to16,
@@ -1250,9 +1256,10 @@ async function withEndScreen(
   is9to16: boolean,
   job: EndScreenJob | undefined,
   start: number | null,
+  runOn: number,
   hasAudio: boolean,
 ): Promise<{ path: string; applied: boolean }> {
-  if (!job) return { path: mainPath, applied: false };
+  if (!job || start === null) return { path: mainPath, applied: false };
   try {
     const out = await applyEndScreen({
       mainPath,
@@ -1266,7 +1273,17 @@ async function withEndScreen(
     return { path: out, applied: true };
   } catch (err) {
     logger.error({ err, kind: job.spec.kind }, "End screen failed — exporting the clip without it");
-    return { path: mainPath, applied: false };
+    if (runOn <= 0) return { path: mainPath, applied: false };
+    // The render ran on past the clip for the card; without the card those
+    // seconds are not what the player chose, so cut them off again.
+    try {
+      const head = await cutHead(mainPath, start, []);
+      cleanupTempFile(mainPath);
+      return { path: head, applied: false };
+    } catch (cutErr) {
+      logger.error({ err: cutErr }, "Could not trim the run-on footage — exporting it as rendered");
+      return { path: mainPath, applied: false };
+    }
   }
 }
 
@@ -1414,7 +1431,8 @@ export function getBufferedWindow(options: {
   const { startSec, clipDuration, totalDuration } = options;
   // Never request more than the source content remaining after startSec.
   const availableDuration = Math.max(0, totalDuration - startSec);
-  // +5 s safety margin for GOP alignment, but never beyond what the source has.
-  const requestedWindow = Math.min(clipDuration + 5, availableDuration);
+  // +7 s: room for the end screen's run-on footage (at most 6 s) plus GOP
+  // alignment, but never beyond what the source has.
+  const requestedWindow = Math.min(clipDuration + 7, availableDuration);
   return { availableDuration, requestedWindow };
 }

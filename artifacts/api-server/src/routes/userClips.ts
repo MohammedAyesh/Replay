@@ -52,7 +52,9 @@ import {
 import { classifyPortfolioSourceError } from "../lib/portfolioPlayback";
 import { clipSettingsTable } from "@workspace/db";
 import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
-import { planClipBranding } from "../lib/clipBranding/plan";
+import { cleanChoice, endScreenFor, endScreenOptions, planClipBranding } from "../lib/clipBranding/plan";
+import { MAX_CARD_STATS } from "../lib/clipBranding/types";
+import { PREVIEW_DIMS, renderPreviewPng } from "../lib/clipBranding/preview";
 import { backupBrandingFor } from "../lib/clipBranding/backup";
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
 import { logger } from "../lib/logger";
@@ -818,6 +820,7 @@ async function runBackgroundExport(
           academyId: clip.academyId,
           matchCode: clip.matchCode,
           footageRequestId: clip.footageRequestId,
+          endScreen: clip.endScreen,
         },
         clipFieldId,
         clip.aspectRatio === "9:16",
@@ -921,6 +924,12 @@ async function runBackgroundExport(
       if (bufferTmpFile) cleanupTempFile(bufferTmpFile);
       if (tmpPath) cleanupTempFile(tmpPath);
       for (const f of assetTmpFiles) cleanupTempFile(f);
+      // The player changed his end screen while this was rendering.
+      if (rerenderAfterCurrent.delete(clipId)) {
+        void rerenderForEndScreen(clipId).catch((err) => {
+          logger.error({ err, clipId }, "Could not re-render a clip after its end screen changed");
+        });
+      }
     }
 }
 
@@ -932,12 +941,23 @@ async function runBackgroundExport(
 export async function queueAdminClipReclip(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
 ): Promise<{ accepted: boolean; queuePosition: number | null }> {
+  return queueClipRerender(clip, true);
+}
+
+/**
+ * Re-render a clip under a new revision (an admin re-clip, or a player who
+ * changed his end screen). The published export stays until the new one lands.
+ */
+async function queueClipRerender(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+  trackAdminFailure: boolean,
+): Promise<{ accepted: boolean; queuePosition: number | null }> {
   if (inFlight.has(clip.id) || isInternalPendingStatus(clip.exportStatus)) {
     return { accepted: false, queuePosition: queueStateFor(clip.id).position };
   }
 
   inFlight.add(clip.id);
-  adminClipFailureReasons.delete(clip.id);
+  if (trackAdminFailure) adminClipFailureReasons.delete(clip.id);
   try {
     // Keep exportedUrl while the replacement renders. It changes only after
     // Bunny Storage confirms the versioned replacement upload.
@@ -952,9 +972,33 @@ export async function queueAdminClipReclip(
 
   startBackgroundExport(clip, {
     exportRevision: randomUUID().replace(/-/g, ""),
-    trackAdminFailure: true,
+    trackAdminFailure,
   });
   return { accepted: true, queuePosition: queueStateFor(clip.id).position };
+}
+
+/** Clips whose end screen changed while they were rendering: re-render once that render ends. */
+const rerenderAfterCurrent = new Set<number>();
+
+/**
+ * Re-render a clip whose end screen choice changed. A clip that has never been
+ * exported picks the choice up on its first export; one that is rendering now
+ * is re-rendered as soon as that finishes.
+ */
+async function rerenderForEndScreen(clipId: number): Promise<"rerendering" | "queued" | "unchanged" | "expired"> {
+  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
+  if (!clip || isSoftDeletedClip(clip) || isLiveVideoId(clip.videoId) || clip.exportStatus == null) return "unchanged";
+  if (clip.exportStatus === "expired") return "expired";
+  if (inFlight.has(clip.id) || isInternalPendingStatus(clip.exportStatus)) {
+    rerenderAfterCurrent.add(clip.id);
+    return "queued";
+  }
+  const queued = await queueClipRerender(clip, false);
+  if (!queued.accepted) {
+    rerenderAfterCurrent.add(clip.id);
+    return "queued";
+  }
+  return "rerendering";
 }
 
 /**
@@ -1028,6 +1072,7 @@ setBackupBrandingProvider(async (clip, uploadedOverlayUrl, exportRevision) => {
       academyId: clip.academyId,
       matchCode: clip.matchCode,
       footageRequestId: clip.footageRequestId,
+      endScreen: clip.endScreen,
     },
     clip.aspectRatio === "9:16",
     fieldId,
@@ -2638,6 +2683,108 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   } finally {
     req.off("aborted", abortUpstream);
     res.off("close", abortUpstream);
+  }
+});
+
+// ── The player's end screen (2026-10-25) ──────────────────────────────────
+// Which card goes after his clip and which numbers are on it. The venue
+// decides whether there is an end screen at all (Admin → Branding); the
+// player chooses among the cards it has switched on.
+
+async function ownClipForEndScreen(req: Parameters<typeof getLocalUserId>[0], rawId: unknown) {
+  const userId = await getLocalUserId(req);
+  if (!userId) return { error: "auth" as const };
+  const clipId = parseInt(String(Array.isArray(rawId) ? rawId[0] : rawId), 10);
+  if (isNaN(clipId)) return { error: "bad" as const };
+  const [clip] = await db.select().from(userClipsTable)
+    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+  if (!clip || isSoftDeletedClip(clip)) return { error: "missing" as const };
+  return { clip };
+}
+
+function brandingClipOf(clip: typeof userClipsTable.$inferSelect, endScreen?: unknown) {
+  return {
+    id: clip.id,
+    userId: clip.userId,
+    academyId: clip.academyId,
+    matchCode: clip.matchCode,
+    footageRequestId: clip.footageRequestId,
+    endScreen: endScreen === undefined ? clip.endScreen : endScreen,
+  };
+}
+
+router.get("/user-clips/:id/end-screen", async (req, res): Promise<void> => {
+  const found = await ownClipForEndScreen(req, req.params.id);
+  if (found.error === "auth") { unauthenticatedResponse(res, req); return; }
+  if (found.error === "bad") { res.status(400).json({ error: "Invalid clip id" }); return; }
+  if (!found.clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  const clip = found.clip;
+  const fieldId = await fieldIdForClip(clip.id);
+  const options = await endScreenOptions(brandingClipOf(clip), fieldId, {
+    academyId: clip.academyId, fieldId, userId: clip.userId,
+  });
+  res.json({ ...options, aspectRatio: clip.aspectRatio, exportStatus: publicExportStatus(clip.exportStatus) });
+});
+
+router.put("/user-clips/:id/end-screen", async (req, res): Promise<void> => {
+  const found = await ownClipForEndScreen(req, req.params.id);
+  if (found.error === "auth") { unauthenticatedResponse(res, req); return; }
+  if (found.error === "bad") { res.status(400).json({ error: "Invalid clip id" }); return; }
+  if (!found.clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  const clip = found.clip;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const choice = cleanChoice(body);
+  if (body.card !== undefined && choice.card === undefined) { res.status(400).json({ error: "Unknown card" }); return; }
+  if (Array.isArray(body.stats) && (choice.stats?.length ?? 0) !== new Set(body.stats).size) {
+    res.status(400).json({ error: `Pick up to ${MAX_CARD_STATS} numbers from the list` });
+    return;
+  }
+  const stored = choice.card === undefined && !choice.stats ? null : choice;
+  const changed = JSON.stringify(cleanChoice(clip.endScreen)) !== JSON.stringify(cleanChoice(stored));
+  await db.update(userClipsTable).set({ endScreen: stored }).where(eq(userClipsTable.id, clip.id));
+  const rerender = changed ? await rerenderForEndScreen(clip.id) : "unchanged";
+  logger.info({ clipId: clip.id, choice: stored, rerender }, "Player changed his clip's end screen");
+  const fieldId = await fieldIdForClip(clip.id);
+  const options = await endScreenOptions(brandingClipOf(clip, stored), fieldId, {
+    academyId: clip.academyId, fieldId, userId: clip.userId,
+  });
+  res.json({ ...options, rerender });
+});
+
+router.get("/user-clips/:id/end-screen/preview.png", async (req, res): Promise<void> => {
+  const found = await ownClipForEndScreen(req, req.params.id);
+  if (found.error === "auth") { unauthenticatedResponse(res, req); return; }
+  if (found.error === "bad") { res.status(400).json({ error: "Invalid clip id" }); return; }
+  if (!found.clip) { res.status(404).json({ error: "Clip not found" }); return; }
+  const clip = found.clip;
+  // The choice being considered, not yet saved: ?card=player&stats=goals,distance
+  const q = req.query as Record<string, unknown>;
+  const choice = cleanChoice({
+    card: typeof q.card === "string" ? q.card : undefined,
+    stats: typeof q.stats === "string" && q.stats ? q.stats.split(",") : undefined,
+  });
+  const fieldId = await fieldIdForClip(clip.id);
+  const temps: string[] = [];
+  try {
+    const card = await endScreenFor(brandingClipOf(clip, choice), fieldId,
+      { academyId: clip.academyId, fieldId, userId: clip.userId }, temps);
+    if (!card) { res.status(404).json({ error: "This clip has no end screen" }); return; }
+    const png = await renderPreviewPng({
+      look: card.spec.look,
+      what: card.spec.kind,
+      dims: PREVIEW_DIMS[clip.aspectRatio === "9:16" ? "9:16" : "16:9"],
+      blur: card.blur,
+      dim: card.dim,
+      spec: card.spec,
+    });
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.send(png);
+  } catch (err) {
+    logger.error({ err, clipId: clip.id }, "Could not draw the end screen preview");
+    if (!res.headersSent) res.status(500).json({ error: "Preview failed" });
+  } finally {
+    for (const t of temps) cleanupTempFile(t);
   }
 });
 

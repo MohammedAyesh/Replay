@@ -38,7 +38,7 @@ export function sampleEndScreen(kind: EndScreenKind, look: BrandLook): EndScreen
           { value: 2, decimals: 0, unit: "", labelAr: "أهداف", best: false },
           { value: 24.3, decimals: 1, unit: "km/h", labelAr: "أعلى سرعة", best: true },
           { value: 4.6, decimals: 1, unit: "km", labelAr: "مسافة", best: false },
-          { value: 62, decimals: 0, unit: "", labelAr: "لمسة", best: false },
+          { value: 3, decimals: 0, unit: "", labelAr: "تسديدة على المرمى", best: false },
         ],
       };
     case "match":
@@ -57,7 +57,7 @@ export function sampleEndScreen(kind: EndScreenKind, look: BrandLook): EndScreen
         stats: [
           { value: 3.1, decimals: 1, unit: "km", labelAr: "مسافة", best: false, delta: { text: "12%", up: true } },
           { value: 21.4, decimals: 1, unit: "km/h", labelAr: "أعلى سرعة", best: false, delta: { text: "0.9", up: true } },
-          { value: 48, decimals: 0, unit: "", labelAr: "لمسة", best: false, delta: { text: "3", up: false } },
+          { value: 2, decimals: 0, unit: "", labelAr: "تسديدة على المرمى", best: false, delta: { text: "1", up: true } },
         ],
       };
     default:
@@ -76,6 +76,8 @@ export async function renderPreviewPng(input: {
   dims: Dims;
   blur: number;
   dim: number;
+  /** A real card (a player's own) instead of the sample for `what`. */
+  spec?: EndScreen;
 }): Promise<Buffer> {
   ensureBrandingFonts();
   const { dims } = input;
@@ -101,7 +103,7 @@ export async function renderPreviewPng(input: {
     ctx.drawImage(await loadImage(png), 0, 0);
   } else {
     ctx.scale(scale, scale);
-    drawEndScreenFrame(ctx, sampleEndScreen(input.what as EndScreenKind, input.look), 3, {
+    drawEndScreenFrame(ctx, input.spec ?? sampleEndScreen(input.what as EndScreenKind, input.look), 3, {
       portrait,
       total: 3,
       dim: input.dim,
@@ -150,7 +152,8 @@ export async function renderPreviewMp4(input: {
     mainPath: sample,
     dims: input.dims,
     job,
-    start: endScreenStart(duration, input.seconds),
+    // The sample stands in for a clip followed by the footage the card plays over.
+    start: endScreenStart(Math.max(1, duration - input.seconds)),
     encode: {
       video: ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-r", "30", "-fps_mode", "cfr"],
       audio: ["-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2"],

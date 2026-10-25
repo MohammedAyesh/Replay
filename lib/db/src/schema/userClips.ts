@@ -70,6 +70,12 @@ export const userClipsTable = pgTable("user_clips", {
    *  taken from the wrong second. */
   posterAtSec: numeric("poster_at_sec", { precision: 10, scale: 3 }),
   hiddenReason: text("hidden_reason").$type<"reports" | "removal_request" | "admin" | "deleted">(),
+  /**
+   * The player's choice for this clip's end screen (2026-10-25): which card,
+   * and which numbers on it. Null = automatic. Only read when the venue has
+   * the end screen switched on in Admin → Branding.
+   */
+  endScreen: jsonb("end_screen").$type<{ card?: string; stats?: string[] }>(),
 });
 
 export type UserClipRow = typeof userClipsTable.$inferSelect;

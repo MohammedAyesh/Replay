@@ -365,7 +365,7 @@ describe("clip export window and source selection", () => {
       totalDuration: 100,
     })).toEqual({
       availableDuration: 90,
-      requestedWindow: 15,
+      requestedWindow: 17,
     });
   });
 

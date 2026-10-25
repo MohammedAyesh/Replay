@@ -35,6 +35,7 @@ export * from "./settingsRules";
 export * from "./settingsDefaults";
 export * from "./brandingAssets";
 export * from "./brandingProfiles";
+export * from "./userReels";
 export * from "./analysisJobs";
 export * from "./fieldOwners";
 export * from "./footageRequests";

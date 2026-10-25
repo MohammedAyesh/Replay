@@ -6,9 +6,9 @@ import path from "path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { BRANDING_PRESETS, brandingAssetDir, presetCrestPath, ensureBrandingFonts } from "./assets";
 import { brightOnDark, inkOn, safeColor } from "./draw";
-import { applyEndScreen, endScreenStart, FPS } from "./endScreenVideo";
+import { applyEndScreen, endScreenRunOn, endScreenStart, FPS } from "./endScreenVideo";
 import { renderOverlayPng } from "./overlay";
-import { dateLabelFromLocal, presetFileFromUrl, statLines, planClipBranding } from "./plan";
+import { cleanChoice, dateLabelFromLocal, presetFileFromUrl, statLines, planClipBranding } from "./plan";
 import { renderPreviewPng, sampleEndScreen } from "./preview";
 import { OVERLAY_STYLES, type BrandLook } from "./types";
 import type { PlayerMetricValues } from "../matchStatsRules";
@@ -79,23 +79,44 @@ describe("presetFileFromUrl", () => {
   });
 });
 
-describe("endScreenStart", () => {
-  it("overlaps the last N seconds of a long enough clip, on a frame boundary", () => {
-    const start = endScreenStart(12.34, 3)!;
-    expect(start).toBeCloseTo(9.34, 1);
+describe("end screen timing", () => {
+  it("starts where the clip ends, on a frame boundary — never over the clip", () => {
+    const start = endScreenStart(12.34);
+    expect(start).toBeCloseTo(12.34, 1);
     expect(Math.abs(start * FPS - Math.round(start * FPS))).toBeLessThan(1e-9);
+    expect(endScreenStart(3)).toBe(3);
   });
-  it("appends instead when the clip is too short to cover", () => {
-    expect(endScreenStart(5.9, 3)).toBeNull();
-    expect(endScreenStart(8, 6)).toBeNull();
-    expect(endScreenStart(9, 6)).not.toBeNull();
+  it("runs on for the card's length when the recording continues, and less when it does not", () => {
+    expect(endScreenRunOn(100, 3600, 3)).toBe(3);
+    expect(endScreenRunOn(3598.5, 3600, 3)).toBe(1.5);
+    expect(endScreenRunOn(3600, 3600, 3)).toBe(0);
+    // Less than a frame left is nothing: the card holds the last frame.
+    expect(endScreenRunOn(3599.99, 3600, 3)).toBe(0);
   });
 });
 
 describe("statLines", () => {
-  it("leaves out zero goals and missing numbers, and keeps four at most", () => {
+  it("leaves out zero goals, touches and missing numbers, and keeps four at most", () => {
     const lines = statLines(metrics({ goals: 0, topSpeedKmh: 24.3, distanceKm: 4.6, touches: 62, passesCompleted: 20, dribblesWon: 3 }), []);
-    expect(lines.map((l) => l.labelAr)).toEqual(["أعلى سرعة", "مسافة", "لمسة", "تمريرة صحيحة"]);
+    expect(lines.map((l) => l.labelAr)).toEqual(["أعلى سرعة", "مسافة", "تمريرة صحيحة", "مراوغة ناجحة"]);
+  });
+  it("shows shots on target where touches used to be", () => {
+    const lines = statLines(metrics({ goals: 1, shots: 3, topSpeedKmh: 24.3, distanceKm: 4.6, touches: 62 }), []);
+    expect(lines.map((l) => l.labelAr)).toEqual(["أهداف", "تسديدة على المرمى", "أعلى سرعة", "مسافة"]);
+    expect(lines[1].value).toBe(3);
+  });
+  it("shows exactly the numbers the player picked, in his order, zeros included", () => {
+    const lines = statLines(metrics({ goals: 0, shots: 2, distanceKm: 4.6, topSpeedKmh: null }), [], {
+      pick: ["distance", "goals", "topSpeed", "shotsOnTarget"],
+    });
+    // Top speed was not measured, so it is left out; the zero goals he asked for stay.
+    expect(lines.map((l) => [l.labelAr, l.value])).toEqual([["مسافة", 4.6], ["أهداف", 0], ["تسديدة على المرمى", 2]]);
+  });
+  it("keeps an academy card to three numbers even when four are picked", () => {
+    const lines = statLines(metrics({ goals: 1, shots: 2, distanceKm: 4.6, topSpeedKmh: 20 }), [], {
+      pick: ["goals", "shotsOnTarget", "distance", "topSpeed"], max: 3,
+    });
+    expect(lines).toHaveLength(3);
   });
   it("puts goals first when there are some", () => {
     const lines = statLines(metrics({ goals: 2, topSpeedKmh: 22 }), []);
@@ -115,6 +136,16 @@ describe("statLines", () => {
   it("shows no delta from a single earlier session", () => {
     const [line] = statLines(metrics({ distanceKm: 3.1 }), [metrics({ distanceKm: 2.0 })], { deltas: true });
     expect(line.delta ?? null).toBeNull();
+  });
+});
+
+describe("cleanChoice", () => {
+  it("keeps known cards and numbers, drops the rest, and caps the numbers at four", () => {
+    expect(cleanChoice({ card: "player", stats: ["goals", "touches", "goals", "distance"] }))
+      .toEqual({ card: "player", stats: ["goals", "distance"] });
+    expect(cleanChoice({ card: "nonsense" })).toEqual({});
+    expect(cleanChoice(null)).toEqual({});
+    expect(cleanChoice({ stats: ["goals", "shotsOnTarget", "topSpeed", "distance", "passes"] }).stats).toHaveLength(4);
   });
 });
 
@@ -172,12 +203,13 @@ describe("applyEndScreen", () => {
     audio: ["-c:a", "aac", "-b:a", "64k", "-ar", "44100", "-ac", "2"],
   };
 
-  it("lays the end screen over the last seconds without changing the length", async () => {
+  it("plays the card over the footage after the clip: the clip plus the card's length", async () => {
     const sample = path.join(brandingAssetDir(), "preview", "sample-portrait.mp4");
     const main = path.join(work, "main.mp4");
-    // Re-encode with a keyframe where the end screen starts, as the export does.
+    // The sample stands in for a clip rendered 3 s past its end, with a
+    // keyframe at the end, as the export does.
     const duration = probeDuration(sample);
-    const start = endScreenStart(duration, 3)!;
+    const start = endScreenStart(duration - 3);
     execFileSync("ffmpeg", [
       "-nostdin", "-y", "-v", "error", "-i", sample, ...encode.video, ...encode.audio,
       "-force_key_frames", String(start), main,
@@ -200,7 +232,8 @@ describe("applyEndScreen", () => {
   it("joins frame-accurately with the real export settings (B-frames)", async () => {
     const { EXPORT_ENCODE_ARGS } = await import("../ffmpegExport");
     const main = path.join(work, "bframes.mp4");
-    const start = endScreenStart(10, 3)!;
+    // A 7 s clip rendered 3 s past its end.
+    const start = endScreenStart(7);
     execFileSync("ffmpeg", [
       "-nostdin", "-y", "-v", "error",
       "-f", "lavfi", "-i", "testsrc2=s=608x1080:r=30:d=10",
@@ -235,7 +268,7 @@ describe("applyEndScreen", () => {
     }
   }, 120_000);
 
-  it("appends to a clip too short to cover", async () => {
+  it("holds the last frame when the recording ends with the clip", async () => {
     const short = path.join(work, "short.mp4");
     execFileSync("ffmpeg", [
       "-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=green:s=608x1080:d=3:r=30",
@@ -245,13 +278,47 @@ describe("applyEndScreen", () => {
       mainPath: short,
       dims: { w: 608, h: 1080 },
       job: { spec: sampleEndScreen("signOff", LOOK), seconds: 2.5, blur: 10, dim: 0.4 },
-      start: endScreenStart(3, 2.5),
+      start: endScreenStart(3),
       encode,
       hasAudio: true,
     });
     try {
       expect(probeDuration(out)).toBeGreaterThan(5.3);
       expect(probeDuration(out)).toBeLessThan(5.8);
+    } finally {
+      fs.rmSync(out, { force: true });
+    }
+  }, 120_000);
+
+  it("uses what footage there is after the clip, then holds its last frame", async () => {
+    // A 3 s clip whose recording has only 1 s more: green, then red.
+    const main = path.join(work, "runon.mp4");
+    execFileSync("ffmpeg", [
+      "-nostdin", "-y", "-v", "error",
+      "-f", "lavfi", "-i", "color=c=green:s=608x1080:d=3:r=30",
+      "-f", "lavfi", "-i", "color=c=red:s=608x1080:d=1:r=30",
+      "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+      "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]", "-map", "[v]", "-map", "2:a", "-t", "4",
+      ...encode.video, ...encode.audio, "-force_key_frames", "3", main,
+    ]);
+    const out = await applyEndScreen({
+      mainPath: main,
+      dims: { w: 608, h: 1080 },
+      job: { spec: sampleEndScreen("signOff", LOOK), seconds: 2.5, blur: 0, dim: 0 },
+      start: endScreenStart(3),
+      encode,
+      hasAudio: true,
+    });
+    try {
+      // The clip's 3 s, then the card's 2.5 s.
+      expect(probeDuration(out)).toBeGreaterThan(5.3);
+      expect(probeDuration(out)).toBeLessThan(5.8);
+      // The clip itself is untouched: still green just before its end.
+      const px = (t: number) => execFileSync("ffmpeg", ["-nostdin", "-v", "error", "-ss", String(t), "-i", out,
+        "-frames:v", "1", "-vf", "crop=2:2:300:900", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+      const [r, g] = px(2.9);
+      expect(g).toBeGreaterThan(100);
+      expect(r).toBeLessThan(60);
     } finally {
       fs.rmSync(out, { force: true });
     }
@@ -350,3 +417,71 @@ describe("ffmpegWithCard", () => {
   }, 60_000);
 });
 
+
+describe("renderClip with an end screen (the real export path)", () => {
+  // A 10 s recording at the export source size: blue, then red from 5 s.
+  const source = path.join(work, "recording.mp4");
+  const ensureSource = async () => {
+    if (fs.existsSync(source)) return;
+    const { EXPORT_SOURCE_WIDTH: W, EXPORT_SOURCE_HEIGHT: H } = await import("../exportSource");
+    execFileSync("ffmpeg", [
+      "-nostdin", "-y", "-v", "error",
+      "-f", "lavfi", "-i", `color=c=blue:s=${W}x${H}:d=5:r=30`,
+      "-f", "lavfi", "-i", `color=c=red:s=${W}x${H}:d=5:r=30`,
+      "-f", "lavfi", "-i", "sine=f=440:r=44100:d=10",
+      "-filter_complex", "[0:v][1:v]concat=n=2:v=1[v]", "-map", "[v]", "-map", "2:a",
+      "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-t", "10", source,
+    ]);
+  };
+  const job = { spec: sampleEndScreen("signOff", LOOK), seconds: 3, blur: 0, dim: 0 };
+  const greenOrRed = (file: string, t: number) => {
+    const [r, , b] = execFileSync("ffmpeg", ["-nostdin", "-v", "error", "-ss", String(t), "-i", file,
+      "-frames:v", "1", "-vf", "crop=2:2:300:1000", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]);
+    return r > b ? "red" : "blue";
+  };
+
+  it("keeps the whole clip and plays the card over the footage that follows it", async () => {
+    await ensureSource();
+    const { renderClip } = await import("../ffmpegExport");
+    // The clip is 2 s–5 s (all blue); the card plays over 5 s–8 s (red).
+    const out = await renderClip({
+      videoUrl: source, totalDuration: 10, startTime: 0.2, endTime: 0.5,
+      cropPath: [], aspectRatio: "9:16", title: "t", endScreen: job,
+    });
+    try {
+      expect(Math.abs(probeDuration(out) - 6)).toBeLessThan(0.15);
+      expect(greenOrRed(out, 2.9)).toBe("blue"); // the clip's last moment, untouched
+      expect(greenOrRed(out, 3.5)).toBe("red"); // the footage after it, under the card
+    } finally {
+      fs.rmSync(out, { force: true });
+    }
+  }, 180_000);
+
+  it("holds the last frame when the recording ends with the clip", async () => {
+    await ensureSource();
+    const { renderClip } = await import("../ffmpegExport");
+    const out = await renderClip({
+      videoUrl: source, totalDuration: 10, startTime: 0.6, endTime: 1,
+      cropPath: [], aspectRatio: "9:16", title: "t", endScreen: job,
+    });
+    try {
+      expect(Math.abs(probeDuration(out) - 7)).toBeLessThan(0.15);
+    } finally {
+      fs.rmSync(out, { force: true });
+    }
+  }, 180_000);
+
+  it("without an end screen the clip is exactly the selection", async () => {
+    await ensureSource();
+    const { renderClip } = await import("../ffmpegExport");
+    const out = await renderClip({
+      videoUrl: source, totalDuration: 10, startTime: 0.2, endTime: 0.5,
+      cropPath: [], aspectRatio: "9:16", title: "t",
+    });
+    try {
+      expect(Math.abs(probeDuration(out) - 3)).toBeLessThan(0.15);
+    } finally {
+      fs.rmSync(out, { force: true });
+    }
+  }, 180_000);
+});
