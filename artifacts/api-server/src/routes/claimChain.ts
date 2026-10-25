@@ -26,6 +26,8 @@ import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { mergeMoments, personalMoments, teamGoalMoments, type FollowPoint } from "../lib/personalMoments";
 import { goalVotesFor } from "../lib/goalReview";
+import { unsureMoments } from "../lib/checkDeck";
+import { momentChecksFor } from "../lib/momentChecks";
 import type { ClaimEarnedClip } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -140,7 +142,7 @@ function crossingsFromSegments(segments: readonly CachedTrackingSegment[]) {
  * chain-wide floor, which is exactly how they were scanned before, so an old
  * chain behaves as it did until its next write makes the marks explicit.
  */
-function chainOf(manifest: TrackingManifest, identityId: string): ChainPart[] {
+export function chainOf(manifest: TrackingManifest, identityId: string): ChainPart[] {
   const identity = (manifest.identities ?? []).find((item) => item.id === identityId);
   const parts = (identity?.parts ?? []).map((part) => ({ ...part }));
   return withMarks(parts, scanFloor(parts, null, identity?.reviewedThroughFrame ?? null));
@@ -735,9 +737,17 @@ export async function syncChainClaim(
           // only goals a player in the match confirmed (goalReview); a goal
           // confirmed later re-syncs every claim on the recording
           const goalVotes = (await goalVotesFor([ctx.recordingId])).get(ctx.recordingId) ?? [];
+          // "Is this you?": a moment where his piece could be someone else
+          // waits for his "yes" in the check deck before it becomes a clip
+          // (lib/checkDeck). A "no" has already taken it off the claim.
+          const mine = personalMoments(play, parts, ctx.segments, ctx.manifest, goalVotes);
+          const answers = await momentChecksFor(ctx.userId, ctx.recordingId);
+          const waiting = new Set(unsureMoments(mine, parts, ctx.segments, play.manifest, play.kits)
+            .filter((u) => answers.get(u.moment.id)?.verdict !== "yes")
+            .map((u) => u.moment.id));
           earnedClips = mergeMoments(
             earnedClips,
-            personalMoments(play, parts, ctx.segments, ctx.manifest, goalVotes),
+            mine.filter((m) => !waiting.has(m.id)),
             teamGoalMoments(play, state.attributed, ctx.manifest, parts, goalVotes),
           );
         }

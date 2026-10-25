@@ -31,6 +31,7 @@ import Live from "@/pages/live";
 import ClaimDemo from "@/pages/claim-demo";
 import ClaimChain from "@/pages/claim-chain";
 import ClaimGame from "@/pages/claim-game";
+import CheckDeckPage from "@/pages/check-deck";
 import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
 import OwnerVar from "@/pages/owner-var";
@@ -497,7 +498,9 @@ function AppRouter() {
   const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/");
   const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute;
   const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me";
-  const isStandaloneRoute = isPublicStandaloneRoute || isFamilyMeRoute;
+  // "Is this you?" is a full-screen swipe deck: no app bars around it
+  const isDeckRoute = /^\/find\/\d+\/check\/?$/.test(location.split(/[?#]/)[0]);
+  const isStandaloneRoute = isPublicStandaloneRoute || isFamilyMeRoute || isDeckRoute;
   const [retryingIdentity, setRetryingIdentity] = useState(false);
   const [signOutPending, setSignOutPending] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
@@ -564,6 +567,7 @@ function AppRouter() {
         <Route path="/my-clips" component={MyClips} />
         <Route path="/live" component={Live} />
         <Route path="/claim/demo" component={ClaimDemo} />
+        <Route path="/find/:id/check" component={CheckDeckPage} />
         <Route path="/find/:id" component={ClaimGame} />
         <Route path="/find-quick/:id" component={FindQuickRedirect} />
         <Route path="/claim/:id" component={ClaimChain} />

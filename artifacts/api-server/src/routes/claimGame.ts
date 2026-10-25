@@ -38,6 +38,8 @@ import {
   fieldsTable,
 } from "@workspace/db";
 import { normaliseChain, type ChainPart } from "../lib/claimChain";
+import { applyCuts } from "../lib/checkDeck";
+import { momentChecksFor } from "../lib/momentChecks";
 import {
   detectedShots,
   shotContext,
@@ -347,8 +349,11 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
 
   // Every claimed piece, clamped to its track and marked answered: the game
   // claim has already asked everything it is going to ask.
+  // Stretches the claimant said were not him in the "Is this you?" deck stay
+  // off, whatever the page sends (it builds its pieces from its own answers).
+  const cuts = [...(await momentChecksFor(ctx.userId, ctx.recordingId)).values()].flatMap((c) => c.cut ? [c.cut] : []);
   const chain: ChainPart[] = normaliseChain(
-    parsed.data.parts.map((part) => ({ ...part, reviewedThrough: part.toFrame + 1 })),
+    applyCuts(parsed.data.parts, cuts).map((part) => ({ ...part, reviewedThrough: part.toFrame + 1 })),
     ctx.tracksById,
   );
 

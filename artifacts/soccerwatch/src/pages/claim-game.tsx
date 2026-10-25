@@ -38,6 +38,8 @@ import {
 } from "@workspace/api-client-react";
 
 import { useAuth } from "@/lib/auth";
+import { useCheckDeck } from "@/lib/check-deck";
+import { useCheckCopy } from "@/i18n/check-strings";
 import { useFriends, useSendPlayerIdentificationRequest } from "@/lib/friends-api";
 import { useGameCopy, type GameStrings } from "@/i18n/game-strings";
 import { GameMedia, type MediaHandle, type MediaView, type TapHit } from "@/components/game-claim/GameMedia";
@@ -2242,10 +2244,27 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuati
 }) {
   const tt = totals(ctx);
   const mo = ctx.game.matchOffset;
+  const [, setDeckLocation] = useLocation();
+  const deck = useCheckDeck(recordingId);
+  const checkCopy = useCheckCopy();
+  const deckCards = deck.data?.cards ?? [];
+  const deckYou = deckCards.filter((card) => card.kind === "you").length;
   return (
     <div className="flex flex-col gap-4">
       <Eyebrow>{copy.done.eyebrow}</Eyebrow>
       <Title>{copy.done.title}</Title>
+      {deckCards.length > 0 && (
+        // "Is this you?": the moments we're not sure were his wait for him here
+        <button type="button" data-testid="button-open-check-deck" onClick={() => setDeckLocation(`/find/${recordingId}/check`)}
+          className="flex items-center gap-3 rounded-2xl border border-turf/40 bg-surface p-4 text-start transition-colors hover:border-turf">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-turf/15 text-turf"><Users className="h-5 w-5" /></span>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="font-display text-lg font-bold leading-tight text-text">{deckYou ? checkCopy.introTitle(deckYou) : checkCopy.introGoalsOnly(deckCards.length)}</span>
+            <span className="text-xs text-muted-text">{checkCopy.swipeRight} · {checkCopy.thatsMe}</span>
+          </span>
+          <span className="inline-flex min-h-9 shrink-0 items-center rounded-full bg-floodlight px-4 text-sm font-bold text-void">{checkCopy.start}</span>
+        </button>
+      )}
       <GameTimeline ctx={ctx} />
       <div className="grid grid-cols-1 gap-2.5">
         <Stat value={mmss(tt.fs)} label={copy.done.found(mmss(Math.max(tt.ip - tt.os, 0)))} />
