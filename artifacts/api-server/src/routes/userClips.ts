@@ -114,7 +114,7 @@ import { canCreateClipFromVideo } from "../lib/publicFootage";
 
 const router: IRouter = Router();
 
-function readableFromUpstream(
+export function readableFromUpstream(
   body: ReadableStream<Uint8Array>,
   onReader?: (reader: ReadableStreamDefaultReader<Uint8Array>) => void,
 ): Readable {
@@ -282,7 +282,7 @@ export function shouldRetryMissingClipExport(
     && (clip.exportStatus == null || clip.exportStatus === "error");
 }
 
-function isSoftDeletedClip(clip: { hiddenReason?: string | null }): boolean {
+export function isSoftDeletedClip(clip: { hiddenReason?: string | null }): boolean {
   return clip.hiddenReason === "deleted";
 }
 
@@ -464,7 +464,7 @@ async function resolveIntroVideoUrl(academyId: number | null): Promise<string | 
  * turning branding off costs nothing at render time and the reason a clip has
  * no logo is visible in one place.
  */
-async function resolveBrandingForClip(
+export async function resolveBrandingForClip(
   academyId: number | null,
   fieldId: number | null,
   ctx: SettingsContext,
@@ -2346,7 +2346,7 @@ async function loadQuotaContext(
  * field scope, which means field rules do not apply to it. That is the correct
  * outcome, not an error, so this never throws and never blocks a download.
  */
-async function fieldIdForClip(clipId?: number): Promise<number | null> {
+export async function fieldIdForClip(clipId?: number): Promise<number | null> {
   if (!clipId) return null;
   try {
     const [row] = await db
@@ -2388,7 +2388,7 @@ async function fieldIdForClip(clipId?: number): Promise<number | null> {
  * Borrowed from the parallel implementation on claim-identity-binding, which got
  * this right where this one did not.
  */
-async function reserveDownload(
+export async function reserveDownload(
   userId: number,
   clipId: number,
   now: Date,

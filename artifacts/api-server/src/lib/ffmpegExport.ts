@@ -150,6 +150,11 @@ export interface FfmpegExportOptions {
    * clip without it, cut back to its own end.
    */
   endScreen?: EndScreenJob;
+  /**
+   * Encode audio to the shared spec (adding silence to a silent source) even
+   * with no bookend: a reel joins its clips with the concat demuxer.
+   */
+  normalizeAudio?: boolean;
 }
 
 
@@ -948,7 +953,7 @@ async function normalizeSegment(
 }
 
 /** Concatenate already-matching MP4s (same codec/dims/fps) via the concat demuxer. */
-async function concatSegments(paths: string[]): Promise<string> {
+export async function concatSegments(paths: string[]): Promise<string> {
   const listPath = path.join(os.tmpdir(), `soccerwatch-concat-${randomUUID()}.txt`);
   const outPath = path.join(os.tmpdir(), `soccerwatch-final-${randomUUID()}.mp4`);
   // Paths are our own tmpdir names (UUID + fixed suffix, no spaces/quotes),
@@ -1077,7 +1082,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   // Only done when there is an intro: the plain export path keeps the source's
   // own audio parameters and costs no extra probe.
   // The end screen's tail is joined the same way, so it needs the same audio spec.
-  const willConcat = !!options.introUrl || !!options.endCardUrl || !!options.endScreen;
+  const willConcat = !!options.introUrl || !!options.endCardUrl || !!options.endScreen || !!options.normalizeAudio;
   // The end screen plays after the clip, over the footage that follows it:
   // render that much further (whatever the source has, up to the card's
   // length) with a keyframe at the clip's end.

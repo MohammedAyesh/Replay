@@ -299,6 +299,33 @@ export async function uploadToBunnyStorage(
 }
 
 /**
+ * Stream a local file to a Bunny Storage path (a highlight reel). Returns the
+ * Storage URL, which only this server can open (Storage is an authenticated origin).
+ */
+export async function uploadFileToBunnyStoragePath(filePath: string, remotePath: string): Promise<string> {
+  if (!/^[A-Za-z0-9/_.-]+$/.test(remotePath) || remotePath.includes("..")) throw new Error("Invalid storage path");
+  const uploadUrl = `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${remotePath}`;
+  const { size } = await fs.promises.stat(filePath);
+  const response = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { AccessKey: BUNNY_STORAGE_API_KEY, "Content-Type": "video/mp4", "Content-Length": String(size) },
+    body: Readable.toWeb(fs.createReadStream(filePath)) as ReadableStream,
+    duplex: "half",
+    signal: AbortSignal.timeout(Math.max(10 * 60_000, Number(process.env.EXPORT_UPLOAD_TIMEOUT_MS) || 0)),
+  } as RequestInit & { duplex: "half" });
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new Error(`Bunny Storage upload failed: ${response.status} ${response.statusText} — ${text}`);
+  }
+  return bunnyStorageUrlFor(remotePath);
+}
+
+/** The Storage (origin) URL of a zone-relative path. */
+export function bunnyStorageUrlFor(remotePath: string): string {
+  return `https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${remotePath}`;
+}
+
+/**
  * Delete a rendered clip export from Bunny Storage. Best-effort.
  *
  * Deletes the legacy `clips/<id>.mp4` path as well as the current
