@@ -475,7 +475,6 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
                     testId="coach-match-invite"
                     arrow="up"
                     arrowOffset="calc(100% - 44px)"
-                    step={explainerCopy.stepOf(1, 1)}
                     actionLabel={explainerCopy.gotIt}
                     onAction={dismissInviteCoach}
                     className="end-0 top-12 w-[min(17rem,calc(100vw-2rem))]"

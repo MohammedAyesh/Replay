@@ -1663,7 +1663,7 @@ export function ClipPlayer({
                 role="group"
                 aria-label="Playback and clip controls"
                 data-testid="player-control-row"
-                className="flex min-w-0 items-center gap-1.5"
+                className="flex min-w-0 items-center gap-1 min-[400px]:gap-1.5"
               >
                 <button
                   type="button"
@@ -1675,17 +1675,23 @@ export function ClipPlayer({
                 </button>
                 {isLiveDvr && liveRange ? (
                   <>
-                    <input
-                      type="range"
-                      min={liveRange.startUtcMs}
-                      max={liveRange.endUtcMs}
-                      step={1000}
-                      value={Math.max(liveRange.startUtcMs, Math.min(liveRange.endUtcMs, liveUtcMs ?? liveRange.endUtcMs))}
-                      aria-label="Live DVR position in Amman local time"
-                      onChange={(event) => seekToUtc(Number(event.target.value))}
-                      className="h-1 min-w-0 flex-1 accent-primary"
-                    />
-                    <span className="w-11 shrink-0 text-center font-mono text-[10px] text-white/80">
+                    <div className="relative flex min-w-0 flex-1 items-center">
+                      {/* Narrow phones: the clock rides above the track so the track keeps its width. */}
+                      <span aria-hidden className="pointer-events-none absolute -top-3.5 start-0.5 font-mono text-[10px] text-white/80 min-[400px]:hidden">
+                        {formatAmmanClock(liveUtcMs)}
+                      </span>
+                      <input
+                        type="range"
+                        min={liveRange.startUtcMs}
+                        max={liveRange.endUtcMs}
+                        step={1000}
+                        value={Math.max(liveRange.startUtcMs, Math.min(liveRange.endUtcMs, liveUtcMs ?? liveRange.endUtcMs))}
+                        aria-label="Live DVR position in Amman local time"
+                        onChange={(event) => seekToUtc(Number(event.target.value))}
+                        className="h-1 min-w-0 flex-1 accent-primary"
+                      />
+                    </div>
+                    <span className="hidden w-11 shrink-0 text-center font-mono text-[10px] text-white/80 min-[400px]:block">
                       {formatAmmanClock(liveUtcMs)}
                     </span>
                     {liveUtcMs != null && liveRange.endUtcMs - liveUtcMs > 8_000 && (
@@ -1701,6 +1707,10 @@ export function ClipPlayer({
                 ) : !isLive && duration > 0 ? (
                   <>
                     <div className="relative flex min-w-0 flex-1 items-center">
+                      {/* Narrow phones: the time rides above the track so the track keeps its width. */}
+                      <span aria-hidden className="pointer-events-none absolute -top-3.5 start-0.5 text-[10px] tabular-nums text-white/80 min-[400px]:hidden">
+                        {formatDuration(currentTime)}
+                      </span>
                       {timelineBands && timelineBands.length > 0 && (
                         <div aria-hidden className="pointer-events-none absolute inset-x-1.5 top-[calc(50%+5px)] h-[3px] overflow-hidden rounded-full">
                           {timelineBands.map((band, index) => {
@@ -1751,7 +1761,7 @@ export function ClipPlayer({
                       />
                     </div>
                     <span
-                      className="w-11 shrink-0 text-center text-[11px] tabular-nums text-white/85"
+                      className="hidden w-11 shrink-0 text-center text-[11px] tabular-nums text-white/85 min-[400px]:block"
                       title={`${formatDuration(currentTime)} / ${formatDuration(duration)}`}
                     >
                       {formatDuration(currentTime)}
@@ -1773,7 +1783,7 @@ export function ClipPlayer({
                     resetControlsTimer();
                   }}
                   className={cn(
-                    "h-10 shrink-0 rounded-full border px-2 text-[11px] font-bold tabular-nums text-white disabled:opacity-40",
+                    "h-10 min-w-9 shrink-0 rounded-full border px-1.5 text-[11px] font-bold tabular-nums text-white disabled:opacity-40 min-[400px]:px-2",
                     Math.abs(playbackRate - 1) < 0.01 ? "border-white/20 bg-white/10" : "border-primary bg-primary/20",
                   )}
                 >
@@ -1783,7 +1793,7 @@ export function ClipPlayer({
                   type="button"
                   aria-label={`Frame shape ${selectedRatio}`}
                   onClick={() => applyFrameChange(selectedRatio === "16:9" ? 1 : frameZoomRef.current, selectedRatio === "16:9" ? "9:16" : "16:9")}
-                  className="h-10 shrink-0 rounded-full border border-white/20 bg-white/10 px-2 text-[11px] font-bold text-white"
+                  className="h-10 shrink-0 rounded-full border border-white/20 bg-white/10 px-1.5 text-[11px] font-bold text-white min-[400px]:px-2"
                 >
                   {selectedRatio}
                 </button>
@@ -1800,7 +1810,7 @@ export function ClipPlayer({
                   data-testid="button-record-clip"
                   onClick={startRecording}
                   aria-label={t.clipping.record}
-                  className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-primary px-3 text-xs font-bold text-primary-foreground"
+                  className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-primary px-2.5 text-xs font-bold text-primary-foreground min-[400px]:px-3"
                 >
                   <Circle className="h-3.5 w-3.5 fill-live text-live" />
                   {explainerCopy.player.clip}

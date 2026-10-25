@@ -255,13 +255,10 @@ export function FreeMatchRoomCard({ status, code, onShare }: { status: FreeMatch
   // After the whistle, his turn first.
   if (!attempt.bookerFound) {
     return (
-      <CardShell glow testId="free-match-room-find">
+      // The report's own "find yourself" card sits right above with the button, so this stays a one-line note.
+      <CardShell testId="free-match-room-find">
         <Chip>{free.chip} · {free.of(attempt.paid ? 3 : 2, 5)}</Chip>
-        <p className="mt-3 font-display text-[22px] font-extrabold leading-tight">{free.reportTitle}</p>
-        <p className="mt-1 text-sm leading-5 text-muted-text">{free.reportLead}</p>
-        {attempt.findRecordingId && (
-          <Link href={`/find/${attempt.findRecordingId}`} className={cn(primaryButton, "mt-4")} data-testid="link-free-match-room-find">{free.findMe}</Link>
-        )}
+        <p className="mt-2 text-sm leading-5">{free.reportNote}</p>
       </CardShell>
     );
   }
