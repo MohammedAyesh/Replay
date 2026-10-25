@@ -48,8 +48,8 @@ import {
  * unique index on source_match_id stops one match earning twice.
  *
  * A booking that spent a free match and then never recorded (cancelled by
- * anyone, failed, refunded) hands it back; that is reconciled on every read,
- * so no cancel path has to remember to do it.
+ * anyone, failed, refunded before delivery, lapsed unpaid) hands it back;
+ * that is reconciled on every read, so no cancel path has to remember to do it.
  */
 
 export type FreeMatchFriend = { userId: number; name: string; avatarUrl: string | null; found: boolean };
@@ -305,29 +305,74 @@ function rewardView(row: FreeMatchReward, codes: Map<number, string>): FreeMatch
 }
 
 /**
- * Hand back free matches spent on bookings that never recorded: cancelled by
- * anyone, failed, or refunded. The time it was held is added back to its
- * expiry. Also frees a reward claimed by a booking that crashed before it
- * got its room (claimed more than 10 minutes ago with no room).
+ * A CliQ booking whose transfer still isn't confirmed this long after its
+ * whistle has lapsed: it never recorded and never will (the status sweep
+ * cancels it, and an admin confirming it late is turned away). Inside this
+ * window a late confirmation still pulls the match from the camera's SD card.
  */
-export async function reconcileRewards(userId: number): Promise<void> {
+export const UNPAID_BOOKING_LAPSE_MS = 24 * 60 * 60 * 1000;
+
+/** An unpaid booking ending at or before this "YYYY-MM-DD HH:MM" (Amman) has lapsed. */
+export function unpaidLapseCutoffLocal(now = Date.now()): string {
+  return ammanLocalString(now - UNPAID_BOOKING_LAPSE_MS);
+}
+
+/**
+ * When the booking behind a held free match stopped holding it: its end for
+ * a booking that lapsed unpaid, else when it was cancelled/failed (its last
+ * update), never later than its end or now. `f` is the footage_requests row.
+ */
+const BOOKING_DIED_AT = sql`(case
+  when f.end_local !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}$' then least(now(), f.updated_at)
+  when f.status = 'awaiting_payment' then least(now(), (f.end_local::timestamp - interval '3 hours') at time zone 'UTC')
+  else least(now(), f.updated_at, (f.end_local::timestamp - interval '3 hours') at time zone 'UTC')
+end)`;
+
+/**
+ * Hand back free matches spent on bookings that never recorded: cancelled by
+ * anyone, failed, refunded before anything was delivered, or left unpaid
+ * until they lapsed. The time it was actually held (from its claim until the
+ * booking died) is added back to its expiry; one whose extended expiry has
+ * already passed stays spent. Also frees a reward claimed by a booking that
+ * crashed before it got its room (claimed more than 10 minutes ago with no
+ * room), adding back those few minutes.
+ */
+export async function reconcileRewards(userId: number, now = Date.now()): Promise<void> {
   await db.execute(sql`
     update free_match_rewards r
        set status = 'available',
            used_match_id = null,
            used_at = null,
-           expires_at = r.expires_at + (now() - coalesce(r.used_at, now()))
+           expires_at = r.expires_at + least(now() - r.used_at, interval '10 minutes')
      where r.user_id = ${userId}
        and r.status = 'used'
-       and (
-         (r.used_match_id is null and r.used_at < now() - interval '10 minutes')
-         or exists (
-           select 1 from match_rooms m
-             join footage_requests f on f.id = m.footage_request_id
-            where m.id = r.used_match_id
-              and f.status in ('cancelled', 'failed', 'refunded')
+       and r.used_match_id is null
+       and r.used_at < now() - interval '10 minutes'
+       and r.expires_at + least(now() - r.used_at, interval '10 minutes') >= now()`);
+  await db.execute(sql`
+    with back as (
+      select r.id, r.expires_at + greatest(interval '0', ${BOOKING_DIED_AT} - coalesce(r.used_at, ${BOOKING_DIED_AT})) as new_expiry
+        from free_match_rewards r
+        join match_rooms m on m.id = r.used_match_id
+        join footage_requests f on f.id = m.footage_request_id
+       where r.user_id = ${userId}
+         and r.status = 'used'
+         and (
+           f.status in ('cancelled', 'failed')
+           -- A refund after delivery keeps the free match spent: the match was recorded.
+           or (f.status = 'refunded' and f.ready_at is null and f.video_id is null and coalesce(f.delivered_seconds, 0) = 0)
+           or (f.status = 'awaiting_payment' and f.end_local <= ${unpaidLapseCutoffLocal(now)})
          )
-       )`);
+    )
+    update free_match_rewards r
+       set status = 'available',
+           used_match_id = null,
+           used_at = null,
+           expires_at = back.new_expiry
+      from back
+     where r.id = back.id
+       and r.status = 'used'
+       and back.new_expiry >= now()`);
 }
 
 /** Whether a new CliQ booking could still earn him the free match: he hasn't had his one yet. */
@@ -417,8 +462,8 @@ export async function availableReward(userId: number): Promise<FreeMatchReward |
  * already spent or lapsed (double tap, two tabs). Attach the booking's room
  * with `attachReward` once it exists, or `releaseReward` if creating it fails.
  */
-export async function claimReward(rewardId: number, userId: number): Promise<boolean> {
-  const rows = await db.update(freeMatchRewardsTable)
+export async function claimReward(rewardId: number, userId: number, executor: Pick<typeof db, "update"> = db): Promise<boolean> {
+  const rows = await executor.update(freeMatchRewardsTable)
     .set({ status: "used", usedMatchId: null, usedAt: new Date() })
     .where(and(
       eq(freeMatchRewardsTable.id, rewardId),
@@ -440,15 +485,29 @@ export async function releaseReward(rewardId: number): Promise<void> {
     .where(and(eq(freeMatchRewardsTable.id, rewardId), eq(freeMatchRewardsTable.status, "used")));
 }
 
-/** A booking that used a free match was cancelled before it recorded: give it back, with the time it was held. */
+/**
+ * A booking that used a free match was cancelled before it recorded: give it
+ * back, with the time it was held (until the booking died, see
+ * BOOKING_DIED_AT). Not if that extended expiry has already passed.
+ */
 export async function releaseRewardForMatch(matchId: number): Promise<void> {
   await db.execute(sql`
-    update free_match_rewards
+    with back as (
+      select r.id, r.expires_at + greatest(interval '0', ${BOOKING_DIED_AT} - coalesce(r.used_at, ${BOOKING_DIED_AT})) as new_expiry
+        from free_match_rewards r
+        join match_rooms m on m.id = r.used_match_id
+        join footage_requests f on f.id = m.footage_request_id
+       where r.used_match_id = ${matchId} and r.status = 'used'
+    )
+    update free_match_rewards r
        set status = 'available',
            used_match_id = null,
-           expires_at = expires_at + (now() - coalesce(used_at, now())),
-           used_at = null
-     where used_match_id = ${matchId} and status = 'used'`);
+           used_at = null,
+           expires_at = back.new_expiry
+      from back
+     where r.id = back.id
+       and r.status = 'used'
+       and back.new_expiry >= now()`);
 }
 
 /**
