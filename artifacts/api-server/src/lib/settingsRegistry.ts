@@ -235,6 +235,38 @@ export const SETTINGS: readonly SettingDefinition[] = [
     unit: "days",
   },
 
+  {
+    key: "booking.loyaltyEnabled",
+    group: "Bookings",
+    label: "Free game every few bookings",
+    description:
+      "Every few paid bookings a player has played earns him a free match (same free hours and use-within " +
+      "days as the free match challenge). Bookings paid for with a free match don't count. Off stops new ones; " +
+      "free matches already earned can still be used.",
+    type: "boolean",
+    defaultValue: true,
+  },
+  {
+    key: "booking.loyaltyEvery",
+    group: "Bookings",
+    label: "Free game: every how many bookings",
+    description: "Paid bookings, played, that earn one free match. 5 means the 6th game is on us.",
+    type: "number",
+    defaultValue: 5,
+    min: 2,
+    max: 20,
+    integer: true,
+    unit: "bookings",
+  },
+  {
+    key: "booking.loyaltyCountFrom",
+    group: "Bookings",
+    label: "Free game: count bookings from",
+    description: "Only bookings starting on or after this date (YYYY-MM-DD, Amman) count, so the launch doesn't hand out free matches for old bookings.",
+    type: "string",
+    defaultValue: "2026-10-25",
+  },
+
   // ── Match stats ────────────────────────────────────────────────────────
   {
     key: "stats.enabled",

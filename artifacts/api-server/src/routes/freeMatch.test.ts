@@ -54,7 +54,8 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import ownerRouter from "./owner";
 import matchRoomsRouter from "./matchRooms";
-import { bookingRecordings, freeMatchStatus } from "../lib/freeMatch";
+import { bookingRecordings, freeMatchStatus, loyaltyStatus } from "../lib/freeMatch";
+import { loadCommerce } from "../lib/commerce";
 import { ensureRoomForRequest } from "../lib/matchRooms";
 
 const TAG = `fm_${Date.now()}`;
@@ -125,7 +126,9 @@ async function everyoneFinds(recordingId: number, who = ["booker", ...FRIENDS]) 
   for (const person of who) await found(person, recordingId);
 }
 
-const rewardsOf = (who: string) => db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users[who]));
+/** His rewards of one kind (the challenge unless asked); the other kind is tested on its own. */
+const rewardsOf = (who: string, kind: "challenge" | "loyalty" = "challenge") => db.select().from(freeMatchRewardsTable)
+  .where(and(eq(freeMatchRewardsTable.userId, users[who]), eq(freeMatchRewardsTable.kind, kind)));
 
 function slot(daysAhead: number, hour: number, minutes: number) {
   const day = localString(Date.now() + daysAhead * DAY).slice(0, 10);
@@ -150,7 +153,7 @@ beforeAll(async () => {
   app.use(express.json());
   app.use("/api", ownerRouter);
   app.use("/api", matchRoomsRouter);
-  for (const key of ["booker", "other", ...FRIENDS, "guest", "admin"]) {
+  for (const key of ["booker", "other", "loyal", ...FRIENDS, "guest", "admin"]) {
     const [u] = await db.insert(usersTable).values({
       name: `${key} ${TAG}`, email: `${TAG}_${key}@test.local`, profileComplete: true,
       isGuest: key === "guest", isAdmin: key === "admin",
@@ -439,5 +442,76 @@ describe("free match: spending", () => {
       inArray(freeMatchRewardsTable.userId, [users.f1, users.f2]),
     ));
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("free game every 5 bookings", () => {
+  // Count from long ago so the test's bookings (some from yesterday) all qualify.
+  const commerce = async (over: Record<string, unknown> = {}) => ({
+    ...(await loadCommerce({ userId: users.loyal })), loyaltyCountFrom: "2000-01-01", ...over,
+  });
+  const loyalRewards = () => rewardsOf("loyal", "loyalty");
+
+  it("counts paid games he played, and the fifth earns a free one", async () => {
+    await booking("loyal", "cliq", 50);
+    await booking("loyal", "field", 40);
+    await booking("loyal", "cliq", 30);
+    await booking("loyal", "cliq", 20);
+    let status = await freeMatchStatus(users.loyal, { commerce: await commerce() });
+    expect(status.loyalty).toMatchObject({ enabled: true, every: 5, count: 4, total: 4, earned: 0 });
+    expect(status.reward).toBeNull();
+
+    // These don't count: waiting for payment, not played yet, cancelled.
+    await booking("loyal", "cliq", 10, { paid: false });
+    await booking("loyal", "cliq", -24);
+    await booking("loyal", "cliq", 12, { status: "cancelled" });
+    status = await freeMatchStatus(users.loyal, { commerce: await commerce() });
+    expect(status.loyalty.total).toBe(4);
+
+    await booking("loyal", "field", 8);
+    status = await freeMatchStatus(users.loyal, { commerce: await commerce() });
+    expect(status.loyalty).toMatchObject({ count: 0, total: 5, earned: 1 });
+    expect(status.reward).toMatchObject({ kind: "loyalty", freeHours: 2, status: "available" });
+    // A loyalty free game doesn't use up the friends challenge.
+    expect(status.canEarn).toBe(true);
+    expect(await loyalRewards()).toHaveLength(1);
+  });
+
+  it("a game paid for with a free match doesn't count toward the next", async () => {
+    const [reward] = await loyalRewards();
+    const paidWithFree = await booking("loyal", "cliq", 6);
+    await db.update(freeMatchRewardsTable).set({ status: "used", usedMatchId: paidWithFree.room.id, usedAt: new Date() })
+      .where(eq(freeMatchRewardsTable.id, reward.id));
+    const status = await loyaltyStatus(users.loyal, await commerce());
+    expect(status).toMatchObject({ total: 5, count: 0 });
+  });
+
+  it("only bookings from the count-from date count", async () => {
+    const status = await loyaltyStatus(users.loyal, await commerce({ loyaltyCountFrom: "2999-01-01" }));
+    expect(status.total).toBe(0);
+  });
+
+  it("ten games earn two, written once even when loaded twice at once", async () => {
+    for (const hours of [7, 5, 4, 3, 2]) await booking("loyal", "cliq", hours);
+    const c = await commerce();
+    const [a, b] = await Promise.all([loyaltyStatus(users.loyal, c), loyaltyStatus(users.loyal, c)]);
+    expect(a.earned).toBe(2);
+    expect(b.earned).toBe(2);
+    expect((await loyalRewards()).map((row) => row.milestone).sort()).toEqual([1, 2]);
+  });
+
+  it("off stops new ones", async () => {
+    await resetPlayer("loyal");
+    await booking("loyal", "cliq", 60);
+    for (const hours of [58, 56, 54, 52]) await booking("loyal", "cliq", hours);
+    const status = await loyaltyStatus(users.loyal, await commerce({ loyaltyEnabled: false }));
+    expect(status.enabled).toBe(false);
+    expect(await loyalRewards()).toHaveLength(0);
+  });
+
+  it("the Book page shows where he is", async () => {
+    const res = await request(app).get("/api/bookings/fields").set(as("loyal"));
+    expect(res.status).toBe(200);
+    expect(res.body.freeMatch.loyalty).toMatchObject({ enabled: true, every: 5 });
   });
 });

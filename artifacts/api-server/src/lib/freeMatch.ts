@@ -77,6 +77,8 @@ export type FreeMatchAttempt = {
 
 export type FreeMatchRewardView = {
   id: number;
+  /** challenge: earned with friends. loyalty: earned by booking N games. */
+  kind: "challenge" | "loyalty";
   freeHours: number;
   worthFils: number;
   expiresAt: string;
@@ -99,8 +101,22 @@ export type FreeMatchStatus = {
   attempt: FreeMatchAttempt | null;
   /** An unused free match he can book with now. */
   reward: FreeMatchRewardView | null;
-  /** The most recent one he earned, for the "unlocked" moment on the source match. */
+  /** The challenge reward he earned, for the "unlocked" moment on the source match. */
   latestEarned: FreeMatchRewardView | null;
+  /** Every N paid games he has played, one free. */
+  loyalty: LoyaltyStatus;
+};
+
+export type LoyaltyStatus = {
+  enabled: boolean;
+  /** Games per free one (5: the 6th is free). */
+  every: number;
+  /** Paid games played in the current block, 0..every-1. */
+  count: number;
+  /** All paid games played since counting started. */
+  total: number;
+  /** Free games earned this way so far. */
+  earned: number;
 };
 
 const DEAD_STATUSES = ["cancelled", "failed", "rejected", "refunded"];
@@ -259,10 +275,11 @@ async function earnReward(userId: number, progress: Progress, commerce: Commerce
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${EARN_LOCK_NAMESPACE}, ${userId})`);
     const [count] = await tx.select({ n: sql<number>`count(*)::int` }).from(freeMatchRewardsTable)
-      .where(eq(freeMatchRewardsTable.userId, userId));
+      .where(and(eq(freeMatchRewardsTable.userId, userId), eq(freeMatchRewardsTable.kind, "challenge")));
     if ((count?.n ?? 0) >= REWARDS_PER_PLAYER) return false;
     const inserted = await tx.insert(freeMatchRewardsTable).values({
       userId,
+      kind: "challenge",
       sourceMatchId: progress.ctx.room.id,
       freeHours: commerce.freeMatchHours,
       worthFils: commerce.freeMatchHours * commerce.playerBookingFilsPerHour,
@@ -276,10 +293,11 @@ async function earnReward(userId: number, progress: Progress, commerce: Commerce
 function rewardView(row: FreeMatchReward, codes: Map<number, string>): FreeMatchRewardView {
   return {
     id: row.id,
+    kind: row.kind,
     freeHours: row.freeHours,
     worthFils: row.worthFils,
     expiresAt: row.expiresAt.toISOString(),
-    sourceCode: codes.get(row.sourceMatchId) ?? null,
+    sourceCode: row.sourceMatchId === null ? null : codes.get(row.sourceMatchId) ?? null,
     thanks: row.friendNames,
     usedCode: row.usedMatchId === null ? null : codes.get(row.usedMatchId) ?? null,
     status: row.status,
@@ -316,8 +334,68 @@ export async function reconcileRewards(userId: number): Promise<void> {
 export async function canEarn(userId: number, commerce: Commerce): Promise<boolean> {
   if (!commerce.freeMatchEnabled) return false;
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(freeMatchRewardsTable)
-    .where(eq(freeMatchRewardsTable.userId, userId));
+    .where(and(eq(freeMatchRewardsTable.userId, userId), eq(freeMatchRewardsTable.kind, "challenge")));
   return (row?.n ?? 0) < REWARDS_PER_PLAYER;
+}
+
+/**
+ * Every N paid games he has played earns a free one. A game counts once its
+ * booking was paid (CliQ confirmed or cash collected at the field), it wasn't
+ * cancelled, failed or refunded, its slot is over, it started on or after the
+ * count-from date, and it wasn't itself paid for with a free match. Missing
+ * rewards are written here (one per block of N), under the same per-player
+ * lock as the challenge, so two devices can't write the same block twice.
+ */
+export async function loyaltyStatus(userId: number, commerce: Commerce): Promise<LoyaltyStatus> {
+  const every = commerce.loyaltyEvery;
+  const nowLocal = ammanLocalString(Date.now());
+  const [row] = await db.execute<{ n: number }>(sql`
+    select count(distinct m.id)::int as n
+      from match_rooms m
+      join footage_requests f on f.id = m.footage_request_id
+     where f.requested_by = ${userId}
+       and f.status not in ('cancelled', 'failed', 'rejected', 'refunded')
+       and f.end_local <= ${nowLocal}
+       and f.start_local >= ${`${commerce.loyaltyCountFrom} 00:00`}
+       and exists (
+         select 1 from stat_unlocks s
+          where s.match_id = m.id and s.user_id = ${userId} and s.kind = 'booking'
+            and s.status = 'paid' and s.method in ('cliq', 'field'))
+       and not exists (select 1 from free_match_rewards r where r.used_match_id = m.id)`).then((result) => result.rows);
+  const total = Number(row?.n ?? 0);
+  const due = Math.floor(total / every);
+  let earned = (await db.select({ milestone: freeMatchRewardsTable.milestone }).from(freeMatchRewardsTable)
+    .where(and(eq(freeMatchRewardsTable.userId, userId), eq(freeMatchRewardsTable.kind, "loyalty")))).length;
+  if (commerce.loyaltyEnabled && due > earned) {
+    earned = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${EARN_LOCK_NAMESPACE}, ${userId})`);
+      const have = new Set((await tx.select({ milestone: freeMatchRewardsTable.milestone }).from(freeMatchRewardsTable)
+        .where(and(eq(freeMatchRewardsTable.userId, userId), eq(freeMatchRewardsTable.kind, "loyalty"))))
+        .map((r) => r.milestone));
+      for (let milestone = 1; milestone <= due; milestone++) {
+        if (have.has(milestone)) continue;
+        await tx.insert(freeMatchRewardsTable).values({
+          userId,
+          kind: "loyalty",
+          milestone,
+          sourceMatchId: null,
+          freeHours: commerce.freeMatchHours,
+          worthFils: commerce.freeMatchHours * commerce.playerBookingFilsPerHour,
+          friendNames: [],
+          expiresAt: new Date(Date.now() + commerce.freeMatchUseWithinDays * 24 * 60 * 60 * 1000),
+        }).onConflictDoNothing();
+        have.add(milestone);
+      }
+      return have.size;
+    });
+  }
+  return {
+    enabled: commerce.loyaltyEnabled,
+    every,
+    count: total - Math.min(due, Math.floor(total / every)) * every,
+    total,
+    earned,
+  };
 }
 
 /** His unused, unexpired free match, if he has one. */
@@ -391,14 +469,19 @@ export async function freeMatchStatus(
     pricePerHourFils: commerce.playerBookingFilsPerHour,
   };
   await reconcileRewards(userId);
+  const loyalty = await loyaltyStatus(userId, commerce);
   let rewards = await db.select().from(freeMatchRewardsTable)
     .where(eq(freeMatchRewardsTable.userId, userId))
     .orderBy(desc(freeMatchRewardsTable.earnedAt));
+  const challengeCount = () => rewards.filter((row) => row.kind === "challenge").length;
   let attempt: FreeMatchAttempt | null = null;
 
-  // Once he has earned his one free match, there is nothing left to track.
-  if (commerce.freeMatchEnabled && rewards.length < REWARDS_PER_PLAYER) {
-    const excluded = rewards.flatMap((row) => [row.sourceMatchId, ...(row.usedMatchId === null ? [] : [row.usedMatchId])]);
+  // Once he has earned his one challenge free match, there is nothing left to track for it.
+  if (commerce.freeMatchEnabled && challengeCount() < REWARDS_PER_PLAYER) {
+    const excluded = rewards.flatMap((row) => [
+      ...(row.sourceMatchId === null ? [] : [row.sourceMatchId]),
+      ...(row.usedMatchId === null ? [] : [row.usedMatchId]),
+    ]);
     const now = Date.now();
     // His CliQ bookings from the last few weeks that haven't earned or used a free match, newest first.
     const candidates: Candidate[] = (await db.select({
@@ -437,7 +520,7 @@ export async function freeMatchStatus(
         .orderBy(desc(freeMatchRewardsTable.earnedAt));
     }
     const rewarded = new Set(rewards.map((row) => row.sourceMatchId));
-    const capped = rewards.length >= REWARDS_PER_PLAYER;
+    const capped = challengeCount() >= REWARDS_PER_PLAYER;
     // What to show: the newest match past the whistle that still has work to do, else the next one coming up.
     const live = progress.filter((entry) => !rewarded.has(entry.ctx.room.id) && (entry.deadlineMs === null || entry.deadlineMs >= now));
     const pick = live.find((entry) => entry.afterWhistle)
@@ -450,17 +533,20 @@ export async function freeMatchStatus(
   const available = rewards
     .filter((row) => row.status === "available" && row.expiresAt >= nowDate)
     .sort((a, b) => a.expiresAt.getTime() - b.expiresAt.getTime())[0] ?? null;
-  const latest = rewards[0] ?? null;
-  const roomIds = [...new Set([available, latest].flatMap((row) => (row ? [row.sourceMatchId, ...(row.usedMatchId === null ? [] : [row.usedMatchId])] : [])))];
+  const latest = rewards.find((row) => row.kind === "challenge") ?? null;
+  const roomIds = [...new Set([available, latest].flatMap((row) => (row
+    ? [...(row.sourceMatchId === null ? [] : [row.sourceMatchId]), ...(row.usedMatchId === null ? [] : [row.usedMatchId])]
+    : [])))];
   const codes = new Map<number, string>(roomIds.length
     ? (await db.select({ id: matchRoomsTable.id, code: matchRoomsTable.code }).from(matchRoomsTable).where(inArray(matchRoomsTable.id, roomIds)))
       .map((row) => [row.id, row.code] as [number, string])
     : []);
   return {
     ...base,
-    canEarn: commerce.freeMatchEnabled && rewards.length < REWARDS_PER_PLAYER,
+    canEarn: commerce.freeMatchEnabled && challengeCount() < REWARDS_PER_PLAYER,
     attempt,
     reward: available ? rewardView(available, codes) : null,
     latestEarned: latest ? rewardView(latest, codes) : null,
+    loyalty,
   };
 }

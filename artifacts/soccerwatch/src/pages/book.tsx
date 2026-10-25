@@ -131,6 +131,8 @@ export default function BookPage() {
   const pricePerHour = fieldsQuery.data?.pricePerHourFils ?? 2000;
   const freeMatch = fieldsQuery.data?.freeMatch ?? null;
   const reward = freeMatch?.reward ?? null;
+  // Every N paid games, one free: where this booking would put him (it counts once paid and played).
+  const loyalty = freeMatch?.loyalty ?? null;
   const usingFree = Boolean(reward) && useFree;
   const fullPriceFils = Math.max(1, Math.ceil(duration / 60)) * pricePerHour;
   // A free match covers its hours; longer bookings pay the extra hours only.
@@ -370,6 +372,11 @@ export default function BookPage() {
         )}
         {ready && usingFree && (
           <p className="mt-3 text-xs leading-5 text-muted-text">{free.noPaymentLead(reward!.freeHours, formatJod(pricePerHour))}</p>
+        )}
+        {ready && !usingFree && loyalty?.enabled && (
+          <p className="mt-3 flex items-center gap-1.5 text-xs font-semibold text-turf" data-testid="book-loyalty-line">
+            <Gift className="h-3.5 w-3.5 shrink-0" />{free.loyaltyThisBooking(loyalty.count + 1, loyalty.every)}
+          </p>
         )}
         {payAtField && (
           <div className="mt-4" role="radiogroup" aria-label={b.payHow}>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Camera, CalendarPlus, ChevronRight, ChevronLeft, CirclePlus, Loader2, Play, Smartphone, Target } from "lucide-react";
 import { useListUserClips, getListUserClipsQueryKey } from "@workspace/api-client-react";
-import { FreeMatchHomeCard } from "@/components/free-match/FreeMatch";
+import { FreeMatchHomeCard, LoyaltyCard } from "@/components/free-match/FreeMatch";
 import { FirstClipChecklist } from "@/components/home/FirstClipChecklist";
 import { StatCarousel } from "@/components/home/StatCarousel";
 import { MatchCard } from "@/components/match/MatchCard";
@@ -115,6 +115,7 @@ export function HomeHub() {
       )}
       {!matches.isLoading && !hero && statTile}
       {data?.freeMatch && <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} />}
+      {data?.freeMatch && <LoyaltyCard status={data.freeMatch} canBook={canBook} />}
 
       {invites.length > 0 && (
         <Section title={copy.invites}>

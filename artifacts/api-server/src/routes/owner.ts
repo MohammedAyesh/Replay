@@ -26,7 +26,7 @@ import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
-import { attachReward, availableReward, canEarn, claimReward, releaseReward, releaseRewardForMatch } from "../lib/freeMatch";
+import { attachReward, availableReward, canEarn, claimReward, loyaltyStatus, releaseReward, releaseRewardForMatch } from "../lib/freeMatch";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -1896,6 +1896,8 @@ router.get("/bookings/fields", async (req, res): Promise<void> => {
     payAtField: commerce.payAtField,
     cliqAlias: commerce.cliqAlias,
     freeMatch: viewer && !viewer.isGuest ? await (async () => {
+      // Loyalty first: a block he has just completed writes its free match, which availableReward then finds.
+      const loyalty = await loyaltyStatus(viewer.id, commerce).catch(() => null);
       const reward = await availableReward(viewer.id).catch(() => null);
       return {
         enabled: commerce.freeMatchEnabled,
@@ -1904,6 +1906,7 @@ router.get("/bookings/fields", async (req, res): Promise<void> => {
         friendsRequired: commerce.freeMatchFriendsRequired,
         freeHours: commerce.freeMatchHours,
         reward: reward ? { id: reward.id, freeHours: reward.freeHours, expiresAt: reward.expiresAt.toISOString() } : null,
+        loyalty: loyalty ? { enabled: loyalty.enabled, every: loyalty.every, count: loyalty.count } : null,
       };
     })() : null,
   });

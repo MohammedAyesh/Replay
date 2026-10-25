@@ -149,6 +149,7 @@ export function FreeMatchHomeCard({ status, canBook }: { status: FreeMatchStatus
         <Chip><Gift className="h-3 w-3" />{free.free}</Chip>
         <p className="mt-3 font-display text-[24px] font-extrabold leading-tight">{free.applied}</p>
         <p className="mt-1 text-sm text-muted-text">{free.appliedSub(status.reward.freeHours, shortDate(status.reward.expiresAt))}</p>
+        {status.reward.kind === "loyalty" && <p className="mt-1 text-sm text-muted-text">{free.loyaltyEarned(status.loyalty.every)}</p>}
         {canBook && <Link href="/book" className={cn(primaryButton, "mt-4")} data-testid="link-free-match-book">{free.bookFree}</Link>}
       </CardShell>
     );
@@ -329,5 +330,46 @@ function FreeMatchUnlocked({ reward, status }: { reward: FreeMatchReward; status
         ? <Link href="/book" className={cn(primaryButton, "mt-4")} data-testid="link-free-match-unlocked-book">{free.bookFree}<ChevronRight className="h-4 w-4 rtl:rotate-180" /></Link>
         : reward.usedCode && <Link href={`/m/${reward.usedCode}`} className={cn(quietButton, "mt-2 w-full border border-line")}>{free.open}</Link>}
     </CardShell>
+  );
+}
+
+// ---------------------------------------------------------------- every N games, one free
+
+/** Home's punch card: one ball per paid game played in the current block. */
+export function LoyaltyCard({ status, canBook }: { status: FreeMatchStatus; canBook: boolean }) {
+  const free = useExplainerCopy().free;
+  const { loyalty } = status;
+  if (!loyalty?.enabled) return null;
+  const left = loyalty.every - loyalty.count;
+  return (
+    <section className="rounded-2xl border border-line bg-surface px-5 py-4" data-testid="loyalty-card">
+      <div className="flex items-center justify-between gap-3">
+        <p className="font-display text-[18px] font-extrabold leading-tight">{free.loyaltyTitle(loyalty.every)}</p>
+        <Chip tone="turf">{free.loyaltyCount(loyalty.count, loyalty.every)}</Chip>
+      </div>
+      <ol className="m-0 mt-3 flex list-none gap-2 p-0" aria-label={free.loyaltyCount(loyalty.count, loyalty.every)}>
+        {Array.from({ length: loyalty.every }, (_, index) => (
+          <li
+            key={index}
+            className={cn(
+              "flex h-9 w-9 items-center justify-center rounded-full border-2 text-[12px] font-bold",
+              index < loyalty.count ? "border-turf bg-turf text-void" : "border-line text-muted-text",
+            )}
+          >
+            {index < loyalty.count ? <Check className="h-4 w-4" strokeWidth={3} /> : index + 1}
+          </li>
+        ))}
+        <li className="flex h-9 items-center justify-center rounded-full bg-floodlight/15 px-3 text-[12px] font-bold text-floodlight">
+          <Gift className="me-1 h-3.5 w-3.5" />{free.free}
+        </li>
+      </ol>
+      <p className="mt-3 text-sm text-muted-text">{loyalty.total === 0 ? free.loyaltyStart(loyalty.every) : free.loyaltyLeft(left)}</p>
+      <p className="mt-1 text-[11.5px] text-muted-text/80">{free.loyaltyRule}</p>
+      {canBook && loyalty.total === 0 && (
+        <Link href="/book" className="mt-3 inline-flex min-h-10 items-center text-sm font-bold text-turf" data-testid="link-loyalty-book">
+          {free.book}<ChevronRight className="h-4 w-4 rtl:rotate-180" />
+        </Link>
+      )}
+    </section>
   );
 }

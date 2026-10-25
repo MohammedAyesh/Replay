@@ -24,6 +24,10 @@ export interface Commerce {
   freeMatchFriendsRequired: number;
   freeMatchHours: number;
   freeMatchUseWithinDays: number;
+  loyaltyEnabled: boolean;
+  loyaltyEvery: number;
+  /** "YYYY-MM-DD" (Amman): bookings starting earlier don't count toward the free game. */
+  loyaltyCountFrom: string;
   statsEnabled: boolean;
   statsPaywall: boolean;
   statsTeamPack: boolean;
@@ -64,6 +68,11 @@ export async function loadCommerce(ctx: SettingsContext = {}): Promise<Commerce>
     freeMatchFriendsRequired: Math.max(1, int(all["booking.freeMatchFriendsRequired"], 5)),
     freeMatchHours: Math.max(1, int(all["booking.freeMatchHours"], 2)),
     freeMatchUseWithinDays: Math.max(1, int(all["booking.freeMatchUseWithinDays"], 30)),
+    loyaltyEnabled: bool(all["booking.loyaltyEnabled"], true),
+    loyaltyEvery: Math.max(2, int(all["booking.loyaltyEvery"], 5)),
+    loyaltyCountFrom: typeof all["booking.loyaltyCountFrom"] === "string" && /^\d{4}-\d{2}-\d{2}$/.test(all["booking.loyaltyCountFrom"] as string)
+      ? all["booking.loyaltyCountFrom"] as string
+      : "2026-10-25",
     statsEnabled: bool(all["stats.enabled"], false),
     statsPaywall: bool(all["stats.paywallEnabled"], false),
     statsTeamPack: bool(all["stats.teamPackEnabled"], true),

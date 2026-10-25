@@ -267,6 +267,8 @@ export type FreeMatchAttempt = {
 };
 export type FreeMatchReward = {
   id: number;
+  /** challenge: earned with friends. loyalty: earned by playing N booked games. */
+  kind: "challenge" | "loyalty";
   freeHours: number;
   worthFils: number;
   expiresAt: string;
@@ -274,6 +276,15 @@ export type FreeMatchReward = {
   thanks: string[];
   usedCode: string | null;
   status: "available" | "used";
+};
+export type LoyaltyStatus = {
+  enabled: boolean;
+  /** Games per free one (5: the 6th is free). */
+  every: number;
+  /** Paid games played in the current block, 0..every-1. */
+  count: number;
+  total: number;
+  earned: number;
 };
 export type FreeMatchStatus = {
   enabled: boolean;
@@ -287,6 +298,8 @@ export type FreeMatchStatus = {
   attempt: FreeMatchAttempt | null;
   reward: FreeMatchReward | null;
   latestEarned: FreeMatchReward | null;
+  /** Every N paid games he has played, one free. */
+  loyalty: LoyaltyStatus;
 };
 
 export type MatchClip = {
@@ -642,6 +655,7 @@ export type BookingFields = {
     friendsRequired: number;
     freeHours: number;
     reward: { id: number; freeHours: number; expiresAt: string } | null;
+    loyalty?: { enabled: boolean; every: number; count: number } | null;
   } | null;
 };
 export type BookingResult = {
