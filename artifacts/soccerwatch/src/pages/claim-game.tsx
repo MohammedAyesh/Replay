@@ -67,7 +67,8 @@ import {
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
   hkey, recordSwitch, restoreClaimVisitOrder, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
-import { benchSpansOut, chainParts, firstRosterChunk, materializeRosterParts, seedRosterParts } from "@/lib/game-claim/parts";
+import { benchSpansOut, chainParts, dropOverlappingShortRosterParts, firstRosterChunk, materializeRosterParts, seedRosterParts } from "@/lib/game-claim/parts";
+import { enterKitAfterLoadingCurrentChunk } from "@/lib/game-claim/roster-navigation";
 import { loadResumeChunks } from "@/lib/game-claim/resume";
 import { sendClaimSave } from "@/lib/game-claim/save";
 import { registerFindReloadGuard } from "@/lib/fresh-build";
@@ -755,7 +756,10 @@ export function GameClaim({
       case "review": {
         if (!d || k === null) break;
         const K = kept(ctx, k);
-        const p = K.filter((x) => !x.manual).sort((a, b) => (b.t1 - b.t0) - (a.t1 - a.t0))[0] ?? K[0];
+        const p = K.filter((x) => x.manual && x.id.startsWith("roster:"))
+          .sort((a, b) => (b.t1 - b.t0) - (a.t1 - a.t0))[0]
+          ?? K.filter((x) => !x.manual).sort((a, b) => (b.t1 - b.t0) - (a.t1 - a.t0))[0]
+          ?? K[0];
         if (p) {
           const tm = (p.t0 + p.t1) / 2;
           show({ t: L(k, tm), lo: L(k, 0), hi: L(k, chunkMeta(ctx, k).dur), k, hl: youIds(ctx, k), focus: (!p.manual ? ovPos(ctx, k, p.id, tm)?.foot : null) ?? p.a, label: copy.media.you });
@@ -918,13 +922,16 @@ export function GameClaim({
       });
       byChunk.set(part.segmentIndex, ranges);
     }
-    const firstChunk = firstRosterChunk(ctxRef.current, byChunk);
+    const filteredByChunk = new Map(
+      [...byChunk].map(([k, parts]) => [k, dropOverlappingShortRosterParts(parts, game.frameRate)]),
+    );
+    const firstChunk = firstRosterChunk(ctxRef.current, filteredByChunk);
     if (firstChunk === null) {
-      go("kit");
+      void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go);
       return;
     }
 
-    for (const [k, parts] of byChunk) {
+    for (const [k, parts] of filteredByChunk) {
       if (Y(ctxRef.current, k).skipped) continue;
       seedRosterParts(ctxRef.current, k, parts);
     }
@@ -1335,10 +1342,12 @@ export function GameClaim({
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <span className="min-w-0 flex-1 truncate font-display text-lg font-bold text-text">{label}</span>
-                  {player.number && (
+                  {player.number ? (
                     <span className="rounded-full border border-line px-2 py-0.5 text-sm font-display tabular-nums text-text">
                       #{player.number}
                     </span>
+                  ) : (
+                    <span className="text-xs text-muted-text">{copy.roster.noNumber}</span>
                   )}
                 </div>
                 <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-text">
@@ -1349,7 +1358,12 @@ export function GameClaim({
             );
           })}
         </div>
-        <Row><Btn onClick={() => go("kit")}>{copy.roster.back}</Btn></Row>
+        <Row>
+          <Btn className="w-full sm:w-auto" testId="button-roster-not-here" onClick={() => {
+            void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go);
+          }}>{copy.roster.notHere}</Btn>
+          <Btn onClick={() => go("intro")}>{copy.roster.back}</Btn>
+        </Row>
       </div>
     );
   } else if (S.step === "kit" && currentChunk) {

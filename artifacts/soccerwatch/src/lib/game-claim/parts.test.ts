@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { firstRosterChunk, materializeRosterParts, seedRosterParts, chainParts } from "./parts";
+import { dropOverlappingShortRosterParts, firstRosterChunk, materializeRosterParts, seedRosterParts, chainParts } from "./parts";
 import { clearPick, newState, pick, Y, type Ctx } from "./claim";
 
 function makeContext(loaded: boolean): Ctx {
@@ -39,6 +39,19 @@ function makeContext(loaded: boolean): Ctx {
 }
 
 describe("roster-seeded claim parts", () => {
+  it("drops the short s4:t41 fragment inside the longer s4:t2 piece but keeps a separate five-second piece", () => {
+    const parts = [
+      { trackId: "s4:t41", fromFrame: 59011, toFrame: 59116 },
+      { trackId: "s4:t2", fromFrame: 47311, toFrame: 59138 },
+      { trackId: "s4:t55", fromFrame: 70000, toFrame: 70125 },
+    ];
+
+    expect(dropOverlappingShortRosterParts(parts, 25)).toEqual([
+      parts[1],
+      parts[2],
+    ]);
+  });
+
   it("sends exact roster frames while a chunk has not loaded", () => {
     const ctx = makeContext(false);
     Y(ctx, 1).rosterParts = [{ trackId: "s1:t7", fromFrame: 105, toFrame: 140 }];

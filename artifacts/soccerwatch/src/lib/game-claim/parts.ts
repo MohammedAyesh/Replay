@@ -14,6 +14,24 @@ import { OUT, overlapSeconds, union, type ManualPiece } from "./model";
 export type ChainPartOut = { trackId: string; fromFrame: number; toFrame: number };
 export type RosterPartIn = { trackId: string; fromFrame: number; toFrame: number };
 
+/** Drop sub-10-second roster fragments that overlap a longer piece in the same card/chunk. */
+export function dropOverlappingShortRosterParts(
+  parts: RosterPartIn[],
+  frameRate: number,
+): RosterPartIn[] {
+  const fps = frameRate > 0 ? frameRate : 20;
+  return parts.filter((part, index) => {
+    const duration = part.toFrame - part.fromFrame;
+    if (duration / fps >= 10) return true;
+    return !parts.some((other, otherIndex) => {
+      if (otherIndex === index) return false;
+      const otherDuration = other.toFrame - other.fromFrame;
+      return otherDuration > duration
+        && Math.max(part.fromFrame, other.fromFrame) < Math.min(part.toFrame, other.toFrame);
+    });
+  });
+}
+
 function rosterManualId(part: { trackId: string; fromFrame: number; toFrame: number }): string {
   return `roster:${part.trackId}:${part.fromFrame}:${part.toFrame}`;
 }
