@@ -15,10 +15,17 @@ export function rewriteLivePlaylist(
   };
   const lines = playlist.split(/\r?\n/);
   const output: string[] = [];
+  let removedSegments = 0;
+  let mediaSequenceIndex = -1;
   let pending: string[] = [];
   let programTime: number | null = null;
   let sawSegment = false;
   for (const line of lines) {
+    if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+      mediaSequenceIndex = output.length;
+      output.push(line);
+      continue;
+    }
     if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
       programTime = Date.parse(line.slice("#EXT-X-PROGRAM-DATE-TIME:".length));
     }
@@ -38,12 +45,17 @@ export function rewriteLivePlaylist(
     if (earliestProgramTime) {
       if (programTime === null || !Number.isFinite(programTime)) return null;
       if (programTime >= earliestProgramTime.getTime()) output.push(...pending, proxied);
+      else removedSegments += 1;
     } else {
       output.push(...pending, proxied);
     }
     pending = [];
     programTime = null;
     sawSegment = true;
+  }
+  if (mediaSequenceIndex >= 0 && removedSegments > 0) {
+    const match = /^#EXT-X-MEDIA-SEQUENCE:(\d+)$/.exec(output[mediaSequenceIndex] ?? "");
+    if (match) output[mediaSequenceIndex] = `#EXT-X-MEDIA-SEQUENCE:${Number(match[1]) + removedSegments}`;
   }
   if (pending.length) output.push(...pending);
   return output.join("\n");

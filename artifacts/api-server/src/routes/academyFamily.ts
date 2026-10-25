@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, or } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   academyFeesTable,
@@ -408,6 +408,7 @@ router.post("/academy/family/claim", async (req, res): Promise<void> => {
   const [player] = await familyPlayerSelection().where(and(
     eq(academyPlayersTable.familyToken, body.data.token),
     eq(academyPlayersTable.isActive, true),
+    gt(academyPlayersTable.familyTokenExpiresAt, new Date()),
   ));
   if (!player) {
     res.status(404).json({ error: "Family link not found" });

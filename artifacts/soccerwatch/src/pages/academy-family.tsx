@@ -10,6 +10,7 @@ import {
 import { CalendarDays, Check, Clock3, Globe, MapPin, Play, ShieldCheck, Trophy, WalletCards } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
+import { retryAcademyFamilyClaim } from "@/lib/academy-family-claim";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
@@ -193,6 +194,16 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   });
   const family = familyQuery.data;
   const familyToken = params.token ?? "";
+  const retryClaim = () => {
+    if (!familyToken) return;
+    attemptedToken.current = familyToken;
+    void retryAcademyFamilyClaim(
+      familyToken,
+      (token) => claim.mutateAsync({ data: { token } }),
+      setLocation,
+    )
+      .catch(() => undefined);
+  };
 
   useEffect(() => {
     if (source !== "token" || authLoading || !user || isGuest || !familyToken) return;
@@ -263,10 +274,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
           {claim.isError ? (
             <button
               type="button"
-              onClick={() => {
-                attemptedToken.current = null;
-                claim.reset();
-              }}
+              onClick={retryClaim}
               className="mt-6 min-h-11 rounded-xl bg-floodlight px-5 font-bold text-void"
               data-testid="button-family-claim-retry"
             >

@@ -405,25 +405,25 @@ router.get("/hls-proxy/segment", async (req, res): Promise<void> => {
       res.set("Cache-Control", "public, max-age=300");
       res.set("Access-Control-Allow-Origin", "*");
       res.set("Accept-Ranges", "bytes");
-      res.set("Content-Length", String(firstRange.total - firstRange.start));
+      const boundedEnd = Math.min(firstRange.end, firstRange.start + PROGRESSIVE_MP4_RANGE_BYTES - 1);
+      res.set("Content-Length", String(progressiveMp4Request.clientRequestedRange
+        ? boundedEnd - firstRange.start + 1
+        : firstRange.total - firstRange.start));
       if (progressiveMp4Request.clientRequestedRange) {
-        res.set("Content-Range", `bytes ${firstRange.start}-${firstRange.total - 1}/${firstRange.total}`);
+        res.set("Content-Range", `bytes ${firstRange.start}-${boundedEnd}/${firstRange.total}`);
         res.status(206);
       } else {
         res.removeHeader("Content-Range");
         res.status(200);
       }
-      await pipeline(
-        streamProgressiveMp4(
-          upstream,
-          firstRange,
-          raw,
-          hostname,
-          abort.signal,
-          progressiveMp4RangePolicy,
-        ),
-        res,
-      );
+      if (progressiveMp4Request.clientRequestedRange) {
+        await pipeline(Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>), res);
+      } else {
+        await pipeline(
+          streamProgressiveMp4(upstream, firstRange, raw, hostname, abort.signal, progressiveMp4RangePolicy),
+          res,
+        );
+      }
       return;
     }
 

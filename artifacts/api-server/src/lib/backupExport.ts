@@ -344,7 +344,10 @@ export async function probeExportObject(
   // The vps1 endpoint remains a valid serving path while Storage is unavailable
   // or before its copy finishes. It must be verified separately before expiry.
   try {
-    const res = await fetchExportObject(exportedUrl, { range: "bytes=0-0" });
+    const res = await fetchExportObject(exportedUrl, {
+      range: "bytes=0-0",
+      signal: AbortSignal.timeout(30_000),
+    });
     const range = res.headers.get("content-range")?.match(/\/(\d+)$/);
     const length = res.headers.get("content-length");
     const bytes = range ? Number(range[1]) : length && res.status === 200 ? Number(length) : null;

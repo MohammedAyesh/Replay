@@ -35,7 +35,11 @@ const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
 /** The rendered MP4 the fake storage origin serves. Big enough to span chunks. */
 const CLIP_BYTES = crypto.randomBytes(512 * 1024);
-const STORAGE_KEY = process.env.BUNNY_STORAGE_API_KEY ?? "";
+const STORAGE_KEY = vi.hoisted(() => {
+  const key = process.env.BUNNY_STORAGE_API_KEY || "test-storage-access-key";
+  process.env.BUNNY_STORAGE_API_KEY = key;
+  return key;
+});
 
 let origin: http.Server;
 let originUrl: string;
@@ -175,7 +179,9 @@ describe("GET /user-clips/:id/download", () => {
     };
 
     const full = await request(app).get(`/api/user-clips/${clipId}/playback`).buffer().parse(parseBuffer);
-    expect(full.status).toBe(200);
+    expect(full.status).toBe(206);
+    expect(full.headers["content-range"]).toBe(`bytes 0-${CLIP_BYTES.length - 1}/${CLIP_BYTES.length}`);
+    expect(full.headers["x-download-quota-used"]).toBeDefined();
     expect(full.body.length).toBe(CLIP_BYTES.length);
     expect(Buffer.compare(full.body as Buffer, CLIP_BYTES)).toBe(0);
 
@@ -185,6 +191,18 @@ describe("GET /user-clips/:id/download", () => {
     expect(range.headers["content-range"]).toBe(`bytes 100-199/${CLIP_BYTES.length}`);
     expect(range.body.length).toBe(100);
     expect(Buffer.compare(range.body as Buffer, CLIP_BYTES.subarray(100, 200))).toBe(0);
+  });
+
+  it("does not clear a pending re-clip when a status probe finds the old export", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/clip.mp4`);
+    await db.update(userClipsTable).set({ exportStatus: "pending" }).where(eq(userClipsTable.id, clipId));
+
+    const response = await request(app).get(`/api/user-clips/${clipId}/export-status`);
+    expect(response.status).toBe(200);
+    const [row] = await db.select({ exportStatus: userClipsTable.exportStatus })
+      .from(userClipsTable).where(eq(userClipsTable.id, clipId));
+    expect(row.exportStatus).toBe("pending");
   });
 
   it("reports an expired clip with no source and no export as unavailable", async () => {

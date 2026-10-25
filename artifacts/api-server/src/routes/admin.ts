@@ -46,6 +46,7 @@ import {
 } from "../lib/bunny";
 import { extractBunnyVideoId } from "../lib/publicFootage";
 import { fetchExportObject, forwardExportContentLength, probeExportObject } from "../lib/backupExport";
+import { boundedExportRange } from "../lib/exportPlayback";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import {
@@ -718,7 +719,7 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     return;
   }
 
-  const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
+  const range = boundedExportRange(typeof req.headers.range === "string" ? req.headers.range : undefined);
   const abort = new AbortController();
   res.on("close", () => {
     if (!res.writableEnded) abort.abort();
@@ -740,6 +741,11 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     res.setHeader("Accept-Ranges", "bytes");
     res.status(416).end();
     await upstream.body?.cancel().catch(() => {});
+    return;
+  }
+  if (range && upstream.status !== 206) {
+    await upstream.body?.cancel().catch(() => {});
+    if (!res.destroyed) res.status(502).json({ error: "Storage ignored the bounded byte range" });
     return;
   }
   if (!upstream.ok || !upstream.body) {
@@ -1505,7 +1511,7 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
   if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
   const oldVideoId = extractBunnyVideoId(recording.videoUrl);
   if (!oldVideoId) { res.status(409).json({ error: "Recording does not point to a Bunny Stream video" }); return; }
-  const newVideoId = parsed.data.videoId;
+  const newVideoId = parsed.data.videoId.toLowerCase();
   if (newVideoId === oldVideoId.toLowerCase()) {
     res.status(409).json({ error: "The new video id is already assigned to this recording" }); return;
   }
@@ -1537,7 +1543,7 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
       res.status(409).json({ error: "New Bunny video must be ready (status 4)", status: targetReadiness.status });
       return;
     }
-    if (Math.abs(currentVideo.duration - targetVideo.duration) > 2) {
+    if (currentVideo.duration > 0 && Math.abs(currentVideo.duration - targetVideo.duration) > 2) {
       res.status(409).json({
         error: "Video length must be within 2 seconds of the current video",
         currentDuration: currentVideo.duration,

@@ -91,6 +91,7 @@ import {
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+const ACADEMY_FAMILY_LINK_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
 const ROLE_ORDER = ["owner", "coach"] as const;
 const JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -593,15 +594,27 @@ router.post(
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const familyToken = crypto.randomBytes(16).toString("hex");
       try {
-        const [player] = await db
-          .update(academyPlayersTable)
-          .set({ familyToken })
-          .where(and(
-            eq(academyPlayersTable.id, playerId),
-            eq(academyPlayersTable.academyId, academyId),
-            eq(academyPlayersTable.isActive, true),
-          ))
-          .returning({ familyToken: academyPlayersTable.familyToken });
+        const player = await db.transaction(async (tx) => {
+          const [updated] = await tx
+            .update(academyPlayersTable)
+            .set({
+              familyToken,
+              familyTokenExpiresAt: new Date(Date.now() + ACADEMY_FAMILY_LINK_LIFETIME_MS),
+            })
+            .where(and(
+              eq(academyPlayersTable.id, playerId),
+              eq(academyPlayersTable.academyId, academyId),
+              eq(academyPlayersTable.isActive, true),
+            ))
+            .returning({ familyToken: academyPlayersTable.familyToken });
+          if (updated) {
+            await tx.delete(academyPlayerGuardiansTable).where(and(
+              eq(academyPlayerGuardiansTable.playerId, playerId),
+              eq(academyPlayerGuardiansTable.addedBy, "link"),
+            ));
+          }
+          return updated;
+        });
         if (!player) {
           res.status(404).json({ error: "Active player not found in this academy" });
           return;

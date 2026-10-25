@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { followCrop, type FollowPoint } from "../lib/personalMoments";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, and, asc, desc, gt, inArray, count, isNull, ne, or, sql, like } from "drizzle-orm";
+import { eq, and, asc, desc, gt, inArray, count, isNull, ne, notInArray, or, sql, like } from "drizzle-orm";
 import {
   db,
   userClipsTable,
@@ -99,8 +99,27 @@ import {
 import { fetchBrandingAsset } from "../lib/brandingFetch";
 import { introPlaybackPath } from "./clipIntro";
 import { canCreateClipFromVideo } from "../lib/publicFootage";
+import { boundedExportRange } from "../lib/exportPlayback";
 
 const router: IRouter = Router();
+
+const RENDER_PENDING_STATUSES = ["pending", PENDING_LOCAL_FALLBACK, PENDING_VPS1_OVERFLOW, PENDING_VPS1_AFTER_PRIMARY];
+
+async function promoteExistingExport(
+  clip: Pick<typeof userClipsTable.$inferSelect, "id" | "exportStatus" | "exportedUrl">,
+  url: string,
+): Promise<boolean> {
+  if (!clip.exportedUrl || isInternalPendingStatus(clip.exportStatus) || clip.exportStatus === "pending" || inFlight.has(clip.id)) return false;
+  const updated = await db.update(userClipsTable)
+    .set({ exportStatus: "done", exportedUrl: url })
+    .where(and(
+      eq(userClipsTable.id, clip.id),
+      eq(userClipsTable.exportedUrl, clip.exportedUrl),
+      or(isNull(userClipsTable.exportStatus), notInArray(userClipsTable.exportStatus, RENDER_PENDING_STATUSES)),
+    ))
+    .returning({ id: userClipsTable.id });
+  return updated.length > 0;
+}
 
 function readableFromUpstream(
   body: ReadableStream<Uint8Array>,
@@ -868,8 +887,7 @@ async function runBackgroundExport(
       if (classifyPortfolioSourceError(err) === "expired") {
         const probe = clip.exportedUrl ? await probeExportObject(clip.exportedUrl) : { state: "missing" as const, url: "", bytes: null };
         if (probe.state === "exists") {
-          await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-            .where(and(eq(userClipsTable.id, clipId), inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK])));
+          await promoteExistingExport(clip, probe.url);
         } else if (probe.state === "missing") {
           await db.update(userClipsTable).set({ exportStatus: "expired" })
             .where(and(eq(userClipsTable.id, clipId), inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK])));
@@ -1848,8 +1866,7 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   if (clip.exportedUrl) {
     const probe = await probeExportObject(clip.exportedUrl);
     if (probe.state === "exists") {
-      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-        .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+      await promoteExistingExport(clip, probe.url);
       res.json({ status: "done", url: probe.url });
       return;
     }
@@ -1994,8 +2011,7 @@ async function exportStatusFor(
   if (clip.exportedUrl) {
     const probe = await probeExportObject(clip.exportedUrl);
     if (probe.state === "exists") {
-      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-        .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+      await promoteExistingExport(clip, probe.url);
       return { ...base, status: "done", url: probe.url };
     }
     if (probe.state === "unverified") {
@@ -2368,6 +2384,10 @@ router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Export not available" });
     return;
   }
+  const requestedRange = req.header("range") ?? undefined;
+  const looksLikeDownload = !requestedRange
+    || req.query.download !== undefined
+    || /attachment/i.test(req.header("content-disposition") ?? "");
   const probe = await probeExportObject(clip.exportedUrl);
   if (probe.state === "missing") {
     res.status(clip.exportStatus === "expired" ? 410 : 404).json({
@@ -2379,15 +2399,32 @@ router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
     res.status(503).json({ error: "Export availability could not be verified." });
     return;
   }
-  if (clip.exportStatus !== "done" || probe.url !== clip.exportedUrl) {
-    await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-      .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+  if (looksLikeDownload) {
+    const now = new Date();
+    const reservation = await reserveDownload(userId, clipId, now);
+    if (reservation.outcome === "disabled") { res.status(403).json({ error: "Downloads are currently disabled" }); return; }
+    if (reservation.outcome === "refused") {
+      res.status(402).json({ error: "Download limit reached", quota: toQuotaResponse(reservation.state) });
+      return;
+    }
+    if (reservation.limitReachedNow) logger.info(buildLimitReachedEvent(userId, clipId, reservation.state, now), "Download quota limit reached");
+    res.setHeader("X-Download-Quota-Used", String(reservation.state.used));
+    res.setHeader("X-Download-Quota-Limit", String(reservation.state.limit));
+    if (reservation.state.resetAt) res.setHeader("X-Download-Quota-Reset", reservation.state.resetAt.toISOString());
   }
-  const range = req.header("range") ?? undefined;
+  if (clip.exportStatus !== "done" || probe.url !== clip.exportedUrl) {
+    await promoteExistingExport(clip, probe.url);
+  }
+  const range = boundedExportRange(requestedRange ?? "bytes=0-");
   const upstream = await fetchExportObject(probe.url, { range });
+  if (upstream.status !== 206) {
+    await upstream.body?.cancel().catch(() => {});
+    res.status(502).json({ error: "Storage ignored the bounded byte range" });
+    return;
+  }
   if (!upstream.ok || !upstream.body) {
     await upstream.body?.cancel().catch(() => {});
-    res.status(upstream.status === 404 && clip.exportStatus === "expired" ? 410 : 502).json({ error: "Playback unavailable" });
+    res.status(502).json({ error: "Playback unavailable" });
     return;
   }
   res.status(upstream.status);
@@ -2424,9 +2461,7 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   if (clip.exportStatus === "expired" || isBackupExportRef(clip.exportedUrl)) {
     const probe = await probeExportObject(clip.exportedUrl);
     if (probe.state === "exists") {
-      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-        .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
-      clip.exportStatus = "done";
+      if (await promoteExistingExport(clip, probe.url)) clip.exportStatus = "done";
       clip.exportedUrl = probe.url;
     } else if (clip.exportStatus === "expired" && probe.state === "missing") {
       res.status(410).json({ error: "This clip is no longer available.", unavailable: true });
@@ -2483,9 +2518,8 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
     void upstreamReader?.cancel().catch(() => {});
   };
   req.on("aborted", abortUpstream);
-  req.socket.on("close", abortUpstream);
-  res.on("close", abortUpstream);
-  res.socket?.on("close", abortUpstream);
+  req.once("aborted", abortUpstream);
+  res.once("close", abortUpstream);
 
   try {
     // Either method's file: Bunny Storage for Method A, vps1 for Method B.
@@ -2511,8 +2545,7 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   }
 
   if (clip.exportStatus !== "done") {
-    await db.update(userClipsTable).set({ exportStatus: "done" })
-      .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+    await promoteExistingExport(clip, clip.exportedUrl);
   }
   res.setHeader("Content-Type", "video/mp4");
   res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);

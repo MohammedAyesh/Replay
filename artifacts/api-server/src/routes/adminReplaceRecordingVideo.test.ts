@@ -175,6 +175,34 @@ describe("admin recording video replacement", () => {
     expect(lengthMismatch.body.error).toContain("within 2 seconds");
   });
 
+  it("allows replacing a failed current video with zero duration", async () => {
+    const seeded = await seedReferences();
+    info.mockImplementation(async (id: string) => ({
+      duration: id === OLD ? 0 : 72.5,
+      hasMP4Fallback: true,
+      availableResolutions: "1080p",
+    }));
+    const response = await request(app).post(`/api/admin/recordings/${seeded.recordingId}/replace-video`)
+      .set(auth()).send({ videoId: NEW });
+    expect(response.status).toBe(200);
+  });
+
+  it("lowercases a replacement id before checking references", async () => {
+    const seeded = await seedReferences();
+    const [referenced] = await db.insert(clipsTable).values({
+      recordingId: seeded.recordingId,
+      momentLabel: "Other clip",
+      bunnyVideoId: NEW,
+      startTime: "1",
+      endTime: "2",
+    }).returning({ id: clipsTable.id });
+    clipIds.push(referenced.id);
+    const response = await request(app).post(`/api/admin/recordings/${seeded.recordingId}/replace-video`)
+      .set(auth()).send({ videoId: NEW.toUpperCase() });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain("already referenced");
+  });
+
   it("defaults to a dry run and lists exact changes without writing", async () => {
     const seeded = await seedReferences();
     const response = await request(app).post(`/api/admin/recordings/${seeded.recordingId}/replace-video`)

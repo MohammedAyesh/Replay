@@ -746,7 +746,7 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
       const metricColours = metricSides.map((side) => kits[side]?.lab ?? hexToLab(roomColour(ctx.room, side)) ?? pick.a);
       const metricMeasured = metricSides.map((side) => kits[side]?.measured ?? false);
       const s: any = multi ?? teamStats(touches, events, pick);
-      const dr: any = multi ?? teamDribbles(dribbles, play.kits, pick);
+      const dr: any = multi ?? multiSideStats([], dribbles, [], [], play.kits, kits, metricSides);
       const sh = multi?.shots ?? perSide(shots, pick);
       const gl = multi?.goals ?? perSide(goals, pick);
       const prev = team as MatchTeamStats | null;

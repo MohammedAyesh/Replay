@@ -10,6 +10,7 @@ import { ammanLocalInstant } from "../lib/matchRooms";
 import { describeLive, parseLiveManifest } from "../lib/liveManifest";
 import { parseLiveCamera, parseVarControlCamera } from "../lib/liveCameras";
 import { canViewPinnedAcademyRecording } from "../lib/publicFootage";
+import { academyBookingFitsSession } from "../lib/academyFootage";
 import { pipeLiveSegment, rewriteLivePlaylist } from "../lib/liveHlsProxy";
 import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
@@ -18,6 +19,7 @@ const router: IRouter = Router();
 type Surface = "console" | "family";
 type SessionLive = {
   sessionId: number; academyId: number; squadId: number | null; cameraId: string | null;
+  startsAt: Date; endsAt: Date | null;
   booking: { startLocal: string; endLocal: string; status: string } | null;
 };
 type Camera = { alias: string; control: string } | null;
@@ -38,6 +40,8 @@ async function sessionFor(academyId: number, sessionId: number): Promise<Session
     sessionId: academySessionsTable.id,
     academyId: academySessionsTable.academyId,
     squadId: academySessionsTable.squadId,
+    startsAt: academySessionsTable.startsAt,
+    endsAt: academySessionsTable.endsAt,
     footageRequestId: academySessionsTable.footageRequestId,
     cameraId: fieldsTable.cameraId,
   }).from(academySessionsTable)
@@ -49,8 +53,12 @@ async function sessionFor(academyId: number, sessionId: number): Promise<Session
     startLocal: footageRequestsTable.startLocal,
     endLocal: footageRequestsTable.endLocal,
     status: footageRequestsTable.status,
+    academyId: footageRequestsTable.academyId,
   }).from(footageRequestsTable).where(eq(footageRequestsTable.id, row.footageRequestId));
-  return { ...row, booking: booking ?? null };
+  const belongsToSession = booking
+    && booking.academyId === row.academyId
+    && academyBookingFitsSession(booking.startLocal, booking.endLocal, row.startsAt, row.endsAt);
+  return { ...row, booking: belongsToSession ? booking : null };
 }
 
 async function canViewFamilySession(userId: number, session: SessionLive): Promise<boolean> {
@@ -176,16 +184,20 @@ async function statusResponse(session: SessionLive, sessionId: number, base: str
 }
 
 function register(surface: Surface, path: string) {
-  const base = path.replace(/\/status$/, "");
+  const baseFor = (academyId: number, sessionId: number) => surface === "console"
+    ? `/api/academy/console/academies/${academyId}/sessions/${sessionId}/live`
+    : `/api/academy/family/sessions/${sessionId}/live`;
+  const routeBase = path.replace(/\/status$/, "");
   router.get(path, async (req, res): Promise<void> => {
     res.set("Cache-Control", "no-store");
     const session = await authorizedSession(req, res, surface);
     if (!session) return;
-    res.json(await statusResponse(session, session.sessionId, base));
+    res.json(await statusResponse(session, session.sessionId, baseFor(session.academyId, session.sessionId)));
   });
-  router.get(`${base}/playlist.m3u8`, async (req, res): Promise<void> => {
+  router.get(`${routeBase}/playlist.m3u8`, async (req, res): Promise<void> => {
     const session = await authorizedSession(req, res, surface);
     if (!session) return;
+    const base = baseFor(session.academyId, session.sessionId);
     const window = bookingWindow(session);
     const camera = varCamera(session.cameraId);
     if (!window || !camera || Date.now() < window.start.getTime() || Date.now() > window.end.getTime()) {
@@ -213,9 +225,10 @@ function register(surface: Surface, path: string) {
       res.status(502).json({ error: "Live playlist unavailable" });
     }
   });
-  router.get(`${base}/seg/:name`, async (req, res): Promise<void> => {
+  router.get(`${routeBase}/seg/:name`, async (req, res): Promise<void> => {
     const session = await authorizedSession(req, res, surface);
     if (!session) return;
+    const base = baseFor(session.academyId, session.sessionId);
     const name = param(req.params.name);
     const camera = varCamera(session.cameraId);
     const window = bookingWindow(session);

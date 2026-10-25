@@ -16,6 +16,7 @@ export const academyPlayersTable = pgTable("academy_players", {
   dateOfBirth: date("date_of_birth", { mode: "string" }),
   guardianPhone: text("guardian_phone"),
   familyToken: text("family_token"),
+  familyTokenExpiresAt: timestamp("family_token_expires_at", { withTimezone: true }),
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   isActive: boolean("is_active").notNull().default(true),
   monthlyDiscountFils: integer("monthly_discount_fils").notNull().default(0),

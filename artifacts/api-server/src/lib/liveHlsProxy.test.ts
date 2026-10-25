@@ -24,6 +24,13 @@ describe("rewriteLivePlaylist", () => {
     expect(result).toContain("/api/live/seg/new.ts");
   });
 
+  it("advances the media sequence when trimming earlier segments", () => {
+    const source = playlist.replace("#EXT-X-TARGETDURATION:4", "#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:40");
+    const result = rewriteLivePlaylist(source, "/api/live/seg/", new Date("2026-10-13T10:00:04.000Z"));
+    expect(result).toContain("#EXT-X-MEDIA-SEQUENCE:41");
+    expect(result).not.toContain("old.ts");
+  });
+
   it("rejects a trim request when segment wall-clock timestamps are absent", () => {
     expect(rewriteLivePlaylist("#EXTM3U\n#EXTINF:4,\nseg/old.ts\n", "/api/live/seg/", new Date())).toBeNull();
   });

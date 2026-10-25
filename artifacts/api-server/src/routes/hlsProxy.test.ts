@@ -151,7 +151,7 @@ describe("hls-proxy manifest cache", () => {
     });
   });
 
-  it("streams an open-ended MP4 range using bounded upstream requests", async () => {
+  it("returns one bounded chunk for an open-ended MP4 range", async () => {
     const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
     const total = MP4_RANGE_BYTES + 7;
     fetchMock
@@ -165,14 +165,13 @@ describe("hls-proxy manifest cache", () => {
 
     expect(res.status).toBe(206);
     expect(res.headers["accept-ranges"]).toBe("bytes");
-    expect(res.headers["content-range"]).toBe(`bytes 0-${total - 1}/${total}`);
-    expect(res.headers["content-length"]).toBe(String(total));
-    expect(res.body).toHaveLength(total);
+    expect(res.headers["content-range"]).toBe(`bytes 0-${MP4_RANGE_BYTES - 1}/${total}`);
+    expect(res.headers["content-length"]).toBe(String(MP4_RANGE_BYTES));
+    expect(res.body).toHaveLength(MP4_RANGE_BYTES);
     expect(res.body[0]).toBe(17);
-    expect(res.body[total - 1]).toBe(29);
+    expect(res.body[MP4_RANGE_BYTES - 1]).toBe(17);
     expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
       `bytes=0-${MP4_RANGE_BYTES - 1}`,
-      `bytes=${MP4_RANGE_BYTES}-${MP4_RANGE_BYTES + MIN_MP4_RANGE_BYTES - 1}`,
     ]);
   });
 
@@ -205,8 +204,7 @@ describe("hls-proxy manifest cache", () => {
     const total = 2 * 1024 * 1024 + 1;
     fetchMock
       .mockResolvedValueOnce(new Response("range too large", { status: 500 }))
-      .mockResolvedValueOnce(mp4Range(0, 2 * 1024 * 1024 - 1, total, 67))
-      .mockResolvedValueOnce(mp4Range(2 * 1024 * 1024, total - 1, total, 79));
+      .mockResolvedValueOnce(mp4Range(0, 2 * 1024 * 1024 - 1, total, 67));
 
     const res = await request(app)
       .get("/api/hls-proxy/segment")
@@ -214,12 +212,13 @@ describe("hls-proxy manifest cache", () => {
       .set("Range", "bytes=0-");
 
     expect(res.status).toBe(206);
-    expect(res.body).toHaveLength(total);
-    expect(res.body[total - 1]).toBe(79);
+    expect(res.headers["content-range"]).toBe(`bytes 0-${2 * 1024 * 1024 - 1}/${total}`);
+    expect(res.headers["content-length"]).toBe(String(2 * 1024 * 1024));
+    expect(res.body).toHaveLength(2 * 1024 * 1024);
+    expect(res.body[res.body.length - 1]).toBe(67);
     expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
       `bytes=0-${MP4_RANGE_BYTES - 1}`,
       `bytes=0-${2 * 1024 * 1024 - 1}`,
-      `bytes=${2 * 1024 * 1024}-${2 * 1024 * 1024 + MIN_MP4_RANGE_BYTES - 1}`,
     ]);
   });
 

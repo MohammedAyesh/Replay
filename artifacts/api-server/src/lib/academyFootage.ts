@@ -18,7 +18,8 @@ import {
 } from "./footageBooking";
 import { logger } from "./logger";
 
-const ACTIVE_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
+export const ACADEMY_FOOTAGE_CONFLICT_STATUSES = ["queued", "running", "scheduled", "recording", "awaiting_payment"] as const;
+const ACTIVE_STATUSES = ACADEMY_FOOTAGE_CONFLICT_STATUSES;
 const REUSABLE_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
 const REBOOKABLE_STATUSES = ["failed", "cancelled", "expired", "refunded"] as const;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
@@ -89,6 +90,32 @@ export function academyFootageWindow(startsAt: Date, endsAt: Date | null): {
   };
 }
 
+export function academySessionPullWindow(startsAt: Date, endsAt: Date | null) {
+  const start = wallEpoch(ammanLocalString(startsAt)) - 15 * 60_000;
+  const end = wallEpoch(ammanLocalString(endsAt ?? new Date(startsAt.getTime() + DEFAULT_DURATION_MS))) + 15 * 60_000;
+  return {
+    startLocal: wallString(start),
+    endLocal: wallString(end),
+    requestedSeconds: Math.floor((end - start) / 1000),
+    note: null,
+  };
+}
+
+export function academySessionIsAtField(location: string, fieldName: string): boolean {
+  return location.trim().toLocaleLowerCase() === fieldName.trim().toLocaleLowerCase();
+}
+
+export function academyBookingFitsSession(
+  bookingStart: string,
+  bookingEnd: string,
+  sessionStart: Date,
+  sessionEnd: Date | null,
+): boolean {
+  const allowedStart = wallEpoch(ammanLocalString(sessionStart)) - 15 * 60_000;
+  const allowedEnd = wallEpoch(ammanLocalString(sessionEnd ?? new Date(sessionStart.getTime() + DEFAULT_DURATION_MS))) + 15 * 60_000;
+  return wallEpoch(bookingStart) >= allowedStart && wallEpoch(bookingEnd) <= allowedEnd;
+}
+
 function bookingErrorNote(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   if (/no footage/i.test(message)) return "No footage is available for this past session.";
@@ -110,6 +137,7 @@ async function loadAcademySession(academyId: number, sessionId: number) {
   const [row] = await db.select({
     session: academySessionsTable,
     academyFieldId: academiesTable.fieldId,
+    academyFieldName: fieldsTable.name,
     cameraId: fieldsTable.cameraId,
   })
     .from(academySessionsTable)
@@ -131,14 +159,14 @@ export async function bookAcademySessionFootage(
   if (!row) return;
   const session = row.session;
   const cameraId = row.cameraId?.trim();
-  if (!cameraId) {
+  if (!cameraId || !academySessionIsAtField(session.location, row.academyFieldName)) {
     await db.update(academySessionsTable)
-      .set({ footageNote: "No camera is assigned to this field." })
+      .set({ footageNote: cameraId ? "This session is not at the academy camera's field." : "No camera is assigned to this field." })
       .where(eq(academySessionsTable.id, sessionId));
     return;
   }
 
-  const window = academyFootageWindow(session.startsAt, session.endsAt);
+  const window = academySessionPullWindow(session.startsAt, session.endsAt);
   try {
     await validateAvailability(cameraId, wallEpoch(window.startLocal), wallEpoch(window.endLocal));
   } catch (error) {
@@ -186,7 +214,7 @@ export async function bookAcademySessionFootage(
   ));
   if (overlapping) {
     await db.update(academySessionsTable)
-      .set({ footageRequestId: overlapping.id, footageNote: window.note })
+      .set({ footageNote: "This camera window is already booked." })
       .where(eq(academySessionsTable.id, sessionId));
     return;
   }
@@ -309,11 +337,11 @@ export async function cancelScheduledAcademyFootageForSession(
   if (
     !footage
     || footage.academyId !== academyId
-    || footage.status !== "scheduled"
+    || !ACTIVE_STATUSES.includes(footage.status as typeof ACTIVE_STATUSES[number])
     || footage.shareToken !== null
   ) return;
   const result = await cancelFootageRequest(footage, {
-    allowedStatuses: ["scheduled"],
+    allowedStatuses: ACTIVE_STATUSES,
     message: "Cancelled because the academy session was deleted",
   });
   if ("error" in result) {
@@ -351,22 +379,32 @@ export async function attachAcademyRecordingsForFootageRequest(
   deliveredSeconds: number | null,
 ): Promise<void> {
   if (!videoId) return;
+  if (request.academyId === null) return;
+  const academyId = request.academyId;
   const playbackUrl = getBunnyPlaybackUrl(videoId);
   await db.transaction(async (tx) => {
     // Serialize duplicate completion callbacks across API replicas without a
     // schema change; otherwise two workers could create duplicate recordings.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${playbackUrl}, 0))`);
-    const linkedSessions = await tx.select({
+    const linkedSessions = (await tx.select({
       id: academySessionsTable.id,
       academyId: academySessionsTable.academyId,
+      startsAt: academySessionsTable.startsAt,
+      endsAt: academySessionsTable.endsAt,
     })
       .from(academySessionsTable)
       .where(and(
         eq(academySessionsTable.footageRequestId, request.id),
-        ...(request.academyId === null ? [] : [eq(academySessionsTable.academyId, request.academyId)]),
+        eq(academySessionsTable.academyId, academyId),
       ))
-      .orderBy(asc(academySessionsTable.startsAt), asc(academySessionsTable.id));
-    if (linkedSessions.length === 0) return;
+      .orderBy(asc(academySessionsTable.startsAt), asc(academySessionsTable.id)))
+      .filter((session) => academyBookingFitsSession(
+        request.startLocal,
+        request.endLocal,
+        session.startsAt,
+        session.endsAt,
+      ));
+    if (linkedSessions.length !== 1) return;
 
     const [existingRecording] = await tx.select({ id: recordingsTable.id })
       .from(recordingsTable)

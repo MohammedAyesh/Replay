@@ -253,7 +253,7 @@ afterEach(async () => {
     await db.delete(academyPlayerGuardiansTable)
       .where(inArray(academyPlayerGuardiansTable.playerId, familyPlayers));
     await db.update(academyPlayersTable)
-      .set({ familyToken: null, userId: null })
+      .set({ familyToken: null, familyTokenExpiresAt: null, userId: null })
       .where(inArray(academyPlayersTable.id, familyPlayers));
   }
   await db.update(academiesTable).set({ contactPhone: null }).where(eq(academiesTable.id, academyAId));
@@ -264,7 +264,11 @@ describe("Academy Console API", () => {
   it("returns a private family view scoped to the linked active player and date window", async () => {
     const token = "a".repeat(32);
     await db.update(academyPlayersTable)
-      .set({ familyToken: token, guardianPhone: "079 123 4567" })
+      .set({
+        familyToken: token,
+        familyTokenExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60_000),
+        guardianPhone: "079 123 4567",
+      })
       .where(eq(academyPlayersTable.id, playerAId));
     const claim = await request(app)
       .post("/api/academy/family/claim")
@@ -511,7 +515,7 @@ describe("Academy Console API", () => {
 
     const inactiveToken = "b".repeat(32);
     await db.update(academyPlayersTable)
-      .set({ familyToken: inactiveToken })
+      .set({ familyToken: inactiveToken, familyTokenExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60_000) })
       .where(eq(academyPlayersTable.id, inactivePlayerAId));
     const inactive = await request(app).post("/api/academy/family/claim")
       .set(as(ownerId))
@@ -633,6 +637,18 @@ describe("Academy Console API", () => {
       .toBe(404);
     expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token: rotatedToken })).status)
       .toBe(200);
+    const rotatedAgain = await request(app).post(playerUrl).set(as(ownerId));
+    const currentToken = rotatedAgain.body.familyUrl.match(/\/p\/([0-9a-f]{32})$/)?.[1];
+    expect((await request(app).get(guardiansUrl).set(as(ownerId))).body).toHaveLength(0);
+    expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token: rotatedToken })).status)
+      .toBe(404);
+    expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token: currentToken })).status)
+      .toBe(200);
+    await db.update(academyPlayersTable)
+      .set({ familyTokenExpiresAt: new Date(Date.now() - 1_000) })
+      .where(eq(academyPlayersTable.id, playerAId));
+    expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token: currentToken })).status)
+      .toBe(404);
 
     const email = `target_${tag}@academy-test.local`;
     const added = await request(app).post(guardiansUrl).set(as(ownerId)).send({ email });
@@ -662,7 +678,7 @@ describe("Academy Console API", () => {
     resetAcademyJoinState();
     const token = "c".repeat(32);
     await db.update(academyPlayersTable)
-      .set({ familyToken: token })
+      .set({ familyToken: token, familyTokenExpiresAt: new Date(Date.now() + 90 * 24 * 60 * 60_000) })
       .where(eq(academyPlayersTable.id, playerAId));
     for (let index = 0; index < 5; index += 1) {
       const response = await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token });
