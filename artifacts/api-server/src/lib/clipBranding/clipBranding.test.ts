@@ -330,3 +330,23 @@ describe("encodeCard (the card handed to vps1)", () => {
   }, 60_000);
 });
 
+describe("ffmpegWithCard", () => {
+  it("succeeds when FFmpeg finishes cleanly before reading every frame (FFmpeg 7.1's appended path)", async () => {
+    const { ffmpegWithCard } = await import("./endScreenVideo");
+    const out = path.join(work, "early.mp4");
+    // Reads 5 of the 90 frames and exits 0: the remaining writes hit a closed pipe.
+    await ffmpegWithCard(["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", "608x1080", "-framerate", "30",
+      "-i", "pipe:0", "-frames:v", "5", "-c:v", "libx264", "-preset", "ultrafast", out],
+      { spec: sampleEndScreen("signOff", LOOK), seconds: 3, blur: 22, dim: 0.5 }, { w: 608, h: 1080 }, 60_000);
+    expect(fs.existsSync(out)).toBe(true);
+  }, 60_000);
+
+  it("reports an FFmpeg failure", async () => {
+    const { ffmpegWithCard } = await import("./endScreenVideo");
+    await expect(ffmpegWithCard(["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", "608x1080", "-framerate", "30",
+      "-i", "pipe:0", "-c:v", "no-such-encoder", path.join(work, "bad.mp4")],
+      { spec: sampleEndScreen("signOff", LOOK), seconds: 3, blur: 22, dim: 0.5 }, { w: 608, h: 1080 }, 60_000))
+      .rejects.toThrow();
+  }, 60_000);
+});
+

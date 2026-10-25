@@ -112,7 +112,13 @@ export async function writeCardFrames(
   const canvas = createCanvas(dims.w, dims.h);
   const ctx = canvas.getContext("2d");
   const frames = Math.round(job.seconds * FPS);
+  const closed = () => {
+    const w = sink as NodeJS.WritableStream & { destroyed?: boolean; writableEnded?: boolean };
+    return w.destroyed === true || w.writableEnded === true;
+  };
   for (let i = 0; i < frames; i++) {
+    // The reader has gone (FFmpeg finished, or was killed): stop drawing.
+    if (closed()) return;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, dims.w, dims.h);
     ctx.scale(scale, scale);
@@ -128,13 +134,52 @@ export async function writeCardFrames(
       await new Promise<void>((resolve, reject) => {
         const onDrain = () => { cleanup(); resolve(); };
         const onError = (err: Error) => { cleanup(); reject(err); };
-        const cleanup = () => { sink.off("drain", onDrain); sink.off("error", onError); };
+        // A pipe that closes without draining must not leave this waiting forever.
+        const onClose = () => { cleanup(); resolve(); };
+        const cleanup = () => {
+          sink.off("drain", onDrain);
+          sink.off("error", onError);
+          sink.off("close", onClose);
+        };
         sink.on("drain", onDrain);
         sink.on("error", onError);
+        sink.on("close", onClose);
       });
     }
   }
-  sink.end();
+  if (!closed()) sink.end();
+}
+
+function isClosedPipe(err: unknown): boolean {
+  const code = (err as { code?: string })?.code;
+  return code === "EPIPE" || code === "ERR_STREAM_DESTROYED" || code === "ERR_STREAM_WRITE_AFTER_END";
+}
+
+/**
+ * Run FFmpeg with the card's frames on its stdin. FFmpeg's exit decides the
+ * result: a run that finishes cleanly before reading every frame (it reached
+ * its -t, or the shortest input ended — FFmpeg 7.1 stops a few frames earlier
+ * than 6.1 on the appended path) leaves the rest unread, and those writes fail
+ * with EPIPE. That is not a failure. A drawing error is, and kills FFmpeg so it
+ * cannot sit waiting for frames that will never come.
+ */
+export async function ffmpegWithCard(args: string[], job: EndScreenJob, dims: Dims, timeoutMs = 300_000): Promise<void> {
+  const { proc, done } = spawnFfmpeg(args, timeoutMs);
+  const writing = writeCardFrames(proc.stdin!, job, dims).catch((err) => {
+    if (!isClosedPipe(err)) {
+      proc.kill("SIGKILL");
+      throw err;
+    }
+  });
+  try {
+    await done;
+  } catch (err) {
+    // FFmpeg failed; if the writer failed first, its error is the cause.
+    await writing.catch((writerErr) => { throw writerErr; });
+    throw err;
+  }
+  proc.stdin?.destroy();
+  await writing.catch(() => {});
 }
 
 /**
@@ -199,13 +244,8 @@ async function renderTail(options: {
     "-movflags", "+faststart",
     out,
   ];
-  const { proc, done } = spawnFfmpeg(args, 300_000);
-  const writing = writeCardFrames(proc.stdin!, job, dims).catch((err) => {
-    proc.kill("SIGKILL");
-    throw err;
-  });
   try {
-    await Promise.all([writing, done]);
+    await ffmpegWithCard(args, job, dims, 300_000);
   } catch (err) {
     fs.unlink(out, () => {});
     throw err;

@@ -1,4 +1,3 @@
-import { spawn } from "child_process";
 import { createHash } from "crypto";
 import fs from "fs";
 import os from "os";
@@ -11,7 +10,7 @@ import {
 } from "../bunny";
 import { getOutputDims } from "../ffmpegExport";
 import type { SettingsContext } from "../settings";
-import { FPS, writeCardFrames, type EndScreenJob } from "./endScreenVideo";
+import { FPS, ffmpegWithCard, type EndScreenJob } from "./endScreenVideo";
 import { clipWantsDrawnBranding, planClipBranding, type BrandingClip } from "./plan";
 import type { Dims } from "./types";
 
@@ -70,22 +69,11 @@ export async function encodeCard(job: EndScreenJob, dims: Dims): Promise<{ buffe
   for (const v of variants) {
     const out = `${os.tmpdir()}/soccerwatch-card-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.${v.ext}`;
     try {
-      const proc = spawn("ffmpeg", [
-        "-nostdin", "-y", "-v", "error",
+      await ffmpegWithCard([
+        "-y", "-v", "error",
         "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${dims.w}x${dims.h}`, "-framerate", String(FPS), "-i", "pipe:0",
         ...v.args, out,
-      ], { stdio: ["pipe", "ignore", "pipe"] });
-      // An FFmpeg that exits early turns the next write into EPIPE; without a
-      // listener that would be an uncaught error. `done` reports the failure.
-      proc.stdin?.on("error", () => {});
-      let stderr = "";
-      proc.stderr?.on("data", (d: Buffer) => { stderr = (stderr + d.toString()).slice(-2000); });
-      const done = new Promise<void>((resolve, reject) => {
-        proc.on("error", reject);
-        proc.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg ${code}: ${stderr.trim()}`))));
-      });
-      const writing = writeCardFrames(proc.stdin!, job, dims).then(() => { proc.stdin?.end(); });
-      await Promise.all([writing, done]);
+      ], job, dims, 120_000);
       const buffer = await fs.promises.readFile(out);
       return { buffer, ext: v.ext };
     } catch (err) {
