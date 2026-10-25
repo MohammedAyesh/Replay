@@ -5,10 +5,12 @@ import {
   detectedShots,
   dribbleEvents,
   dropTeleports,
+  passEvents,
   playerMoments,
   sideOfKit,
   teamDribbles,
   type Lab,
+  type PitchDirection,
   type Touch,
 } from "./matchPlay";
 import { ballFollow, followCrop, followPath, mergeMoments, teamGoalMoments } from "./personalMoments";
@@ -110,6 +112,38 @@ describe("dribbleEvents", () => {
     expect(dribbleEvents(manifest, segs, [run[0], touch(3, "s0:mate", 25, WHITE)], kits, null)).toEqual([]);
     const noPitch = { ...manifest, pitchModel: undefined } as unknown as TrackingManifest;
     expect(dribbleEvents(noPitch, segs, run, kits, null)).toEqual([]);
+  });
+
+  it("is not a dribble past a man who never came within 3 m of him (four cam1 matches, 2026-10-25)", () => {
+    // in front of him (3.2 m off his line, inside the 3.5 m "in front" lane)
+    // and behind him at the end, but never closer than 3.2 m: he stood off
+    const aside = track("s0:opp", 0, 200, () => [11, 13.2]);
+    expect(dribbleEvents(manifest, [segment([me, aside, mate])], run, kits, null)).toEqual([]);
+    // the same man 2.5 m off his line is engaged
+    const close = track("s0:opp", 0, 200, () => [11, 12.4]);
+    expect(dribbleEvents(manifest, [segment([me, close, mate])], run, kits, null)).toHaveLength(1);
+  });
+
+  it("with the attacking direction, is not a dribble running back toward his own goal past men already behind him", () => {
+    // white attacks x = 0: "me" runs from x = 5 to 17, away from it
+    const whiteAttacksZero: PitchDirection = {
+      kits: [WHITE, BLACK],
+      sideOf: (kit) => (kit ? (kit[0] > 100 ? 0 : 1) : null),
+      attacking: (goalX) => (goalX === 0 ? 0 : 1),
+    };
+    // "opp" stands at x = 7: 2 m further from x = 0 than the carrier, so behind
+    // him as white attacks, though ahead of him along this run
+    const behind = track("s0:opp", 0, 200, () => [7, 10.5]);
+    const runBack = [0, 1, 2, 3, 4].map((t) => touch(t, "s0:me", 5 + t * 3, WHITE));
+    const plain = dribbleEvents(manifest, [segment([me, behind, mate])], runBack, kits, null);
+    expect(plain).toHaveLength(1);
+    const withDir = dribbleEvents(manifest, [segment([me, behind, mate])], runBack, kits, null, whiteAttacksZero);
+    expect(withDir).toHaveLength(0);
+    // the same run toward the goal white attacks is kept
+    const whiteAttacksForty: PitchDirection = { ...whiteAttacksZero, attacking: (goalX) => (goalX === 40 ? 0 : 1) };
+    expect(dribbleEvents(manifest, segs, run, kits, null, whiteAttacksForty)).toHaveLength(1);
+    // and without a direction nothing changes
+    expect(dribbleEvents(manifest, segs, run, kits, null, null)).toHaveLength(1);
   });
 
   it("belongs to the claimant whose part covers its first touch", () => {
@@ -242,5 +276,16 @@ describe("personal moments", () => {
 
   it("has no ball path when the tracker saw no ball near the moment", () => {
     expect(ballFollow([{ v: 1, fps: 20, touches: [], kits: {}, ball: [[100, 10, 10]] }] as never, { width: 3840, height: 1080, frameRate: 20 }, 500)).toBeUndefined();
+  });
+});
+
+describe("passEvents ball speed", () => {
+  const at = (t: number, id: string, x: number): Touch => ({ f: Math.round(t * 20), t, segmentIndex: 0, trackId: id, kit: WHITE, ball: [x, 10], foot: [x, 10], d: 0, reassigned: false });
+  it("calls a long ball faster than 30 m/s a contested ball, not a pass (job 26, 106:27: 20.3 m in 0.4 s)", () => {
+    const [jump] = passEvents([at(10, "s0:a", 5), at(10.4, "s0:b", 25.3)], { a: WHITE, b: BLACK });
+    expect(jump?.kind).toBe("contest");
+    // the fastest real one on four matches: 14.2 m in 0.5 s (rec 394, 52:15)
+    const [hard] = passEvents([at(10, "s0:a", 5), at(10.5, "s0:b", 19.2)], { a: WHITE, b: BLACK });
+    expect(hard?.kind).toBe("pass");
   });
 });

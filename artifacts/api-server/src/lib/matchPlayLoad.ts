@@ -73,7 +73,7 @@ export type RecordingPlay = {
 };
 
 /** Bumped whenever what is derived here changes, so cached results are rebuilt. */
-const DERIVE_VERSION = 5;
+const DERIVE_VERSION = 6;
 
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
@@ -153,17 +153,6 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
   for (const sc of sidecars) for (const [id, v] of Object.entries(sc?.kits ?? {})) kits.set(id, [v[0], v[1], v[2]]);
   const events: BundleEvent[] = (segments ?? []).flatMap((segment) =>
     (segment.events ?? []).filter((e) => typeof e.time === "number" && Number.isFinite(e.time)).map((e) => ({ type: String(e.type), t: e.time })));
-  let dribbles: Dribble[] = [];
-  if (segments && resolved.touches.length) {
-    try {
-      // with bibs on one side, a dribble's opponents and its outcome follow the
-      // bib line rather than raw shirt distance
-      const bib = bibKit(sidecars);
-      dribbles = dribbleEvents(manifest, segments, resolved.touches, kits, bib ? { a: bib.lab, b: bib.lab, bib } : null);
-    } catch (error) {
-      logger.warn({ recordingId, err: error }, "Could not read dribbles");
-    }
-  }
   const inPlay: Array<[number, number]> | null = segments
     ? mergeSpans(segments.flatMap((segment) => (segment.inPlaySpans ?? [])
       .filter((span) => Number.isFinite(span.start) && Number.isFinite(span.end))
@@ -175,6 +164,17 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
       direction = pitchDirection({ manifest, sidecars, segments, kits, bib: bibKit(sidecars), inPlay });
     } catch (error) {
       logger.warn({ recordingId, err: error }, "Could not read the attacking direction");
+    }
+  }
+  let dribbles: Dribble[] = [];
+  if (segments && resolved.touches.length) {
+    try {
+      // with bibs on one side, a dribble's opponents and its outcome follow the
+      // bib line rather than raw shirt distance
+      const bib = bibKit(sidecars);
+      dribbles = dribbleEvents(manifest, segments, resolved.touches, kits, bib ? { a: bib.lab, b: bib.lab, bib } : null, direction);
+    } catch (error) {
+      logger.warn({ recordingId, err: error }, "Could not read dribbles");
     }
   }
   const data: RecordingPlay = {

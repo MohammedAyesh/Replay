@@ -309,6 +309,15 @@ export const PASS = {
   ambiguousKit: 5,
   /** possession credited per interval is capped, so a dead ball cannot swamp it */
   possessionCapSeconds: 8,
+  /**
+   * a "pass" faster than this between the two touches is a ball-tracker jump,
+   * not a pass: it counts as a contested ball, metres per second. On four cam1
+   * matches (394 and jobs 26, 27, 29, 2026-10-25) every judged long pass over
+   * 30 m/s was a glitch (17.8 m, 20.3 m and 17.9 m "in 0.4 s" with the ball
+   * moving a metre between two players); the fastest real one was 28.4 m/s.
+   * About 5% of long passes are dropped.
+   */
+  maxBallSpeed: 30,
 } as const;
 
 /**
@@ -465,7 +474,7 @@ export function passEvents(
     const metres = u.ball && v.ball ? Math.hypot(v.ball[0] - u.ball[0], v.ball[1] - u.ball[1]) : null;
     const kind: PlayEvent["kind"] = v.trackId === u.trackId || metres === null || metres < PASS.contestMetres
       ? "carry"
-      : metres < PASS.passMetres ? "contest" : "pass";
+      : metres < PASS.passMetres || metres / gap > PASS.maxBallSpeed ? "contest" : "pass";
     events.push({ kind, from: u, to: v, sameTeam, metres: metres === null ? null : round1(metres) });
   }
   return events;
@@ -838,6 +847,21 @@ export const DRIBBLE = {
   /** and is "passed" once he is this far behind the carrier (and still within passedRadius) */
   behindMetres: 0.5,
   passedRadiusMetres: 6,
+  /**
+   * and he has to have come this close to the carrier during the run, metres
+   * (feet to feet on the minimap). Without it a man standing still 4-6 m away
+   * counted as beaten. On 81 judged dribbles from four cam1 matches (2026-10-25)
+   * no real or plausible dribble had its man further than 2.9 m; 11 wrong ones
+   * did ("never engaged", "a run into space").
+   */
+  engageMetres: 3,
+  /**
+   * with the attacking direction known: a run that goes this far back toward
+   * the carrier's own goal...
+   */
+  backwardMetres: 3,
+  /** ...past men who all started at least this far behind him is not a take-on, metres */
+  behindStartMetres: 1.5,
   /** the next touch decides it only when it comes within this long, seconds */
   outcomeSeconds: 4,
   /** without team colours: another shirt this far from his is an opponent... */
@@ -902,8 +926,10 @@ export function dribbleEvents(
   touches: Touch[],
   kits: Map<string, Lab>,
   pick: TeamPick | null,
+  direction: PitchDirection | null = null,
 ): Dribble[] {
   if (!hasUsablePitchModel(manifest) || touches.length < 2) return [];
+  const length = manifest.pitchModel?.pitchWidthMetres ?? 0;
   const T = touches;
   const sideOf = (id: string, fallback: Lab | null) => kits.get(id) ?? fallback ?? null;
   type Run = { i: number; j: number };
@@ -977,6 +1003,8 @@ export function dribbleEvents(
     const ux = (c1.x - c0.x) / L, uy = (c1.y - c0.y) / L;
     const beaten: string[] = [];
     for (const [id, seq] of opp) {
+      // he has to have been at the carrier at some point of the run
+      if (!seq.some(({ p, mp }) => Math.hypot(p.x - mp.x, p.y - mp.y) <= DRIBBLE.engageMetres)) continue;
       let ahead = false;
       for (const { p, mp } of seq) {
         const rx = p.x - mp.x, ry = p.y - mp.y;
@@ -986,6 +1014,21 @@ export function dribbleEvents(
       }
     }
     if (!beaten.length) continue;
+    // with the direction from the minimap: running back toward his own goal past
+    // men who were already behind him is not getting past anyone
+    const side = direction?.sideOf(own) ?? null;
+    if (direction && side !== null && length > 0) {
+      const goal = direction.attacking(0, first.t) === side ? 0 : direction.attacking(length, first.t) === side ? length : null;
+      if (goal !== null) {
+        const toGoal = (x: number) => Math.abs(x - goal);
+        const progress = toGoal(c0.x) - toGoal(c1.x);
+        const allBehind = beaten.every((id) => {
+          const start = opp.get(id)?.[0];
+          return start ? toGoal(start.p.x) - toGoal(start.mp.x) > DRIBBLE.behindStartMetres : false;
+        });
+        if (progress < -DRIBBLE.backwardMetres && allBehind) continue;
+      }
+    }
     const next = T[r.j + 1];
     let outcome: Dribble["outcome"] = null;
     if (next && next.t - last.t <= DRIBBLE.outcomeSeconds) {
