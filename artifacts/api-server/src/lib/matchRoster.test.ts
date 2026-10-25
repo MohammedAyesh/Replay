@@ -108,9 +108,10 @@ describe("voteMatchRosterShirtNumber", () => {
   });
 
   it("corrects a truncated match-roster number from a strong per-track read", () => {
-    expect(voteMatchRosterShirtNumber("4", [
-      { number: "44", seenFrames: 128 },
-    ])).toBe("44");
+    // red 44 on rec 401: every one of his eight tracks voted 44, the pooled vote kept "4"
+    expect(voteMatchRosterShirtNumber("4", [5, 24, 40, 13, 4, 8, 20, 14].map((seenFrames) => (
+      { number: "44", seenFrames }
+    )))).toBe("44");
   });
 
   it("accepts a clear single-digit vote", () => {
@@ -160,6 +161,11 @@ describe("voteMatchRosterShirtNumber", () => {
   it("names red 44 where the pipeline kept the half-read 4 (rec 401, rec 402)", () => {
     expect(voteMatchRosterShirtNumber("4", tracks("44", 5, 24, 40, 13, 4, 8, 20, 14), "4")).toBe("44");
     expect(voteMatchRosterShirtNumber("4", [...tracks("44", 3, 20, 38), ...tracks("4", 13)], "4")).toBe("44");
+  });
+
+  it("does not lengthen a number from a single track that read a longer one (jobs 23, 28)", () => {
+    expect(voteMatchRosterShirtNumber("9", tracks("91", 13), "9")).toBe("9");
+    expect(voteMatchRosterShirtNumber("1", tracks("12", 10), "1")).toBe("1");
   });
 
   it("names a single digit only when it is the pipeline's own candidate", () => {

@@ -44,10 +44,9 @@ const MAX_MATCH_ROSTER_PARTS_PER_PLAYER = 256;
  *   white 8 read "18" on 9 frames against "8" on 112 (rec 394) does not.
  * - SHARE: the winner needs three quarters of the player's frames, so a front-print
  *   10 read "70" 9 times and "10" 4 times (rec 394) is not renamed 70.
- * - Corroboration: a two-digit winner needs two tracks or must contain the
- *   pipeline's number; a single digit must be the pipeline's own candidate. One-track
- *   "0"s on plain shirts (rec 396, three players) and a one-track "44" on a man in
- *   a jacket (rec 401) passed every other test.
+ * - Corroboration: a two-digit winner needs two tracks; a single digit must be the
+ *   pipeline's own candidate. One-track "0"s on plain shirts (rec 396, three players)
+ *   and a one-track "44" on a man in a jacket (rec 401) passed every other test.
  */
 export const ROSTER_NUMBER_VOTE = { foldMin: 0.25, share: 0.75, minFrames: 8, minTracks: 2, minTrackFrames: 3 };
 
@@ -101,8 +100,7 @@ export function voteMatchRosterShirtNumber(
   if (topFrames < minFrames || topFrames < share * totalFrames) return matchNumber;
   const hints = [rosterShirtNumber(candidate), rosterShirtNumber(matchNumber)].filter((hint): hint is string => !!hint);
   if (topNumber.length === 1) return hints.includes(topNumber) ? topNumber : matchNumber;
-  const corroborated = (foldedTracks.get(topNumber) ?? 0) >= minTracks || hints.some((hint) => topNumber.includes(hint));
-  return corroborated ? topNumber : matchNumber;
+  return (foldedTracks.get(topNumber) ?? 0) >= minTracks ? topNumber : matchNumber;
 }
 
 function rosterId(value: unknown): string | null {
