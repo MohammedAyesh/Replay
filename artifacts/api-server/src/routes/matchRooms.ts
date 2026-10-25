@@ -25,7 +25,7 @@ import { blockedUserIdsFor, isBlockedEitherWay } from "../lib/safety";
 import { DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 import { publicExportStatus } from "../lib/userClipExportState";
 import { acceptedFriendshipBetween } from "../lib/friends";
-import { activatePaidBooking, cancelUnpaidBooking } from "./owner";
+import { activatePaidBooking, rejectBookingPayment } from "./owner";
 import { loadCommerce, type Commerce } from "../lib/commerce";
 import {
   ammanLocalInstant,
@@ -1766,15 +1766,26 @@ router.post("/admin/stat-unlocks/:id/:action", async (req, res): Promise<void> =
   const now = new Date();
   // A booking payment starts (or cancels) the recording itself.
   let booking: { status: string } | null = null;
-  if (row.kind === "booking" && row.matchId && row.status === "pending") {
-    const [room] = await db.select({ requestId: matchRoomsTable.footageRequestId }).from(matchRoomsTable)
+  if (row.kind === "booking" && row.matchId) {
+    const [room] = await db.select({ requestId: matchRoomsTable.footageRequestId, requestStatus: footageRequestsTable.status })
+      .from(matchRoomsTable)
+      .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, matchRoomsTable.footageRequestId))
       .where(eq(matchRoomsTable.id, row.matchId));
-    if (room) {
-      if (action === "confirm") booking = await activatePaidBooking(room.requestId);
-      else {
-        await cancelUnpaidBooking(room.requestId);
-        booking = { status: "cancelled" };
+    if (room && action === "confirm") {
+      booking = row.status === "pending" ? await activatePaidBooking(room.requestId) : { status: room.requestStatus };
+      // The booker cancelled it (or it lapsed) before the transfer was confirmed:
+      // nothing records, so the payment is never marked paid. Refund it by hand.
+      if (booking.status === "cancelled") {
+        res.status(409).json({ error: "This booking was cancelled, so its payment can't be marked paid", booking });
+        return;
       }
+    } else if (room && row.status === "pending") {
+      const rejected = await rejectBookingPayment(room.requestId, row.method);
+      if ("error" in rejected) {
+        res.status(502).json({ error: "The recording could not be cancelled. Try again in a minute." });
+        return;
+      }
+      booking = rejected;
     }
   }
   const [saved] = await db.update(statUnlocksTable).set(action === "confirm" ? {
@@ -1783,7 +1794,19 @@ router.post("/admin/stat-unlocks/:id/:action", async (req, res): Promise<void> =
     confirmedAt: now,
     validUntil: row.kind === "monthly" ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) : null,
   } : { status: "rejected", confirmedBy: user.id, confirmedAt: now })
-    .where(eq(statUnlocksTable.id, id)).returning();
+    // Only as it was read (a booking payment rejected above by its own cancel
+    // counts as read): if the booker cancelled or the field took the cash in
+    // the meantime, that answer stands.
+    .where(and(
+      eq(statUnlocksTable.id, id),
+      action === "reject" && booking?.status === "cancelled"
+        ? inArray(statUnlocksTable.status, [row.status, "rejected"])
+        : eq(statUnlocksTable.status, row.status),
+    )).returning();
+  if (!saved) {
+    res.status(409).json({ error: "This payment changed in the meantime. Reload and check it again.", booking });
+    return;
+  }
   res.json({ id: saved.id, status: saved.status, booking });
 });
 
@@ -1801,17 +1824,27 @@ router.post("/m/:code/booking/collect", async (req, res): Promise<void> => {
     return;
   }
   const paid = (req.body ?? {}).paid !== false;
+  // A pay-at-field booking, or one the booker switched from that to CliQ: it is
+  // locked in (recording), so the field can still take the cash for it.
+  const lockedIn = ctx.request.status !== "awaiting_payment";
   const [payment] = await db.select().from(statUnlocksTable).where(and(
     eq(statUnlocksTable.matchId, ctx.room.id), eq(statUnlocksTable.kind, "booking"),
-    eq(statUnlocksTable.method, "field"), eq(statUnlocksTable.status, "pending"),
+    inArray(statUnlocksTable.method, lockedIn ? ["field", "cliq"] : ["field"]), eq(statUnlocksTable.status, "pending"),
   ));
-  if (!payment) {
+  if (!payment || ["cancelled", "failed"].includes(ctx.request.status)) {
     res.status(409).json({ error: "No cash payment is waiting on this match" });
     return;
   }
-  await db.update(statUnlocksTable).set({
+  const marked = await db.update(statUnlocksTable).set({
     status: paid ? "paid" : "rejected", confirmedBy: user.id, confirmedAt: new Date(),
-  }).where(eq(statUnlocksTable.id, payment.id));
+    // Cash in hand is a pay-at-field payment, whatever the booker last picked.
+    ...(paid ? { method: "field" } : {}),
+  }).where(and(eq(statUnlocksTable.id, payment.id), eq(statUnlocksTable.status, "pending")))
+    .returning({ id: statUnlocksTable.id });
+  if (!marked.length) {
+    res.status(409).json({ error: "This payment was just settled. Reload to see it." });
+    return;
+  }
   logger.info({ match: ctx.room.code, by: user.id, paid }, "pay-at-field booking marked");
   const fresh = await loadRoomByCode(ctx.room.code);
   res.json(await roomPayload(req, fresh ?? ctx, user));

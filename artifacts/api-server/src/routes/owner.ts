@@ -2,7 +2,7 @@ import { bookingPriceFils, loadCommerce } from "../lib/commerce";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import {
   academiesTable,
   db,
@@ -26,7 +26,9 @@ import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
-import { attachReward, availableReward, canEarn, claimReward, loyaltyStatus, releaseReward, releaseRewardForMatch } from "../lib/freeMatch";
+import {
+  attachReward, availableReward, canEarn, claimReward, loyaltyStatus, releaseReward, releaseRewardForMatch, unpaidLapseCutoffLocal,
+} from "../lib/freeMatch";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -777,6 +779,7 @@ export async function runOwnerStatusSync(): Promise<void> {
         .map(({ request, camera }) => refreshOwnerRequest(request, camera!)),
     );
     await expireOwnerShares();
+    await lapseUnpaidBookings().catch((error) => logger.warn({ error }, "Lapsing unpaid bookings failed"));
   } finally {
     syncInProgress = false;
   }
@@ -1274,25 +1277,29 @@ router.post("/owner/fields/:fieldId/requests", async (req, res): Promise<void> =
     return;
   }
 
-  const overlapping = await db
+  const overlapping = (await db
     .select({
       startLocal: footageRequestsTable.startLocal,
       endLocal: footageRequestsTable.endLocal,
+      academyId: footageRequestsTable.academyId,
     })
     .from(footageRequestsTable)
     .where(and(
       eq(footageRequestsTable.fieldId, fieldId),
       inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES),
-    ));
-  if (overlapping.some((existing) => {
+    ))).filter((existing) => {
     const existingStart = ammanLocalEpoch(existing.startLocal);
     const existingEnd = ammanLocalEpoch(existing.endLocal);
     return Number.isFinite(existingStart)
       && Number.isFinite(existingEnd)
       && start.epochMs < existingEnd
       && existingStart < end.epochMs;
-  })) {
-    res.status(400).json({ error: "You already booked footage for this time" });
+  });
+  if (overlapping.length) {
+    // Academy sessions hold the camera too, but they are hidden from the owner's
+    // list: say who has the slot, and nothing more about it.
+    const academyOnly = overlapping.every((existing) => existing.academyId !== null);
+    res.status(400).json({ error: academyOnly ? "The academy has this slot booked" : "You already booked footage for this time" });
     return;
   }
 
@@ -1876,6 +1883,8 @@ router.get("/owner/fields/:fieldId/ledger", async (req, res): Promise<void> => {
 
 // Prices and limits come from Admin -> Settings (lib/commerce.ts).
 const BOOKING_HOLD_STATUSES = [...ACTIVE_REQUEST_STATUSES, "awaiting_payment"];
+/** pg_advisory_xact_lock(namespace, fieldId): serialises player booking creation per field. */
+const BOOKING_LOCK_NAMESPACE = 7742;
 
 router.get("/bookings/fields", async (req, res): Promise<void> => {
   const viewer = await getLocalUserRecord(req).catch(() => null);
@@ -1948,7 +1957,10 @@ const playerBookingSchema = z.object({
   useFreeMatch: z.boolean().optional(),
 });
 
-/** Bookings a player holds without having paid: CliQ ones waiting, plus pay-at-field ones not yet collected. */
+/**
+ * Bookings a player holds without having paid: CliQ ones waiting, plus locked-in
+ * ones (pay at the field, or switched from it to CliQ) not yet collected or confirmed.
+ */
 async function unpaidHolds(userId: number): Promise<number> {
   const [cliq] = await db.select({ n: sql<number>`count(*)::int` }).from(footageRequestsTable)
     .where(and(eq(footageRequestsTable.requestedBy, userId), eq(footageRequestsTable.status, "awaiting_payment")));
@@ -1957,7 +1969,7 @@ async function unpaidHolds(userId: number): Promise<number> {
     .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, matchRoomsTable.footageRequestId))
     .where(and(
       eq(statUnlocksTable.userId, userId), eq(statUnlocksTable.kind, "booking"),
-      eq(statUnlocksTable.method, "field"), eq(statUnlocksTable.status, "pending"),
+      inArray(statUnlocksTable.method, ["field", "cliq"]), eq(statUnlocksTable.status, "pending"),
       inArray(footageRequestsTable.status, ["queued", "scheduled", "recording", "running"]),
     ));
   return (cliq?.n ?? 0) + (field?.n ?? 0);
@@ -2023,36 +2035,31 @@ router.post("/bookings", async (req, res): Promise<void> => {
     res.status(409).json({ error: `You have ${waiting} bookings waiting for payment. Pay or cancel one first.` });
     return;
   }
-  const others = await db.select({ startLocal: footageRequestsTable.startLocal, endLocal: footageRequestsTable.endLocal })
-    .from(footageRequestsTable)
-    .where(and(eq(footageRequestsTable.fieldId, field.id), inArray(footageRequestsTable.status, BOOKING_HOLD_STATUSES)));
-  if (others.some((o) => {
-    const s = ammanLocalEpoch(o.startLocal);
-    const e = ammanLocalEpoch(o.endLocal);
-    return start.epochMs < e && s < end.epochMs;
-  })) {
-    res.status(409).json({ error: "Someone already booked that time" });
-    return;
-  }
-
   // A free match covers its free hours; anything longer is paid as usual, per started hour.
   const amountFils = reward
     ? Math.max(0, Math.ceil(durationSeconds / 3600) - reward.freeHours) * commerce.playerBookingFilsPerHour
     : bookingPriceFils(durationSeconds, commerce.playerBookingFilsPerHour);
-  // Claim the free match before anything is created, so a double tap is turned away cleanly.
-  if (reward && !(await claimReward(reward.id, user.id))) {
-    res.status(409).json({ error: "You don't have a free match to use" });
-    return;
-  }
   const fullyFree = Boolean(reward) && amountFils === 0;
   const method = fullyFree ? "free" : payWith;
-  let created: typeof footageRequestsTable.$inferSelect | undefined;
-  let room: Awaited<ReturnType<typeof ensureRoomForRequest>>;
-  let reference: string;
-  try {
-    [created] = await db.insert(footageRequestsTable).values({
+  const fieldCamera = field.cameraId;
+  // One booking at a time per field: the slot check, the free-match claim and the
+  // insert that holds the slot can't interleave with another booking's, so two
+  // taps for one slot can't both pass (nor both spend a free match).
+  const held = await db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(${BOOKING_LOCK_NAMESPACE}, ${field.id})`);
+    const others = await tx.select({ startLocal: footageRequestsTable.startLocal, endLocal: footageRequestsTable.endLocal })
+      .from(footageRequestsTable)
+      .where(and(eq(footageRequestsTable.fieldId, field.id), inArray(footageRequestsTable.status, BOOKING_HOLD_STATUSES)));
+    if (others.some((o) => {
+      const s = ammanLocalEpoch(o.startLocal);
+      const e = ammanLocalEpoch(o.endLocal);
+      return start.epochMs < e && s < end.epochMs;
+    })) return { error: "Someone already booked that time" } as const;
+    // Claim the free match with the slot, so a double tap is turned away cleanly.
+    if (reward && !(await claimReward(reward.id, user.id, tx))) return { error: "You don't have a free match to use" } as const;
+    const [row] = await tx.insert(footageRequestsTable).values({
       fieldId: field.id,
-      cameraId: field.cameraId,
+      cameraId: fieldCamera,
       requestedBy: user.id,
       startLocal: start.value,
       endLocal: end.value,
@@ -2062,6 +2069,16 @@ router.post("/bookings", async (req, res): Promise<void> => {
       status: "awaiting_payment",
       message: "Waiting for payment",
     }).returning();
+    return { row } as const;
+  });
+  if ("error" in held) {
+    res.status(409).json({ error: held.error });
+    return;
+  }
+  const created: typeof footageRequestsTable.$inferSelect = held.row;
+  let room: Awaited<ReturnType<typeof ensureRoomForRequest>>;
+  let reference: string;
+  try {
     room = await ensureRoomForRequest(created);
     if (reward) await attachReward(reward.id, room.id);
     await db.update(matchRoomsTable).set({
@@ -2091,10 +2108,8 @@ router.post("/bookings", async (req, res): Promise<void> => {
     });
   } catch (error) {
     // Don't leave a half-made booking holding the slot or the free match.
-    if (created) {
-      await db.update(footageRequestsTable).set({ status: "cancelled", message: "Booking could not be completed", updatedAt: new Date() })
-        .where(eq(footageRequestsTable.id, created.id)).catch(() => undefined);
-    }
+    await db.update(footageRequestsTable).set({ status: "cancelled", message: "Booking could not be completed", updatedAt: new Date() })
+      .where(eq(footageRequestsTable.id, created.id)).catch(() => undefined);
     if (reward) await releaseReward(reward.id).catch(() => undefined);
     throw error;
   }
@@ -2115,6 +2130,53 @@ router.post("/bookings", async (req, res): Promise<void> => {
   });
 });
 
+/** What an unpaid booking says once its slot is long over without the payment. */
+const LAPSED_MESSAGE = "Payment not received in time";
+
+async function bookingStatus(requestId: number): Promise<string> {
+  const [fresh] = await db.select({ status: footageRequestsTable.status }).from(footageRequestsTable)
+    .where(eq(footageRequestsTable.id, requestId));
+  return fresh?.status ?? "missing";
+}
+
+/**
+ * A booking that won't record owes nothing: its waiting payment is turned down,
+ * a fully free one is voided, and a free match it spent comes back.
+ */
+async function settleCancelledBooking(roomId: number): Promise<void> {
+  await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
+    .where(and(eq(statUnlocksTable.matchId, roomId), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.status, "pending")));
+  await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
+    .where(and(eq(statUnlocksTable.matchId, roomId), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.method, "free")));
+  await releaseRewardForMatch(roomId);
+}
+
+/**
+ * Stop a locked-in booking's camera job, then cancel it. "camera": the camera
+ * service refused, nothing changed, try again. "moved": the booking had already
+ * left the active states (someone else finished or cancelled it).
+ */
+async function stopAndCancelBooking(row: FootageRequest, message: string): Promise<"cancelled" | "camera" | "moved"> {
+  if (row.vpsJobId) {
+    try {
+      const result = await controlFetch(
+        `/record-hq/${encodeURIComponent(row.cameraId)}/${encodeURIComponent(row.vpsJobId)}`,
+        { method: "DELETE" },
+        30_000,
+      );
+      if (!result.ok && result.status !== 404) return "camera";
+    } catch (error) {
+      logger.warn({ requestId: row.id, error }, "Booking camera job could not be stopped");
+      return "camera";
+    }
+  }
+  syncState.delete(row.id);
+  const cancelled = await db.update(footageRequestsTable).set({ status: "cancelled", message, updatedAt: new Date() })
+    .where(and(eq(footageRequestsTable.id, row.id), inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES)))
+    .returning({ id: footageRequestsTable.id });
+  return cancelled.length ? "cancelled" : "moved";
+}
+
 /** The booker can drop an unpaid booking. */
 router.delete("/bookings/:id", async (req, res): Promise<void> => {
   const user = await getLocalUserRecord(req);
@@ -2132,58 +2194,79 @@ router.delete("/bookings/:id", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Booking not found" });
     return;
   }
-  const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, id));
-  if (row.status !== "awaiting_payment") {
-    // A pay-at-field booking is already scheduled. It can still be dropped before kick-off
-    // while the cash is uncollected: stop the camera job, then cancel.
-    const [fieldPayment] = room ? await db.select().from(statUnlocksTable).where(and(
-      eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"),
-      eq(statUnlocksTable.method, "field"), eq(statUnlocksTable.status, "pending"),
-    )) : [];
-    // A fully free booking (a free match, nothing extra) can be dropped the same way; the free match comes back.
-    const [freePayment] = room && !fieldPayment ? await db.select().from(statUnlocksTable).where(and(
-      eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.method, "free"),
-    )) : [];
-    const beforeKickoff = ammanLocalEpoch(row.startLocal) > ammanLocalEpoch(getAmmanNow().local);
-    if ((!fieldPayment && !freePayment) || !beforeKickoff || !["queued", "scheduled"].includes(row.status)) {
-      res.status(409).json({ error: "Only unpaid bookings can be cancelled here, before kick-off" });
+  if (row.status === "awaiting_payment") {
+    // Only while it is still waiting: an admin may have confirmed the transfer
+    // (and started the camera) since it was read.
+    if (await cancelUnpaidBooking(id, "Cancelled before payment")) {
+      res.status(204).send();
       return;
     }
-    if (row.vpsJobId) {
-      try {
-        const result = await controlFetch(
-          `/record-hq/${encodeURIComponent(row.cameraId)}/${encodeURIComponent(row.vpsJobId)}`,
-          { method: "DELETE" },
-          30_000,
-        );
-        if (!result.ok && result.status !== 404) {
-          res.status(502).json({ error: "The recording could not be cancelled. Try again in a minute." });
-          return;
-        }
-      } catch (error) {
-        logger.warn({ requestId: id, error }, "Pay-at-field booking cancellation failed");
-        res.status(502).json({ error: "The recording could not be cancelled. Try again in a minute." });
-        return;
-      }
+    if (await bookingStatus(id) === "cancelled") {
+      res.status(204).send();
+      return;
     }
-    syncState.delete(id);
+    res.status(409).json({ error: "This booking was just confirmed, so it can't be cancelled here" });
+    return;
   }
-  await db.update(footageRequestsTable).set({ status: "cancelled", message: "Cancelled before payment", updatedAt: new Date() })
-    .where(eq(footageRequestsTable.id, id));
-  if (room) {
-    await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
-      .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.status, "pending")));
-    await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
-      .where(and(eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.method, "free")));
-    // A booking that spent a free match gives it back.
-    await releaseRewardForMatch(room.id);
+  const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, id));
+  // A locked-in booking is already scheduled: pay at the field, switched from that
+  // to CliQ, or fully free (a free match, nothing extra). It can still be dropped
+  // before kick-off while nothing has been paid: stop the camera job, then cancel.
+  const [unpaid] = room ? await db.select().from(statUnlocksTable).where(and(
+    eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"),
+    inArray(statUnlocksTable.method, ["field", "cliq"]), eq(statUnlocksTable.status, "pending"),
+  )) : [];
+  const [freePayment] = room && !unpaid ? await db.select().from(statUnlocksTable).where(and(
+    eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.method, "free"),
+  )) : [];
+  const beforeKickoff = ammanLocalEpoch(row.startLocal) > ammanLocalEpoch(getAmmanNow().local);
+  if ((!unpaid && !freePayment) || !beforeKickoff || !["queued", "scheduled"].includes(row.status)) {
+    res.status(409).json({ error: "Only unpaid bookings can be cancelled here, before kick-off" });
+    return;
   }
+  // Turn the waiting payment down first, only if it is still waiting: the field
+  // collecting the cash or an admin confirming the transfer right now wins instead.
+  if (unpaid) {
+    const taken = await db.update(statUnlocksTable).set({ status: "rejected", confirmedAt: new Date() })
+      .where(and(eq(statUnlocksTable.id, unpaid.id), eq(statUnlocksTable.status, "pending")))
+      .returning({ id: statUnlocksTable.id });
+    if (!taken.length) {
+      res.status(409).json({ error: "This booking was just paid, so it can't be cancelled here" });
+      return;
+    }
+  }
+  const restorePayment = async () => {
+    if (unpaid) {
+      await db.update(statUnlocksTable).set({ status: "pending", confirmedAt: null })
+        .where(and(eq(statUnlocksTable.id, unpaid.id), eq(statUnlocksTable.status, "rejected")));
+    }
+  };
+  const outcome = await stopAndCancelBooking(row, "Cancelled before payment");
+  if (outcome === "camera") {
+    await restorePayment();
+    res.status(502).json({ error: "The recording could not be cancelled. Try again in a minute." });
+    return;
+  }
+  if (outcome === "moved") {
+    if (await bookingStatus(id) === "cancelled") {
+      res.status(204).send();
+      return;
+    }
+    await restorePayment();
+    res.status(409).json({ error: "Only unpaid bookings can be cancelled here, before kick-off" });
+    return;
+  }
+  // A booking that spent a free match gives it back.
+  if (room) await settleCancelledBooking(room.id);
   res.status(204).send();
 });
 
 /**
  * Switch how an unpaid booking will be paid. CliQ -> field locks the recording in
- * now. Field -> CliQ keeps it locked in; the admin confirms the transfer as usual.
+ * now. Field -> CliQ keeps it locked in, and it stays resolvable: the admin
+ * confirms the transfer as usual (or rejecting it cancels the recording), the
+ * field can still take cash for it, and the booker can still cancel it before
+ * kick-off.
  */
 router.post("/bookings/:id/pay-with", async (req, res): Promise<void> => {
   const user = await getLocalUserRecord(req);
@@ -2206,7 +2289,7 @@ router.post("/bookings/:id/pay-with", async (req, res): Promise<void> => {
   const [payment] = room ? await db.select().from(statUnlocksTable).where(and(
     eq(statUnlocksTable.matchId, room.id), eq(statUnlocksTable.kind, "booking"), eq(statUnlocksTable.status, "pending"),
   )) : [];
-  if (!payment) {
+  if (!payment || !["awaiting_payment", ...ACTIVE_REQUEST_STATUSES].includes(row.status)) {
     res.status(409).json({ error: "This booking has no payment waiting" });
     return;
   }
@@ -2217,31 +2300,92 @@ router.post("/bookings/:id/pay-with", async (req, res): Promise<void> => {
       return;
     }
   }
-  await db.update(statUnlocksTable).set({ method }).where(eq(statUnlocksTable.id, payment.id));
+  await db.update(statUnlocksTable).set({ method }).where(and(eq(statUnlocksTable.id, payment.id), eq(statUnlocksTable.status, "pending")));
   const activated = method === "field" ? await activatePaidBooking(id) : null;
+  if (activated?.status === "cancelled") {
+    res.status(409).json({ error: "This booking lapsed before it was paid" });
+    return;
+  }
   res.json({ method, status: activated?.status ?? row.status });
 });
 
-/** Called when an admin confirms a booking payment: start the camera job. */
+/**
+ * Called when an admin confirms a booking payment (or a booking is locked in by
+ * paying at the field): start the camera job. Only a booking still waiting for
+ * its payment moves on; one cancelled in the meantime stays cancelled, and one
+ * whose slot is long over (see UNPAID_BOOKING_LAPSE_MS) lapses instead.
+ */
 export async function activatePaidBooking(requestId: number): Promise<{ status: string }> {
   const [row] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
   if (!row) return { status: "missing" };
   if (row.status !== "awaiting_payment") return { status: row.status };
-  await db.update(footageRequestsTable).set({ status: "queued", message: null, updatedAt: new Date() })
-    .where(eq(footageRequestsTable.id, requestId));
-  await startCameraJob({ ...row, status: "queued" }, row.cameraId);
-  const [fresh] = await db.select({ status: footageRequestsTable.status }).from(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
-  return { status: fresh?.status ?? "queued" };
-}
-
-export async function cancelUnpaidBooking(requestId: number): Promise<void> {
-  const cancelled = await db.update(footageRequestsTable).set({ status: "cancelled", message: "Payment not received", updatedAt: new Date() })
+  if (row.endLocal <= unpaidLapseCutoffLocal()) {
+    await cancelUnpaidBooking(requestId, LAPSED_MESSAGE);
+    return { status: await bookingStatus(requestId) };
+  }
+  const claimed = await db.update(footageRequestsTable).set({ status: "queued", message: null, updatedAt: new Date() })
     .where(and(eq(footageRequestsTable.id, requestId), eq(footageRequestsTable.status, "awaiting_payment")))
     .returning({ id: footageRequestsTable.id });
-  if (!cancelled.length) return;
+  if (!claimed.length) return { status: await bookingStatus(requestId) };
+  await startCameraJob({ ...row, status: "queued" }, row.cameraId);
+  return { status: await bookingStatus(requestId) };
+}
+
+/**
+ * Cancel a booking that is still waiting for its payment, and settle it (its
+ * waiting payment turned down, its free match back). False when it had already
+ * moved on (confirmed, or cancelled by someone else).
+ */
+export async function cancelUnpaidBooking(requestId: number, message = "Payment not received"): Promise<boolean> {
+  const cancelled = await db.update(footageRequestsTable).set({ status: "cancelled", message, updatedAt: new Date() })
+    .where(and(eq(footageRequestsTable.id, requestId), eq(footageRequestsTable.status, "awaiting_payment")))
+    .returning({ id: footageRequestsTable.id });
+  if (!cancelled.length) return false;
   const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, requestId));
-  // The extra hours on a free match were never paid: the free match comes back.
-  if (room) await releaseRewardForMatch(room.id);
+  if (room) await settleCancelledBooking(room.id);
+  return true;
+}
+
+/**
+ * An admin turned a booking's payment down. Still waiting for it: the booking is
+ * cancelled. Locked in on a CliQ transfer (a pay-at-field booking switched to
+ * CliQ): its camera job is stopped and it is cancelled, whatever state it has
+ * reached, so it never records unpaid. A pay-at-field payment (the cash
+ * wasn't paid) or an already delivered match keeps its recording; only the
+ * payment is rejected. `{ error: "camera" }`: the camera job couldn't be
+ * stopped; nothing changed, try again.
+ */
+export async function rejectBookingPayment(requestId: number, method: string): Promise<{ status: string } | { error: "camera" }> {
+  if (await cancelUnpaidBooking(requestId)) return { status: "cancelled" };
+  const [row] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
+  if (!row) return { status: "missing" };
+  if (method === "cliq" && ACTIVE_REQUEST_STATUSES.includes(row.status as typeof ACTIVE_REQUEST_STATUSES[number])) {
+    const outcome = await stopAndCancelBooking(row, "Payment not received");
+    if (outcome === "camera") return { error: "camera" };
+    if (outcome === "cancelled") {
+      const [room] = await db.select({ id: matchRoomsTable.id }).from(matchRoomsTable).where(eq(matchRoomsTable.footageRequestId, requestId));
+      if (room) await settleCancelledBooking(room.id);
+    }
+  }
+  return { status: await bookingStatus(requestId) };
+}
+
+/**
+ * Unpaid CliQ bookings whose slot is long over never record: the status sweep
+ * cancels them, so they stop holding the player's free match and his count of
+ * bookings waiting for payment.
+ */
+export async function lapseUnpaidBookings(now = Date.now()): Promise<number> {
+  const rows = await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable)
+    .where(and(
+      eq(footageRequestsTable.status, "awaiting_payment"),
+      lte(footageRequestsTable.endLocal, unpaidLapseCutoffLocal(now)),
+    ));
+  let lapsed = 0;
+  for (const row of rows) {
+    if (await cancelUnpaidBooking(row.id, LAPSED_MESSAGE)) lapsed += 1;
+  }
+  return lapsed;
 }
 
 
