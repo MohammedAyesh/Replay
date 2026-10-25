@@ -101,6 +101,7 @@ import {
   useMyMatches,
 } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
+import { bookingPaymentActions } from "@/lib/booking-payment-actions";
 
 const PENDING_KEY = "replay_pending_join";
 type Tab = "overview" | "teams" | "var" | "clips" | "vote" | "stats";
@@ -2078,9 +2079,9 @@ function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchString
       <div className="rounded-2xl border border-violet/40 bg-violet/10 px-4 py-3 text-sm font-semibold text-violet">{field ? b.fieldPending(jod) : b.pending}</div>
     );
   }
-  // Whoever is at the field (the owner or an admin) ticks the cash off here.
-  const canCollect = field && room.isOwner;
-  const canCancel = Boolean(booking.requestId) && (field ? room.phase === "pre" : true);
+  // Whoever is at the field (the owner or an admin) ticks the cash off here, also
+  // on a pay-at-field booking the booker switched to CliQ.
+  const { canCollect, canCancel, canSwitch } = bookingPaymentActions(room, booking);
   return (
     <section className={cn("rounded-2xl border bg-surface p-4", field ? "border-turf/40" : "border-floodlight/40")} data-testid="booking-payment-card">
       <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-start justify-between gap-3 text-start">
@@ -2112,7 +2113,7 @@ function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchString
             </div>
           )}
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-            {booking.mine && booking.requestId && (field || booking.payAtFieldAllowed) && (
+            {canSwitch && (
               <button
                 type="button"
                 disabled={payWith.isPending}
