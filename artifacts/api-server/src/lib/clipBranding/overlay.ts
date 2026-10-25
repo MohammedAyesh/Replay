@@ -20,9 +20,9 @@ import type { BrandLook, Dims, OverlayStyle } from "./types";
  * at 0,0 in the main encode — so it costs nothing extra and inherits that path's
  * "branding never costs a clip" handling.
  *
- * Laid out in design units (1080×1920 portrait, 1920×1080 landscape) inside the
- * platforms' safe zones: below Reels' 220 px top bar, clear of TikTok's 120 px
- * right rail, and only the watermark in the bottom caption zone.
+ * Laid out in design units (1080×1920 portrait, 1920×1080 landscape). The crest
+ * sits in the top-left corner (Mohammed, 2026-10-25), which on Reels and TikTok
+ * is under their top bar; the watermark stays out of the bottom caption zone.
  */
 export type OverlayInput = {
   style: Exclude<OverlayStyle, "uploaded">;
@@ -47,8 +47,8 @@ export function renderOverlayPng(input: OverlayInput): Buffer {
   const DH = h / s;
   const venue = safeColor(input.look.primaryColor, "#2FD8C4");
 
-  const top = portrait ? 232 : 36;
-  const left = portrait ? 48 : 44;
+  const top = portrait ? 40 : 36;
+  const left = portrait ? 40 : 44;
   const crest = portrait ? 170 : 130;
 
   if (input.style === "academyFrame") {
