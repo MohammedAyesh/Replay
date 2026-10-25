@@ -15,6 +15,7 @@ import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
 import { formatAmmanClock, useAcademyLiveStatus } from "@/components/academy-console/use-academy-live-status";
 import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
+import { nextFamilyClaimKey } from "@/lib/academy-family-claim";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -161,6 +162,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const [liveSession, setLiveSession] = useState<{ id: number; title: string } | null>(null);
   const claim = useClaimAcademyFamily();
   const attemptedToken = useRef<string | null>(null);
+  const [claimAttempt, setClaimAttempt] = useState(0);
   const requestedLanguage = new URLSearchParams(search).get("lang");
   const isEnglish = requestedLanguage === "en" || (
     requestedLanguage === null && source === "me" && appLocale === "en"
@@ -195,13 +197,14 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const familyToken = params.token ?? "";
 
   useEffect(() => {
-    if (source !== "token" || authLoading || !user || isGuest || !familyToken) return;
-    if (attemptedToken.current === familyToken) return;
-    attemptedToken.current = familyToken;
+    if (source !== "token" || authLoading || !user || isGuest) return;
+    const key = nextFamilyClaimKey(attemptedToken.current, familyToken, claimAttempt);
+    if (!key) return;
+    attemptedToken.current = key;
     void claim.mutateAsync({ data: { token: familyToken } })
       .then((result) => setLocation(`/academy/me?playerId=${result.playerId}`))
       .catch(() => undefined);
-  }, [authLoading, claim.mutateAsync, familyToken, isGuest, setLocation, source, user]);
+  }, [authLoading, claim.mutateAsync, claimAttempt, familyToken, isGuest, setLocation, source, user]);
 
   const toggleLanguage = () => {
     const nextSearch = new URLSearchParams(search);
@@ -264,8 +267,8 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
             <button
               type="button"
               onClick={() => {
-                attemptedToken.current = null;
                 claim.reset();
+                setClaimAttempt((attempt) => attempt + 1);
               }}
               className="mt-6 min-h-11 rounded-xl bg-floodlight px-5 font-bold text-void"
               data-testid="button-family-claim-retry"

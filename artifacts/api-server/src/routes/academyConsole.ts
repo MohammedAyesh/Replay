@@ -593,15 +593,27 @@ router.post(
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const familyToken = crypto.randomBytes(16).toString("hex");
       try {
-        const [player] = await db
-          .update(academyPlayersTable)
-          .set({ familyToken })
-          .where(and(
-            eq(academyPlayersTable.id, playerId),
-            eq(academyPlayersTable.academyId, academyId),
-            eq(academyPlayersTable.isActive, true),
-          ))
-          .returning({ familyToken: academyPlayersTable.familyToken });
+        // Rotating the link revokes everyone who joined through a family link, as the
+        // console promises ("The current link will stop working immediately").
+        // Guardians the owner added by hand (addedBy "owner") keep their access.
+        const player = await db.transaction(async (tx) => {
+          const [rotated] = await tx
+            .update(academyPlayersTable)
+            .set({ familyToken })
+            .where(and(
+              eq(academyPlayersTable.id, playerId),
+              eq(academyPlayersTable.academyId, academyId),
+              eq(academyPlayersTable.isActive, true),
+            ))
+            .returning({ familyToken: academyPlayersTable.familyToken });
+          if (rotated) {
+            await tx.delete(academyPlayerGuardiansTable).where(and(
+              eq(academyPlayerGuardiansTable.playerId, playerId),
+              eq(academyPlayerGuardiansTable.addedBy, "link"),
+            ));
+          }
+          return rotated;
+        });
         if (!player) {
           res.status(404).json({ error: "Active player not found in this academy" });
           return;

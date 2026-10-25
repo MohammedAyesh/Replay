@@ -138,6 +138,50 @@ describe("academy live session access and status", () => {
     expect((await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body.status).toBe("not_live");
     expect(vi.mocked(controlFetch).mock.calls.every(([url]) => !String(url).includes(secret))).toBe(true);
   });
+  it("returns real /api playlist and segment URLs for both surfaces", async () => {
+    await setBooking(-30 * 60_000, 30 * 60_000);
+    const fresh = () => ({ ok: true, status: 200, body: `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PROGRAM-DATE-TIME:${new Date().toISOString()}\n#EXTINF:4,\nseg/a.ts\n` });
+    vi.mocked(controlFetch).mockResolvedValueOnce(fresh() as never);
+    const consoleBody = (await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body;
+    expect(consoleBody.playlistPath).toBe(`/api/academy/console/academies/${academyId}/sessions/${sessionId}/live/playlist.m3u8`);
+    vi.mocked(controlFetch).mockResolvedValueOnce(fresh() as never);
+    const familyBody = (await request(app).get(familyStatus()).set(auth(guardianId)).expect(200)).body;
+    expect(familyBody.playlistPath).toBe(`/api/academy/family/sessions/${sessionId}/live/playlist.m3u8`);
+    for (const path of [consoleBody.playlistPath, familyBody.playlistPath]) expect(path).not.toContain(":");
+
+    const upstream = `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PROGRAM-DATE-TIME:${new Date().toISOString()}\n#EXTINF:4,\nseg/a.ts\n`;
+    vi.mocked(controlResponse).mockResolvedValueOnce(new Response(upstream) as never);
+    const consolePlaylist = await request(app).get(consoleBody.playlistPath).set(auth(memberId)).expect(200);
+    expect(consolePlaylist.text).toContain(`\n/api/academy/console/academies/${academyId}/sessions/${sessionId}/live/seg/a.ts`);
+    vi.mocked(controlResponse).mockResolvedValueOnce(new Response(upstream) as never);
+    const familyPlaylist = await request(app).get(familyBody.playlistPath).set(auth(guardianId)).expect(200);
+    expect(familyPlaylist.text).toContain(`\n/api/academy/family/sessions/${sessionId}/live/seg/a.ts`);
+  });
+
+  it("serves only segments the session's trimmed playlist lists", async () => {
+    await setBooking(-30 * 60_000, 30 * 60_000);
+    const [booking] = await db.select({ startLocal: footageRequestsTable.startLocal })
+      .from(footageRequestsTable).where(eq(footageRequestsTable.id, requestId!));
+    const startMs = Date.parse(`${booking.startLocal.replace(" ", "T")}:00+03:00`);
+    const upstream = [
+      "#EXTM3U", "#EXT-X-TARGETDURATION:4", "#EXT-X-MEDIA-SEQUENCE:10",
+      `#EXT-X-PROGRAM-DATE-TIME:${new Date(startMs - 60_000).toISOString()}`, "#EXTINF:4,", "seg/before.ts",
+      `#EXT-X-PROGRAM-DATE-TIME:${new Date(startMs + 60_000).toISOString()}`, "#EXTINF:4,", "seg/after.ts", "",
+    ].join("\n");
+    const segBase = `/api/academy/family/sessions/${sessionId}/live/seg`;
+    vi.mocked(controlResponse).mockResolvedValueOnce(new Response(upstream) as never);
+    await request(app).get(`${segBase}/before.ts`).set(auth(guardianId)).expect(404);
+    expect(vi.mocked(controlResponse).mock.calls.some(([url]) => String(url).includes("/seg/"))).toBe(false);
+    vi.mocked(controlResponse).mockResolvedValueOnce(new Response(upstream) as never);
+    await request(app).get(`${segBase}/unknown.ts`).set(auth(guardianId)).expect(404);
+    vi.mocked(controlResponse)
+      .mockResolvedValueOnce(new Response(upstream) as never)
+      .mockResolvedValueOnce(new Response("segment-bytes", { headers: { "content-type": "video/mp2t" } }) as never);
+    const ok = await request(app).get(`${segBase}/after.ts`).set(auth(guardianId)).expect(200);
+    expect(ok.headers["content-type"]).toContain("video/mp2t");
+    expect(String(vi.mocked(controlResponse).mock.calls.at(-1)?.[0])).toBe("/var/cam1/hls/seg/after.ts");
+  });
+
   it("returns 404 for playlist requests outside the booking window", async () => {
     await setBooking(60 * 60_000, 2 * 60 * 60_000);
     await request(app).get(`/api/academy/console/academies/${academyId}/sessions/${sessionId}/live/playlist.m3u8`)
