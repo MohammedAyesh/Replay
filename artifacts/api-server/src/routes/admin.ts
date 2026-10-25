@@ -1,6 +1,4 @@
 import { Router, type IRouter } from "express";
-import { Readable } from "stream";
-import { pipeline } from "stream/promises";
 import { eq, count, and, desc, sql, inArray, ne, gte, lte, ilike, isNotNull, like, or } from "drizzle-orm";
 import { durationToSeconds } from "../lib/analysisJobs";
 import { z } from "zod/v4";
@@ -46,7 +44,8 @@ import {
   getBunnyPlaybackUrl,
 } from "../lib/bunny";
 import { extractBunnyVideoId } from "../lib/publicFootage";
-import { fetchExportObject, forwardExportContentLength, probeExportObject } from "../lib/backupExport";
+import { fetchExportObject, probeExportObject } from "../lib/backupExport";
+import { ADMIN_PREVIEW_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import {
@@ -760,9 +759,13 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     return;
   }
 
+  // Always a bounded upstream range, so no response carries a Content-Length
+  // over the host's 32 MiB limit — including `Range: bytes=0-`, which the
+  // origin answers with the whole file's length. See lib/exportPlayback.ts.
   const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
+  const plan = planExportRange(range, ADMIN_PREVIEW_RANGE_MAX_BYTES);
   const abort = new AbortController();
-  res.on("close", () => {
+  res.once("close", () => {
     if (!res.writableEnded) abort.abort();
   });
 
@@ -770,21 +773,13 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
   try {
     // The exported URL comes only from this clip's database row. Storage and
     // backup-renderer credentials stay in fetchExportObject on the server.
-    upstream = await fetchExportObject(clip.exportedUrl, { range, signal: abort.signal });
+    upstream = await fetchExportObject(clip.exportedUrl, { range: plan.upstreamRange, signal: abort.signal });
   } catch {
     if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
     return;
   }
 
-  if (upstream.status === 416) {
-    const contentRange = upstream.headers.get("content-range");
-    if (contentRange) res.setHeader("Content-Range", contentRange);
-    res.setHeader("Accept-Ranges", "bytes");
-    res.status(416).end();
-    await upstream.body?.cancel().catch(() => {});
-    return;
-  }
-  if (!upstream.ok || !upstream.body) {
+  if (upstream.status !== 416 && (!upstream.ok || !upstream.body)) {
     await upstream.body?.cancel().catch(() => {});
     if (upstream.status === 404) {
       const body = {
@@ -798,23 +793,17 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     return;
   }
 
-  res.status(upstream.status);
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Content-Disposition", `inline; filename="clip-${clipId}.mp4"`);
-  res.setHeader("Accept-Ranges", upstream.headers.get("accept-ranges") ?? "bytes");
-  res.setHeader("Cache-Control", "private, no-store");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  forwardExportContentLength(res, upstream, Boolean(range));
-  for (const name of ["content-range"]) {
-    const value = upstream.headers.get(name);
-    if (value) res.setHeader(name, value);
-  }
-
   try {
-    await pipeline(
-      Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>),
-      res,
-    );
+    const outcome = await sendBoundedExport(res, upstream, plan, {
+      "Content-Type": "video/mp4",
+      "Content-Disposition": `inline; filename="clip-${clipId}.mp4"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    if (outcome === "unusable") {
+      await upstream.body?.cancel().catch(() => {});
+      if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
+    }
   } catch (err) {
     // The browser closing or seeking a video can abort an in-flight range
     // request; there is nothing useful to report in that case.
