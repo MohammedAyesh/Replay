@@ -26,9 +26,9 @@ function Bar({ label, a, b, colours, suffix = "", locale }: {
   return (
     <div className="dm-bar">
       <div className="dm-bar-top" dir="ltr">
-        <span className="dm-num">{formatNumber(a, locale)}{suffix}</span>
+        <span className="dm-num">{formatNumber(a, locale, suffix === "%" ? 1 : 0)}{suffix}</span>
         <span className="dm-bar-label" dir={locale === "ar" ? "rtl" : "ltr"}>{label}</span>
-        <span className="dm-num">{formatNumber(b, locale)}{suffix}</span>
+        <span className="dm-num">{formatNumber(b, locale, suffix === "%" ? 1 : 0)}{suffix}</span>
       </div>
       <div className="dm-bar-track" dir="ltr" aria-hidden="true">
         <span style={{ width: `${share * 100}%`, background: readable(colours[0]) }} />

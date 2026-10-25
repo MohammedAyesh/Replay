@@ -16,7 +16,7 @@ const LocaleContext = createContext<LocaleContextValue>({
   setLocale: () => {},
 });
 
-export function LocaleProvider({ children }: { children: React.ReactNode }) {
+export function LocaleProvider({ children, publicPage = false }: { children: React.ReactNode; publicPage?: boolean }) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     return saved === "en" ? "en" : "ar";
@@ -27,7 +27,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
 
   const { data: me } = useGetMe({
     query: {
-      enabled: !isPublicFamilyPage,
+      enabled: !publicPage && !isPublicFamilyPage,
       retry: false,
       staleTime: 5 * 60 * 1000,
       queryKey: getGetMeQueryKey(),

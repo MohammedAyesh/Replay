@@ -22,8 +22,9 @@ describe("parseIdList", () => {
 });
 
 describe("playerLabels", () => {
-  it("uses shirt numbers, and letters for players without one or with a repeated number", () => {
-    expect(playerLabels(["7", null, "10", "7", null])).toEqual(["#7", "A", "#10", "B", "C"]);
+  it("uses shirt numbers only when every player has one", () => {
+    expect(playerLabels(["7", "10", "11"])).toEqual(["#7", "#10", "#11"]);
+    expect(playerLabels(["7", null, "10"])).toEqual(["Player 1", "Player 2", "Player 3"]);
   });
 });
 

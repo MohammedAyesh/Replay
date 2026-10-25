@@ -27,6 +27,7 @@ export interface DemoCopy {
   proof: {
     returnRate: string;
     recordings: string;
+    recordingHours: string;
     clips: string;
     analysed: string;
     note: string;
@@ -192,6 +193,21 @@ export interface DemoCopy {
   footer: string;
   jod: string;
   sectionNav: string;
+  tabs: { demo: string; story: string };
+  bridge: { body: string; action: string };
+  story: {
+    title: string;
+    subtitle: string;
+    chapters: Record<Persona, Array<{ time: string; body: string; visual: "panorama" | "phone" | "clip" | "chat" | "booking" | "progress" }>>;
+    closing: PersonaText;
+    exampleNote: string;
+    visualFallback: string;
+    flywheel: { title: string; steps: Record<Persona, string[]>; returnLabel: string; clipsLabel: string; atLabel: string };
+    revenueTitle: string;
+    revenueCards: Record<Persona, Array<{ title: string; body: string; driver: string; driverIndex: 0 | 1 }>>;
+    calculatorExampleNote: string;
+    nav: { timeline: string; flywheel: string; revenue: string; calculator: string };
+  };
 }
 
 const ar: DemoCopy = {
@@ -213,8 +229,9 @@ const ar: DemoCopy = {
     scroll: "انزل تشوف",
   },
   proof: {
-    returnRate: "من الزباين اللي بدفعوا بيرجعوا يحجزوا",
+    returnRate: "بملعب جوردان جالاكسي، من الزباين اللي بدفعوا بيرجعوا يحجزوا",
     recordings: "تسجيل محفوظ",
+    recordingHours: "ساعة تصوير محفوظة",
     clips: "مقطع قصّه اللاعبين",
     analysed: "مباراة حللها الذكاء الاصطناعي",
     note: "اللي بدّه فيديو لمبارياته، بضل يرجع.",
@@ -222,7 +239,7 @@ const ar: DemoCopy = {
   sections: {
     clips: {
       kicker: "من اللاعبين",
-      title: { pitch: "هيك بشاركوا ملعبك", academy: "هيك بشارك اللاعبين والأهل" },
+      title: { pitch: "شو بوصل للاعبين", academy: "شو بوصل للاعبين والأهل" },
       body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي من التطبيق، وكل مقطع بطلع وعليه شعار الملعب. أخفينا الأسماء.",
       loss: "بدون كاميرا، كل مباراة على ملعبك الليلة بتخلص وما بيضل منها إشي.",
       mute: "اكتم الصوت",
@@ -331,7 +348,7 @@ const ar: DemoCopy = {
     },
     report: {
       kicker: "بعد الصافرة",
-      title: { pitch: "تقرير المباراة جاهز لحاله", academy: "تقرير لكل مباراة وحصة" },
+      title: { pitch: "بعد الصافرة", academy: "بعد الصافرة" },
       body: (date) => `الكاميرا قاستها، ما حدا كتبها. من مباراة حقيقية بتاريخ ${date}، والأسماء مخفية.`,
       loading: "عم نحسب التقرير من المباراة… أول مرة بتاخد شوي.",
       teamA: "فريق أ",
@@ -441,6 +458,56 @@ const ar: DemoCopy = {
   footer: "ريبلاي · عمّان",
   jod: "دينار",
   sectionNav: "أقسام الصفحة",
+  tabs: { demo: "شوف المنتج", story: "كيف بتكسب منها" },
+  bridge: { body: "شفت كيف بتشتغل. هلأ شوف كيف بتجيبلك حجوزات.", action: "شوف كيف بتكسب منها" },
+  story: {
+    title: "مباراة وحدة. شوف لوين بتوصل.",
+    subtitle: "هاي قصة مباراة عادية على ملعبك، من الصافرة لحد الحجز الجاي.",
+    chapters: {
+      pitch: [
+        { time: "الخميس، 10 بالليل", body: "عشر شباب بيلعبوا على ملعبك. الكاميرا بتصوّر لحالها، وما حدا من موظفينك بعمل إشي.", visual: "panorama" },
+        { time: "بعد الصافرة بـ20 دقيقة", body: "كل لاعب بتوصله مقاطعه على جواله، جاهزة وعليها شعار ملعبك.", visual: "phone" },
+        { time: "نفس الليلة", body: "واحد منهم بنزّل هدفه ستوري. أصحابه بشوفوه، وبآخره بطاقة: احجز مباراتك الجاية · [اسم ملعبك].", visual: "clip" },
+        { time: "تاني يوم", body: "أصحابه بسألوه عن الملعب، وهو بيبعتلهم اللوكيشن.", visual: "chat" },
+        { time: "الأسبوع الجاي", body: "فريق جديد بحجز عندك وبطلب المباراة مصوّرة، لأنه بدهم مقاطعهم كمان. وفريق الخميس؟ راجع.", visual: "booking" },
+      ],
+      academy: [
+        { time: "السبت، الحصة", body: "الكاميرا بتصوّر الحصة كاملة، والمدرب ما بحتاج يمسك جوال.", visual: "panorama" },
+        { time: "أبو سامي بالشغل", body: "بتابع ابنه مباشر من جواله.", visual: "phone" },
+        { time: "بعد الحصة", body: "سامي بتوصله مقاطعه وعليها شعار الأكاديمية، وأمه بتبعتها على قروب العيلة.", visual: "clip" },
+        { time: "قروب العيلة", body: "عمته بتسأله وين بيتدرب سامي، لأنها بتعرف ولد بعمره.", visual: "chat" },
+        { time: "الشهر الجاي", body: "لاعب جديد بسجّل، وأهل سامي بيجددوا الاشتراك لأنهم شايفين أرقامه بتتحسن.", visual: "progress" },
+      ],
+    },
+    closing: { pitch: "وهيك بتلف. كل مباراة بتجيب اللي بعدها.", academy: "كل حصة بتسوّق للي بعدها." },
+    exampleNote: "القصة مثال لمباراة عادية. الأرقام تحت حقيقية من جوردان جالاكسي.",
+    visualFallback: "مشهد توضيحي",
+    flywheel: {
+      title: "كل مباراة بتوصل للي بعدها",
+      steps: {
+        pitch: ["بلعبوا", "بتوصلهم المقاطع", "بنشروها", "أصحابهم بشوفوا ملعبك", "بحجزوا"],
+        academy: ["بتتمرّنوا", "بتوصلهم المقاطع", "الأهل بنشروها", "العيلة بتشوف الأكاديمية", "بسجّلوا أو بجددوا"],
+      },
+      returnLabel: "من الزباين اللي بدفعوا بيرجعوا يحجزوا",
+      clipsLabel: "مقطع قصّوه اللاعبين",
+      atLabel: "بجوردان جالاكسي",
+    },
+    revenueTitle: "من وين بتجي المصاري",
+    revenueCards: {
+      pitch: [
+        { title: "المباراة المصوّرة بسعر أعلى", body: "ضيف فرق السعر للمباراة المصوّرة على حجوزاتك.", driver: "من المباريات المصوّرة", driverIndex: 0 },
+        { title: "حجوزات جديدة من السوشال", body: "كل مقطع بيننشر مثال لإعلان مجاني بيوصل لأصحاب اللاعبين.", driver: "من الحجوزات الزيادة", driverIndex: 1 },
+        { title: "زباين بيرجعوا", body: "نسبة العودة الحقيقية من جوردان جالاكسي، أو عدّل الحجوزات حسب أرقام ملعبك.", driver: "من الحجوزات الزيادة", driverIndex: 1 },
+      ],
+      academy: [
+        { title: "اشتراك أعلى مقابل التصوير والتقارير", body: "احسب الزيادة الشهرية اللي بتناسب اللاعبين المسجّلين عندك.", driver: "من زيادة الاشتراك", driverIndex: 0 },
+        { title: "تسجيلات جديدة من المقاطع", body: "مقاطع اللاعبين بتوصل لأهل جداد وبتعرّفهم على الأكاديمية.", driver: "من اللاعبين الجداد", driverIndex: 1 },
+        { title: "تجديد الاشتراكات", body: "الأهل بشوفوا تطوّر أولادهم وبيقرروا إذا يكملوا معهم.", driver: "من زيادة الاشتراك", driverIndex: 0 },
+      ],
+    },
+    calculatorExampleNote: "مدخلات الحاسبة أمثلة للتوضيح. عدّلها حسب أرقامك الفعلية.",
+    nav: { timeline: "القصة", flywheel: "الدورة", revenue: "المصاري", calculator: "احسبها" },
+  },
 };
 
 const en: DemoCopy = {
@@ -462,8 +529,9 @@ const en: DemoCopy = {
     scroll: "Scroll to see it",
   },
   proof: {
-    returnRate: "of paying customers come back to book again",
+    returnRate: "of paying customers at Jordan Galaxy come back to book again",
     recordings: "recordings on file",
+    recordingHours: "hours of footage recorded",
     clips: "clips cut by players",
     analysed: "matches analysed by AI",
     note: "Players who want their videos keep coming back.",
@@ -471,7 +539,7 @@ const en: DemoCopy = {
   sections: {
     clips: {
       kicker: "Made by players",
-      title: { pitch: "This is how players share your pitch", academy: "This is how players and parents share it" },
+      title: { pitch: "What your players get", academy: "What players and parents get" },
       body: "Real clips players cut at Jordan Galaxy in the app. Every clip goes out with the pitch's logo on it. Names hidden.",
       loss: "Without a camera, every match on your pitch tonight ends and nothing of it is left.",
       mute: "Mute",
@@ -580,7 +648,7 @@ const en: DemoCopy = {
     },
     report: {
       kicker: "After the whistle",
-      title: { pitch: "The match report writes itself", academy: "A report for every match and session" },
+      title: { pitch: "After the whistle", academy: "After the whistle" },
       body: (date) => `Measured by the camera, not typed in. From a real match on ${date}, names hidden.`,
       loading: "Working out the report from the match… the first time takes a moment.",
       teamA: "Team A",
@@ -690,6 +758,56 @@ const en: DemoCopy = {
   footer: "Replay · Amman",
   jod: "JOD",
   sectionNav: "Page sections",
+  tabs: { demo: "See the product", story: "How it earns you more" },
+  bridge: { body: "You've seen how it works. Now see how it brings you bookings.", action: "See how it earns you more" },
+  story: {
+    title: "One match. Watch where it goes.",
+    subtitle: "An ordinary match at your pitch, from kick-off to the next booking.",
+    chapters: {
+      pitch: [
+        { time: "Thursday, 10 pm", body: "Ten guys play at your pitch. The camera films on its own; your staff don't lift a finger.", visual: "panorama" },
+        { time: "20 minutes after the whistle", body: "Every player has his clips on his phone, ready, with your logo on them.", visual: "phone" },
+        { time: "Same night", body: "One of them posts his goal to his story. His friends watch, and it ends on a card: Book your next match · [your pitch].", visual: "clip" },
+        { time: "Next day", body: "His friends ask about the pitch, and he sends them the location.", visual: "chat" },
+        { time: "Next week", body: "A new team books with you and asks for it filmed, because they want their clips too. And Thursday's team? They're back.", visual: "booking" },
+      ],
+      academy: [
+        { time: "Saturday, the session", body: "The camera films the whole session; the coach never holds a phone.", visual: "panorama" },
+        { time: "Sami's dad is at work", body: "He watches his son live on his phone.", visual: "phone" },
+        { time: "After the session", body: "Sami gets his clips with the academy's badge, and his mum shares them in the family group.", visual: "clip" },
+        { time: "The family group", body: "His aunt asks where Sami trains; she knows a boy his age.", visual: "chat" },
+        { time: "Next month", body: "A new player signs up, and Sami's parents renew because they can see his numbers improving.", visual: "progress" },
+      ],
+    },
+    closing: { pitch: "And round it goes. Every match brings the next one.", academy: "Every session markets the next one." },
+    exampleNote: "This story is an example of an ordinary match. The numbers below are real, from Jordan Galaxy.",
+    visualFallback: "Illustrative scene",
+    flywheel: {
+      title: "Each match leads to the next",
+      steps: {
+        pitch: ["Play", "Get their clips", "Share", "Friends see your pitch", "Book"],
+        academy: ["Train", "Get their clips", "Parents share", "Families see the academy", "Enrol or renew"],
+      },
+      returnLabel: "of paying customers come back to book again",
+      clipsLabel: "clips cut by players",
+      atLabel: "at Jordan Galaxy",
+    },
+    revenueTitle: "Where the money comes from",
+    revenueCards: {
+      pitch: [
+        { title: "Filmed matches at a higher price", body: "Add the filmed-match price difference to your bookings.", driver: "from filmed matches", driverIndex: 0 },
+        { title: "New bookings from social media", body: "Every shared clip is an example of a free ad reaching players' friends.", driver: "from extra bookings", driverIndex: 1 },
+        { title: "Customers who come back", body: "Use Jordan Galaxy's real return rate, or adjust extra bookings to your pitch.", driver: "from extra bookings", driverIndex: 1 },
+      ],
+      academy: [
+        { title: "A higher monthly fee for filming and reports", body: "Set the monthly increase that fits your enrolled players.", driver: "from the higher fee", driverIndex: 0 },
+        { title: "New enrolments from shared clips", body: "Players' clips introduce new families to your academy.", driver: "from new players", driverIndex: 1 },
+        { title: "Renewals because parents see progress", body: "Parents can see their child's progress and decide to stay.", driver: "from the higher fee", driverIndex: 0 },
+      ],
+    },
+    calculatorExampleNote: "The calculator inputs are examples. Adjust them to match your real numbers.",
+    nav: { timeline: "The story", flywheel: "The loop", revenue: "Revenue", calculator: "Calculator" },
+  },
 };
 
 export const demoCopy: Record<DemoLocale, DemoCopy> = { ar, en };

@@ -55,11 +55,12 @@ export function Calculator({ persona, copy, jod, locale }: {
   const [extra, setExtra] = useState(3);
   const [share, setShare] = useState(40);
   const [price, setPrice] = useState(40);
-  const [extraBookings, setExtraBookings] = useState(2);
+  const [extraBookings, setExtraBookings] = useState(1);
   const [players, setPlayers] = useState(60);
   const [perPlayer, setPerPlayer] = useState(3);
   const [newPlayers, setNewPlayers] = useState(2);
   const [fee, setFee] = useState(35);
+  const [showFormula, setShowFormula] = useState(false);
 
   const weeksPerMonth = 52 / 12;
   const parts: Array<[string, number]> = persona === "pitch"
@@ -98,11 +99,14 @@ export function Calculator({ persona, copy, jod, locale }: {
         <strong className="dm-big-num">{formatNumber(Math.round(monthly), locale)} <small>{jod}</small></strong>
         <span className="dm-small">{copy.perYear(formatNumber(Math.round(monthly * 12), locale))}</span>
         <ul className="dm-calc-parts">
-          {parts.map(([label, value]) => (
-            <li key={label}><span>{label}</span><b className="dm-num">{formatNumber(Math.round(value), locale)} {jod}</b></li>
+          {parts.map(([label, value], index) => (
+            <li key={label} id={`demo-calc-line-${index}`}><span>{label}</span><b className="dm-num">{formatNumber(Math.round(value), locale)} {jod}</b></li>
           ))}
         </ul>
-        <span className="dm-formula">{persona === "pitch" ? copy.formulaPitch : copy.formulaAcademy}</span>
+        <button type="button" className="dm-formula-toggle" aria-expanded={showFormula} onClick={() => setShowFormula((shown) => !shown)}>
+          {showFormula ? (locale === "ar" ? "إخفاء المعادلة" : "Hide formula") : (locale === "ar" ? "كيف حسبناها؟" : "How is this calculated?")}
+        </button>
+        {showFormula && <span className="dm-formula">{persona === "pitch" ? copy.formulaPitch : copy.formulaAcademy}</span>}
       </div>
       <p className="dm-small">{copy.note}</p>
     </div>

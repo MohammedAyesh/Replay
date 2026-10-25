@@ -6,7 +6,7 @@
  * as null so the page can hide it rather than fill it with an example.
  *
  * People are never named. Clips carry no creator, and match players are
- * labelled by shirt number when the bundle read one, otherwise by letter.
+ * labelled by shirt number when every player has one, otherwise by index.
  */
 import { and, count, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
@@ -20,7 +20,7 @@ import {
 import {
   getBunnyPlaybackUrl,
   getBunnyProxiedPlaybackUrl,
-  getBunnyProxiedThumbnailUrl,
+  getBunnyThumbnailUrl,
 } from "./bunny";
 import { readClaimSegment } from "./claimMatchStorage";
 import { logger } from "./logger";
@@ -62,10 +62,15 @@ export type DemoClip = {
   aspectRatio: "16:9" | "9:16";
   src: string;
   poster: string;
+  videoId: string;
+  viewCount: number;
+  startFraction: number;
+  endFraction: number;
 };
 
 export type DemoMatch = {
   recordingId: number;
+  videoId: string;
   date: string;
   timeSlot: string;
   src: string;
@@ -76,7 +81,7 @@ export type DemoMatch = {
 };
 
 export type DemoShowcase = {
-  counts: { recordings: number; clips: number; analysed: number };
+  counts: { recordings: number; clips: number; analysed: number; recordingHours?: number | null };
   /** Share of paying customers who book again, as the business measures it (setting demo.returnRatePercent; 0 hides it). */
   returnRatePercent: number | null;
   match: DemoMatch | null;
@@ -84,6 +89,8 @@ export type DemoShowcase = {
   /** Vertical (9:16) exports for the social-media section; may be empty. */
   socialClips: DemoClip[];
   salesWhatsapp: string | null;
+  fieldName: string;
+  testimonial: { quoteAr: string; quoteEn: string; name: string; role: string; pitch: string } | null;
   /** True once the demo_leads table exists, so the callback form has somewhere to go. */
   leadsEnabled: boolean;
 };
@@ -168,19 +175,10 @@ export function parseIdList(raw: string): number[] {
   return ids;
 }
 
-/** Shirt number when one was read, otherwise A, B, ... in the order given. */
+/** Use shirt numbers only when every player has one; otherwise avoid mixed labels. */
 export function playerLabels(numbers: Array<string | null>): string[] {
-  let letter = 0;
-  const used = new Set<string>();
-  return numbers.map((number) => {
-    if (number && !used.has(number)) {
-      used.add(number);
-      return `#${number}`;
-    }
-    const label = letter < 26 ? String.fromCharCode(65 + letter) : `P${letter + 1}`;
-    letter += 1;
-    return label;
-  });
+  const allHaveNumbers = numbers.length > 0 && numbers.every((number) => /^\d+$/.test(number?.trim() ?? ""));
+  return numbers.map((number, index) => allHaveNumbers ? `#${number}` : `Player ${index + 1}`);
 }
 
 /**
@@ -266,11 +264,12 @@ function matchMedia(recording: typeof recordingsTable.$inferSelect, analysed: bo
   if (!videoId || videoId.startsWith("live:")) return null;
   return {
     recordingId: recording.id,
+    videoId,
     date: recording.date,
     timeSlot: recording.timeSlot,
     src: getBunnyProxiedPlaybackUrl(videoId),
     rawSrc: getBunnyPlaybackUrl(videoId),
-    poster: getBunnyProxiedThumbnailUrl(videoId),
+    poster: getBunnyThumbnailUrl(videoId),
     analysed,
   };
 }
@@ -279,13 +278,17 @@ function matchMedia(recording: typeof recordingsTable.$inferSelect, analysed: bo
  * Finished player clips, newest-and-most-watched first, or the admin's list.
  * Deleted, reported and admin-hidden clips never appear.
  */
-function toDemoClip(row: { id: number; aspectRatio: string }): DemoClip {
+function toDemoClip(row: { id: number; aspectRatio: string; videoId: string; viewCount: number; startTime: string; endTime: string }): DemoClip {
   const token = shareToken(row.id);
   return {
     id: row.id,
     aspectRatio: row.aspectRatio === "9:16" ? "9:16" : "16:9",
     src: `/api/s/${row.id}/${token}/clip.mp4`,
     poster: `/api/s/${row.id}/${token}/poster.jpg`,
+    videoId: row.videoId,
+    viewCount: row.viewCount,
+    startFraction: Number(row.startTime),
+    endFraction: Number(row.endTime),
   };
 }
 
@@ -350,18 +353,39 @@ async function pickDemoClips(): Promise<DemoClip[]> {
   return picked.map(toDemoClip);
 }
 
+function parseDemoDurationSeconds(value: string): number | null {
+  const raw = value.trim();
+  if (!raw) return null;
+  if (raw.includes(":")) {
+    const parts = raw.split(":").map(Number);
+    if ((parts.length !== 2 && parts.length !== 3) || parts.some((part) => !Number.isInteger(part) || part < 0)) return null;
+    if (parts.length === 3 && (parts[1] > 59 || parts[2] > 59)) return null;
+    if (parts.length === 2 && parts[1] > 59) return null;
+    return parts.length === 3 ? parts[0] * 3600 + parts[1] * 60 + parts[2] : parts[0] * 60 + parts[1];
+  }
+  const bare = Number(raw);
+  if (!Number.isFinite(bare) || bare <= 0) return null;
+  // Match the recording-duration convention elsewhere in the API: bare values
+  // up to five hours are minutes; larger values are seconds.
+  return bare <= 300 ? bare * 60 : bare;
+}
+
 async function demoCounts(): Promise<DemoShowcase["counts"]> {
   const fieldIds = await demoFieldIds();
-  const [recordings] = fieldIds.length
-    ? await db.select({ n: count() }).from(recordingsTable).where(inArray(recordingsTable.fieldId, fieldIds))
-    : [{ n: 0 }];
+  const recordingRows = fieldIds.length
+    ? await db.select({ duration: recordingsTable.duration }).from(recordingsTable).where(inArray(recordingsTable.fieldId, fieldIds))
+    : [];
   const [clips] = await db.select({ n: count() }).from(userClipsTable).where(isNull(userClipsTable.hiddenReason));
   const [analysed] = await db.select({ n: count() }).from(recordingTrackingBundlesTable);
-  return { recordings: Number(recordings?.n ?? 0), clips: Number(clips?.n ?? 0), analysed: Number(analysed?.n ?? 0) };
+  const durations = recordingRows.map((row) => parseDemoDurationSeconds(row.duration));
+  const recordingHours = durations.length > 0 && durations.every((value) => value !== null)
+    ? durations.reduce<number>((sum, value) => sum + (value ?? 0), 0) / 3600
+    : null;
+  return { recordings: recordingRows.length, clips: Number(clips?.n ?? 0), analysed: Number(analysed?.n ?? 0), recordingHours };
 }
 
 export async function buildDemoShowcase(): Promise<DemoShowcase> {
-  const [counts, picked, clips, socialClips, whatsapp, leadsEnabled, returnRate] = await Promise.all([
+  const [counts, picked, clips, socialClips, whatsapp, leadsEnabled, returnRate, fieldRows, quoteAr, quoteEn, quoteName, quoteRole, quotePitch] = await Promise.all([
     demoCounts(),
     pickDemoRecording(),
     pickDemoClips(),
@@ -369,7 +393,14 @@ export async function buildDemoShowcase(): Promise<DemoShowcase> {
     settingString("demo.salesWhatsapp"),
     demoLeadsReady(),
     settingNumber("demo.returnRatePercent"),
+    db.select({ name: fieldsTable.name }).from(fieldsTable).where(eq(fieldsTable.name, DEMO_FIELD_NAME)).limit(1),
+    settingString("demo.testimonial.quoteAr"),
+    settingString("demo.testimonial.quoteEn"),
+    settingString("demo.testimonial.name"),
+    settingString("demo.testimonial.role"),
+    settingString("demo.testimonial.pitch"),
   ]);
+  const values = [quoteAr, quoteEn, quoteName, quoteRole, quotePitch];
   return {
     counts,
     returnRatePercent: returnRate > 0 && returnRate <= 100 ? Math.round(returnRate) : null,
@@ -377,6 +408,8 @@ export async function buildDemoShowcase(): Promise<DemoShowcase> {
     clips,
     socialClips,
     salesWhatsapp: whatsappDigits(whatsapp),
+    fieldName: fieldRows[0]?.name ?? DEMO_FIELD_NAME,
+    testimonial: values.every(Boolean) ? { quoteAr, quoteEn, name: quoteName, role: quoteRole, pitch: quotePitch } : null,
     leadsEnabled,
   };
 }

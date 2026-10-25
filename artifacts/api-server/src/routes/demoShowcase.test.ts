@@ -5,10 +5,9 @@ import request from "supertest";
 vi.mock("../lib/demoShowcase", () => ({
   buildDemoShowcase: vi.fn(),
   buildDemoReport: vi.fn(),
-  pickDemoRecording: vi.fn(),
 }));
 
-import { buildDemoReport, buildDemoShowcase, pickDemoRecording } from "../lib/demoShowcase";
+import { buildDemoReport, buildDemoShowcase } from "../lib/demoShowcase";
 import demoShowcaseRouter, { resetDemoShowcaseCache } from "./demoShowcase";
 
 const app = express();
@@ -22,12 +21,13 @@ const showcase = {
   socialClips: [],
   salesWhatsapp: null,
   leadsEnabled: false,
+  fieldName: "Jordan Galaxy",
+  testimonial: null,
 };
 
 afterEach(() => {
   vi.mocked(buildDemoShowcase).mockReset();
   vi.mocked(buildDemoReport).mockReset();
-  vi.mocked(pickDemoRecording).mockReset();
   resetDemoShowcaseCache();
 });
 
@@ -49,14 +49,17 @@ describe("GET /api/demo/showcase", () => {
 
 describe("GET /api/demo/showcase/report", () => {
   it("says unavailable when no analysed match exists, without building anything", async () => {
-    vi.mocked(pickDemoRecording).mockResolvedValue(null);
+    vi.mocked(buildDemoShowcase).mockResolvedValue(showcase);
     const response = await request(app).get("/api/demo/showcase/report").expect(200);
     expect(response.body).toEqual({ available: false, report: null });
     expect(buildDemoReport).not.toHaveBeenCalled();
   });
 
   it("builds the report once for concurrent requests", async () => {
-    vi.mocked(pickDemoRecording).mockResolvedValue({ recording: { id: 387 } as never, analysed: true });
+    vi.mocked(buildDemoShowcase).mockResolvedValue({
+      ...showcase,
+      match: { recordingId: 387, analysed: true } as never,
+    });
     vi.mocked(buildDemoReport).mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
       return { recordingId: 387, date: "2026-09-28", timeSlot: "22:00", durationSeconds: 3600, hasBall: true, hasPitch: true, team: null, moments: [], players: [], broadcast: null };

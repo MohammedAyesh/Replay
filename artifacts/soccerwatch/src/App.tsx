@@ -634,19 +634,23 @@ function ClerkProviderWithRoutes() {
   );
 }
 
-function RoutedApp() {
-  return <ClerkProviderWithRoutes />;
+function AppContent() {
+  const [location] = useLocation();
+  const publicDemo = location === "/demo";
+  return (
+    <LocaleProvider publicPage={publicDemo}>
+      <FullscreenVideoProvider>
+        {publicDemo ? <DemoPage /> : <ClerkProviderWithRoutes />}
+      </FullscreenVideoProvider>
+    </LocaleProvider>
+  );
 }
 
 function App() {
   return (
     <WouterRouter base={basePath}>
       <QueryClientProvider client={queryClient}>
-        <LocaleProvider>
-          <FullscreenVideoProvider>
-            <RoutedApp />
-          </FullscreenVideoProvider>
-        </LocaleProvider>
+        <AppContent />
       </QueryClientProvider>
     </WouterRouter>
   );

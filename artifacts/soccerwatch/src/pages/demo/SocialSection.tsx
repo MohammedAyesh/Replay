@@ -71,11 +71,11 @@ function StoryPhone({ clip, name, persona, copy, active, onActivate, onFocusIn }
         <video
           ref={videoRef}
           className="dm-phone-video"
-          src={withBase(clip.src)}
-          poster={withBase(clip.poster)}
+          src={active ? withBase(clip.src) : undefined}
+          poster={active ? withBase(clip.poster) : undefined}
           muted
           playsInline
-          preload="metadata"
+          preload={active ? "metadata" : "none"}
           onTimeUpdate={(event) => {
             const v = event.currentTarget;
             if (v.duration > 0) setProgress(v.currentTime / v.duration);

@@ -15,13 +15,15 @@ import { PlayerSection } from "./PlayerSection";
 import { useInView } from "./playback";
 import { Report } from "./Report";
 import { SocialSection } from "./SocialSection";
+import { StoryTab } from "./StoryTab";
 import "./demo.css";
 
-type SectionKey = "clips" | "social" | "try" | "live" | "report" | "players" | "tools" | "numbers" | "setup";
+type SectionKey = "products" | "try" | "live" | "after" | "setup";
+type DemoView = "demo" | "story";
 
 const ORDER: Record<Persona, SectionKey[]> = {
-  pitch: ["clips", "social", "try", "live", "report", "players", "tools", "numbers", "setup"],
-  academy: ["try", "players", "live", "social", "report", "clips", "tools", "numbers", "setup"],
+  pitch: ["products", "try", "live", "after", "setup"],
+  academy: ["try", "after", "live", "products", "setup"],
 };
 
 const PERSONA_KEY = "replay-demo-persona";
@@ -36,6 +38,14 @@ function initialPersona(): Persona {
     // Storage can be blocked (private mode, in-app browsers); the default is fine.
   }
   return "pitch";
+}
+
+function initialView(): DemoView {
+  try {
+    return new URLSearchParams(window.location.search).get("view") === "story" ? "story" : "demo";
+  } catch {
+    return "demo";
+  }
 }
 
 function usePersona(): [Persona, (next: Persona) => void] {
@@ -77,11 +87,24 @@ function Section({ id, index, kicker, title, body, children, tone }: {
   );
 }
 
+function TestimonialCard({ testimonial, locale }: {
+  testimonial: NonNullable<NonNullable<ReturnType<typeof useShowcase>["data"]>["testimonial"]>;
+  locale: DemoLocale;
+}) {
+  return (
+    <figure className="dm-testimonial" dir={locale === "ar" ? "rtl" : "ltr"}>
+      <blockquote>{locale === "ar" ? testimonial.quoteAr : testimonial.quoteEn}</blockquote>
+      <figcaption><strong>{testimonial.name}</strong><span>{testimonial.role} · {testimonial.pitch}</span></figcaption>
+    </figure>
+  );
+}
+
 export default function DemoPage() {
   const { locale, setLocale } = useLocale();
   const lang: DemoLocale = locale === "en" ? "en" : "ar";
   const copy = demoCopy[lang];
   const [persona, setPersona] = usePersona();
+  const [view, setViewState] = useState<DemoView>(initialView);
   const showcase = useShowcase();
   const data = showcase.data;
   const reportQuery = useReport(Boolean(data?.match?.analysed));
@@ -91,6 +114,37 @@ export default function DemoPage() {
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [brandName, setBrandName] = useState("");
   const brand = brandName.trim() || copy.sections.social.defaultName[persona];
+  const s = copy.sections;
+  const setView = (next: DemoView) => {
+    if (next === view) return;
+    setViewState(next);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("view", next);
+      window.history.pushState(window.history.state, "", url.toString());
+    } catch {
+      // The current tab still changes if the URL cannot be updated.
+    }
+    window.setTimeout(() => document.getElementById("demo-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  };
+
+  useEffect(() => {
+    const syncView = () => setViewState(initialView());
+    window.addEventListener("popstate", syncView);
+    return () => window.removeEventListener("popstate", syncView);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get("view") !== view) {
+        url.searchParams.set("view", view);
+        window.history.replaceState(window.history.state, "", url.toString());
+      }
+    } catch {
+      // Tab state remains usable when history APIs are unavailable.
+    }
+  }, [view]);
 
   useEffect(() => {
     const previous = document.title;
@@ -102,8 +156,19 @@ export default function DemoPage() {
 
   const heroClip = useMemo(() => {
     const clips = data?.clips ?? [];
-    return clips.find((clip) => clip.aspectRatio === "16:9") ?? clips[0] ?? null;
-  }, [data?.clips]);
+    if (!clips.length) return null;
+    const mostWatched = [...clips].sort((a, b) => b.viewCount - a.viewCount)[0];
+    const goals = report?.moments.filter((moment) => moment.type === "goal") ?? [];
+    if (!data?.match || !report || goals.length === 0) return mostWatched;
+    const goalClips = clips
+      .filter((clip) => clip.videoId === data.match?.videoId && goals.some((goal) => {
+        const start = clip.startFraction * report.durationSeconds;
+        const end = clip.endFraction * report.durationSeconds;
+        return goal.t >= start && goal.t <= end;
+      }))
+      .sort((a, b) => b.viewCount - a.viewCount);
+    return goalClips[0] ?? mostWatched;
+  }, [data?.clips, data?.match, report]);
 
   const matchDate = report?.date ?? data?.match?.date ?? null;
   const dateLabel = matchDate ? formatMatchDate(matchDate, lang) : null;
@@ -120,52 +185,49 @@ export default function DemoPage() {
 
   const socialClips = (data?.socialClips?.length ? data.socialClips : data?.clips) ?? [];
   const available: Record<SectionKey, boolean> = {
-    clips: (data?.clips.length ?? 0) > 0,
-    social: socialClips.length > 0,
+    products: (data?.clips.length ?? 0) > 0 || socialClips.length > 0,
     try: Boolean(data?.match),
     live: true,
-    report: reportVisible,
-    players: Boolean(report && report.players.length >= 2),
-    tools: true,
-    numbers: true,
+    after: reportVisible,
     setup: true,
   };
   const order = ORDER[persona].filter((key) => available[key]);
-
-  const tiles = data
-    ? ([
-      [data.returnRatePercent ?? 0, copy.proof.returnRate, "%"],
-      [data.counts.clips, copy.proof.clips, ""],
-      [data.counts.analysed, copy.proof.analysed, ""],
-    ] as Array<[number, string, string]>).filter(([n]) => n > 0)
-    : [];
-
-  const s = copy.sections;
+  const navItems = view === "demo"
+    ? [
+      ...order.map((key) => ({
+        id: key,
+        label: {
+          products: s.clips.kicker,
+          try: s.tryIt.kicker,
+          live: s.live.kicker,
+          after: s.report.kicker,
+          setup: s.setup.kicker,
+        }[key],
+      })),
+      { id: "demo-bridge", label: copy.bridge.action },
+      { id: "contact", label: s.contact.title[persona] },
+    ]
+    : [
+      { id: "story-timeline", label: copy.story.nav.timeline },
+      { id: "story-flywheel", label: copy.story.nav.flywheel },
+      { id: "story-revenue", label: copy.story.nav.revenue },
+      { id: "story-calculator", label: copy.story.nav.calculator },
+      { id: "contact", label: s.contact.title[persona] },
+    ];
   const render = (key: SectionKey, index: number) => {
     switch (key) {
-      case "clips":
+      case "products":
         return (
-          <Section key={key} id="clips" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={s.clips.body}>
+          <Section key={key} id="products" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={s.clips.body}>
             {persona === "pitch" && <p className="dm-loss">{s.clips.loss}</p>}
-            <ClipRail clips={data!.clips} copy={s.clips} brandName={brand} />
+            {data?.clips.length ? <ClipRail clips={data.clips} copy={s.clips} brandName={data.fieldName || "Jordan Galaxy"} /> : null}
+            {socialClips.length > 0 && <SocialSection clips={socialClips} persona={persona} copy={s.social} name={brandName} onName={setBrandName} />}
           </Section>
         );
       case "try":
         return (
           <Section key={key} id="try" index={index} kicker={s.tryIt.kicker} title={s.tryIt.title} body={dateLabel ? s.tryIt.body(dateLabel) : s.tryIt.bodyNoDate} tone="raised">
             <Panorama match={data!.match!} moments={report?.moments ?? []} momentsState={momentsState} copy={s.tryIt} />
-          </Section>
-        );
-      case "social":
-        return (
-          <Section key={key} id="social" index={index} kicker={s.social.kicker} title={s.social.title[persona]} tone="raised">
-            <SocialSection clips={socialClips} persona={persona} copy={s.social} name={brandName} onName={setBrandName} />
-          </Section>
-        );
-      case "players":
-        return (
-          <Section key={key} id="players" index={index} kicker={s.players.kicker} title={s.players.title[persona]} body={s.players.body} tone={persona === "academy" ? "raised" : undefined}>
-            <PlayerSection report={report!} persona={persona} copy={s.players} reportCopy={s.report} locale={lang} />
           </Section>
         );
       case "live":
@@ -200,36 +262,20 @@ export default function DemoPage() {
             )}
           </Section>
         );
-      case "report":
+      case "after":
         return (
-          <Section key={key} id="report" index={index} kicker={s.report.kicker} title={s.report.title[persona]} body={dateLabel ? s.report.body(dateLabel) : undefined} tone="raised">
+          <Section key={key} id="after" index={index} kicker={s.report.kicker} title={s.report.title[persona]} body={dateLabel ? s.report.body(dateLabel) : undefined} tone="raised">
             {report ? (
-              <Report report={report} copy={s.report} locale={lang} />
+              <>
+                <Report report={report} copy={s.report} locale={lang} />
+                {report.players.length >= 2 && <PlayerSection report={report} persona={persona} copy={s.players} reportCopy={s.report} locale={lang} />}
+              </>
             ) : (
               <div className="dm-loading" role="status">
                 <span className="dm-loading-bar" aria-hidden="true" />
                 <p className="dm-small">{s.report.loading}</p>
               </div>
             )}
-          </Section>
-        );
-      case "tools":
-        return (
-          <Section key={key} id="tools" index={index} kicker={s.tools.kicker} title={s.tools.title[persona]}>
-            <ol className="dm-tools">
-              {s.tools.items[persona].map((item) => (
-                <li key={item.title}>
-                  <h3>{item.title}</h3>
-                  <p>{item.body}</p>
-                </li>
-              ))}
-            </ol>
-          </Section>
-        );
-      case "numbers":
-        return (
-          <Section key={key} id="numbers" index={index} kicker={s.numbers.kicker} title={s.numbers.title[persona]} tone="raised">
-            <Calculator key={persona} persona={persona} copy={s.numbers} jod={copy.jod} locale={lang} />
           </Section>
         );
       case "setup":
@@ -241,6 +287,9 @@ export default function DemoPage() {
                   <li key={step}><span className="dm-step-num">{i + 1}</span>{step}</li>
                 ))}
               </ol>
+              <ul className="dm-tools-inline">
+                {s.tools.items[persona].map((item) => <li key={item.title}><strong>{item.title}</strong> — {item.body}</li>)}
+              </ul>
               <div className="dm-faq">
                 <h3 className="dm-h3">{s.setup.faqTitle}</h3>
                 {s.setup.faq[persona].map((item, i) => {
@@ -277,20 +326,7 @@ export default function DemoPage() {
             <span className="dm-brand-word">{copy.brand}</span>
           </a>
           <nav className="dm-top-nav" aria-label={copy.sectionNav}>
-            {order.map((key) => {
-              const label = {
-                clips: s.clips.kicker,
-                social: s.social.kicker,
-                players: s.players.kicker,
-                try: s.tryIt.kicker,
-                live: s.live.kicker,
-                report: s.report.kicker,
-                tools: s.tools.kicker,
-                numbers: s.numbers.kicker,
-                setup: s.setup.kicker,
-              }[key];
-              return <a key={key} href={`#${key}`}>{label}</a>;
-            })}
+            {navItems.map(({ id, label }) => <a key={id} href={`#${id}`}>{label}</a>)}
           </nav>
           <div className="dm-top-actions">
             <button type="button" className="dm-lang" onClick={() => setLocale(lang === "ar" ? "en" : "ar")} lang={lang === "ar" ? "en" : "ar"}>
@@ -325,27 +361,97 @@ export default function DemoPage() {
           </div>
         </section>
 
-        {tiles.length > 0 && (
-          <div className="dm-proof">
-            <div className="dm-wrap">
-              <dl className="dm-proof-grid" style={{ gridTemplateColumns: `repeat(${tiles.length}, minmax(0, 1fr))` }}>
-                {tiles.map(([n, label, suffix]) => (
-                  <div key={label} className="dm-proof-tile">
-                    <dt>{label}</dt>
-                    <dd className="dm-num">{formatNumber(n, lang)}{suffix}</dd>
-                  </div>
-                ))}
-              </dl>
-              <p className="dm-small">{copy.proof.note}</p>
-            </div>
+        <section className="dm-proof" aria-label={copy.proof.note}>
+          <div className="dm-wrap dm-proof-layout">
+            <dl className="dm-proof-grid">
+              {data?.returnRatePercent != null && (
+                <div className="dm-proof-tile">
+                  <dt>{copy.proof.returnRate}</dt>
+                  <dd className="dm-num">{formatNumber(data.returnRatePercent, lang)}%</dd>
+                </div>
+              )}
+              {data?.counts.recordingHours != null && (
+                <div className="dm-proof-tile">
+                  <dt>{copy.proof.recordingHours}</dt>
+                  <dd className="dm-num">{formatNumber(data.counts.recordingHours, lang, 1)}</dd>
+                </div>
+              )}
+              {data?.counts.clips != null && (
+                <div className="dm-proof-tile">
+                  <dt>{copy.proof.clips}</dt>
+                  <dd className="dm-num">{formatNumber(data.counts.clips, lang)}</dd>
+                </div>
+              )}
+            </dl>
+            {data?.testimonial && <TestimonialCard testimonial={data.testimonial} locale={lang} />}
           </div>
-        )}
+        </section>
 
-        {showcase.isLoading && (
-          <div className="dm-wrap dm-page-loading" role="status"><span className="dm-loading-bar" aria-hidden="true" /></div>
-        )}
+        <div className="dm-tab-switch" role="tablist" aria-label={copy.sectionNav}>
+          {(["demo", "story"] as DemoView[]).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              id={`demo-tab-${tab}`}
+              aria-controls="demo-panel"
+              aria-selected={view === tab}
+              className={`dm-tab-switch-btn ${view === tab ? "is-on" : ""}`}
+              onClick={() => setView(tab)}
+            >
+              {copy.tabs[tab]}
+            </button>
+          ))}
+        </div>
 
-        {order.map((key, i) => render(key, i + 1))}
+        <div id="demo-panel" className="dm-tab-panel-main" role="tabpanel" aria-labelledby={`demo-tab-${view}`}>
+          {showcase.isLoading && (
+            <div className="dm-wrap dm-page-loading" role="status"><span className="dm-loading-bar" aria-hidden="true" /></div>
+          )}
+
+          {view === "demo" ? (
+            <>
+              {order.map((key, i) => render(key, i + 1))}
+              <section id="demo-bridge" className="dm-bridge" aria-label={copy.bridge.body}>
+                <div className="dm-wrap dm-bridge-row">
+                  <p>{copy.bridge.body}</p>
+                  <button type="button" className="dm-btn dm-btn--primary" onClick={() => setView("story")}>{copy.bridge.action}</button>
+                </div>
+              </section>
+            </>
+          ) : (
+            <>
+              <StoryTab
+                persona={persona}
+                locale={lang}
+                match={data?.match ?? null}
+                clip={socialClips.find((item) => item.aspectRatio === "9:16") ?? socialClips[0] ?? null}
+                brandName={brand}
+                returnRatePercent={data?.returnRatePercent ?? null}
+                clipCount={data?.counts.clips ?? null}
+                copy={{
+                  title: copy.story.title,
+                  subtitle: copy.story.subtitle,
+                  chapters: copy.story.chapters[persona],
+                  closing: copy.story.closing[persona],
+                  exampleNote: copy.story.exampleNote,
+                  visualFallback: copy.story.visualFallback,
+                  flywheel: {
+                    ...copy.story.flywheel,
+                    steps: copy.story.flywheel.steps[persona],
+                    clipsLabel: copy.proof.clips,
+                  },
+                  revenueTitle: copy.story.revenueTitle,
+                  revenueCards: copy.story.revenueCards[persona],
+                  calculatorExampleNote: copy.story.calculatorExampleNote,
+                  nav: copy.story.nav,
+                }}
+                calculator={<Calculator key={persona} persona={persona} copy={s.numbers} jod={copy.jod} locale={lang} />}
+              />
+              {data?.testimonial && <div className="dm-wrap dm-story-testimonial"><TestimonialCard testimonial={data.testimonial} locale={lang} /></div>}
+            </>
+          )}
+        </div>
 
         <section id="contact" ref={contactRef} className="dm-contact" aria-labelledby="contact-title">
           <div className="dm-wrap dm-contact-grid">

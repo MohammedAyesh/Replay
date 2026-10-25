@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 
-import { buildDemoReport, buildDemoShowcase, pickDemoRecording, type DemoReport, type DemoShowcase } from "../lib/demoShowcase";
+import { buildDemoReport, buildDemoShowcase, type DemoReport, type DemoShowcase } from "../lib/demoShowcase";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -76,14 +76,14 @@ router.get("/demo/showcase", async (_req, res): Promise<void> => {
 
 router.get("/demo/showcase/report", async (_req, res): Promise<void> => {
   try {
-    const picked = await pickDemoRecording();
-    if (!picked?.analysed) {
+    const current = await showcase();
+    if (!current.match?.analysed) {
       res.setHeader("Cache-Control", "public, max-age=60");
       res.json({ available: false, report: null });
       return;
     }
-    const data = await report(picked.recording.id);
-    res.setHeader("Cache-Control", "public, max-age=300");
+    const data = await report(current.match.recordingId);
+    res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
     res.json({ available: Boolean(data), report: data });
   } catch (error) {
     logger.error({ err: error }, "demo report failed");

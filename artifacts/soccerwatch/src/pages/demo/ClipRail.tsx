@@ -3,14 +3,13 @@ import { Pause, Play, Volume2, VolumeX } from "lucide-react";
 
 import type { DemoCopy } from "./copy";
 import { formatClock, withBase, type DemoClip } from "./data";
-import { LogoBug } from "./FieldLogo";
 import { claimPlayback, releasePlayback, useActivePlayback, useInView } from "./playback";
 
 function ClipCard({ clip, copy, brandName }: { clip: DemoClip; copy: DemoCopy["sections"]["clips"]; brandName: string }) {
   const id = `clip-${useId()}`;
   const videoRef = useRef<HTMLVideoElement>(null);
   const active = useActivePlayback();
-  const { ref, inView } = useInView<HTMLDivElement>("0px", 0.6);
+  const { ref, inView } = useInView<HTMLDivElement>("240px 0px", 0.01);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [started, setStarted] = useState(false);
@@ -48,8 +47,8 @@ function ClipCard({ clip, copy, brandName }: { clip: DemoClip; copy: DemoCopy["s
         ref={videoRef}
         className="dm-clip-video"
         src={withBase(clip.src)}
-        poster={withBase(clip.poster)}
-        preload={started ? "auto" : "metadata"}
+        poster={inView ? withBase(clip.poster) : undefined}
+        preload={started ? "auto" : "none"}
         onLoadedMetadata={(event) => {
           const d = event.currentTarget.duration;
           if (Number.isFinite(d) && d > 0) setDuration(d);
@@ -71,7 +70,7 @@ function ClipCard({ clip, copy, brandName }: { clip: DemoClip; copy: DemoCopy["s
           </span>
         )}
       </button>
-      <span className="dm-clip-bug" aria-hidden="true"><LogoBug name={brandName} compact /></span>
+      <span className="dm-clip-bug" aria-hidden="true">{brandName}</span>
       <div className="dm-clip-foot">
         <span className="dm-tc">{duration !== null ? formatClock(duration) : ""}</span>
         {started && (

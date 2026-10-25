@@ -9,10 +9,15 @@ export type DemoClip = {
   aspectRatio: "16:9" | "9:16";
   src: string;
   poster: string;
+  videoId: string;
+  viewCount: number;
+  startFraction: number;
+  endFraction: number;
 };
 
 export type DemoMatch = {
   recordingId: number;
+  videoId: string;
   date: string;
   timeSlot: string;
   src: string;
@@ -22,12 +27,14 @@ export type DemoMatch = {
 };
 
 export type DemoShowcase = {
-  counts: { recordings: number; clips: number; analysed: number };
+  counts: { recordings: number; clips: number; analysed: number; recordingHours?: number | null };
   returnRatePercent?: number | null;
   match: DemoMatch | null;
   clips: DemoClip[];
   socialClips?: DemoClip[];
   salesWhatsapp: string | null;
+  fieldName: string;
+  testimonial: { quoteAr: string; quoteEn: string; name: string; role: string; pitch: string } | null;
   /** Set once the callback form has somewhere to go. */
   leadsEnabled?: boolean;
 };

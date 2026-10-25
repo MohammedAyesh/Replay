@@ -7,4 +7,4 @@ The SoccerWatch Vite build intentionally requires both `PORT` and `BASE_PATH`; t
 
 **Why:** Running the package build without those values fails while loading the Vite config, before compilation starts.
 
-**How to apply:** Use the artifact workflow for normal validation or provide the project port and `/soccerwatch` base path for a direct production build.
+**How to apply:** Use the artifact workflow for normal validation or provide `PORT` and the current artifact `BASE_PATH` from its configuration for a direct production build; do not assume the path matches the artifact name.
