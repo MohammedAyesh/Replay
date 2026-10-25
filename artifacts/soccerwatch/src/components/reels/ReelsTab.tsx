@@ -486,9 +486,21 @@ function ReelCard({ reel, index, clipsById }: { reel: UserReel; index: number; c
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-violet" aria-hidden />
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold text-text">{copy.failed}</p>
-                {reel.error && <p className="text-xs text-muted-text">{reel.error}</p>}
+                <p className="text-xs text-muted-text">
+                  {reel.errorCode === "clip_deleted" ? copy.reasonClipDeleted
+                    : reel.errorCode === "too_long" ? copy.reasonTooLong
+                    : copy.reasonFailed}
+                </p>
               </div>
             </div>
+            <Button size="sm" variant="outline" disabled={busy} onClick={retry} className="mt-2">
+              <RotateCcw className="h-3.5 w-3.5" aria-hidden /> {copy.retry}
+            </Button>
+          </div>
+        )}
+        {reel.status === "done" && reel.errorCode === "change_failed" && (
+          <div className="mt-3 rounded-xl border border-violet/40 bg-violet/10 px-3 py-2.5" role="status">
+            <p className="text-xs text-text">{copy.changeFailed}</p>
             <Button size="sm" variant="outline" disabled={busy} onClick={retry} className="mt-2">
               <RotateCcw className="h-3.5 w-3.5" aria-hidden /> {copy.retry}
             </Button>

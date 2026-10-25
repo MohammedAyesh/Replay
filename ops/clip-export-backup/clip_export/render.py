@@ -594,8 +594,16 @@ def render(job, spec, attempt):
         raise errs["reader"]
     if "writer" in errs:
         raise RuntimeError("encoder pipe failed (%s): %s" % (errs["writer"], enc_err.strip()))
+    clip_frames = int(math.ceil(clip_dur * FPS - 1e-6))
     if got < n_frames - 3:
-        raise RuntimeError("source ended early: %d of %d frames (%s)" % (got, n_frames, dec_err.strip()))
+        if es and run_on > 0 and got >= clip_frames - 3:
+            # The recording ended inside the run-on (playlist durations are
+            # approximate): keep what there is; the card holds its last frame.
+            log(job, "run-on footage ended early: %d of %d frames" % (got, n_frames))
+            render_dur = max(clip_dur, got / float(FPS))
+            run_on = render_dur - clip_dur
+        else:
+            raise RuntimeError("source ended early: %d of %d frames (%s)" % (got, n_frames, dec_err.strip()))
     if enc_rc != 0:
         raise RuntimeError("encoder exited %s: %s" % (enc_rc, enc_err.strip()))
 
@@ -644,7 +652,18 @@ def render(job, spec, attempt):
                 try:
                     os.replace(endscreen.trim_to(tmp_out, es_start, WORK_DIR, job, FFMPEG), tmp_out)
                 except Exception as e2:  # noqa: BLE001
-                    log(job, "could not trim the run-on footage (%s) -- exporting it as rendered" % e2)
+                    # Never ship seconds he did not choose: re-encode the clip alone.
+                    log(job, "could not cut the run-on footage (%s) -- re-encoding the clip alone" % e2)
+                    cut = os.path.join(WORK_DIR, job + ".cut.mp4")
+                    r = subprocess.run(
+                        [FFMPEG, "-nostdin", "-v", "error", "-i", tmp_out, "-t", "%.3f" % clip_dur,
+                         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+                         "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+                         "-movflags", "+faststart", "-y", cut],
+                        capture_output=True, text=True, timeout=600)
+                    if r.returncode != 0:
+                        raise RuntimeError("could not cut the clip back to its end: %s" % r.stderr.strip()[-300:])
+                    os.replace(cut, tmp_out)
         dur = float(probe(tmp_out).get("format", {}).get("duration", 0) or 0)
 
     final = os.path.join(OUT_DIR, job + ".mp4")

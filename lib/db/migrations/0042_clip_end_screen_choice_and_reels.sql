@@ -1,6 +1,7 @@
 -- The player's end screen choice and highlight reels (2026-10-25).
--- Additive: one nullable column, one new table.
+-- Additive: two columns (one nullable, one with a default), one new table.
 ALTER TABLE "user_clips" ADD COLUMN IF NOT EXISTS "end_screen" jsonb;
+ALTER TABLE "user_clips" ADD COLUMN IF NOT EXISTS "end_screen_pending" boolean DEFAULT false NOT NULL;
 CREATE TABLE IF NOT EXISTS "user_reels" (
   "id" serial PRIMARY KEY NOT NULL,
   "user_id" integer NOT NULL,

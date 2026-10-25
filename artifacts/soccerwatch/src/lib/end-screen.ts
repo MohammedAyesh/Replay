@@ -36,6 +36,8 @@ export type UserReel = {
   endScreen: EndScreenChoice;
   status: ReelStatus;
   error: string | null;
+  /** A stable reason to show in the player's language (the error text is English). */
+  errorCode: "source_gone" | "clip_deleted" | "too_long" | "change_failed" | "failed" | null;
   durationSec: number | null;
   createdAt: string;
   updatedAt: string;

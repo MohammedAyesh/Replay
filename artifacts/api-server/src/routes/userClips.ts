@@ -46,6 +46,8 @@ import {
   isBunnyConfigured,
   isBunnyStorageConfigured,
   uploadToBunnyStorage,
+  deleteBunnyStoragePath,
+  getPortfolioClipStoragePath,
   BUNNY_STORAGE_API_KEY,
   BUNNY_CDN_HOSTNAME,
 } from "../lib/bunny";
@@ -813,6 +815,9 @@ async function runBackgroundExport(
       // uploaded one. A drawn end screen replaces the uploaded end card, which
       // renderClip keeps only as the fallback if the end screen fails.
       // Planning never throws; anything it cannot do it leaves out.
+      // The choice as it is now, not when the job was queued.
+      const [fresh] = await db.select({ endScreen: userClipsTable.endScreen })
+        .from(userClipsTable).where(eq(userClipsTable.id, clipId)).catch(() => [] as { endScreen: unknown }[]);
       const drawn = await planClipBranding(
         {
           id: clip.id,
@@ -820,7 +825,7 @@ async function runBackgroundExport(
           academyId: clip.academyId,
           matchCode: clip.matchCode,
           footageRequestId: clip.footageRequestId,
-          endScreen: clip.endScreen,
+          endScreen: fresh ? fresh.endScreen : clip.endScreen,
         },
         clipFieldId,
         clip.aspectRatio === "9:16",
@@ -884,13 +889,23 @@ async function runBackgroundExport(
 
       exportProgress.set(clipId, "uploading");
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId, options.exportRevision);
-      await db
+      const [published] = await db
         .update(userClipsTable)
         .set({ exportStatus: "done", exportedUrl })
         .where(and(
           eq(userClipsTable.id, clipId),
           inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
-        ));
+        ))
+        .returning({ id: userClipsTable.id });
+      // A re-render (new end screen, admin re-clip) supersedes this server's
+      // previous file; remove it. vps1's own copies (clips/c<id>-…) are left
+      // to vps1, which keeps exports forever.
+      const previous = published && clip.exportedUrl && clip.exportedUrl !== exportedUrl
+        ? getPortfolioClipStoragePath(clipId, clip.exportedUrl)
+        : null;
+      if (previous && !previous.startsWith(`clips/c${clipId}`)) {
+        void deleteBunnyStoragePath(previous).catch((err) => logger.warn({ err, clipId, previous }, "Could not delete a superseded export"));
+      }
       if (options.trackAdminFailure) adminClipFailureReasons.delete(clipId);
       logger.info({ clipId, exportedUrl, method: "primary" }, "Clip export complete");
     } catch (err) {
@@ -925,11 +940,7 @@ async function runBackgroundExport(
       if (tmpPath) cleanupTempFile(tmpPath);
       for (const f of assetTmpFiles) cleanupTempFile(f);
       // The player changed his end screen while this was rendering.
-      if (rerenderAfterCurrent.delete(clipId)) {
-        void rerenderForEndScreen(clipId).catch((err) => {
-          logger.error({ err, clipId }, "Could not re-render a clip after its end screen changed");
-        });
-      }
+      void endScreenSweep([clipId]);
     }
 }
 
@@ -977,28 +988,54 @@ async function queueClipRerender(
   return { accepted: true, queuePosition: queueStateFor(clip.id).position };
 }
 
-/** Clips whose end screen changed while they were rendering: re-render once that render ends. */
-const rerenderAfterCurrent = new Set<number>();
-
 /**
- * Re-render a clip whose end screen choice changed. A clip that has never been
- * exported picks the choice up on its first export; one that is rendering now
- * is re-rendered as soon as that finishes.
+ * Re-render a clip whose end screen choice changed.
+ *
+ * Only a settled export (done or error) is claimed and re-rendered here, with
+ * a conditional update so two instances cannot both start one. A clip that is
+ * rendering anywhere — here, on vps1, on another instance — gets the durable
+ * `end_screen_pending` flag instead, and `endScreenSweep` re-renders it once
+ * that render settles. A clip never exported picks the choice up on its first export.
  */
 async function rerenderForEndScreen(clipId: number): Promise<"rerendering" | "queued" | "unchanged" | "expired"> {
   const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
   if (!clip || isSoftDeletedClip(clip) || isLiveVideoId(clip.videoId) || clip.exportStatus == null) return "unchanged";
   if (clip.exportStatus === "expired") return "expired";
-  if (inFlight.has(clip.id) || isInternalPendingStatus(clip.exportStatus)) {
-    rerenderAfterCurrent.add(clip.id);
-    return "queued";
+  if (!inFlight.has(clipId) && (await claimEndScreenRerender(clipId))) return "rerendering";
+  await db.update(userClipsTable).set({ endScreenPending: true }).where(eq(userClipsTable.id, clipId));
+  // It may have settled between the two statements.
+  void endScreenSweep([clipId]);
+  return "queued";
+}
+
+/** Claim a settled clip for an end screen re-render and start it. */
+async function claimEndScreenRerender(clipId: number): Promise<boolean> {
+  if (inFlight.has(clipId)) return false;
+  const [claimed] = await db.update(userClipsTable)
+    .set({ exportStatus: "pending", endScreenPending: false })
+    .where(and(eq(userClipsTable.id, clipId), inArray(userClipsTable.exportStatus, ["done", "error"])))
+    .returning();
+  if (!claimed) return false;
+  inFlight.add(clipId);
+  startBackgroundExport(claimed, { exportRevision: randomUUID().replace(/-/g, "") });
+  logger.info({ clipId }, "Re-rendering a clip for its new end screen");
+  return true;
+}
+
+/** Re-render flagged clips whose last render has settled (all, or just `ids`). */
+async function endScreenSweep(ids?: number[]): Promise<void> {
+  try {
+    const rows = await db.select({ id: userClipsTable.id }).from(userClipsTable)
+      .where(and(
+        eq(userClipsTable.endScreenPending, true),
+        inArray(userClipsTable.exportStatus, ["done", "error"]),
+        ...(ids ? [inArray(userClipsTable.id, ids)] : []),
+      ))
+      .limit(10);
+    for (const { id } of rows) await claimEndScreenRerender(id);
+  } catch (err) {
+    logger.warn({ err }, "End screen re-render sweep failed");
   }
-  const queued = await queueClipRerender(clip, false);
-  if (!queued.accepted) {
-    rerenderAfterCurrent.add(clip.id);
-    return "queued";
-  }
-  return "rerendering";
 }
 
 /**
@@ -1090,6 +1127,10 @@ startExportFailoverSweep({
   resumeLocalFallback,
 });
 startBackupStorageUrlUpgradeSweep();
+// Durable re-renders for end screens changed mid-render (any renderer, any instance).
+if (process.env.NODE_ENV !== "test") {
+  setInterval(() => { void endScreenSweep(); }, 60_000).unref();
+}
 
 /**
  * Queue the existing MP4 export pipeline for a live capture after its Bunny
@@ -2423,6 +2464,51 @@ export async function reserveDownload(
 }
 
 /**
+ * A highlight reel's download: every clip in it is a download, as if each
+ * had been downloaded on its own — a clip already downloaded inside the
+ * window costs nothing again, and the reel is refused (nothing recorded)
+ * unless all of its new clips fit. A reel is therefore never a way round the
+ * allowance, and downloading the same reel twice costs nothing the second time.
+ */
+export async function reserveReelDownload(
+  userId: number,
+  clipIds: number[],
+  now: Date,
+): Promise<
+  | { outcome: "disabled" }
+  | { outcome: "refused"; state: ReturnType<typeof evaluateQuota>; needed: number }
+  | { outcome: "allowed"; state: ReturnType<typeof evaluateQuota> }
+> {
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`);
+    // Field rules from the reel's last clip, whose venue brands it.
+    const ctx = await loadQuotaContext(userId, now, clipIds[clipIds.length - 1], tx);
+    if (!ctx.downloadsEnabled) return { outcome: "disabled" as const };
+    const events = [...ctx.events];
+    const record: number[] = [];
+    let state = evaluateQuota(events, now, { unlimited: ctx.unlimited, limit: ctx.limit, windowDays: ctx.windowDays });
+    for (const clipId of clipIds) {
+      const decision = consumeQuota(events, clipId, now, {
+        unlimited: ctx.unlimited, limit: ctx.limit, windowDays: ctx.windowDays,
+      });
+      if (!decision.allowed) {
+        const fresh = clipIds.filter((id) => !ctx.events.some((e) => e.clipId === id)).length;
+        return { outcome: "refused" as const, state: evaluateQuota(ctx.events, now, { unlimited: ctx.unlimited, limit: ctx.limit, windowDays: ctx.windowDays }), needed: fresh };
+      }
+      if (decision.shouldRecord) {
+        record.push(clipId);
+        events.push({ at: now, clipId });
+      }
+      state = decision.state;
+    }
+    if (record.length) {
+      await tx.insert(clipDownloadsTable).values(record.map((clipId) => ({ userId, clipId, createdAt: now })));
+    }
+    return { outcome: "allowed" as const, state };
+  });
+}
+
+/**
  * GET /user-clips/download-quota
  *
  * The counter and reset date the UI shows. Surfaced as its own endpoint and read
@@ -2734,7 +2820,7 @@ router.put("/user-clips/:id/end-screen", async (req, res): Promise<void> => {
   const clip = found.clip;
   const body = (req.body ?? {}) as Record<string, unknown>;
   const choice = cleanChoice(body);
-  if (body.card !== undefined && choice.card === undefined) { res.status(400).json({ error: "Unknown card" }); return; }
+  if (body.card != null && body.card !== "auto" && choice.card === undefined) { res.status(400).json({ error: "Unknown card" }); return; }
   if (Array.isArray(body.stats) && (choice.stats?.length ?? 0) !== new Set(body.stats).size) {
     res.status(400).json({ error: `Pick up to ${MAX_CARD_STATS} numbers from the list` });
     return;
@@ -2742,12 +2828,13 @@ router.put("/user-clips/:id/end-screen", async (req, res): Promise<void> => {
   const stored = choice.card === undefined && !choice.stats ? null : choice;
   const changed = JSON.stringify(cleanChoice(clip.endScreen)) !== JSON.stringify(cleanChoice(stored));
   await db.update(userClipsTable).set({ endScreen: stored }).where(eq(userClipsTable.id, clip.id));
-  const rerender = changed ? await rerenderForEndScreen(clip.id) : "unchanged";
-  logger.info({ clipId: clip.id, choice: stored, rerender }, "Player changed his clip's end screen");
   const fieldId = await fieldIdForClip(clip.id);
   const options = await endScreenOptions(brandingClipOf(clip, stored), fieldId, {
     academyId: clip.academyId, fieldId, userId: clip.userId,
   });
+  // Nothing to re-render when the venue has no end screen: the choice is kept for when it does.
+  const rerender = changed && options.enabled ? await rerenderForEndScreen(clip.id) : "unchanged";
+  logger.info({ clipId: clip.id, choice: stored, rerender }, "Player changed his clip's end screen");
   res.json({ ...options, rerender });
 });
 

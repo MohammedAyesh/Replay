@@ -18,9 +18,11 @@ import { pipeline } from "stream/promises";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db, userClipsTable, userReelsTable, type UserReelRow } from "@workspace/db";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { toQuotaResponse } from "../lib/downloadQuota";
 import { logger } from "../lib/logger";
 import {
   BUNNY_CDN_HOSTNAME,
+  BunnyVideoNotFoundError,
   bunnyStorageUrlFor,
   getBunnyVideoInfo,
   isBunnyConfigured,
@@ -44,7 +46,7 @@ import {
   isSoftDeletedClip,
   normalizeExportWindow,
   readableFromUpstream,
-  reserveDownload,
+  reserveReelDownload,
   resolveBrandingForClip,
 } from "./userClips";
 
@@ -54,6 +56,11 @@ export const REEL_MIN_CLIPS = 2;
 export const REEL_MAX_CLIPS = 10;
 /** Longest reel, in seconds of the clips themselves (the end screen is extra). */
 export const REEL_MAX_SECONDS = Math.max(30, Number(process.env.REEL_MAX_SECONDS) || 180);
+/** Reels one player can have being made at once, and in all. */
+export const REEL_MAX_PENDING = 3;
+export const REEL_MAX_TOTAL = 50;
+/** A pending reel nobody has touched for this long lost its render (a restart). */
+const STALE_PENDING_MS = 10 * 60_000;
 
 type ClipRow = typeof userClipsTable.$inferSelect;
 
@@ -61,6 +68,16 @@ type ClipRow = typeof userClipsTable.$inferSelect;
 const rendering = new Set<number>();
 /** Reels whose end screen changed mid-render: render again when it ends. */
 const renderAgain = new Set<number>();
+
+/** A stable reason the app can show in the player's language. */
+function errorCodeOf(reel: UserReelRow): string | null {
+  if (reel.exportStatus === "expired") return "source_gone";
+  if (!reel.exportError) return null;
+  if (/deleted/i.test(reel.exportError)) return "clip_deleted";
+  if (/seconds at most/i.test(reel.exportError)) return "too_long";
+  if (/could not be applied/i.test(reel.exportError)) return "change_failed";
+  return "failed";
+}
 
 function publicReel(reel: UserReelRow) {
   return {
@@ -70,7 +87,8 @@ function publicReel(reel: UserReelRow) {
     aspectRatio: reel.aspectRatio,
     endScreen: cleanChoice(reel.endScreen),
     status: reel.exportStatus ?? "pending",
-    error: reel.exportStatus === "error" || reel.exportStatus === "expired" ? reel.exportError : null,
+    error: reel.exportError,
+    errorCode: errorCodeOf(reel),
     durationSec: reel.durationSec,
     createdAt: reel.createdAt,
     updatedAt: reel.updatedAt,
@@ -129,7 +147,11 @@ async function renderReel(reel: UserReelRow, clips: ClipRow[]): Promise<{ path: 
       try {
         info = await getBunnyVideoInfo(clip.videoId);
       } catch (err) {
-        throw new ReelSourceGone(`The recording behind "${clip.title}" is no longer available`, { cause: err });
+        // Only a recording Bunny says is gone is gone; anything else can be retried.
+        if (err instanceof BunnyVideoNotFoundError) {
+          throw new ReelSourceGone(`The recording behind "${clip.title}" is no longer available`, { cause: err });
+        }
+        throw err;
       }
       const window = normalizeExportWindow(parseFloat(clip.startTime), parseFloat(clip.endTime), info.duration);
       if (window.clipDuration <= 0) throw new Error(`"${clip.title}" has no footage`);
@@ -208,10 +230,19 @@ async function runReelRender(reelId: number): Promise<void> {
   if (rendering.has(reelId)) { renderAgain.add(reelId); return; }
   rendering.add(reelId);
   let out: string | null = null;
+  // Keeps updatedAt fresh while it waits and renders, so no other instance
+  // takes it for a lost render and starts a second one.
+  const heartbeat = setInterval(() => {
+    void db.update(userReelsTable).set({ updatedAt: new Date() })
+      .where(and(eq(userReelsTable.id, reelId), eq(userReelsTable.exportStatus, "pending"))).catch(() => {});
+  }, 60_000);
+  heartbeat.unref();
+  let previousPath: string | null = null;
   try {
     await renderQueue.run(`reel-${reelId}`, async () => {
       const [reel] = await db.select().from(userReelsTable).where(eq(userReelsTable.id, reelId));
       if (!reel || reel.deletedAt) return;
+      previousPath = reel.exportPath;
       const clips = await reelClips(reel.userId, reel.clipIds);
       if (!clips) {
         await db.update(userReelsTable).set({ exportStatus: "error", exportError: "One of the clips in this reel was deleted", updatedAt: new Date() })
@@ -234,17 +265,30 @@ async function runReelRender(reelId: number): Promise<void> {
       logger.info({ reelId, seconds: rendered.seconds }, "Highlight reel ready");
     });
   } catch (err) {
-    const gone = err instanceof ReelSourceGone || /no longer available|404/i.test(String((err as Error)?.message));
+    const gone = err instanceof ReelSourceGone;
+    const message = err instanceof Error ? err.message.slice(0, 300) : "The reel could not be made";
     logger.error({ err, reelId }, "Highlight reel render failed");
-    await db.update(userReelsTable).set({
-      exportStatus: gone ? "expired" : "error",
-      exportError: err instanceof Error ? err.message.slice(0, 300) : "The reel could not be made",
-      updatedAt: new Date(),
-    }).where(eq(userReelsTable.id, reelId)).catch(() => {});
+    // A change that failed on a reel that already has a good file keeps that
+    // file playable; the player is told his last change did not apply.
+    await db.update(userReelsTable).set(previousPath
+      ? { exportStatus: "done", exportError: `Your last change could not be applied: ${message}`.slice(0, 300), updatedAt: new Date() }
+      : { exportStatus: gone ? "expired" : "error", exportError: message, updatedAt: new Date() })
+      .where(eq(userReelsTable.id, reelId)).catch(() => {});
   } finally {
+    clearInterval(heartbeat);
     if (out) cleanupTempFile(out);
     rendering.delete(reelId);
-    if (renderAgain.delete(reelId)) void runReelRender(reelId);
+    if (renderAgain.delete(reelId)) void queueReelRender(reelId);
+  }
+}
+
+/** Pick up pending reels whose render was lost (a restart, another instance gone). */
+function resumeStale(reels: UserReelRow[]): void {
+  for (const reel of reels) {
+    if (reel.exportStatus === "pending" && !rendering.has(reel.id)
+      && Date.now() - reel.updatedAt.getTime() > STALE_PENDING_MS) {
+      void queueReelRender(reel.id);
+    }
   }
 }
 
@@ -256,9 +300,10 @@ async function queueReelRender(reelId: number): Promise<void> {
 
 function parseChoice(raw: unknown): { ok: true; choice: ReturnType<typeof cleanChoice> | null } | { ok: false; error: string } {
   if (raw == null) return { ok: true, choice: null };
+  if (typeof raw !== "object" || Array.isArray(raw)) return { ok: false, error: "Unknown end screen" };
   const r = raw as Record<string, unknown>;
   const choice = cleanChoice(r);
-  if (r.card !== undefined && choice.card === undefined) return { ok: false, error: "Unknown card" };
+  if (r.card != null && r.card !== "auto" && choice.card === undefined) return { ok: false, error: "Unknown card" };
   if (Array.isArray(r.stats) && (choice.stats?.length ?? 0) !== new Set(r.stats).size) {
     return { ok: false, error: `Pick up to ${MAX_CARD_STATS} numbers from the list` };
   }
@@ -288,6 +333,14 @@ router.post("/user-reels", async (req, res): Promise<void> => {
   const clips = await reelClips(userId, clipIds);
   if (!clips) { res.status(400).json({ error: "Only your own saved clips can go in a reel" }); return; }
   const shapes = new Set(clips.map((c) => (c.aspectRatio === "9:16" ? "9:16" : "16:9")));
+  // A render holds a slot for every clip in it: a few at a time per player.
+  const mine = await db.select({ status: userReelsTable.exportStatus }).from(userReelsTable)
+    .where(and(eq(userReelsTable.userId, userId), isNull(userReelsTable.deletedAt)));
+  if (mine.length >= REEL_MAX_TOTAL) { res.status(429).json({ error: `You can keep ${REEL_MAX_TOTAL} reels. Delete one to make another.` }); return; }
+  if (mine.filter((r) => r.status === "pending").length >= REEL_MAX_PENDING) {
+    res.status(429).json({ error: "Wait for your reels being made to finish first." });
+    return;
+  }
   if (shapes.size > 1) { res.status(400).json({ error: "Pick clips of one shape: all vertical or all wide" }); return; }
   const [reel] = await db.insert(userReelsTable).values({
     userId,
@@ -307,6 +360,7 @@ router.get("/user-reels", async (req, res): Promise<void> => {
   const reels = await db.select().from(userReelsTable)
     .where(and(eq(userReelsTable.userId, userId), isNull(userReelsTable.deletedAt)))
     .orderBy(desc(userReelsTable.createdAt));
+  resumeStale(reels);
   res.json(reels.map(publicReel));
 });
 
@@ -316,10 +370,7 @@ router.get("/user-reels/:id", async (req, res): Promise<void> => {
   const reel = await ownReel(userId, req.params.id);
   if (!reel) { res.status(404).json({ error: "Reel not found" }); return; }
   // A render this process lost (a restart) is picked up again when looked at.
-  if (reel.exportStatus === "pending" && !rendering.has(reel.id)
-    && Date.now() - reel.updatedAt.getTime() > 20 * 60_000) {
-    void queueReelRender(reel.id);
-  }
+  resumeStale([reel]);
   res.json(publicReel(reel));
 });
 
@@ -350,7 +401,10 @@ router.post("/user-reels/:id/retry", async (req, res): Promise<void> => {
   if (!userId) { unauthenticatedResponse(res, req); return; }
   const reel = await ownReel(userId, req.params.id);
   if (!reel) { res.status(404).json({ error: "Reel not found" }); return; }
-  if (reel.exportStatus !== "error") { res.status(409).json({ error: "This reel is not waiting for a retry" }); return; }
+  if (reel.exportStatus !== "error" && !(reel.exportStatus === "done" && reel.exportError)) {
+    res.status(409).json({ error: "This reel is not waiting for a retry" });
+    return;
+  }
   await queueReelRender(reel.id);
   res.json(publicReel({ ...reel, exportStatus: "pending" }));
 });
@@ -466,19 +520,31 @@ router.get("/user-reels/:id/playback", async (req, res): Promise<void> => {
 });
 
 /**
- * Download counts as one of the player's downloads, recorded against the
- * reel's first clip: downloading the reel again (or that clip) is not counted twice.
+ * Each clip in the reel counts as a download (unless already downloaded in
+ * the window): a reel is not a way round the allowance. See reserveReelDownload.
  */
 router.get("/user-reels/:id/download", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) { unauthenticatedResponse(res, req); return; }
   const reel = await ownReel(userId, req.params.id);
   if (!reel || reel.exportStatus !== "done" || !reel.exportPath) { res.status(404).json({ error: "Reel not ready" }); return; }
-  const reservation = await reserveDownload(userId, reel.clipIds[0], new Date());
+  const reservation = await reserveReelDownload(userId, reel.clipIds, new Date());
   if (reservation.outcome === "disabled") { res.status(403).json({ error: "Downloads are currently disabled" }); return; }
-  if (reservation.outcome === "refused") { res.status(402).json({ error: "Download limit reached" }); return; }
+  if (reservation.outcome === "refused") {
+    res.status(402).json({
+      error: "Download limit reached",
+      needed: reservation.needed,
+      quota: toQuotaResponse(reservation.state),
+    });
+    return;
+  }
   const abort = new AbortController();
-  const abortUpstream = () => { if (!abort.signal.aborted) abort.abort(); };
+  let nodeStream: ReturnType<typeof readableFromUpstream> | null = null;
+  const abortUpstream = () => {
+    if (!abort.signal.aborted) abort.abort();
+    nodeStream?.destroy();
+  };
+  req.once("aborted", abortUpstream);
   res.once("close", abortUpstream);
   try {
     const upstream = await fetchExportObject(bunnyStorageUrlFor(reel.exportPath), { signal: abort.signal });
@@ -487,15 +553,18 @@ router.get("/user-reels/:id/download", async (req, res): Promise<void> => {
       res.status(502).json({ error: "Download unavailable" });
       return;
     }
-    const safeName = reel.title.replace(/[^a-z0-9_\-]/gi, "_") || "reel";
+    // Titles are often Arabic: keep what is safe, else name it after the reel.
+    const safeName = /[a-z0-9]/i.test(reel.title) ? reel.title.replace(/[^a-z0-9_\-]/gi, "_") : `reel-${reel.id}`;
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
     forwardExportContentLength(res, upstream, false);
-    await pipeline(readableFromUpstream(upstream.body as ReadableStream<Uint8Array>), res);
+    nodeStream = readableFromUpstream(upstream.body as ReadableStream<Uint8Array>);
+    await pipeline(nodeStream, res);
   } catch (err) {
     if (!abort.signal.aborted) logger.error({ err, reelId: reel.id }, "Reel download failed");
     if (!res.headersSent) res.status(502).json({ error: "Download failed" });
   } finally {
+    req.off("aborted", abortUpstream);
     res.off("close", abortUpstream);
   }
 });

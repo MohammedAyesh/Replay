@@ -149,7 +149,7 @@ beforeAll(async () => {
     { key: KEYS[3], value: false }, { key: KEYS[4], value: false }, { key: KEYS[5], value: 3 },
   ]);
   invalidateSettingsCache();
-});
+}, 180_000);
 
 afterAll(async () => {
   await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, KEYS));
@@ -166,7 +166,7 @@ beforeEach(() => {
 
 describe("POST /user-reels", () => {
   it("needs two to ten of his own clips, each once, all one shape", async () => {
-    const post = (body: unknown) => request(app).post("/api/user-reels").send(body);
+    const post = (body: object) => request(app).post("/api/user-reels").send(body);
     expect((await post({ clipIds: [portraitA] })).status).toBe(400);
     expect((await post({ clipIds: [portraitA, portraitA] })).status).toBe(400);
     expect((await post({ clipIds: [portraitA, othersClip] })).status).toBe(400);
@@ -241,6 +241,37 @@ describe("changing and deleting a reel", () => {
       if (reel.exportStatus === "error") expect(reel.exportError).toMatch(/deleted/);
     } finally {
       await db.update(userClipsTable).set({ hiddenReason: null, isHidden: false }).where(eq(userClipsTable.id, portraitB));
+    }
+  }, 200_000);
+});
+
+describe("downloading a reel", () => {
+  it("counts every clip in it against the allowance, and refuses rather than half-count", async () => {
+    const created = await request(app).post("/api/user-reels").send({ clipIds: [portraitA, portraitB] });
+    const reel = await waitForReel(created.body.id);
+    expect(reel.exportStatus).toBe("done");
+    const { clipDownloadsTable } = await import("@workspace/db");
+    const { invalidateSettingsCache } = await import("../lib/settings");
+    await db.delete(clipDownloadsTable).where(eq(clipDownloadsTable.userId, ownerId));
+    await db.insert(settingsDefaultsTable).values({ key: "downloads.limit", value: 1 });
+    invalidateSettingsCache();
+    try {
+      const refused = await request(app).get(`/api/user-reels/${reel.id}/download`);
+      expect(refused.status).toBe(402);
+      expect(refused.body.needed).toBe(2);
+      expect(await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.userId, ownerId))).toHaveLength(0);
+
+      await db.update(settingsDefaultsTable).set({ value: 5 }).where(eq(settingsDefaultsTable.key, "downloads.limit"));
+      invalidateSettingsCache();
+      expect((await request(app).get(`/api/user-reels/${reel.id}/download`)).status).toBe(200);
+      expect(await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.userId, ownerId))).toHaveLength(2);
+      // The same reel again costs nothing more.
+      expect((await request(app).get(`/api/user-reels/${reel.id}/download`)).status).toBe(200);
+      expect(await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.userId, ownerId))).toHaveLength(2);
+    } finally {
+      await db.delete(settingsDefaultsTable).where(eq(settingsDefaultsTable.key, "downloads.limit"));
+      await db.delete(clipDownloadsTable).where(eq(clipDownloadsTable.userId, ownerId));
+      invalidateSettingsCache();
     }
   }, 200_000);
 });

@@ -500,10 +500,11 @@ export function cleanChoice(raw: unknown): EndScreenChoice {
   const out: EndScreenChoice = {};
   if (!raw || typeof raw !== "object") return out;
   const r = raw as Record<string, unknown>;
-  if (r.card === "auto" || (END_SCREEN_KINDS as readonly unknown[]).includes(r.card)) out.card = r.card as EndScreenChoice["card"];
+  // "auto" and no card mean the same thing, so they are stored the same way.
+  if ((END_SCREEN_KINDS as readonly unknown[]).includes(r.card)) out.card = r.card as EndScreenChoice["card"];
   if (Array.isArray(r.stats)) {
     const keys = [...new Set(r.stats.filter((k): k is EndScreenStatKey => (END_SCREEN_STAT_KEYS as unknown[]).includes(k)))];
-    out.stats = keys.slice(0, MAX_CARD_STATS);
+    if (keys.length) out.stats = keys.slice(0, MAX_CARD_STATS);
   }
   return out;
 }

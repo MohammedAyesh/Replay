@@ -79,7 +79,9 @@ def start_for(clip_dur):
 
 def run_on(clip_end, source_duration, seconds):
     """How much footage after the clip the render includes for the card."""
-    left = source_duration - clip_end if math.isfinite(source_duration) else 0.0
+    # Half a second short of the playlist's stated end: its EXTINF sum can
+    # overstate what the stream really holds.
+    left = source_duration - clip_end - 0.5 if math.isfinite(source_duration) else 0.0
     r = max(0.0, min(seconds, left))
     return 0.0 if r < 1.0 / FPS else math.floor(r * FPS) / FPS
 

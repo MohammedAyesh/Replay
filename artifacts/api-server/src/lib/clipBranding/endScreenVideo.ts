@@ -346,6 +346,13 @@ export async function applyEndScreen(options: {
 
     const head = held ? mainPath : await cutHead(mainPath, start, temps);
     const final = await concat([head, tail]);
+    // The clip plus the card, exactly: anything else is a bad join.
+    const want = (held ? duration : start) + job.seconds;
+    const got = await probeDuration(final);
+    if (Math.abs(got - want) > 0.35) {
+      fs.unlink(final, () => {});
+      throw new Error(`End screen output is ${got.toFixed(2)}s, expected ${want.toFixed(2)}s`);
+    }
     logger.info(
       { kind: job.spec.kind, start, runOn: held ? 0 : Math.min(job.seconds, duration - start), seconds: job.seconds },
       "End screen applied",

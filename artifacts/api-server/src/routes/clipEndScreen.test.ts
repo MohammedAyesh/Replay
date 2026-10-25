@@ -129,6 +129,34 @@ describe("PUT /user-clips/:id/end-screen", () => {
     mockedGetLocalUserId.mockResolvedValue(otherId);
     expect((await request(app).put(`/api/user-clips/${clipId}/end-screen`).send({ card: "signOff" })).status).toBe(404);
   });
+
+  it("remembers a change made while the clip is rendering, durably, for a re-render after it", async () => {
+    await db.update(userClipsTable).set({ exportStatus: "pending", endScreen: null, endScreenPending: false }).where(eq(userClipsTable.id, clipId));
+    try {
+      const res = await request(app).put(`/api/user-clips/${clipId}/end-screen`).send({ card: "signOff" });
+      expect(res.body.rerender).toBe("queued");
+      const [row] = await db.select({ pending: userClipsTable.endScreenPending }).from(userClipsTable).where(eq(userClipsTable.id, clipId));
+      expect(row.pending).toBe(true);
+    } finally {
+      await db.update(userClipsTable).set({ exportStatus: null, endScreen: null, endScreenPending: false }).where(eq(userClipsTable.id, clipId));
+    }
+  });
+
+  it("does not re-render when the venue has no end screen, and treats auto/empty as no choice", async () => {
+    await setEndScreen(false);
+    await db.update(userClipsTable).set({ exportStatus: "done" }).where(eq(userClipsTable.id, clipId));
+    try {
+      const res = await request(app).put(`/api/user-clips/${clipId}/end-screen`).send({ card: "signOff" });
+      expect(res.body.rerender).toBe("unchanged");
+      const auto = await request(app).put(`/api/user-clips/${clipId}/end-screen`).send({ card: "auto", stats: [] });
+      expect(auto.status).toBe(200);
+      const [row] = await db.select({ endScreen: userClipsTable.endScreen }).from(userClipsTable).where(eq(userClipsTable.id, clipId));
+      expect(row.endScreen).toBeNull();
+      expect((await request(app).put(`/api/user-clips/${clipId}/end-screen`).send({ card: null })).status).toBe(200);
+    } finally {
+      await db.update(userClipsTable).set({ exportStatus: null, endScreen: null }).where(eq(userClipsTable.id, clipId));
+    }
+  });
 });
 
 describe("GET /user-clips/:id/end-screen/preview.png", () => {

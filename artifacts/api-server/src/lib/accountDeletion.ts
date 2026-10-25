@@ -14,10 +14,11 @@ import {
   settingsRulesTable,
   statUnlocksTable,
   userClipsTable,
+  userReelsTable,
   usersTable,
   varMarksTable,
 } from "@workspace/db";
-import { deleteBunnyClipAssets, deleteBunnyStoragePath } from "./bunny";
+import { deleteBunnyClipAssets, deleteBunnyStoragePath, getPortfolioClipStoragePath } from "./bunny";
 import { deleteClerkUserAccount } from "./clerkUserBridge";
 import { logger } from "./logger";
 
@@ -155,7 +156,10 @@ async function deleteUserAccountNow(
     }
   }
 
-  let deletedClipAssets: Array<{ id: number; posterPath: string | null }>;
+  let deletedClipAssets: Array<{ id: number; posterPath: string | null; exportedUrl: string | null }>;
+  // Rendered reels and re-rendered clip revisions live at paths that the
+  // per-clip cleanup does not derive; collect them while the rows exist.
+  let extraPaths: string[] = [];
   try {
     deletedClipAssets = await db.transaction(async (tx) => {
       // Recheck after the external identity is deleted to avoid removing an
@@ -170,9 +174,17 @@ async function deleteUserAccountNow(
       if (active.length > 0) throw new ActiveFootageRequestError(active.length);
 
       const clipAssets = await tx
-        .select({ id: userClipsTable.id, posterPath: userClipsTable.posterPath })
+        .select({ id: userClipsTable.id, posterPath: userClipsTable.posterPath, exportedUrl: userClipsTable.exportedUrl })
         .from(userClipsTable)
         .where(eq(userClipsTable.userId, userId));
+      const reels = await tx.select({ path: userReelsTable.exportPath }).from(userReelsTable)
+        .where(eq(userReelsTable.userId, userId));
+      extraPaths = [
+        ...reels.map((r) => r.path).filter((p): p is string => !!p && /^reels\/r\d+-[0-9a-f]+\.mp4$/.test(p)),
+        ...clipAssets
+          .map((c) => (c.exportedUrl ? getPortfolioClipStoragePath(c.id, c.exportedUrl) : null))
+          .filter((p): p is string => !!p),
+      ];
 
       const likedSurvivingClips = await tx
         .select({ id: userClipsTable.id })
@@ -318,6 +330,9 @@ async function deleteUserAccountNow(
     return { status: "database_failure" };
   }
 
+  await Promise.allSettled(extraPaths.map((p) => deleteBunnyStoragePath(p).catch((err) => {
+    logger.warn({ err, userId, path: p }, "Could not remove a reel or clip revision of a deleted account");
+  })));
   const assetCleanup = await Promise.allSettled([
     ...deletedClipAssets.map(({ id, posterPath }) => deleteBunnyClipAssets(id, posterPath)),
     ...(user.avatarPath ? [deleteBunnyStoragePath(user.avatarPath)] : []),

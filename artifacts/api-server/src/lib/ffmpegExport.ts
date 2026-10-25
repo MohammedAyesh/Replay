@@ -1286,8 +1286,10 @@ async function withEndScreen(
       cleanupTempFile(mainPath);
       return { path: head, applied: false };
     } catch (cutErr) {
-      logger.error({ err: cutErr }, "Could not trim the run-on footage — exporting it as rendered");
-      return { path: mainPath, applied: false };
+      // Never ship seconds he did not choose: fail this branded render, and
+      // the caller's unbranded retry renders exactly the clip.
+      cleanupTempFile(mainPath);
+      throw new Error(`End screen failed and the run-on footage could not be trimmed: ${(cutErr as Error)?.message ?? cutErr}`);
     }
   }
 }

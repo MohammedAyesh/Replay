@@ -76,6 +76,12 @@ export const userClipsTable = pgTable("user_clips", {
    * the end screen switched on in Admin → Branding.
    */
   endScreen: jsonb("end_screen").$type<{ card?: string; stats?: string[] }>(),
+  /**
+   * The end screen changed while the clip was rendering (here, on vps1, or on
+   * another instance): re-render once that render settles. Durable, so a
+   * restart or a vps1 hand-off cannot lose the player's change.
+   */
+  endScreenPending: boolean("end_screen_pending").notNull().default(false),
 });
 
 export type UserClipRow = typeof userClipsTable.$inferSelect;
