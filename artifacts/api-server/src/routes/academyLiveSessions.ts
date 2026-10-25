@@ -10,7 +10,7 @@ import { ammanLocalInstant } from "../lib/matchRooms";
 import { describeLive, parseLiveManifest } from "../lib/liveManifest";
 import { parseLiveCamera, parseVarControlCamera } from "../lib/liveCameras";
 import { canViewPinnedAcademyRecording } from "../lib/publicFootage";
-import { pipeLiveSegment, rewriteLivePlaylist } from "../lib/liveHlsProxy";
+import { liveSegmentNames, pipeLiveSegment, rewriteLivePlaylist } from "../lib/liveHlsProxy";
 import { controlFetch, controlResponse } from "./contabo";
 import { logger } from "../lib/logger";
 
@@ -175,13 +175,24 @@ async function statusResponse(session: SessionLive, sessionId: number, base: str
   }
 }
 
+/**
+ * The browser-facing URL of a session's live routes. It is built from the authorized
+ * session, not from the Express route pattern, and carries the /api prefix the web
+ * app uses for every other API call.
+ */
+function sessionLiveBase(surface: Surface, session: SessionLive): string {
+  return surface === "console"
+    ? `/api/academy/console/academies/${session.academyId}/sessions/${session.sessionId}/live`
+    : `/api/academy/family/sessions/${session.sessionId}/live`;
+}
+
 function register(surface: Surface, path: string) {
   const base = path.replace(/\/status$/, "");
   router.get(path, async (req, res): Promise<void> => {
     res.set("Cache-Control", "no-store");
     const session = await authorizedSession(req, res, surface);
     if (!session) return;
-    res.json(await statusResponse(session, session.sessionId, base));
+    res.json(await statusResponse(session, session.sessionId, sessionLiveBase(surface, session)));
   });
   router.get(`${base}/playlist.m3u8`, async (req, res): Promise<void> => {
     const session = await authorizedSession(req, res, surface);
@@ -200,7 +211,7 @@ function register(surface: Surface, path: string) {
       }
       const playlist = rewriteLivePlaylist(
         await upstream.text(),
-        `${base}/seg/`,
+        `${sessionLiveBase(surface, session)}/seg/`,
         new Date(ammanLocalInstant(session.booking!.startLocal)),
       );
       if (!playlist) {
@@ -228,6 +239,18 @@ function register(surface: Surface, path: string) {
       return;
     }
     try {
+      // Serve only a segment the trimmed playlist for this session would list: vps1's
+      // rolling window can still hold footage from before the booking started.
+      const listing = await controlResponse(`/var/${encodeURIComponent(camera.control)}/hls/playlist.m3u8`, {}, 15_000);
+      if (!listing.ok) {
+        res.status(502).json({ error: "Live playlist unavailable" });
+        return;
+      }
+      const allowed = liveSegmentNames(await listing.text(), new Date(ammanLocalInstant(session.booking!.startLocal)));
+      if (!allowed?.has(name)) {
+        res.status(404).json({ error: "Live segment is outside this session window" });
+        return;
+      }
       const upstream = await controlResponse(
         `/var/${encodeURIComponent(camera.control)}/hls/seg/${encodeURIComponent(name)}`,
         {},
