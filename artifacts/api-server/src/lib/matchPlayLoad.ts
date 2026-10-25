@@ -28,7 +28,9 @@ import {
   bibKit,
   type BibKit,
   parseBallSidecar,
+  pitchDirection,
   resolveTouches,
+  type PitchDirection,
   type BallSidecar,
   type BundleEvent,
   type Dribble,
@@ -62,10 +64,16 @@ export type RecordingPlay = {
   inPlay: Array<[number, number]> | null;
   /** before / game / break / after, tracking seconds (manifest.provenance.phases); null on older bundles */
   phases: Array<{ kind: string; start: number; end: number }> | null;
+  /**
+   * which end each side attacks, from the minimap (matchPlay.pitchDirection);
+   * read while the segments are in hand so compact loads have it too. Null when
+   * the minimap cannot tell.
+   */
+  direction?: PitchDirection | null;
 };
 
 /** Bumped whenever what is derived here changes, so cached results are rebuilt. */
-const DERIVE_VERSION = 4;
+const DERIVE_VERSION = 5;
 
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
@@ -156,6 +164,19 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
       logger.warn({ recordingId, err: error }, "Could not read dribbles");
     }
   }
+  const inPlay: Array<[number, number]> | null = segments
+    ? mergeSpans(segments.flatMap((segment) => (segment.inPlaySpans ?? [])
+      .filter((span) => Number.isFinite(span.start) && Number.isFinite(span.end))
+      .map((span) => [span.start, span.end] as [number, number])))
+    : null;
+  let direction: PitchDirection | null = null;
+  if (segments) {
+    try {
+      direction = pitchDirection({ manifest, sidecars, segments, kits, bib: bibKit(sidecars), inPlay });
+    } catch (error) {
+      logger.warn({ recordingId, err: error }, "Could not read the attacking direction");
+    }
+  }
   const data: RecordingPlay = {
     recordingId,
     manifest,
@@ -173,12 +194,9 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
     events,
     dribbles,
     teleports,
-    inPlay: segments
-      ? mergeSpans(segments.flatMap((segment) => (segment.inPlaySpans ?? [])
-        .filter((span) => Number.isFinite(span.start) && Number.isFinite(span.end))
-        .map((span) => [span.start, span.end] as [number, number])))
-      : null,
+    inPlay,
     phases: phasesFromProvenance(manifest.provenance),
+    direction,
   };
   playCache.set(recordingId, { key, data, at: Date.now() });
   if (playCache.size > MAX_CACHED) {
