@@ -262,6 +262,8 @@ interface VideoReplacementResult {
   oldVideoId: string;
   newVideoId: string;
   changes: VideoReplacementChange[];
+  /** Set when the current video is failed or missing and its length could not be compared. */
+  lengthCheck?: { note: string | null } | null;
 }
 
 interface ClaimDispute {
@@ -5803,6 +5805,9 @@ function ReplaceVideoAction({
                   <p><span className="text-zinc-400">Old video:</span> <code className="break-all">{preview.oldVideoId}</code></p>
                   <p className="mt-1"><span className="text-zinc-400">New video:</span> <code className="break-all">{preview.newVideoId}</code></p>
                 </div>
+                {preview.lengthCheck?.note && (
+                  <p className="rounded-lg border border-amber-700/60 bg-amber-950/30 p-2.5 text-xs text-amber-200">{preview.lengthCheck.note}</p>
+                )}
                 <p className="text-sm font-semibold">Database changes to apply ({preview.changes.length})</p>
                 <div className="max-h-56 space-y-2 overflow-y-auto">
                   {preview.changes.map((change, index) => (
