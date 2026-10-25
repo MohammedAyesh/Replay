@@ -158,7 +158,7 @@ export function personalMoments(
   const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
   const shots = detectedShots(play.events, play.touches, pitch, shotContext(play));
   const own = playerMoments(parts, play.dribbles, goals, shots);
-  const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions);
+  const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions, play.bib ?? null);
   // the ball out of play (warm-up, stoppages) is nobody's moment: on rec 394
   // all five long "passes" sampled from the warm-up went, none from the match
   const live = (t: number) => inSpans(play.inPlay, t);

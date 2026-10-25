@@ -311,7 +311,71 @@ export const PASS = {
   possessionCapSeconds: 8,
 } as const;
 
-export type TeamPick = { a: Lab; b: Lab };
+/**
+ * The two sides. a is the claimant's side, b the other. When one side wears
+ * bibs (a saturated colour the other side does not share), bib says which
+ * shirts are bibs: everyone within its radius is the bib side, everyone else is
+ * the other side, whatever colour they wear. Without it a white or pink shirt
+ * on the no-bib side sits nearer a yellow bib than a dark shirt and is put on
+ * the wrong side (recording 401: 4 of 9 long passes to teammates read as lost).
+ */
+export type TeamPick = { a: Lab; b: Lab; bib?: BibKit | null };
+export type BibKit = { lab: Lab; radius: number };
+
+export const BIB = {
+  /** a bib colour is saturated: chroma (distance from neutral on a and b) at least this */
+  minChroma: 15,
+  /** and worn for at least this share of all kit-seconds */
+  minShare: 0.2,
+  /** shirts within this of a candidate count towards it */
+  nearKit: 10,
+  /** the side's edge is the widest gap in kit distance between these */
+  minRadius: 8,
+  maxRadius: 30,
+  /** a track needs this many seconds on camera to place the edge */
+  minTrackSeconds: 20,
+  fallbackRadius: 15,
+};
+
+/**
+ * The bib colour, if one side wears bibs: the saturated shirt colour that holds
+ * the most kit-seconds (at least BIB.minShare of them), and how far from it a
+ * shirt can be and still be a bib (the widest gap in distance from it).
+ */
+export function bibKit(sidecars: Array<BallSidecar | null>): BibKit | null {
+  const kits: Array<[number, number, number, number]> = [];
+  for (const sc of sidecars) for (const v of Object.values(sc?.kits ?? {})) if (v[3] > 0) kits.push([v[0], v[1], v[2], v[3]]);
+  const total = kits.reduce((sum, k) => sum + k[3], 0);
+  if (!(total > 0)) return null;
+  let best: { lab: Lab; secs: number } | null = null;
+  for (const c of kits) {
+    if (Math.hypot(c[1] - 128, c[2] - 128) < BIB.minChroma) continue;
+    const near = kits.filter((k) => kitDistance([k[0], k[1], k[2]], [c[0], c[1], c[2]]) <= BIB.nearKit);
+    const secs = near.reduce((sum, k) => sum + k[3], 0);
+    if (secs < BIB.minShare * total || (best && secs <= best.secs)) continue;
+    best = { lab: [0, 1, 2].map((i) => near.reduce((sum, k) => sum + k[i] * k[3], 0) / secs) as Lab, secs };
+  }
+  if (!best) return null;
+  const lab = best.lab.map((v) => Math.round(v * 10) / 10) as Lab;
+  const d = kits.filter((k) => k[3] >= BIB.minTrackSeconds).map((k) => kitDistance([k[0], k[1], k[2]], lab)).sort((p, q) => p - q);
+  let radius = BIB.fallbackRadius;
+  let widest = -1;
+  for (let i = 0; i + 1 < d.length; i++) {
+    if (d[i + 1] < BIB.minRadius || d[i] > BIB.maxRadius) continue;
+    const gap = d[i + 1] - d[i];
+    if (gap > widest) { widest = gap; radius = (d[i] + d[i + 1]) / 2; }
+  }
+  return { lab, radius: Math.round(radius * 10) / 10 };
+}
+
+/** Which side of a pick a shirt is on: 0 = a (the claimant's), 1 = b. */
+export function sideOfPick(kit: Lab, pick: TeamPick): 0 | 1 {
+  if (pick.bib) {
+    const isBib = (k: Lab) => kitDistance(k, pick.bib!.lab) <= pick.bib!.radius;
+    return isBib(kit) === isBib(pick.a) ? 0 : 1;
+  }
+  return kitDistance(kit, pick.a) <= kitDistance(kit, pick.b) ? 0 : 1;
+}
 
 export type PlayEvent = {
   kind: "carry" | "contest" | "pass";
@@ -325,6 +389,10 @@ export type PlayEvent = {
 
 export function teamOf(touch: Touch, pick: TeamPick | null): { team: 0 | 1; margin: number } | null {
   if (!pick || !touch.kit) return null;
+  if (pick.bib) {
+    const d = kitDistance(touch.kit, pick.bib.lab);
+    return { team: sideOfPick(touch.kit, pick), margin: Math.abs(d - pick.bib.radius) };
+  }
   const da = kitDistance(touch.kit, pick.a);
   const db = kitDistance(touch.kit, pick.b);
   return { team: da <= db ? 0 : 1, margin: Math.abs(da - db) };
@@ -508,7 +576,15 @@ export function kitOfParts(parts: ClaimedPart[], sidecars: Array<BallSidecar | n
  * how much it was on camera (so a referee's shirt seen for a minute does not
  * win over the other team seen for an hour).
  */
-export function seedTeams(own: Lab | null, options: Array<{ lab: Lab; secs: number }>): TeamPick | null {
+export function seedTeams(own: Lab | null, options: Array<{ lab: Lab; secs: number }>, bib: BibKit | null = null): TeamPick | null {
+  if (bib) {
+    // bibs against everyone else: the other side's swatch is the bib, or (for a
+    // claimant in a bib) the non-bib kit seen longest
+    const a = own ?? bib.lab;
+    if (kitDistance(a, bib.lab) > bib.radius) return { a, b: bib.lab, bib };
+    const other = options.filter((c) => kitDistance(c.lab, bib.lab) > bib.radius).sort((p, q) => q.secs - p.secs)[0];
+    return { a, b: other?.lab ?? bib.lab, bib };
+  }
   if (options.length < 2) return null;
   let mineIndex = 0;
   if (own) options.forEach((c, i) => { if (kitDistance(c.lab, own) < kitDistance(options[mineIndex].lab, own)) mineIndex = i; });
@@ -648,11 +724,7 @@ export type Dribble = {
 /** The side of a shirt: 0/1 against a team pick, or "same"/"other" against another shirt, or null when it cannot be told. */
 function sameSide(p: Lab | null, q: Lab | null, pick: TeamPick | null): boolean | null {
   if (!p || !q) return null;
-  if (pick) {
-    const tp = kitDistance(p, pick.a) <= kitDistance(p, pick.b) ? 0 : 1;
-    const tq = kitDistance(q, pick.a) <= kitDistance(q, pick.b) ? 0 : 1;
-    return tp === tq;
-  }
+  if (pick) return sideOfPick(p, pick) === sideOfPick(q, pick);
   const d = kitDistance(p, q);
   if (d >= DRIBBLE.opponentKit) return false;
   if (d <= DRIBBLE.sameKit) return true;
@@ -1364,7 +1436,7 @@ export function detectedShots(events: BundleEvent[], touches: Touch[], pitch: Pi
 /** Which side a shirt is on under a pick, or null. */
 export function sideOfKit(kit: Lab | null, pick: TeamPick | null): 0 | 1 | null {
   if (!kit || !pick) return null;
-  return kitDistance(kit, pick.a) <= kitDistance(kit, pick.b) ? 0 : 1;
+  return sideOfPick(kit, pick);
 }
 
 /** One player's share of the dribbles, goals and shots, by their claimed parts. */

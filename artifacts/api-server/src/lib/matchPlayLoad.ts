@@ -25,6 +25,8 @@ import {
   dribbleEvents,
   dropTeleports,
   kitOptions,
+  bibKit,
+  type BibKit,
   parseBallSidecar,
   resolveTouches,
   type BallSidecar,
@@ -45,6 +47,8 @@ export type RecordingPlay = {
   touches: Touch[];
   rejected: { noTrack: number; tooFar: number };
   kitOptions: Array<{ lab: Lab; secs: number }>;
+  /** the bib colour when one side wears bibs (matchPlay.bibKit), else null */
+  bib?: BibKit | null;
   segments: TrackingSegmentPayload[] | null;
   /** every track's torso colour, from the ball sidecars */
   kits: Map<string, Lab>;
@@ -134,7 +138,10 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
   let dribbles: Dribble[] = [];
   if (segments && resolved.touches.length) {
     try {
-      dribbles = dribbleEvents(manifest, segments, resolved.touches, kits, null);
+      // with bibs on one side, a dribble's opponents and its outcome follow the
+      // bib line rather than raw shirt distance
+      const bib = bibKit(sidecars);
+      dribbles = dribbleEvents(manifest, segments, resolved.touches, kits, bib ? { a: bib.lab, b: bib.lab, bib } : null);
     } catch (error) {
       logger.warn({ recordingId, err: error }, "Could not read dribbles");
     }
@@ -150,6 +157,7 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
     touches: resolved.touches,
     rejected: resolved.rejected,
     kitOptions: kitOptions(sidecars),
+    bib: bibKit(sidecars),
     segments: opts.keepSegments ? segments : null,
     kits,
     events,

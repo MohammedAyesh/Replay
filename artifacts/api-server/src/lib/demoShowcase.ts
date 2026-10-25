@@ -392,7 +392,7 @@ export async function buildDemoReport(recordingId: number): Promise<DemoReport |
   const play = await loadRecordingPlay(recordingId, { keepSegments: true });
   if (!play) return null;
 
-  const pick = play.hasKits ? seedTeams(null, play.kitOptions) : null;
+  const pick = play.hasKits ? seedTeams(null, play.kitOptions, play.bib ?? null) : null;
   const events = passEvents(play.touches, pick);
   const pitch = pitchSizeOf(play.manifest);
   const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
