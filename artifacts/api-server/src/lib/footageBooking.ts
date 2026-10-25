@@ -30,7 +30,7 @@ function parseLocalWallEpoch(value: string): number {
     : Number.NaN;
 }
 
-function ammanNowWallEpoch(now = new Date()): number {
+export function ammanNowWallEpoch(now = new Date()): number {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Amman",
     year: "numeric",

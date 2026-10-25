@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, or, sql } from "drizzle-orm";
 import {
   academyRecordingsTable,
   academySessionsTable,
@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import { getBunnyPlaybackUrl } from "./bunny";
 import {
+  ammanNowWallEpoch,
   cancelFootageRequest,
   createFootageRequest,
   startCameraJob,
@@ -19,6 +20,9 @@ import {
 import { logger } from "./logger";
 
 const ACTIVE_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
+// Statuses that hold the camera for a window. Matches the player booking path
+// (owner.ts BOOKING_HOLD_STATUSES): an unpaid player booking already owns its slot.
+const HOLD_STATUSES = [...ACTIVE_STATUSES, "awaiting_payment"] as const;
 const REUSABLE_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
 const REBOOKABLE_STATUSES = ["failed", "cancelled", "expired", "refunded"] as const;
 const FIVE_MINUTES_MS = 5 * 60 * 1000;
@@ -96,6 +100,24 @@ function bookingErrorNote(error: unknown): string {
   return "Footage could not be booked — try again.";
 }
 
+export const CAMERA_BOOKED_ELSEWHERE_NOTE = "Camera booked by someone else for this time.";
+export const CAMERA_BOOKED_BY_ACADEMY_NOTE = "The camera is already booked by this academy for an overlapping time.";
+export const PAST_SESSION_NOTE = "Footage is only booked automatically for upcoming sessions.";
+export const AWAY_SESSION_NOTE = "Away session — the academy's camera is not booked.";
+
+/**
+ * Sessions have only a free-text location. A location that says it is away
+ * ("Away", "Away at X", "خارج الأرض") is clearly not at the academy's pitch.
+ */
+export function isAwayLocation(location: string): boolean {
+  return /(^|[^\p{L}])away([^\p{L}]|$)/iu.test(location) || location.includes("خارج");
+}
+
+function localWindowContains(outerStart: string, outerEnd: string, innerStart: string, innerEnd: string): boolean {
+  const values = [outerStart, outerEnd, innerStart, innerEnd].map(wallEpoch);
+  return values.every(Number.isFinite) && values[0] <= values[2] && values[1] >= values[3];
+}
+
 function localWindowOverlaps(aStart: string, aEnd: string, bStart: string, bEnd: string): boolean {
   const aStartMs = wallEpoch(aStart);
   const aEndMs = wallEpoch(aEnd);
@@ -139,6 +161,43 @@ export async function bookAcademySessionFootage(
   }
 
   const window = academyFootageWindow(session.startsAt, session.endsAt);
+  let requestId = session.footageRequestId;
+  if (requestId !== null) {
+    const [existing] = await db.select().from(footageRequestsTable)
+      .where(eq(footageRequestsTable.id, requestId));
+    // A link to someone else's booking (a player's, another academy's) is never ours
+    // to keep: it is dropped and the session is booked like a fresh one.
+    const ours = existing?.academyId === academyId;
+    if (ours && REUSABLE_STATUSES.includes(existing.status as typeof REUSABLE_STATUSES[number])) {
+      await db.update(academySessionsTable)
+        .set({ footageNote: window.note })
+        .where(eq(academySessionsTable.id, sessionId));
+      return;
+    }
+    if (ours && !REBOOKABLE_STATUSES.includes(existing.status as typeof REBOOKABLE_STATUSES[number])) {
+      return;
+    }
+    await db.update(academySessionsTable)
+      .set({ footageRequestId: null })
+      .where(eq(academySessionsTable.id, sessionId));
+    requestId = null;
+  }
+
+  // A free (rate 0) camera pull is booked only for an upcoming session at the
+  // academy's own pitch, never for a past window or an away match.
+  if (isAwayLocation(session.location)) {
+    await db.update(academySessionsTable)
+      .set({ footageNote: AWAY_SESSION_NOTE })
+      .where(eq(academySessionsTable.id, sessionId));
+    return;
+  }
+  if (wallEpoch(ammanLocalString(session.startsAt)) < ammanNowWallEpoch()) {
+    await db.update(academySessionsTable)
+      .set({ footageNote: PAST_SESSION_NOTE })
+      .where(eq(academySessionsTable.id, sessionId));
+    return;
+  }
+
   try {
     await validateAvailability(cameraId, wallEpoch(window.startLocal), wallEpoch(window.endLocal));
   } catch (error) {
@@ -148,45 +207,43 @@ export async function bookAcademySessionFootage(
     return;
   }
 
-  let requestId = session.footageRequestId;
-  if (requestId !== null) {
-    const [existing] = await db.select().from(footageRequestsTable)
-      .where(eq(footageRequestsTable.id, requestId));
-    if (existing && REUSABLE_STATUSES.includes(existing.status as typeof REUSABLE_STATUSES[number])) {
-      await db.update(academySessionsTable)
-        .set({ footageNote: window.note })
-        .where(eq(academySessionsTable.id, sessionId));
-      return;
-    }
-    if (existing && !REBOOKABLE_STATUSES.includes(existing.status as typeof REBOOKABLE_STATUSES[number])) {
-      return;
-    }
-    await db.update(academySessionsTable)
-      .set({ footageRequestId: null })
-      .where(eq(academySessionsTable.id, sessionId));
-    requestId = null;
-  }
-
-  const activeRequests = await db.select({
+  const holdingRequests = await db.select({
     id: footageRequestsTable.id,
+    academyId: footageRequestsTable.academyId,
+    status: footageRequestsTable.status,
     startLocal: footageRequestsTable.startLocal,
     endLocal: footageRequestsTable.endLocal,
   })
     .from(footageRequestsTable)
     .where(and(
-      eq(footageRequestsTable.fieldId, row.academyFieldId),
-      eq(footageRequestsTable.cameraId, cameraId),
-      inArray(footageRequestsTable.status, ACTIVE_STATUSES),
+      or(
+        eq(footageRequestsTable.fieldId, row.academyFieldId),
+        eq(footageRequestsTable.cameraId, cameraId),
+      ),
+      inArray(footageRequestsTable.status, HOLD_STATUSES),
     ));
-  const overlapping = activeRequests.find((candidate) => localWindowOverlaps(
+  const overlapping = holdingRequests.filter((candidate) => localWindowOverlaps(
     window.startLocal,
     window.endLocal,
     candidate.startLocal,
     candidate.endLocal,
   ));
-  if (overlapping) {
+  // Only this academy's own booking that covers the whole session is shared.
+  const reusable = overlapping.find((candidate) => candidate.academyId === academyId
+    && REUSABLE_STATUSES.includes(candidate.status as typeof REUSABLE_STATUSES[number])
+    && localWindowContains(candidate.startLocal, candidate.endLocal, window.startLocal, window.endLocal));
+  if (reusable) {
     await db.update(academySessionsTable)
-      .set({ footageRequestId: overlapping.id, footageNote: window.note })
+      .set({ footageRequestId: reusable.id, footageNote: window.note })
+      .where(eq(academySessionsTable.id, sessionId));
+    return;
+  }
+  if (overlapping.length > 0) {
+    // Someone already holds the camera for part of this window. A second camera job
+    // for the same time is never created.
+    const elsewhere = overlapping.some((candidate) => candidate.academyId !== academyId);
+    await db.update(academySessionsTable)
+      .set({ footageNote: elsewhere ? CAMERA_BOOKED_ELSEWHERE_NOTE : CAMERA_BOOKED_BY_ACADEMY_NOTE })
       .where(eq(academySessionsTable.id, sessionId));
     return;
   }
@@ -238,7 +295,8 @@ export async function syncAcademySessionFootageAfterTimeChange(
   }
   const [footage] = await db.select().from(footageRequestsTable)
     .where(eq(footageRequestsTable.id, requestId));
-  if (!footage) {
+  if (!footage || footage.academyId !== academyId) {
+    // Someone else's booking is never changed here; the session just stops pointing at it.
     await db.update(academySessionsTable)
       .set({ footageRequestId: null })
       .where(eq(academySessionsTable.id, sessionId));
@@ -309,11 +367,13 @@ export async function cancelScheduledAcademyFootageForSession(
   if (
     !footage
     || footage.academyId !== academyId
-    || footage.status !== "scheduled"
+    || !ACTIVE_STATUSES.includes(footage.status as typeof ACTIVE_STATUSES[number])
     || footage.shareToken !== null
   ) return;
+  // Same cancellation as the owner's cancel: a queued/running/recording pull is
+  // stopped on vps1 (DELETE /record-hq/<cam>/<job>) before the row is cancelled.
   const result = await cancelFootageRequest(footage, {
-    allowedStatuses: ["scheduled"],
+    allowedStatuses: ACTIVE_STATUSES,
     message: "Cancelled because the academy session was deleted",
   });
   if ("error" in result) {
@@ -350,7 +410,10 @@ export async function attachAcademyRecordingsForFootageRequest(
   videoId: string | null,
   deliveredSeconds: number | null,
 ): Promise<void> {
-  if (!videoId) return;
+  // Only an academy's own booking feeds its sessions; a player's or owner's
+  // booking (academyId null) never attaches to any academy.
+  const requestAcademyId = request.academyId;
+  if (!videoId || requestAcademyId === null) return;
   const playbackUrl = getBunnyPlaybackUrl(videoId);
   await db.transaction(async (tx) => {
     // Serialize duplicate completion callbacks across API replicas without a
@@ -363,7 +426,7 @@ export async function attachAcademyRecordingsForFootageRequest(
       .from(academySessionsTable)
       .where(and(
         eq(academySessionsTable.footageRequestId, request.id),
-        ...(request.academyId === null ? [] : [eq(academySessionsTable.academyId, request.academyId)]),
+        eq(academySessionsTable.academyId, requestAcademyId),
       ))
       .orderBy(asc(academySessionsTable.startsAt), asc(academySessionsTable.id));
     if (linkedSessions.length === 0) return;
