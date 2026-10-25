@@ -52,7 +52,7 @@ export function sampleEndScreen(kind: EndScreenKind, look: BrandLook): EndScreen
       return {
         ...common,
         kind,
-        player: { big: "#7", sub: "75 MIN ON CAMERA" },
+        player: { big: "#7", sub: null },
         ageGroup: "U-12",
         stats: [
           { value: 3.1, decimals: 1, unit: "km", labelAr: "مسافة", best: false, delta: { text: "12%", up: true } },

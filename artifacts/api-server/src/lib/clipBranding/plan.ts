@@ -338,8 +338,8 @@ async function buildEndScreen(
         const number = player.jerseyNumber != null && String(player.jerseyNumber).trim() !== "" ? `#${player.jerseyNumber}` : null;
         const firstName = player.name?.trim().split(/\s+/)[0] ?? "";
         const big = number ?? (showNames && firstName ? firstName.toUpperCase() : "PLAYER");
-        const minutes = mine?.stats.minutes;
-        const sub = showNames && number ? firstName : (minutes ? `${Math.round(minutes)} MIN ON CAMERA` : null);
+        // Only the first name under the number, and only when the academy allows names (no minutes line).
+        const sub = showNames && number ? firstName : null;
         return {
           ...common,
           kind: "academy",
