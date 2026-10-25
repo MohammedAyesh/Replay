@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrackingSegmentPayload } from "@workspace/db";
-import { parseMatchRoster, summarizeMatchRoster } from "./matchRoster";
+import { parseMatchRoster, summarizeMatchRoster, voteMatchRosterShirtNumber } from "./matchRoster";
 
 const segments = [
   {
@@ -95,5 +95,37 @@ describe("parseMatchRoster", () => {
     }, segments);
 
     expect(roster).toBeNull();
+  });
+});
+
+describe("voteMatchRosterShirtNumber", () => {
+  it("folds a partial single-digit read into the matching two-digit shirt with more frames", () => {
+    expect(voteMatchRosterShirtNumber("25", [
+      { number: "1", seenFrames: 13 },
+      { number: "11", seenFrames: 8 },
+      { number: "17", seenFrames: 3 },
+    ])).toBe("11");
+  });
+
+  it("corrects a truncated match-roster number from a strong per-track read", () => {
+    expect(voteMatchRosterShirtNumber("4", [
+      { number: "44", seenFrames: 128 },
+    ])).toBe("44");
+  });
+
+  it("accepts a clear single-digit vote", () => {
+    expect(voteMatchRosterShirtNumber("6", [
+      { number: "6", seenFrames: 77 },
+    ])).toBe("6");
+  });
+
+  it("keeps the match-roster number when there are no reads", () => {
+    expect(voteMatchRosterShirtNumber("12", [])).toBe("12");
+  });
+
+  it("keeps the match-roster number when the vote has fewer than eight frames", () => {
+    expect(voteMatchRosterShirtNumber("25", [
+      { number: "9", seenFrames: 4 },
+    ])).toBe("25");
   });
 });

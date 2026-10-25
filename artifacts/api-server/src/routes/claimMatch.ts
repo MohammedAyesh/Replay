@@ -78,6 +78,7 @@ import {
   parseMatchRoster,
   summarizeMatchRoster,
   type MatchRoster,
+  voteMatchRosterShirtNumber,
 } from "../lib/matchRoster";
 import { parseJerseySidecar, type JerseySidecar } from "../lib/jerseySidecar";
 import { ensureClaimMomentUserClip } from "./userClips";
@@ -2575,7 +2576,12 @@ async function rosterPlayersWithPhotos(
     .sort((a, b) => a - b);
   const previewSegmentIndexes = new Set(sampleRosterParts(candidateSegmentIndexes, 24));
   const spriteData = new Map<number, Record<string, unknown>>();
+  const jerseyTracksBySegment = new Map<number, JerseySidecar["tracks"]>();
+  const unavailableJerseySegments = new Set<number>();
   const segmentByIndex = new Map(manifest.segments.map((segment) => [segment.index, segment]));
+  const rosterSegmentIndexes = [...new Set(roster.players.flatMap((player) => (
+    player.parts.map((part) => part.segmentIndex)
+  )))];
 
   await Promise.all([...previewSegmentIndexes].map(async (index) => {
     const segment = segmentByIndex.get(index);
@@ -2588,7 +2594,31 @@ async function rosterPlayersWithPhotos(
     }
   }));
 
+  await Promise.all(rosterSegmentIndexes.map(async (index) => {
+    const segment = segmentByIndex.get(index);
+    if (!segment?.jerseyPath) {
+      unavailableJerseySegments.add(index);
+      return;
+    }
+    try {
+      const bytes = await readClaimSegment(segment.jerseyPath);
+      const sidecar = parseJerseySidecar(JSON.parse(bytes.toString("utf8")), index, segment.startFrame);
+      if (sidecar) jerseyTracksBySegment.set(index, sidecar.tracks);
+      else unavailableJerseySegments.add(index);
+    } catch {
+      // Jersey reads are a hint; missing or malformed data must not hide the roster.
+      unavailableJerseySegments.add(index);
+    }
+  }));
+
   return roster.players.map((player, playerIndex) => {
+    const allJerseyFilesAvailable = player.parts.every((part) => (
+      !unavailableJerseySegments.has(part.segmentIndex)
+    ));
+    const jerseyReads = player.parts.flatMap((part) => {
+      const reading = jerseyTracksBySegment.get(part.segmentIndex)?.[part.trackId];
+      return reading ? [{ number: reading.number, seenFrames: reading.seenFrames }] : [];
+    });
     const photos = samplesByPlayer[playerIndex]
       .filter((part) => previewSegmentIndexes.has(part.segmentIndex))
       .flatMap((part) => {
@@ -2617,7 +2647,13 @@ async function rosterPlayersWithPhotos(
           jpeg: photo.j as string,
         }];
       });
-    return { ...player, photos };
+    return {
+      ...player,
+      number: allJerseyFilesAvailable
+        ? voteMatchRosterShirtNumber(player.number, jerseyReads)
+        : player.number,
+      photos,
+    };
   });
 }
 

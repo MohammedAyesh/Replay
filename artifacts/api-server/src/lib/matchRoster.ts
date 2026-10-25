@@ -26,8 +26,46 @@ export type MatchRosterSummary = {
   playerMinutes: number;
 };
 
+export type MatchRosterJerseyRead = {
+  number: string;
+  seenFrames: number;
+};
+
 const MAX_MATCH_ROSTER_PLAYERS = 200;
 const MAX_MATCH_ROSTER_PARTS_PER_PLAYER = 256;
+
+/**
+ * Prefer a stable per-track jersey vote over the possibly truncated match
+ * roster value. Single-digit reads are folded into the strongest longer
+ * number on this player that contains them (for example, 4 into 44).
+ */
+export function voteMatchRosterShirtNumber(
+  matchNumber: string | null,
+  reads: MatchRosterJerseyRead[],
+): string | null {
+  const tallies = new Map<string, number>();
+  for (const read of reads) {
+    if (!/^\d+$/.test(read.number) || !Number.isFinite(read.seenFrames) || read.seenFrames <= 0) continue;
+    tallies.set(read.number, (tallies.get(read.number) ?? 0) + read.seenFrames);
+  }
+  if (!tallies.size) return matchNumber;
+
+  const folded = new Map(tallies);
+  for (const [shortNumber, frames] of tallies) {
+    const longerCandidates = [...tallies.entries()]
+      .filter(([number]) => number.length > shortNumber.length && number.includes(shortNumber))
+      .sort(([aNumber, aFrames], [bNumber, bFrames]) => bFrames - aFrames || aNumber.localeCompare(bNumber));
+    if (!longerCandidates.length) continue;
+    const [target] = longerCandidates[0];
+    folded.set(shortNumber, 0);
+    folded.set(target, (folded.get(target) ?? 0) + frames);
+  }
+
+  const totalFrames = [...folded.values()].reduce((sum, frames) => sum + frames, 0);
+  const [topNumber, topFrames] = [...folded.entries()]
+    .sort(([aNumber, aFrames], [bNumber, bFrames]) => bFrames - aFrames || aNumber.localeCompare(bNumber))[0];
+  return topFrames >= 8 && topFrames / totalFrames >= 0.6 ? topNumber : matchNumber;
+}
 
 function rosterId(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) return value.trim().slice(0, 120);
