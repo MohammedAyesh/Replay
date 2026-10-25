@@ -153,6 +153,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, KEYS));
+  // One process runs every test file: leave no cached settings behind.
+  (await import("../lib/settings")).invalidateSettingsCache();
   await db.delete(brandingProfilesTable).where(eq(brandingProfilesTable.id, profileId));
   await db.delete(userReelsTable).where(inArray(userReelsTable.userId, [ownerId, otherId]));
   await db.delete(userClipsTable).where(inArray(userClipsTable.userId, [ownerId, otherId]));
