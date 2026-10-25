@@ -2650,7 +2650,7 @@ async function rosterPlayersWithPhotos(
     return {
       ...player,
       number: allJerseyFilesAvailable
-        ? voteMatchRosterShirtNumber(player.number, jerseyReads)
+        ? voteMatchRosterShirtNumber(player.number, jerseyReads, player.numberCandidate ?? null)
         : player.number,
       photos,
     };

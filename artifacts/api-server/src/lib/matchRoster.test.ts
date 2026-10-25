@@ -128,4 +128,49 @@ describe("voteMatchRosterShirtNumber", () => {
       { number: "9", seenFrames: 4 },
     ])).toBe("25");
   });
+
+  // Per-track reads from recordings 394, 396, 401 and 402, each checked by eye on the
+  // frames that produced them (2026-10-25).
+  const tracks = (number: string, ...frames: number[]) => frames.map((seenFrames) => ({ number, seenFrames }));
+
+  it("keeps a white 8 when one track read the arm beside it as 18 (rec 394)", () => {
+    expect(voteMatchRosterShirtNumber("8", [
+      ...tracks("8", 22, 4, 12, 6, 15, 23, 6, 11, 13), ...tracks("18", 9), ...tracks("0", 7),
+    ], "8")).toBe("8");
+  });
+
+  it("does not rename a front-print 10 to 70 on a first-digit misread (rec 394)", () => {
+    expect(voteMatchRosterShirtNumber(null, [...tracks("10", 4), ...tracks("70", 9)])).toBeNull();
+  });
+
+  it("does not number a plain shirt from one track of 0 reads (rec 396)", () => {
+    expect(voteMatchRosterShirtNumber(null, tracks("0", 15))).toBeNull();
+    expect(voteMatchRosterShirtNumber(null, tracks("0", 10), "2")).toBeNull();
+  });
+
+  it("does not number a man in a jacket from one track that read 44 (rec 401)", () => {
+    expect(voteMatchRosterShirtNumber(null, tracks("44", 9), "1")).toBeNull();
+  });
+
+  it("names the purple 11 the pipeline left blank (rec 401, rec 402)", () => {
+    expect(voteMatchRosterShirtNumber(null, [...tracks("1", 8, 5), ...tracks("17", 3), ...tracks("11", 8)], "11")).toBe("11");
+    expect(voteMatchRosterShirtNumber(null, [...tracks("11", 9, 3, 6), ...tracks("17", 4)], "11")).toBe("11");
+  });
+
+  it("names red 44 where the pipeline kept the half-read 4 (rec 401, rec 402)", () => {
+    expect(voteMatchRosterShirtNumber("4", tracks("44", 5, 24, 40, 13, 4, 8, 20, 14), "4")).toBe("44");
+    expect(voteMatchRosterShirtNumber("4", [...tracks("44", 3, 20, 38), ...tracks("4", 13)], "4")).toBe("44");
+  });
+
+  it("names a single digit only when it is the pipeline's own candidate", () => {
+    expect(voteMatchRosterShirtNumber(null, tracks("0", 4, 10), "1")).toBeNull();
+    expect(voteMatchRosterShirtNumber(null, tracks("1", 7, 11), "1")).toBe("1");
+  });
+
+  it("parses the pipeline's number candidate when the bundle has one", () => {
+    const roster = parseMatchRoster({
+      players: [{ player_id: "p1", number: null, number_cand: "11", minutes: 60, parts: [["second-half", "t41"]] }],
+    }, segments);
+    expect(roster?.players[0].numberCandidate).toBe("11");
+  });
 });

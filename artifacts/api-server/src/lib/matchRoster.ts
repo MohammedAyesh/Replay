@@ -14,6 +14,8 @@ export type MatchRosterPlayer = {
   id: string;
   name: string | null;
   number: string | null;
+  /** The pipeline's best reading when it declined to name one (people/match.json number_cand). */
+  numberCandidate?: string | null;
   minutes: number;
   parts: MatchRosterPart[];
 };
@@ -35,36 +37,72 @@ const MAX_MATCH_ROSTER_PLAYERS = 200;
 const MAX_MATCH_ROSTER_PARTS_PER_PLAYER = 256;
 
 /**
- * Prefer a stable per-track jersey vote over the possibly truncated match
- * roster value. Single-digit reads are folded into the strongest longer
- * number on this player that contains them (for example, 4 into 44).
+ * The same rule as the pipeline's number_revote.py (vps1, 2026-10-25), checked by
+ * eye on recordings 394, 396, 401 and 402.
+ * - FOLD_MIN: a shorter read folds into a longer number that contains it only when
+ *   the longer one has a quarter of the pair's frames. 44 half-read as 4 folds; a
+ *   white 8 read "18" on 9 frames against "8" on 112 (rec 394) does not.
+ * - SHARE: the winner needs three quarters of the player's frames, so a front-print
+ *   10 read "70" 9 times and "10" 4 times (rec 394) is not renamed 70.
+ * - Corroboration: a two-digit winner needs two tracks or must contain the
+ *   pipeline's number; a single digit must be the pipeline's own candidate. One-track
+ *   "0"s on plain shirts (rec 396, three players) and a one-track "44" on a man in
+ *   a jacket (rec 401) passed every other test.
+ */
+export const ROSTER_NUMBER_VOTE = { foldMin: 0.25, share: 0.75, minFrames: 8, minTracks: 2, minTrackFrames: 3 };
+
+const rosterShirtNumber = (value: string | null | undefined): string | null => (
+  typeof value === "string" && /^\d{1,2}$/.test(value) && !(value.length > 1 && value.startsWith("0")) ? value : null
+);
+
+/**
+ * Second opinion on a match roster number from the per-track jersey votes, one
+ * read per track. Returns the pipeline's number when the vote is not convincing;
+ * it never removes a number.
  */
 export function voteMatchRosterShirtNumber(
   matchNumber: string | null,
   reads: MatchRosterJerseyRead[],
+  candidate: string | null = null,
 ): string | null {
-  const tallies = new Map<string, number>();
+  const { foldMin, share, minFrames, minTracks, minTrackFrames } = ROSTER_NUMBER_VOTE;
+  const frames = new Map<string, number>();
+  const tracks = new Map<string, number>();
   for (const read of reads) {
-    if (!/^\d+$/.test(read.number) || !Number.isFinite(read.seenFrames) || read.seenFrames <= 0) continue;
-    tallies.set(read.number, (tallies.get(read.number) ?? 0) + read.seenFrames);
+    const number = rosterShirtNumber(read.number);
+    if (!number || !Number.isFinite(read.seenFrames) || read.seenFrames < minTrackFrames) continue;
+    frames.set(number, (frames.get(number) ?? 0) + read.seenFrames);
+    tracks.set(number, (tracks.get(number) ?? 0) + 1);
   }
-  if (!tallies.size) return matchNumber;
+  if (!frames.size) return matchNumber;
 
-  const folded = new Map(tallies);
-  for (const [shortNumber, frames] of tallies) {
-    const longerCandidates = [...tallies.entries()]
-      .filter(([number]) => number.length > shortNumber.length && number.includes(shortNumber))
-      .sort(([aNumber, aFrames], [bNumber, bFrames]) => bFrames - aFrames || aNumber.localeCompare(bNumber));
-    if (!longerCandidates.length) continue;
-    const [target] = longerCandidates[0];
-    folded.set(shortNumber, 0);
-    folded.set(target, (folded.get(target) ?? 0) + frames);
+  const byWeight = ([aNumber, aFrames]: [string, number], [bNumber, bFrames]: [string, number]) => (
+    bFrames - aFrames || (aNumber < bNumber ? -1 : aNumber > bNumber ? 1 : 0)
+  );
+  const foldedFrames = new Map(frames);
+  const foldedTracks = new Map(tracks);
+  for (const [shortNumber, shortFrames] of frames) {
+    const target = [...frames.entries()]
+      .filter(([number, longFrames]) => (
+        number.length > shortNumber.length
+        && number.includes(shortNumber)
+        && longFrames >= foldMin * (longFrames + shortFrames)
+      ))
+      .sort(byWeight)[0]?.[0];
+    if (!target) continue;
+    foldedFrames.set(shortNumber, 0);
+    foldedFrames.set(target, (foldedFrames.get(target) ?? 0) + shortFrames);
+    foldedTracks.set(target, (foldedTracks.get(target) ?? 0) + (tracks.get(shortNumber) ?? 0));
+    foldedTracks.set(shortNumber, 0);
   }
 
-  const totalFrames = [...folded.values()].reduce((sum, frames) => sum + frames, 0);
-  const [topNumber, topFrames] = [...folded.entries()]
-    .sort(([aNumber, aFrames], [bNumber, bFrames]) => bFrames - aFrames || aNumber.localeCompare(bNumber))[0];
-  return topFrames >= 8 && topFrames / totalFrames >= 0.6 ? topNumber : matchNumber;
+  const totalFrames = [...foldedFrames.values()].reduce((sum, value) => sum + value, 0);
+  const [topNumber, topFrames] = [...foldedFrames.entries()].sort(byWeight)[0];
+  if (topFrames < minFrames || topFrames < share * totalFrames) return matchNumber;
+  const hints = [rosterShirtNumber(candidate), rosterShirtNumber(matchNumber)].filter((hint): hint is string => !!hint);
+  if (topNumber.length === 1) return hints.includes(topNumber) ? topNumber : matchNumber;
+  const corroborated = (foldedTracks.get(topNumber) ?? 0) >= minTracks || hints.some((hint) => topNumber.includes(hint));
+  return corroborated ? topNumber : matchNumber;
 }
 
 function rosterId(value: unknown): string | null {
@@ -145,11 +183,13 @@ export function parseMatchRoster(
     seenPlayerIds.add(id);
 
     const name = firstString(player.name);
+    const numberCandidate = shirtNumber(player.number_cand ?? player.numberCandidate);
     const minutes = firstNumber(player.minutes);
     players.push({
       id,
       name: name?.trim().slice(0, 120) || null,
       number: shirtNumber(player.number),
+      ...(numberCandidate ? { numberCandidate } : {}),
       minutes: minutes !== undefined && minutes >= 0 ? minutes : 0,
       parts: parts.sort((a, b) => a.segmentIndex - b.segmentIndex || a.fromFrame - b.fromFrame),
     });
