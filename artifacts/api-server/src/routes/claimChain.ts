@@ -734,7 +734,7 @@ export async function syncChainClaim(
           earnedClips = mergeMoments(
             earnedClips,
             personalMoments(play, parts, ctx.segments, ctx.manifest),
-            teamGoalMoments(play, state.attributed, ctx.manifest),
+            teamGoalMoments(play, state.attributed, ctx.manifest, parts),
           );
         }
       } catch (error) {

@@ -598,7 +598,7 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
   let source: "query" | "saved" | "seeded" | null = null;
   if (qa && qb) { pick = { a: qa, b: qb }; source = "query"; }
   else if (savedPick) { pick = savedPick; source = "saved"; }
-  else { pick = seedTeams(ownKit, play.kitOptions); source = pick ? "seeded" : null; }
+  else { pick = seedTeams(ownKit, play.kitOptions, play.bib ?? null); source = pick ? "seeded" : null; }
   if (!play.hasKits) { pick = null; source = null; }
 
   const events = passEvents(touches, pick);

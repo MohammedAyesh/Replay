@@ -28,6 +28,7 @@ import {
   playerMoments,
   playerPlay,
   seedTeams,
+  sideOfKit,
   type ClaimedPart,
 } from "./matchPlay";
 import type { RecordingPlay } from "./matchPlayLoad";
@@ -153,7 +154,7 @@ export function personalMoments(
   const shots = detectedShots(play.events, play.touches, pitch, shotContext(play));
   const own = playerMoments(parts, play.dribbles, goals, shots);
   const live = (t: number) => inSpans(play.inPlay, t);
-  const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions);
+  const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions, play.bib ?? null);
   const passes = playerPlay(play.touches, passEvents(play.touches, pick), parts, Boolean(pick)).passes
     .filter((p) => p.give && p.completed && p.metres >= PERSONAL.longPassMetres && live(p.t0))
     .sort((a, b) => b.metres - a.metres)
@@ -201,11 +202,19 @@ export function teamGoalMoments(
   play: RecordingPlay,
   attributed: ReadonlyArray<{ startSeconds: number; endSeconds: number }>,
   manifest: Pick<TrackingManifest, "frameRate" | "width" | "height">,
+  parts: ClaimedPart[] = [],
 ): PersonalMoment[] {
   if (!play.hasBall) return [];
   const pitch = pitchSizeOf(play.manifest);
+  // Only his own side's goals. With the claimant's parts, the scorer's shirt is
+  // put on a side the same way his passes are (bibs aware); a goal the other
+  // side scored is not his moment. Recording 401: Mousa got the 76:04 goal a
+  // yellow bib scored. Unknown scorer or shirt keeps the goal, as before.
+  const own = parts.length ? kitOfParts(parts, play.sidecars, play.fps) : null;
+  const pick = own ? seedTeams(own, play.kitOptions, play.bib ?? null) : null;
   return detectedGoals(play.events, play.touches, pitch, goalContext(play))
     .filter((g) => attributed.some((span) => g.t >= span.startSeconds && g.t <= span.endSeconds))
+    .filter((g) => !pick || sideOfKit(g.kit, pick) !== 1)
     .map((g) => ({
       id: `goal-${Math.round(g.t)}`,
       title: `Goal · ${clock(g.t)}`,
