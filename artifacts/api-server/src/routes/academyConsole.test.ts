@@ -658,6 +658,25 @@ describe("Academy Console API", () => {
     expect((await request(app).get(guardiansUrl).set(as(ownerId))).body).toHaveLength(1);
   });
 
+  it("revokes link-joined guardians when the family link is rotated, keeping owner-added ones", async () => {
+    const playerUrl = `/api/academy/console/academies/${academyAId}/players/${playerAId}/family-link`;
+    const guardiansUrl = `/api/academy/console/academies/${academyAId}/players/${playerAId}/guardians`;
+    const current = await request(app).post(playerUrl).set(as(ownerId));
+    const token = current.body.familyUrl.match(/\/p\/([0-9a-f]{32})$/)?.[1];
+    expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token })).status).toBe(200);
+    expect((await request(app).post(guardiansUrl).set(as(ownerId)).send({ email: `target_${tag}@academy-test.local` }))
+      .status).toBe(200);
+    const before = (await request(app).get(guardiansUrl).set(as(ownerId))).body as Array<{ userId: number; addedBy: string }>;
+    expect(before.map(({ userId, addedBy }) => ({ userId, addedBy })).sort((a, b) => a.userId - b.userId))
+      .toEqual([{ userId: ownerId, addedBy: "link" }, { userId: targetId, addedBy: "owner" }].sort((a, b) => a.userId - b.userId));
+
+    expect((await request(app).post(playerUrl).set(as(ownerId))).status).toBe(200);
+    const after = (await request(app).get(guardiansUrl).set(as(ownerId))).body as Array<{ userId: number; addedBy: string }>;
+    expect(after.map(({ userId, addedBy }) => ({ userId, addedBy }))).toEqual([{ userId: targetId, addedBy: "owner" }]);
+    expect((await request(app).post("/api/academy/family/claim").set(as(ownerId)).send({ token })).status).toBe(404);
+    expect((await request(app).delete(`${guardiansUrl}/${targetId}`).set(as(ownerId))).status).toBe(204);
+  });
+
   it("rate limits authenticated family-link claims", async () => {
     resetAcademyJoinState();
     const token = "c".repeat(32);
