@@ -211,7 +211,9 @@ function drawBand(ctx: SKRSContext2D, spec: EndScreen, tt: number, wipe: number,
   latin(ctx, nameSize);
   let y = 110 + crestSize + 30 + (1 - nameIn) * 20;
   for (const line of lines) { y += nameSize * 0.8; ctx.fillText(line, cx, y); }
-  const subAr = spec.kind === "signOff" ? (look.taglineAr ?? look.nameAr) : look.nameAr;
+  // The sign-off's tagline is the large headline beside the band, so the band
+  // carries the Arabic name, like every other card.
+  const subAr = look.nameAr;
   if (subAr) {
     const sz = fitSize(ctx, subAr, 600, 44, 26, (v) => arabic(ctx, v, 900));
     arabic(ctx, sz, 900);
@@ -270,15 +272,18 @@ function drawContent(ctx: SKRSContext2D, spec: EndScreen, tt: number, portrait: 
     const top = portrait ? 1196 : 300;
     if (!portrait) {
       // Landscape has room the band does not use: the tagline, large.
-      const line = spec.look.taglineAr ?? "كل ماتش هون متصوّر";
-      ctx.save();
-      ctx.globalAlpha = head;
-      ctx.fillStyle = TEXT;
-      const sz = fitSize(ctx, line, width, 96, 48, (v) => arabic(ctx, v, 900));
-      arabic(ctx, sz, 900);
-      ctx.textAlign = "right";
-      shadowed(ctx, () => ctx.fillText(line, left + width, 220));
-      ctx.restore();
+      // The venue's own words only: its tagline, else its Arabic name.
+      const line = spec.look.taglineAr ?? spec.look.nameAr;
+      if (line) {
+        ctx.save();
+        ctx.globalAlpha = head;
+        ctx.fillStyle = TEXT;
+        const sz = fitSize(ctx, line, width, 96, 48, (v) => arabic(ctx, v, 900));
+        arabic(ctx, sz, 900);
+        ctx.textAlign = "right";
+        shadowed(ctx, () => ctx.fillText(line, left + width, 220));
+        ctx.restore();
+      }
     }
     drawContactLine(ctx, spec, left, width, portrait ? top + 56 : top + 160, head);
     return;
