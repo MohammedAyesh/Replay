@@ -121,7 +121,11 @@ export function usePanoramaFrame() {
       pointersRef.current.clear();
       pinchRef.current.active = false;
     }
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // A pointer the browser no longer considers active can't be captured; track it anyway.
+    }
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointersRef.current.size === 2) {
       const distance = pointerDistance();
