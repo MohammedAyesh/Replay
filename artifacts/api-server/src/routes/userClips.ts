@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { followCrop, type FollowPoint } from "../lib/personalMoments";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
-import { eq, and, asc, desc, gt, inArray, count, isNull, ne, or, sql, like } from "drizzle-orm";
+import { eq, and, asc, desc, gt, inArray, count, isNull, ne, notInArray, or, sql, like } from "drizzle-orm";
 import {
   db,
   userClipsTable,
@@ -91,11 +91,18 @@ import {
   PENDING_LOCAL_FALLBACK,
   PENDING_VPS1_AFTER_PRIMARY,
   PENDING_VPS1_OVERFLOW,
+  RENDER_PENDING_STATUSES,
   isInternalPendingStatus,
   isLocalFallbackPendingStatus,
+  isRenderPendingStatus,
   isVps1PendingStatus,
   publicExportStatus,
 } from "../lib/userClipExportState";
+import {
+  CLIP_PLAYBACK_RANGE_MAX_BYTES,
+  planExportRange,
+  sendBoundedExport,
+} from "../lib/exportPlayback";
 import { fetchBrandingAsset } from "../lib/brandingFetch";
 import { introPlaybackPath } from "./clipIntro";
 import { canCreateClipFromVideo } from "../lib/publicFootage";
@@ -1848,8 +1855,9 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   if (clip.exportedUrl) {
     const probe = await probeExportObject(clip.exportedUrl);
     if (probe.state === "exists") {
-      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-        .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+      // The existing file is served either way; the row is only marked done
+      // when no re-render is pending (see promoteExistingExport).
+      await promoteExistingExport(clip, probe.url);
       res.json({ status: "done", url: probe.url });
       return;
     }
@@ -1961,6 +1969,40 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
 });
 
 /**
+ * Whether a render of this clip is asked for and unsettled — in the row
+ * (any pending status) or in this process.
+ */
+function isExportRenderPending(clip: Pick<typeof userClipsTable.$inferSelect, "id" | "exportStatus">): boolean {
+  return isRenderPendingStatus(clip.exportStatus) || inFlight.has(clip.id);
+}
+
+/**
+ * Record that a clip's existing export object is reachable: mark the row done
+ * (and store the probe's canonical URL) — but only from a settled status
+ * (`done`, `error`, `expired` or none). Never while a re-render is pending: an
+ * admin re-clip keeps the old exportedUrl published until the replacement
+ * uploads, and both renderers finish with `UPDATE … WHERE status IN (pending
+ * states)`. Promoting here used to make that write match 0 rows, so the new
+ * render was uploaded and then silently dropped. The WHERE clause repeats the
+ * check so a re-clip queued after this request read the row is not clobbered.
+ */
+async function promoteExistingExport(
+  clip: Pick<typeof userClipsTable.$inferSelect, "id" | "exportStatus" | "exportedUrl">,
+  url: string,
+): Promise<boolean> {
+  if (!clip.exportedUrl || isExportRenderPending(clip)) return false;
+  const updated = await db.update(userClipsTable)
+    .set({ exportStatus: "done", exportedUrl: url })
+    .where(and(
+      eq(userClipsTable.id, clip.id),
+      eq(userClipsTable.exportedUrl, clip.exportedUrl),
+      or(isNull(userClipsTable.exportStatus), notInArray(userClipsTable.exportStatus, RENDER_PENDING_STATUSES)),
+    ))
+    .returning({ id: userClipsTable.id });
+  return updated.length > 0;
+}
+
+/**
  * What the client should be told about a clip's export, and — because the
  * client polls this every two seconds — the place where a failed or lost
  * Method A is handed to Method B while someone is waiting for it.
@@ -1994,8 +2036,10 @@ async function exportStatusFor(
   if (clip.exportedUrl) {
     const probe = await probeExportObject(clip.exportedUrl);
     if (probe.state === "exists") {
-      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-        .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+      // A reachable older export stays what viewers see while a re-render
+      // (admin re-clip, recovery) is pending, but the row is not marked done:
+      // that would make the new render's completion update nothing.
+      await promoteExistingExport(clip, probe.url);
       return { ...base, status: "done", url: probe.url };
     }
     if (probe.state === "unverified") {
@@ -2380,27 +2424,42 @@ router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
     return;
   }
   if (clip.exportStatus !== "done" || probe.url !== clip.exportedUrl) {
-    await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-      .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
+    await promoteExistingExport(clip, probe.url);
   }
-  const range = req.header("range") ?? undefined;
-  const upstream = await fetchExportObject(probe.url, { range });
-  if (!upstream.ok || !upstream.body) {
-    await upstream.body?.cancel().catch(() => {});
-    res.status(upstream.status === 404 && clip.exportStatus === "expired" ? 410 : 502).json({ error: "Playback unavailable" });
-    return;
-  }
-  res.status(upstream.status);
-  res.setHeader("Content-Type", upstream.headers.get("content-type") ?? "video/mp4");
-  res.setHeader("Accept-Ranges", upstream.headers.get("accept-ranges") ?? "bytes");
-  const contentRange = upstream.headers.get("content-range");
-  if (contentRange) res.setHeader("Content-Range", contentRange);
-  forwardExportContentLength(res, upstream, Boolean(range));
+  // Every playback response is a bounded 206, whatever Range was sent (or
+  // none): the host refuses a Content-Length over 32 MiB, and a full-file
+  // answer here would be an unmetered download. See lib/exportPlayback.ts.
+  const plan = planExportRange(req.header("range") ?? undefined, CLIP_PLAYBACK_RANGE_MAX_BYTES);
+  const abort = new AbortController();
+  const abortUpstream = () => { if (!res.writableEnded && !abort.signal.aborted) abort.abort(); };
+  res.once("close", abortUpstream);
   try {
-    await pipeline(Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>), res);
+    let upstream: Response;
+    try {
+      upstream = await fetchExportObject(probe.url, { range: plan.upstreamRange, signal: abort.signal });
+    } catch (err) {
+      if (!abort.signal.aborted) logger.warn({ err, clipId }, "Could not reach the export for playback");
+      if (!res.headersSent && !res.destroyed) res.status(502).json({ error: "Playback unavailable" });
+      return;
+    }
+    if (upstream.status !== 416 && (!upstream.ok || !upstream.body)) {
+      await upstream.body?.cancel().catch(() => {});
+      res.status(upstream.status === 404 && clip.exportStatus === "expired" ? 410 : 502).json({ error: "Playback unavailable" });
+      return;
+    }
+    const outcome = await sendBoundedExport(res, upstream, plan, {
+      "Content-Type": upstream.headers.get("content-type") ?? "video/mp4",
+      "Cache-Control": "private, no-store",
+    });
+    if (outcome === "unusable") {
+      await upstream.body?.cancel().catch(() => {});
+      res.status(502).json({ error: "Playback unavailable" });
+    }
   } catch (err) {
     if (!res.headersSent) res.status(500).json({ error: "Playback failed" });
     else logger.debug({ err, clipId }, "Playback stream ended early");
+  } finally {
+    res.off("close", abortUpstream);
   }
 });
 
@@ -2424,9 +2483,7 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   if (clip.exportStatus === "expired" || isBackupExportRef(clip.exportedUrl)) {
     const probe = await probeExportObject(clip.exportedUrl);
     if (probe.state === "exists") {
-      await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
-        .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
-      clip.exportStatus = "done";
+      if (await promoteExistingExport(clip, probe.url)) clip.exportStatus = "done";
       clip.exportedUrl = probe.url;
     } else if (clip.exportStatus === "expired" && probe.state === "missing") {
       res.status(410).json({ error: "This clip is no longer available.", unavailable: true });
@@ -2482,53 +2539,60 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
     upstreamNodeStream?.destroy();
     void upstreamReader?.cancel().catch(() => {});
   };
-  req.on("aborted", abortUpstream);
-  req.socket.on("close", abortUpstream);
-  res.on("close", abortUpstream);
-  res.socket?.on("close", abortUpstream);
+  // Per-request listeners only, removed when the handler ends. The socket is
+  // shared by every request on a keep-alive connection: listeners added to it
+  // here used to pile up (MaxListenersExceededWarning after a few downloads)
+  // and kept each finished request's closure alive. `res` emits "close" when
+  // the client goes away, so the socket itself needs no listener.
+  req.once("aborted", abortUpstream);
+  res.once("close", abortUpstream);
 
   try {
-    // Either method's file: Bunny Storage for Method A, vps1 for Method B.
-    upstream = await fetchExportObject(clip.exportedUrl, { signal: abort.signal });
-  } catch (err) {
-    logger.error({ err, clipId, backup: isBackupExportRef(clip.exportedUrl) }, "Could not reach the finished export");
-  }
-  if (!upstream || !upstream.ok || !upstream.body) {
-    await upstream?.body?.cancel().catch(() => {});
-    // The finished file cannot be served. Put the clip back into the export
-    // pipeline (Method A, with Method B behind it) instead of leaving a "done"
-    // row that fails every download; the client sees "pending" and waits.
-    if (!abort.signal.aborted) {
-      logger.error({ clipId, status: upstream?.status ?? null }, "Finished export unavailable — re-rendering");
-      const recovery = await exportStatusFor(clip, { verify: true }).catch(() => null);
-      if (clip.exportStatus === "expired" && recovery?.reason === "expired") {
-        if (!res.headersSent) res.status(410).json({ error: "This clip is no longer available.", unavailable: true });
-        return;
-      }
-      if (!res.headersSent) res.status(503).json({ error: "Your clip is being prepared again. Try in a minute.", retry: true });
+    try {
+      // Either method's file: Bunny Storage for Method A, vps1 for Method B.
+      upstream = await fetchExportObject(clip.exportedUrl, { signal: abort.signal });
+    } catch (err) {
+      logger.error({ err, clipId, backup: isBackupExportRef(clip.exportedUrl) }, "Could not reach the finished export");
     }
-    return;
-  }
+    if (!upstream || !upstream.ok || !upstream.body) {
+      await upstream?.body?.cancel().catch(() => {});
+      // The finished file cannot be served. Put the clip back into the export
+      // pipeline (Method A, with Method B behind it) instead of leaving a "done"
+      // row that fails every download; the client sees "pending" and waits.
+      if (!abort.signal.aborted) {
+        logger.error({ clipId, status: upstream?.status ?? null }, "Finished export unavailable — re-rendering");
+        const recovery = await exportStatusFor(clip, { verify: true }).catch(() => null);
+        if (clip.exportStatus === "expired" && recovery?.reason === "expired") {
+          if (!res.headersSent) res.status(410).json({ error: "This clip is no longer available.", unavailable: true });
+          return;
+        }
+        if (!res.headersSent) res.status(503).json({ error: "Your clip is being prepared again. Try in a minute.", retry: true });
+      }
+      return;
+    }
 
-  if (clip.exportStatus !== "done") {
-    await db.update(userClipsTable).set({ exportStatus: "done" })
-      .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.exportedUrl, clip.exportedUrl)));
-  }
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
-  forwardExportContentLength(res, upstream, false);
+    if (clip.exportStatus !== "done") {
+      await promoteExistingExport(clip, clip.exportedUrl);
+    }
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Disposition", `attachment; filename="${safeName}.mp4"`);
+    forwardExportContentLength(res, upstream, false);
 
-  const nodeStream = readableFromUpstream(
-    upstream.body as ReadableStream<Uint8Array>,
-    (reader) => { upstreamReader = reader; },
-  );
-  upstreamNodeStream = nodeStream;
-  try {
-    await pipeline(nodeStream, res);
-  } catch (err) {
-    // Client disconnects land here too; they are not worth an error log.
-    if (!abort.signal.aborted) logger.error({ err, clipId }, "Error proxying clip download");
-    if (!res.headersSent) res.status(500).json({ error: "Download failed" });
+    const nodeStream = readableFromUpstream(
+      upstream.body as ReadableStream<Uint8Array>,
+      (reader) => { upstreamReader = reader; },
+    );
+    upstreamNodeStream = nodeStream;
+    try {
+      await pipeline(nodeStream, res);
+    } catch (err) {
+      // Client disconnects land here too; they are not worth an error log.
+      if (!abort.signal.aborted) logger.error({ err, clipId }, "Error proxying clip download");
+      if (!res.headersSent) res.status(500).json({ error: "Download failed" });
+    }
+  } finally {
+    req.off("aborted", abortUpstream);
+    res.off("close", abortUpstream);
   }
 });
 

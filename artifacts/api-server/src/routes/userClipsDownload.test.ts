@@ -18,8 +18,19 @@ import express, { type Express } from "express";
 import cookieParser from "cookie-parser";
 import http from "http";
 import crypto from "crypto";
-import { db, usersTable, userClipsTable } from "@workspace/db";
+import type { Socket } from "net";
+import { clipDownloadsTable, db, usersTable, userClipsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+
+// lib/bunny reads BUNNY_STORAGE_API_KEY once, at import. Without a key no
+// AccessKey header is sent at all, so the AccessKey test needs one; set a
+// dummy for this file only (before anything imports lib/bunny) and restore it
+// afterwards. Production behaviour is unchanged.
+const storageKeyEnv = vi.hoisted(() => {
+  const original = process.env.BUNNY_STORAGE_API_KEY;
+  if (!original) process.env.BUNNY_STORAGE_API_KEY = "test-storage-access-key";
+  return { original, key: process.env.BUNNY_STORAGE_API_KEY as string };
+});
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
@@ -30,22 +41,20 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { CLIP_PLAYBACK_RANGE_MAX_BYTES } from "../lib/exportPlayback";
 
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
 /** The rendered MP4 the fake storage origin serves. Big enough to span chunks. */
 const CLIP_BYTES = crypto.randomBytes(512 * 1024);
-// The storage key is read when lib/bunny loads, so set one before any import:
-// without it nothing sends an AccessKey and this file's header check fails.
-const STORAGE_KEY = vi.hoisted(() => {
-  process.env.BUNNY_STORAGE_API_KEY ||= "test-storage-key";
-  return process.env.BUNNY_STORAGE_API_KEY;
-});
+/** A clip bigger than one playback window. */
+const BIG_BYTES = crypto.randomBytes(5 * 1024 * 1024);
+const STORAGE_KEY = storageKeyEnv.key;
 
 let origin: http.Server;
 let originUrl: string;
 /** Requests the fake origin saw, so we can assert on auth headers and aborts. */
-let originHits: { url: string; accessKey: string | undefined; aborted: boolean }[] = [];
+let originHits: { url: string; accessKey: string | undefined; aborted: boolean; range: string | undefined }[] = [];
 
 let app: Express;
 const TAG = `dl_${Date.now()}`;
@@ -73,7 +82,12 @@ async function insertClip(userId: number, exportedUrl: string | null, title = "M
 
 beforeAll(async () => {
   origin = http.createServer((req, res) => {
-    const hit = { url: req.url ?? "", accessKey: req.headers.accesskey as string | undefined, aborted: false };
+    const hit = {
+      url: req.url ?? "",
+      accessKey: req.headers.accesskey as string | undefined,
+      aborted: false,
+      range: req.headers.range,
+    };
     originHits.push(hit);
     req.on("aborted", () => { hit.aborted = true; });
 
@@ -94,27 +108,28 @@ beforeAll(async () => {
       res.write(CLIP_BYTES.subarray(0, 1024));
       return;
     }
+    const file = req.url === "/big.mp4" ? BIG_BYTES : CLIP_BYTES;
     const range = req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
     if (range) {
       const start = Number(range[1]);
-      const end = Math.min(range[2] ? Number(range[2]) : CLIP_BYTES.length - 1, CLIP_BYTES.length - 1);
-      if (start >= CLIP_BYTES.length || end < start) {
-        res.writeHead(416, { "Content-Range": `bytes */${CLIP_BYTES.length}` });
+      const end = Math.min(range[2] ? Number(range[2]) : file.length - 1, file.length - 1);
+      if (start >= file.length || end < start) {
+        res.writeHead(416, { "Content-Range": `bytes */${file.length}` });
         res.end();
         return;
       }
-      const part = CLIP_BYTES.subarray(start, end + 1);
+      const part = file.subarray(start, end + 1);
       res.writeHead(206, {
         "Content-Type": "video/mp4",
         "Accept-Ranges": "bytes",
         "Content-Length": String(part.length),
-        "Content-Range": `bytes ${start}-${end}/${CLIP_BYTES.length}`,
+        "Content-Range": `bytes ${start}-${end}/${file.length}`,
       });
       res.end(part);
       return;
     }
-    res.writeHead(200, { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": String(CLIP_BYTES.length) });
-    res.end(CLIP_BYTES);
+    res.writeHead(200, { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Length": String(file.length) });
+    res.end(file);
   });
   await new Promise<void>((resolve) => origin.listen(0, "127.0.0.1", resolve));
   const addr = origin.address() as { port: number };
@@ -150,6 +165,8 @@ afterAll(async () => {
   await db.delete(userClipsTable).where(inArray(userClipsTable.userId, [ownerId, strangerId]));
   await db.delete(usersTable).where(inArray(usersTable.id, [ownerId, strangerId]));
   await new Promise<void>((resolve) => origin.close(() => resolve()));
+  if (storageKeyEnv.original === undefined) delete process.env.BUNNY_STORAGE_API_KEY;
+  else process.env.BUNNY_STORAGE_API_KEY = storageKeyEnv.original;
 });
 
 describe("GET /user-clips/:id/download", () => {
@@ -179,8 +196,10 @@ describe("GET /user-clips/:id/download", () => {
       r.on("end", () => cb(null, Buffer.concat(chunks)));
     };
 
+    // Playback always answers with a bounded 206; this clip fits in one window.
     const full = await request(app).get(`/api/user-clips/${clipId}/playback`).buffer().parse(parseBuffer);
-    expect(full.status).toBe(200);
+    expect(full.status).toBe(206);
+    expect(full.headers["content-range"]).toBe(`bytes 0-${CLIP_BYTES.length - 1}/${CLIP_BYTES.length}`);
     expect(full.body.length).toBe(CLIP_BYTES.length);
     expect(Buffer.compare(full.body as Buffer, CLIP_BYTES)).toBe(0);
 
@@ -312,6 +331,44 @@ describe("GET /user-clips/:id/download", () => {
     expect(row.exportedUrl).toBe(`${originUrl}/missing.mp4`);
   });
 
+  it("does not pile 'close' listeners onto a keep-alive socket across downloads", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/clip.mp4`);
+    const sockets: Socket[] = [];
+    const server = app.listen(0, "127.0.0.1");
+    server.on("connection", (socket: Socket) => sockets.push(socket));
+    await new Promise<void>((resolve) => server.once("listening", () => resolve()));
+    const port = (server.address() as { port: number }).port;
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    const warnings: Error[] = [];
+    const onWarning = (warning: Error) => { warnings.push(warning); };
+    process.on("warning", onWarning);
+
+    const download = () => new Promise<number>((resolve, reject) => {
+      http.get(`http://127.0.0.1:${port}/api/user-clips/${clipId}/download`, { agent }, (res) => {
+        let bytes = 0;
+        res.on("data", (chunk: Buffer) => { bytes += chunk.length; });
+        res.on("end", () => resolve(bytes));
+        res.on("error", reject);
+      }).on("error", reject);
+    });
+
+    try {
+      expect(await download()).toBe(CLIP_BYTES.length);
+      expect(sockets).toHaveLength(1);
+      const baseline = sockets[0].listenerCount("close");
+      for (let i = 0; i < 8; i += 1) expect(await download()).toBe(CLIP_BYTES.length);
+      // Same connection reused for every request, with no listener left behind.
+      expect(sockets).toHaveLength(1);
+      expect(sockets[0].listenerCount("close")).toBe(baseline);
+      expect(warnings.filter((w) => w.name === "MaxListenersExceededWarning")).toHaveLength(0);
+    } finally {
+      process.off("warning", onWarning);
+      agent.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("aborts the upstream fetch when the client goes away mid-download", async () => {
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const clipId = await insertClip(ownerId, `${originUrl}/slow.mp4`);
@@ -337,5 +394,90 @@ describe("GET /user-clips/:id/download", () => {
     expect(originHits.at(-1)?.aborted).toBe(true);
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+});
+
+describe("GET /user-clips/:id/playback", () => {
+  const parseBuffer = (r: any, cb: (error: Error | null, body: any) => void) => {
+    const chunks: Buffer[] = [];
+    r.on("data", (chunk: Buffer) => chunks.push(chunk));
+    r.on("end", () => cb(null, Buffer.concat(chunks)));
+  };
+
+  it("answers a no-Range or `bytes=0-` request with only a bounded first window, not the whole file", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/big.mp4`);
+    const before = await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.clipId, clipId));
+
+    for (const range of [undefined, "bytes=0-"]) {
+      originHits = [];
+      const call = request(app).get(`/api/user-clips/${clipId}/playback`);
+      if (range) call.set("Range", range);
+      const res = await call.buffer().parse(parseBuffer);
+
+      expect(res.status).toBe(206);
+      expect(res.headers["content-type"]).toBe("video/mp4");
+      expect(res.headers["content-disposition"]).toBeUndefined();
+      expect(res.headers["content-range"]).toBe(`bytes 0-${CLIP_PLAYBACK_RANGE_MAX_BYTES - 1}/${BIG_BYTES.length}`);
+      expect(Number(res.headers["content-length"])).toBe(CLIP_PLAYBACK_RANGE_MAX_BYTES);
+      expect((res.body as Buffer).length).toBeLessThan(BIG_BYTES.length);
+      expect(Buffer.compare(res.body as Buffer, BIG_BYTES.subarray(0, CLIP_PLAYBACK_RANGE_MAX_BYTES))).toBe(0);
+      // The origin was asked for a bounded window, never the whole file.
+      expect(originHits.at(-1)?.range).toBe(`bytes=0-${CLIP_PLAYBACK_RANGE_MAX_BYTES - 1}`);
+    }
+
+    // Playback is not a download: nothing is written to the quota ledger.
+    const after = await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.clipId, clipId));
+    expect(after).toHaveLength(before.length);
+  });
+
+  it("lets a player walk the file window by window", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/big.mp4`);
+    const start = 3_000_000;
+
+    const res = await request(app).get(`/api/user-clips/${clipId}/playback`)
+      .set("Range", `bytes=${start}-`).buffer().parse(parseBuffer);
+
+    const end = Math.min(BIG_BYTES.length - 1, start + CLIP_PLAYBACK_RANGE_MAX_BYTES - 1);
+    expect(res.status).toBe(206);
+    expect(res.headers["content-range"]).toBe(`bytes ${start}-${end}/${BIG_BYTES.length}`);
+    expect(Buffer.compare(res.body as Buffer, BIG_BYTES.subarray(start, end + 1))).toBe(0);
+  });
+
+  it("keeps every playback response under the host's 32 MiB Content-Length limit", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/large.mp4`);
+    const total = 64 * 1024 * 1024;
+    // An origin that ignores the bounded Range and returns its full length.
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (!url.endsWith("/large.mp4")) return new Response(null, { status: 404 });
+      return new Response(new Uint8Array(total), {
+        status: 206,
+        headers: { "content-length": String(total), "content-range": `bytes 0-${total - 1}/${total}` },
+      });
+    });
+    try {
+      const res = await request(app).get(`/api/user-clips/${clipId}/playback`)
+        .set("Range", "bytes=0-").buffer().parse(parseBuffer);
+      expect(res.status).toBe(206);
+      expect(Number(res.headers["content-length"])).toBeLessThanOrEqual(30 * 1024 * 1024);
+      expect(res.headers["content-range"]).toBe(`bytes 0-${CLIP_PLAYBACK_RANGE_MAX_BYTES - 1}/${total}`);
+      expect((res.body as Buffer).length).toBe(CLIP_PLAYBACK_RANGE_MAX_BYTES);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("maps an upstream 416 to 416 instead of 502", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, `${originUrl}/clip.mp4`);
+
+    const res = await request(app).get(`/api/user-clips/${clipId}/playback`)
+      .set("Range", `bytes=${CLIP_BYTES.length + 100}-`);
+
+    expect(res.status).toBe(416);
+    expect(res.headers["content-range"]).toBe(`bytes */${CLIP_BYTES.length}`);
   });
 });

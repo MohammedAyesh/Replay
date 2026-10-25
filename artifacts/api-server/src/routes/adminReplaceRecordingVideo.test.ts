@@ -262,4 +262,133 @@ describe("admin recording video replacement", () => {
       startTime: "30.000000", endTime: "34.000000",
     });
   });
+
+  it("lower-cases the new id before the reference guards, so letter case cannot bypass them", async () => {
+    const { recordingId } = await seedReferences();
+    const HEX = "abcdef01-2345-4678-89ab-cdef01234567";
+    // Another user's clip already points at the new video (stored lower-case).
+    const [elsewhere] = await db.insert(userClipsTable).values({
+      userId: memberId, videoId: HEX, title: "Elsewhere", startTime: "1", endTime: "2",
+    }).returning({ id: userClipsTable.id });
+    userClipIds.push(elsewhere.id);
+
+    const upper = await request(app).post(`/api/admin/recordings/${recordingId}/replace-video`)
+      .set(auth()).send({ videoId: HEX.toUpperCase(), apply: true });
+    expect(upper.status).toBe(409);
+    expect(upper.body.error).toContain("already referenced");
+
+    // A recording row that spells the id in upper case is caught too.
+    await db.delete(userClipsTable).where(eq(userClipsTable.id, elsewhere.id));
+    const [upperRecording] = await db.insert(recordingsTable).values({
+      fieldId, court: "3", date: "2026-10-22", timeSlot: "20:00–21:00", duration: "60 min",
+      videoUrl: `https://vz-test.b-cdn.net/${HEX.toUpperCase()}/playlist.m3u8`,
+    }).returning({ id: recordingsTable.id });
+    recordingIds.push(upperRecording.id);
+    const lower = await request(app).post(`/api/admin/recordings/${recordingId}/replace-video`)
+      .set(auth()).send({ videoId: HEX });
+    expect(lower.status).toBe(409);
+    expect(lower.body.error).toContain("already referenced");
+  });
+
+  it("treats the current id in another letter case as the same video", async () => {
+    const HEX_OLD = "fedcba98-7654-4321-8fed-cba987654321";
+    const [recording] = await db.insert(recordingsTable).values({
+      fieldId, court: "4", date: "2026-10-22", timeSlot: "21:00–22:00", duration: "60 min",
+      videoUrl: `https://vz-test.b-cdn.net/${HEX_OLD}/playlist.m3u8`,
+    }).returning({ id: recordingsTable.id });
+    recordingIds.push(recording.id);
+
+    const response = await request(app).post(`/api/admin/recordings/${recording.id}/replace-video`)
+      .set(auth()).send({ videoId: HEX_OLD.toUpperCase() });
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain("already assigned");
+  });
+
+  it("reports the new id lower-cased in the dry run", async () => {
+    const { recordingId } = await seedReferences();
+    const HEX = "0a1b2c3d-4e5f-4a6b-9c8d-7e6f5a4b3c2d";
+    const response = await request(app).post(`/api/admin/recordings/${recordingId}/replace-video`)
+      .set(auth()).send({ videoId: HEX.toUpperCase() });
+    expect(response.status).toBe(200);
+    expect(response.body.newVideoId).toBe(HEX);
+    expect(response.body.lengthCheck).toMatchObject({ currentVideo: "ok", comparedWith: "current_video" });
+  });
+
+  describe("when the current video is failed or missing in Bunny", () => {
+    function currentVideoFailed() {
+      info.mockImplementation(async (id: string) => {
+        if (id === OLD) throw new Error(`Could not determine duration for video ${id}: length=0`);
+        return { duration: id === NEW ? 72.5 : 72, hasMP4Fallback: true, availableResolutions: "1080p" };
+      });
+      readiness.mockImplementation(async (id: string) => (
+        id === OLD ? { ready: false, status: 5 } : { ready: true, status: 4 }
+      ));
+    }
+
+    it("allows the swap, skips the length check and says so in the dry run", async () => {
+      currentVideoFailed();
+      const seeded = await seedReferences();
+      const dryRun = await request(app).post(`/api/admin/recordings/${seeded.recordingId}/replace-video`)
+        .set(auth()).send({ videoId: NEW });
+      expect(dryRun.status).toBe(200);
+      expect(dryRun.body.mode).toBe("dry_run");
+      expect(dryRun.body.lengthCheck).toMatchObject({
+        currentVideo: "failed",
+        comparedWith: "skipped",
+        currentDuration: null,
+        newDuration: 72.5,
+      });
+      expect(dryRun.body.lengthCheck.note).toContain("length check was skipped");
+
+      const applied = await request(app).post(`/api/admin/recordings/${seeded.recordingId}/replace-video`)
+        .set(auth()).send({ videoId: NEW, apply: true });
+      expect(applied.status).toBe(200);
+      expect(applied.body.mode).toBe("applied");
+      expect((await db.select().from(recordingsTable).where(eq(recordingsTable.id, seeded.recordingId)))[0].videoUrl)
+        .toContain(NEW);
+    });
+
+    it("compares against the recording's stored duration when it has one", async () => {
+      currentVideoFailed();
+      const seeded = await seedReferences();
+      await db.update(recordingsTable).set({ duration: "1:12" }).where(eq(recordingsTable.id, seeded.recordingId));
+      const ok = await request(app).post(`/api/admin/recordings/${seeded.recordingId}/replace-video`)
+        .set(auth()).send({ videoId: NEW });
+      expect(ok.status).toBe(200);
+      expect(ok.body.lengthCheck).toMatchObject({
+        currentVideo: "failed", comparedWith: "recording_duration", currentDuration: 72,
+      });
+      expect(ok.body.lengthCheck.note).toContain("stored duration");
+
+      await db.update(recordingsTable).set({ duration: "5:00" }).where(eq(recordingsTable.id, seeded.recordingId));
+      const mismatch = await request(app).post(`/api/admin/recordings/${seeded.recordingId}/replace-video`)
+        .set(auth()).send({ videoId: NEW });
+      expect(mismatch.status).toBe(409);
+      expect(mismatch.body).toMatchObject({ currentVideo: "failed", recordingDuration: 300, newDuration: 72.5 });
+    });
+
+    it("allows the swap when the current video no longer exists in the library", async () => {
+      info.mockImplementation(async (id: string) => {
+        const { BunnyVideoNotFoundError } = await import("../lib/bunny");
+        if (id === OLD) throw new BunnyVideoNotFoundError(id);
+        return { duration: 72.5, hasMP4Fallback: true, availableResolutions: "1080p" };
+      });
+      const { recordingId } = await seedReferences();
+      const response = await request(app).post(`/api/admin/recordings/${recordingId}/replace-video`)
+        .set(auth()).send({ videoId: NEW });
+      expect(response.status).toBe(200);
+      expect(response.body.lengthCheck).toMatchObject({ currentVideo: "missing", comparedWith: "skipped" });
+    });
+
+    it("still fails loudly when Bunny's API itself is down", async () => {
+      info.mockImplementation(async (id: string) => {
+        if (id === OLD) throw new Error(`Bunny API error 503 fetching video info for ${id}`);
+        return { duration: 72.5, hasMP4Fallback: true, availableResolutions: "1080p" };
+      });
+      const { recordingId } = await seedReferences();
+      const response = await request(app).post(`/api/admin/recordings/${recordingId}/replace-video`)
+        .set(auth()).send({ videoId: NEW });
+      expect(response.status).toBe(500);
+    });
+  });
 });

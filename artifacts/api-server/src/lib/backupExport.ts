@@ -294,14 +294,22 @@ export type ExportProbe = {
   url: string;
 };
 
+/**
+ * How long one probe request may take. Probes run in front of export-status,
+ * /download and /playback, so a hung vps1 must turn into "unverified" in
+ * seconds, not after fetchExportObject's ten-minute download budget.
+ */
+export const EXPORT_PROBE_TIMEOUT_MS = 12_000;
+
 /** Verify an existing export without downloading its body. 404 is definitive;
  * auth errors, outages, and missing credentials are deliberately unverified. */
 export async function probeExportObject(
   exportedUrl: string,
-  options: { fetcher?: typeof fetch; storageApiKey?: string } = {},
+  options: { fetcher?: typeof fetch; storageApiKey?: string; probeTimeoutMs?: number } = {},
 ): Promise<ExportProbe> {
   const fetcher = options.fetcher ?? fetch;
   const storageKey = options.storageApiKey ?? BUNNY_STORAGE_API_KEY;
+  const probeTimeoutMs = options.probeTimeoutMs ?? EXPORT_PROBE_TIMEOUT_MS;
   const inspect = async (url: string): Promise<ExportProbe> => {
     if (isBunnyStorageUrl(url) && !storageKey) {
       return { state: "unverified", bytes: null, url };
@@ -309,7 +317,7 @@ export async function probeExportObject(
     try {
       const headers: Record<string, string> = { Range: "bytes=0-0" };
       if (isBunnyStorageUrl(url) && storageKey) headers.AccessKey = storageKey;
-      const res = await fetcher(url, { headers, signal: AbortSignal.timeout(15_000) });
+      const res = await fetcher(url, { headers, signal: AbortSignal.timeout(probeTimeoutMs) });
       const range = res.headers.get("content-range")?.match(/\/(\d+)$/);
       const length = res.headers.get("content-length");
       const bytes = range ? Number(range[1]) : length && res.status === 200 ? Number(length) : null;
@@ -344,7 +352,10 @@ export async function probeExportObject(
   // The vps1 endpoint remains a valid serving path while Storage is unavailable
   // or before its copy finishes. It must be verified separately before expiry.
   try {
-    const res = await fetchExportObject(exportedUrl, { range: "bytes=0-0" });
+    const res = await fetchExportObject(exportedUrl, {
+      range: "bytes=0-0",
+      signal: AbortSignal.timeout(probeTimeoutMs),
+    });
     const range = res.headers.get("content-range")?.match(/\/(\d+)$/);
     const length = res.headers.get("content-length");
     const bytes = range ? Number(range[1]) : length && res.status === 200 ? Number(length) : null;

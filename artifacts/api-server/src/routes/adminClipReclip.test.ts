@@ -71,6 +71,9 @@ vi.mock("../lib/settings", async (importOriginal) => {
       "render.maxConcurrent": 1,
       "render.yieldToArchive": false,
       "render.yieldCeilingSeconds": 1,
+      "downloads.enabled": true,
+      "downloads.limit": 5,
+      "downloads.windowDays": 30,
     })),
     getSettingValue: vi.fn(async () => false),
   };
@@ -83,7 +86,10 @@ import {
   uploadToBunnyStorage,
 } from "../lib/bunny";
 import { fetchExportObject, probeExportObject } from "../lib/backupExport";
+import { ADMIN_PREVIEW_RANGE_MAX_BYTES } from "../lib/exportPlayback";
+import { renderClip } from "../lib/ffmpegExport";
 import adminRouter from "./admin";
+import userClipsRouter from "./userClips";
 
 const TAG = `admin_reclip_${Date.now()}`;
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
@@ -101,6 +107,7 @@ beforeAll(async () => {
   app = express();
   app.use(express.json());
   app.use("/api", adminRouter);
+  app.use("/api", userClipsRouter);
 
   const [admin] = await db.insert(usersTable).values({
     name: `Admin ${TAG}`,
@@ -244,6 +251,79 @@ describe("admin clip re-clipping", () => {
     expect(rows).toHaveLength(1);
   });
 
+  it("keeps a re-clip pending while the old export is viewed, then publishes the new render", async () => {
+    const clip = await createClip();
+    await db.update(usersTable).set({ plan: "pro" }).where(eq(usersTable.id, playerId));
+    let releaseRender!: () => void;
+    const renderGate = new Promise<void>((resolve) => { releaseRender = resolve; });
+    vi.mocked(renderClip).mockImplementationOnce(async () => {
+      await renderGate;
+      return "/tmp/admin-reclip-output.mp4";
+    });
+    // The old export is still published and reachable throughout.
+    exportProber.mockImplementation(async (url) => ({ state: "exists", bytes: 8, url }));
+    exportFetcher.mockImplementation(async () => new Response(Buffer.from("old-clip"), {
+      status: 206,
+      headers: { "content-type": "video/mp4", "content-length": "8", "content-range": "bytes 0-7/8" },
+    }));
+
+    try {
+      const queued = await request(app).post(`/api/admin/clips/${clip.id}/reclip`);
+      expect(queued.body).toMatchObject({ state: "queued" });
+
+      // The player opens the clip while the admin's re-clip renders: every
+      // route that probes the export finds the OLD object reachable.
+      mockedGetLocalUserId.mockResolvedValue(playerId);
+      const status = await request(app).get(`/api/user-clips/${clip.id}/export-status`);
+      expect(status.body).toMatchObject({ status: "done", url: clip.exportedUrl });
+      const verified = await request(app).get(`/api/user-clips/${clip.id}/export-status?verify=1`);
+      expect(verified.body).toMatchObject({ status: "done", url: clip.exportedUrl });
+      const exported = await request(app).post(`/api/user-clips/${clip.id}/export`);
+      expect(exported.body).toMatchObject({ status: "done", url: clip.exportedUrl });
+      const playback = await request(app).get(`/api/user-clips/${clip.id}/playback`);
+      expect(playback.status).toBe(206);
+      const download = await request(app).get(`/api/user-clips/${clip.id}/download`);
+      expect(download.status).toBe(200);
+
+      // None of them marked the row done with the old URL.
+      const [during] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clip.id));
+      expect(during).toMatchObject({ exportStatus: "pending", exportedUrl: clip.exportedUrl });
+
+      releaseRender();
+      const after = await waitForStatus(clip.id, "done");
+      expect(after.exportedUrl).not.toBe(clip.exportedUrl);
+      expect(after.exportedUrl).toMatch(new RegExp(`/${clip.id}-[a-f0-9]{32}\\.mp4$`));
+    } finally {
+      releaseRender();
+      await db.update(usersTable).set({ plan: "free" }).where(eq(usersTable.id, playerId));
+    }
+  });
+
+  it("never promotes a clip in an internal render state, but does settle an errored one", async () => {
+    mockedGetLocalUserId.mockResolvedValue(playerId);
+    exportProber.mockImplementation(async (url) => ({ state: "exists", bytes: 8, url }));
+    exportFetcher.mockImplementation(async () => new Response(Buffer.from("old-clip"), {
+      status: 206,
+      headers: { "content-type": "video/mp4", "content-length": "8", "content-range": "bytes 0-7/8" },
+    }));
+
+    for (const renderState of ["pending_vps1_overflow", "pending_local_fallback", "pending_vps1_after_primary"]) {
+      const clip = await createClip();
+      await db.update(userClipsTable).set({ exportStatus: renderState }).where(eq(userClipsTable.id, clip.id));
+      await request(app).get(`/api/user-clips/${clip.id}/export-status`).expect(200);
+      await request(app).get(`/api/user-clips/${clip.id}/playback`).expect(206);
+      const [row] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clip.id));
+      expect(row.exportStatus).toBe(renderState);
+    }
+
+    const errored = await createClip();
+    await db.update(userClipsTable).set({ exportStatus: "error" }).where(eq(userClipsTable.id, errored.id));
+    const status = await request(app).get(`/api/user-clips/${errored.id}/export-status`).expect(200);
+    expect(status.body).toMatchObject({ status: "done", url: errored.exportedUrl });
+    const [row] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, errored.id));
+    expect(row).toMatchObject({ exportStatus: "done", exportedUrl: errored.exportedUrl });
+  });
+
   it("requires an admin to access exported clip playback", async () => {
     const clip = await createClip();
     mockedGetLocalUserId.mockResolvedValue(playerId);
@@ -268,29 +348,39 @@ describe("admin clip re-clipping", () => {
     const after = await db.select().from(clipDownloadsTable)
       .where(eq(clipDownloadsTable.clipId, clip.id));
 
-    expect(response.status).toBe(200);
+    // The preview always asks upstream for a bounded window and answers 206,
+    // even without a Range: an origin that ignores the Range (200 here) has
+    // the window cut out of its body.
+    expect(response.status).toBe(206);
     expect(response.headers["content-type"]).toBe("video/mp4");
     expect(response.headers["content-disposition"]).toBe(`inline; filename="clip-${clip.id}.mp4"`);
+    expect(response.headers["content-range"]).toBe("bytes 0-7/8");
+    expect(response.headers["content-length"]).toBe("8");
     expect(exportFetcher).toHaveBeenCalledWith(
       clip.exportedUrl,
-      expect.objectContaining({ range: undefined }),
+      expect.objectContaining({ range: `bytes=0-${ADMIN_PREVIEW_RANGE_MAX_BYTES - 1}` }),
     );
     expect(after).toHaveLength(before.length);
     expect(after).toHaveLength(0);
   });
 
-  it("chunk-streams a large full export without changing playback headers", async () => {
+  it("never forwards a Content-Length over the host limit for an open-ended range on a large export", async () => {
     const clip = await createClip();
-    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("large export"), {
-      status: 200,
+    const total = 40 * 1024 * 1024;
+    // An origin that answers `bytes=0-` (or ignores our bound) with the whole
+    // file's length used to have that length forwarded, over the 32 MiB cap.
+    exportFetcher.mockResolvedValueOnce(new Response(Buffer.alloc(total, 7), {
+      status: 206,
       headers: {
-        "content-length": String(32 * 1024 * 1024 + 1),
+        "content-length": String(total),
+        "content-range": `bytes 0-${total - 1}/${total}`,
         "accept-ranges": "bytes",
       },
     }));
 
     const response = await request(app)
       .get(`/api/admin/clips/${clip.id}/playback`)
+      .set("Range", "bytes=0-")
       .buffer(true)
       .parse((incoming, callback) => {
         const chunks: Buffer[] = [];
@@ -298,13 +388,33 @@ describe("admin clip re-clipping", () => {
         incoming.on("end", () => callback(null, Buffer.concat(chunks)));
       });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(206);
     expect(response.headers["content-type"]).toBe("video/mp4");
     expect(response.headers["content-disposition"]).toBe(`inline; filename="clip-${clip.id}.mp4"`);
     expect(response.headers["accept-ranges"]).toBe("bytes");
-    expect(response.headers["content-length"]).toBeUndefined();
-    expect(response.headers["transfer-encoding"]).toBe("chunked");
-    expect((response.body as Buffer).toString()).toBe("large export");
+    expect(Number(response.headers["content-length"])).toBe(ADMIN_PREVIEW_RANGE_MAX_BYTES);
+    expect(Number(response.headers["content-length"])).toBeLessThanOrEqual(30 * 1024 * 1024);
+    expect(response.headers["content-range"]).toBe(`bytes 0-${ADMIN_PREVIEW_RANGE_MAX_BYTES - 1}/${total}`);
+    expect((response.body as Buffer).length).toBe(ADMIN_PREVIEW_RANGE_MAX_BYTES);
+    expect(exportFetcher).toHaveBeenCalledWith(
+      clip.exportedUrl,
+      expect.objectContaining({ range: `bytes=0-${ADMIN_PREVIEW_RANGE_MAX_BYTES - 1}` }),
+    );
+  });
+
+  it("forwards an upstream 416 as 416", async () => {
+    const clip = await createClip();
+    exportFetcher.mockResolvedValueOnce(new Response(null, {
+      status: 416,
+      headers: { "content-range": "bytes */10" },
+    }));
+
+    const response = await request(app)
+      .get(`/api/admin/clips/${clip.id}/playback`)
+      .set("Range", "bytes=50-");
+
+    expect(response.status).toBe(416);
+    expect(response.headers["content-range"]).toBe("bytes */10");
   });
 
   it("forwards Range and streams the matching 206 partial response", async () => {

@@ -1,7 +1,6 @@
 import { Router, type IRouter } from "express";
-import { Readable } from "stream";
-import { pipeline } from "stream/promises";
-import { eq, count, and, desc, sql, inArray, ne, gte, lte, isNotNull, like, or } from "drizzle-orm";
+import { eq, count, and, desc, sql, inArray, ne, gte, lte, ilike, isNotNull, like, or } from "drizzle-orm";
+import { durationToSeconds } from "../lib/analysisJobs";
 import { z } from "zod/v4";
 import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, userClipAuditEventsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable, footageRequestsTable } from "@workspace/db";
 import {
@@ -45,7 +44,8 @@ import {
   getBunnyPlaybackUrl,
 } from "../lib/bunny";
 import { extractBunnyVideoId } from "../lib/publicFootage";
-import { fetchExportObject, forwardExportContentLength, probeExportObject } from "../lib/backupExport";
+import { fetchExportObject, probeExportObject } from "../lib/backupExport";
+import { ADMIN_PREVIEW_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import {
@@ -59,10 +59,51 @@ import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } 
 
 const router: IRouter = Router();
 
+const BUNNY_GUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 const replaceRecordingVideoBody = z.object({
-  videoId: z.string().trim().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i),
+  videoId: z.string().trim().regex(BUNNY_GUID_RE),
   apply: z.boolean().optional().default(false),
 });
+
+/** How the new video's length was checked, reported with every swap response. */
+type ReplaceVideoLengthCheck = {
+  currentVideo: "ok" | "failed" | "missing";
+  comparedWith: "current_video" | "recording_duration" | "skipped";
+  /** Seconds the new video was compared with (current video or recording). */
+  currentDuration: number | null;
+  newDuration: number;
+  note: string | null;
+};
+
+/**
+ * The video a recording currently points at, for a swap. A failed Bunny video
+ * (status 5, length 0) makes getBunnyVideoInfo throw a plain Error and a
+ * deleted one throws BunnyVideoNotFoundError; both are the usual reason for a
+ * swap, so they are reported rather than turned into a 500. Anything else
+ * (an API outage) still throws.
+ */
+async function currentVideoForReplacement(videoId: string): Promise<
+  | { state: "ok"; duration: number }
+  | { state: "failed" | "missing"; status: number | null }
+> {
+  try {
+    const info = await getBunnyVideoInfo(videoId);
+    return { state: "ok", duration: info.duration };
+  } catch (infoError) {
+    if (infoError instanceof BunnyVideoNotFoundError) return { state: "missing", status: null };
+    let status: number | null = null;
+    try {
+      status = (await getBunnyVideoReadiness(videoId)).status;
+    } catch (readinessError) {
+      if (readinessError instanceof BunnyVideoNotFoundError) return { state: "missing", status: null };
+      throw infoError;
+    }
+    const noLength = infoError instanceof Error && /Could not determine duration/.test(infoError.message);
+    if (status === 5 || noLength) return { state: "failed", status };
+    throw infoError;
+  }
+}
 
 type VideoReferenceChange = {
   table: "recordings" | "clips" | "footage_requests" | "user_clips";
@@ -718,9 +759,13 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     return;
   }
 
+  // Always a bounded upstream range, so no response carries a Content-Length
+  // over the host's 32 MiB limit — including `Range: bytes=0-`, which the
+  // origin answers with the whole file's length. See lib/exportPlayback.ts.
   const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
+  const plan = planExportRange(range, ADMIN_PREVIEW_RANGE_MAX_BYTES);
   const abort = new AbortController();
-  res.on("close", () => {
+  res.once("close", () => {
     if (!res.writableEnded) abort.abort();
   });
 
@@ -728,21 +773,13 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
   try {
     // The exported URL comes only from this clip's database row. Storage and
     // backup-renderer credentials stay in fetchExportObject on the server.
-    upstream = await fetchExportObject(clip.exportedUrl, { range, signal: abort.signal });
+    upstream = await fetchExportObject(clip.exportedUrl, { range: plan.upstreamRange, signal: abort.signal });
   } catch {
     if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
     return;
   }
 
-  if (upstream.status === 416) {
-    const contentRange = upstream.headers.get("content-range");
-    if (contentRange) res.setHeader("Content-Range", contentRange);
-    res.setHeader("Accept-Ranges", "bytes");
-    res.status(416).end();
-    await upstream.body?.cancel().catch(() => {});
-    return;
-  }
-  if (!upstream.ok || !upstream.body) {
+  if (upstream.status !== 416 && (!upstream.ok || !upstream.body)) {
     await upstream.body?.cancel().catch(() => {});
     if (upstream.status === 404) {
       const body = {
@@ -756,23 +793,17 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     return;
   }
 
-  res.status(upstream.status);
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Content-Disposition", `inline; filename="clip-${clipId}.mp4"`);
-  res.setHeader("Accept-Ranges", upstream.headers.get("accept-ranges") ?? "bytes");
-  res.setHeader("Cache-Control", "private, no-store");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  forwardExportContentLength(res, upstream, Boolean(range));
-  for (const name of ["content-range"]) {
-    const value = upstream.headers.get(name);
-    if (value) res.setHeader(name, value);
-  }
-
   try {
-    await pipeline(
-      Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>),
-      res,
-    );
+    const outcome = await sendBoundedExport(res, upstream, plan, {
+      "Content-Type": "video/mp4",
+      "Content-Disposition": `inline; filename="clip-${clipId}.mp4"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    if (outcome === "unusable") {
+      await upstream.body?.cancel().catch(() => {});
+      if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
+    }
   } catch (err) {
     // The browser closing or seeking a video can abort an in-flight range
     // request; there is nothing useful to report in that case.
@@ -1505,21 +1536,27 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
   if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
   const oldVideoId = extractBunnyVideoId(recording.videoUrl);
   if (!oldVideoId) { res.status(409).json({ error: "Recording does not point to a Bunny Stream video" }); return; }
-  const newVideoId = parsed.data.videoId;
+  // Lower-case before any check. The schema already insists on a GUID; every
+  // reference lookup below is case-insensitive too, so "ABCD…" cannot slip
+  // past the "already referenced" guard that keeps a swap reversible.
+  const newVideoId = parsed.data.videoId.toLowerCase();
+  if (!BUNNY_GUID_RE.test(newVideoId)) {
+    res.status(400).json({ error: "A valid Bunny video id is required" }); return;
+  }
   if (newVideoId === oldVideoId.toLowerCase()) {
     res.status(409).json({ error: "The new video id is already assigned to this recording" }); return;
   }
   const targetRecordingRows = (await db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable)
-    .where(like(recordingsTable.videoUrl, `%${newVideoId}%`)))
-    .filter((row) => extractBunnyVideoId(row.videoUrl)?.toLowerCase() === newVideoId.toLowerCase());
+    .where(ilike(recordingsTable.videoUrl, `%${newVideoId}%`)))
+    .filter((row) => extractBunnyVideoId(row.videoUrl)?.toLowerCase() === newVideoId);
   const [targetClip] = await db.select({ id: clipsTable.id }).from(clipsTable).where(or(
-    eq(clipsTable.bunnyVideoId, newVideoId),
-    like(clipsTable.bunnyPlaybackUrl, `%${newVideoId}%`),
+    sql`lower(${clipsTable.bunnyVideoId}) = ${newVideoId}`,
+    ilike(clipsTable.bunnyPlaybackUrl, `%${newVideoId}%`),
   )).limit(1);
   const [targetRequest] = await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable)
-    .where(eq(footageRequestsTable.videoId, newVideoId)).limit(1);
+    .where(sql`lower(${footageRequestsTable.videoId}) = ${newVideoId}`).limit(1);
   const [targetUserClip] = await db.select({ id: userClipsTable.id }).from(userClipsTable)
-    .where(eq(userClipsTable.videoId, newVideoId)).limit(1);
+    .where(sql`lower(${userClipsTable.videoId}) = ${newVideoId}`).limit(1);
   if (targetRecordingRows.length || targetClip || targetRequest || targetUserClip) {
     res.status(409).json({
       error: "New video id is already referenced; choose an unassigned Bunny video to keep replacement reversible",
@@ -1527,9 +1564,10 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
     return;
   }
 
+  let lengthCheck: ReplaceVideoLengthCheck;
   try {
-    const [currentVideo, targetVideo, targetReadiness] = await Promise.all([
-      getBunnyVideoInfo(oldVideoId),
+    const [current, targetVideo, targetReadiness] = await Promise.all([
+      currentVideoForReplacement(oldVideoId),
       getBunnyVideoInfo(newVideoId),
       getBunnyVideoReadiness(newVideoId),
     ]);
@@ -1537,13 +1575,46 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
       res.status(409).json({ error: "New Bunny video must be ready (status 4)", status: targetReadiness.status });
       return;
     }
-    if (Math.abs(currentVideo.duration - targetVideo.duration) > 2) {
-      res.status(409).json({
-        error: "Video length must be within 2 seconds of the current video",
-        currentDuration: currentVideo.duration,
+    if (current.state === "ok") {
+      if (Math.abs(current.duration - targetVideo.duration) > 2) {
+        res.status(409).json({
+          error: "Video length must be within 2 seconds of the current video",
+          currentDuration: current.duration,
+          newDuration: targetVideo.duration,
+        });
+        return;
+      }
+      lengthCheck = {
+        currentVideo: "ok",
+        comparedWith: "current_video",
+        currentDuration: current.duration,
         newDuration: targetVideo.duration,
-      });
-      return;
+        note: null,
+      };
+    } else {
+      // The current video is failed (Bunny status 5 / length 0) or gone, which
+      // is usually why it is being replaced. Its length cannot be read, so
+      // compare against the recording's stored duration when there is one.
+      const storedSeconds = durationToSeconds(recording.duration);
+      const stored = storedSeconds != null && storedSeconds > 0 ? storedSeconds : null;
+      if (stored != null && Math.abs(stored - targetVideo.duration) > 2) {
+        res.status(409).json({
+          error: "Video length must be within 2 seconds of the recording's stored duration",
+          currentVideo: current.state,
+          recordingDuration: stored,
+          newDuration: targetVideo.duration,
+        });
+        return;
+      }
+      lengthCheck = {
+        currentVideo: current.state,
+        comparedWith: stored != null ? "recording_duration" : "skipped",
+        currentDuration: stored,
+        newDuration: targetVideo.duration,
+        note: stored != null
+          ? `The current video is ${current.state} in Bunny${current.status != null ? ` (status ${current.status})` : ""}; the new video's length was compared with the recording's stored duration instead.`
+          : `The current video is ${current.state} in Bunny${current.status != null ? ` (status ${current.status})` : ""} and the recording has no usable stored duration; the length check was skipped.`,
+      };
     }
   } catch (error: unknown) {
     if (error instanceof BunnyVideoNotFoundError) {
@@ -1562,6 +1633,7 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
         oldVideoId,
         newVideoId,
         changes,
+        lengthCheck,
       });
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "Recording not found") {
@@ -1601,8 +1673,9 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
     newVideoId,
     changedAt: new Date().toISOString(),
     changedFields: changes.length,
+    lengthCheck,
   }, "Admin replaced recording Bunny video");
-  res.json({ mode: "applied", recordingId, oldVideoId, newVideoId, changes });
+  res.json({ mode: "applied", recordingId, oldVideoId, newVideoId, changes, lengthCheck });
 });
 
 router.patch("/admin/recordings/:id", async (req, res): Promise<void> => {
