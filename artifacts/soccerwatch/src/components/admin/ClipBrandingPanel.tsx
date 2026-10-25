@@ -556,6 +556,7 @@ function SwitchesSection(props: {
   );
 
   const style = String(value(KEYS.style) ?? "uploaded");
+  const overlayOn = value(KEYS.overlayEnabled) === true;
   const endOn = value(KEYS.endOn) === true;
 
   return (
@@ -574,31 +575,36 @@ function SwitchesSection(props: {
       {error && <p className="text-text text-sm rounded border border-line px-2 py-1.5">{error}</p>}
 
       <div className="space-y-1.5">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-muted-text text-[11px] uppercase tracking-wider">Overlay during the clip</p>
-          {originNode(KEYS.style)}
+        {toggle(KEYS.overlayEnabled, "Overlay during the clip")}
+        <div className={cn("pl-5 border-l border-line ml-1.5 space-y-1.5 pb-1", !overlayOn && "opacity-50")}>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-muted-text text-[11px]">Which overlay</p>
+            {originNode(KEYS.style)}
+          </div>
+          <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Which overlay">
+            {Object.keys(STYLE_LABEL).map((s) => (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={style === s}
+                disabled={busy === KEYS.style || !explained[KEYS.style] || locked(KEYS.style)}
+                onClick={() => style !== s && void change(KEYS.style, s)}
+                className={cn(
+                  "px-3 py-1.5 rounded-full text-xs font-semibold border",
+                  style === s ? "bg-turf text-void border-turf" : "border-line text-muted-text hover:text-text",
+                )}
+              >
+                {STYLE_LABEL[s]}
+              </button>
+            ))}
+          </div>
+          <p className="text-muted-text text-[11px]">
+            {style === "uploaded"
+              ? "Uses the PNG uploaded below; nothing is drawn."
+              : "Drawn from the look above. Preview it with the buttons at the bottom."}
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Overlay during the clip">
-          {Object.keys(STYLE_LABEL).map((s) => (
-            <button
-              key={s}
-              type="button"
-              role="radio"
-              aria-checked={style === s}
-              disabled={busy === KEYS.style || !explained[KEYS.style] || locked(KEYS.style)}
-              onClick={() => style !== s && void change(KEYS.style, s)}
-              className={cn(
-                "px-3 py-1.5 rounded-full text-xs font-semibold border",
-                style === s ? "bg-turf text-void border-turf" : "border-line text-muted-text hover:text-text",
-              )}
-            >
-              {STYLE_LABEL[s]}
-            </button>
-          ))}
-        </div>
-        {value(KEYS.overlayEnabled) === false && (
-          <p className="text-muted-text text-[11px]">The overlay master switch (Settings → Branding overlay) is off, so no overlay is drawn.</p>
-        )}
       </div>
 
       <div className="border-t border-line pt-2">
