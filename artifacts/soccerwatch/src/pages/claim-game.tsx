@@ -1306,6 +1306,14 @@ export function GameClaim({
         <Eyebrow>{copy.roster.eyebrow}</Eyebrow>
         <Title>{copy.roster.title}</Title>
         <Lede>{copy.roster.lead}</Lede>
+        {/* Above the cards: a match can list 100+ cards, and a player whose number is
+            missing must not have to scroll past all of them to find the way out
+            (rec 402: the button sat ~21,000 px down). */}
+        <Row>
+          <Btn className="w-full sm:w-auto" testId="button-roster-not-here" onClick={() => {
+            void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go);
+          }}>{copy.roster.notHere}</Btn>
+        </Row>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           {rosterPlayers.map((player) => {
             const label = player.name || copy.roster.unnamed;
@@ -1353,9 +1361,6 @@ export function GameClaim({
           })}
         </div>
         <Row>
-          <Btn className="w-full sm:w-auto" testId="button-roster-not-here" onClick={() => {
-            void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go);
-          }}>{copy.roster.notHere}</Btn>
           <Btn onClick={() => go("intro")}>{copy.roster.back}</Btn>
         </Row>
       </div>
