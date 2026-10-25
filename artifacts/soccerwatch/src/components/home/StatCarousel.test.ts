@@ -27,3 +27,30 @@ describe("the word beside the big number", () => {
     expect(tileCopies.ar.bigUnit("goals", 1)).toBe("هدف");
   });
 });
+
+describe("dribble duel copy", () => {
+  it("labels the scoreline and footer in English", () => {
+    expect(tileCopies.en.duel).toMatchObject({
+      won: "won",
+      of: "of",
+      yourSuccess: "your success",
+      theirSuccess: "their success",
+      dribblesInDuel: "dribbles in duel",
+    });
+    expect(tileCopies.en.duel.tries(1)).toBe("try");
+    expect(tileCopies.en.duel.tries(4)).toBe("tries");
+  });
+
+  it("uses Arabic labels and Arabic plural forms", () => {
+    expect(tileCopies.ar.duel).toMatchObject({
+      won: "نجحت",
+      of: "من",
+      yourSuccess: "نسبة نجاحك",
+      theirSuccess: "نسبة نجاحه",
+      dribblesInDuel: "مراوغات بالتحدّي",
+    });
+    expect(tileCopies.ar.duel.tries(1)).toBe("محاولة");
+    expect(tileCopies.ar.duel.tries(2)).toBe("محاولتين");
+    expect(tileCopies.ar.duel.tries(4)).toBe("محاولات");
+  });
+});

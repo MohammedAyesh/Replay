@@ -85,7 +85,6 @@ export type StatTile =
   | { kind: "notFound"; match: MatchBit; findRecordingId: number; found: number; teaser: { metric: TileMetric; value: number } | null }
   | { kind: "passing"; match: MatchBit; completed: number; tried: number; rate: number; bestRate: boolean; pitchRate: number | null }
   | { kind: "touches"; match: MatchBit; total: number; firstIndex: number; blocks: number[]; busiest: { index: number; count: number }; everySeconds: number | null }
-  | { kind: "distanceTotal"; fieldName: string | null; sinceLocal: string; latestLocal: string; matches: number; totalKm: number; perMatch: number[]; milestone: number; passed: boolean; matchesToGo: number }
   | { kind: "distanceSpells"; match: MatchBit; spells: number[]; strongest: number; finishedStrongest: boolean }
   | { kind: "ranks"; match: MatchBit; claimed: number; ranks: Array<{ metric: TileMetric; rank: number; value: number; of: number | null; shared?: boolean; per10?: boolean }> }
   | { kind: "style"; matches: number; touches: number; passes: number; dribbles: number; shots: number; other: number; lean: "passer" | "dribbler" | "shooter" | "allRounder" }
@@ -449,36 +448,6 @@ function distanceSpells(input: HomeTileInput): ScoredTile | null {
   return { score: 66 * freshness(latest.match.startLocal, input.nowLocal), tile: { kind: "distanceSpells", match: bit(latest.match), spells: values, strongest, finishedStrongest } };
 }
 
-export const MILESTONES_KM = [5, 10, 21.1, 42.2, 50, 75, 100, 150, 200, 300, 500];
-
-function distanceTotal(input: HomeTileInput): ScoredTile | null {
-  const rows = input.history.filter((row) => num(row.stats.distanceKm));
-  if (rows.length < 2) return null;
-  const perMatch = rows.map((row) => row.stats.distanceKm as number).reverse();
-  const total = perMatch.reduce((a, b) => a + b, 0);
-  const beforeLatest = total - perMatch.at(-1)!;
-  const passedNow = MILESTONES_KM.filter((m) => beforeLatest < m && m <= total).at(-1);
-  const next = MILESTONES_KM.find((m) => m > total);
-  const perAverage = total / perMatch.length;
-  const fields = new Set(rows.map((row) => row.match.fieldName));
-  const common = {
-    kind: "distanceTotal" as const,
-    fieldName: fields.size === 1 ? rows[0].match.fieldName : null,
-    sinceLocal: rows.at(-1)!.match.startLocal,
-    latestLocal: rows[0].match.startLocal,
-    matches: rows.length,
-    totalKm: round1(total),
-    perMatch: perMatch.map(round1),
-  };
-  const fresh = freshness(rows[0].match.startLocal, input.nowLocal);
-  if (passedNow !== undefined) {
-    return { score: 84 * fresh, tile: { ...common, milestone: passedNow, passed: true, matchesToGo: 0 } };
-  }
-  if (next === undefined) return null;
-  const matchesToGo = Math.max(1, Math.ceil((next - total) / Math.max(0.1, perAverage)));
-  return { score: (matchesToGo <= 2 ? 58 : 36) * fresh, tile: { ...common, milestone: next, passed: false, matchesToGo } };
-}
-
 function dribbles(input: HomeTileInput): ScoredTile | null {
   const latest = input.history[0];
   const won = latest?.stats.dribblesWon;
@@ -742,7 +711,7 @@ export function teaser(peers: TilePeer[]): { metric: TileMetric; value: number }
 }
 
 const BUILDERS = [
-  claim, strain, personalBest, lastMatchFirst, distanceTotal, challenge, form, passing, rival, teamShare,
+  claim, strain, personalBest, lastMatchFirst, challenge, form, passing, rival, teamShare,
   distanceSpells, passingTrend, dribbleDuel, dribbles, ranks, week, shots, touches, matchesPlayed, style,
 ];
 

@@ -137,18 +137,6 @@ const en = {
     unit: (n: number): string => (n === 1 ? "touch" : "touches"),
   },
 
-  total: {
-    title: (field: string | null) => (field ? `Distance at ${field}` : "Distance with Replay"),
-    when: (date: string) => `Since ${date}`,
-    sub: (milestone: string) => `of ${milestone}`,
-    milestone: (km: number) => (km === 21.1 ? "a half marathon" : km === 42.2 ? "a marathon" : `${km} km`),
-    passed: (milestone: string, n: number) => `You've now run ${milestone}, in ${n} ${en.matches(n)}.`,
-    toGo: (milestone: string, k: number, day: string) => `${k === 1 ? `One more match like ${day}'s` : `${cap(enWord(k))} more matches like ${day}'s`} takes you past ${milestone}.`,
-    matches: "matches",
-    perMatch: "per match",
-    lastMatch: "last match",
-  },
-
   spells: {
     title: "Running by 10 minutes",
     stronger: "Your strongest spell came last",
@@ -243,6 +231,11 @@ const en = {
     head: (name: string, diff: number, theyWon: boolean) => (theyWon ? `${name} beat you by ${enWord(diff)}.` : `You beat ${name} by ${enWord(diff)}.`),
     note: " They tried more, you lost the ball less.",
     won: "won",
+    of: "of",
+    tries: (n: number): string => (n === 1 ? "try" : "tries"),
+    yourSuccess: "your success",
+    theirSuccess: "their success",
+    dribblesInDuel: "dribbles in duel",
   },
 
   week: {
@@ -390,18 +383,6 @@ const ar: TileStrings = {
     unit: (n: number) => arCount(n, ["لمسة", "لمستين", "لمسات"]),
   },
 
-  total: {
-    title: (field: string | null) => (field ? `مسافتك في ${iso(field)}` : `مسافتك مع ريبلاي`),
-    when: (date: string) => `من ${date}`,
-    sub: (milestone: string) => `من ${milestone}`,
-    milestone: (km: number) => (km === 21.1 ? "نص ماراثون" : km === 42.2 ? "ماراثون" : `${km} كم`),
-    passed: (milestone: string, n: number) => `هيك ركضت ${milestone} بـ${arN(n, MATCH)}.`,
-    toGo: (milestone: string, k: number, day: string) => `${k === 1 ? "ماتش كمان" : k === 2 ? "ماتشين كمان" : `${k} ماتشات كمان`} متل ماتش ${day} وبتعدّي ${milestone}.`,
-    matches: "ماتشات",
-    perMatch: "بالماتش",
-    lastMatch: "آخر ماتش",
-  },
-
   spells: {
     title: "ركضك كل 10 دقايق",
     stronger: "أقوى فترة إلك كانت بالآخر",
@@ -496,6 +477,11 @@ const ar: TileStrings = {
     head: (name: string, diff: number, theyWon: boolean) => (theyWon ? `${iso(name)} غلبك بـ${diff === 1 ? "وحدة" : diff}.` : `غلبت ${iso(name)} بـ${diff === 1 ? "وحدة" : diff}.`),
     note: " هو حاول أكثر، وإنت خسرت الكرة أقل.",
     won: "نجحت",
+    of: "من",
+    tries: (n: number): string => (n === 2 ? "محاولتين" : n >= 3 && n <= 10 ? "محاولات" : "محاولة"),
+    yourSuccess: "نسبة نجاحك",
+    theirSuccess: "نسبة نجاحه",
+    dribblesInDuel: "مراوغات بالتحدّي",
   },
 
   week: {

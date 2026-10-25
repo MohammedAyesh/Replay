@@ -16,7 +16,6 @@ export type StatTile =
   | { kind: "notFound"; match: MatchBit; findRecordingId: number; found: number; teaser: { metric: TileMetric; value: number } | null }
   | { kind: "passing"; match: MatchBit; completed: number; tried: number; rate: number; bestRate: boolean; pitchRate: number | null }
   | { kind: "touches"; match: MatchBit; total: number; firstIndex: number; blocks: number[]; busiest: { index: number; count: number }; everySeconds: number | null }
-  | { kind: "distanceTotal"; fieldName: string | null; sinceLocal: string; latestLocal: string; matches: number; totalKm: number; perMatch: number[]; milestone: number; passed: boolean; matchesToGo: number }
   | { kind: "distanceSpells"; match: MatchBit; spells: number[]; strongest: number; finishedStrongest: boolean }
   | { kind: "ranks"; match: MatchBit; claimed: number; ranks: Array<{ metric: TileMetric; rank: number; value: number; of: number | null; shared?: boolean; per10?: boolean }> }
   | { kind: "style"; matches: number; touches: number; passes: number; dribbles: number; shots: number; other: number; lean: "passer" | "dribbler" | "shooter" | "allRounder" }

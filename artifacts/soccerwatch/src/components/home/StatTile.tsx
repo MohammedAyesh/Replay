@@ -328,7 +328,6 @@ export function StatTileCard({ tile }: { tile: StatTile }) {
     case "notFound": return <NotFound tile={tile} c={c} now={now} />;
     case "passing": return <Passing tile={tile} c={c} now={now} />;
     case "touches": return <Touches tile={tile} c={c} now={now} />;
-    case "distanceTotal": return <DistanceTotal tile={tile} c={c} now={now} />;
     case "distanceSpells": return <DistanceSpells tile={tile} c={c} now={now} />;
     case "ranks": return <Ranks tile={tile} c={c} now={now} />;
     case "style": return <Style tile={tile} c={c} now={now} />;
@@ -475,20 +474,6 @@ function Touches({ tile, c, now }: P<"touches">) {
       <Headline big={String(tile.total)} unit={t.unit(tile.total)} sub={t.sub(from, from + 5)} color={LIME} />
       <Bars values={tile.blocks} hi={tile.busiest.index - tile.firstIndex} color={LIME}
         labels={tile.blocks.map((_, i) => `${(tile.firstIndex + i) * 5}′`)} />
-    </Card>
-  );
-}
-
-function DistanceTotal({ tile, c, now }: P<"distanceTotal">) {
-  const t = c.total;
-  const name = t.milestone(tile.milestone);
-  const lastDay = dayRef(tile.latestLocal, now, c.locale);
-  const per = tile.matches ? tile.totalKm / tile.matches : 0;
-  return (
-    <Card testId="distanceTotal" href="/matches" title={t.title(tile.fieldName)} when={t.when(shortDate(tile.sinceLocal, c.locale))}
-      line={tile.passed ? t.passed(name, tile.matches) : t.toGo(name, tile.matchesToGo, lastDay)}
-      foot={[{ v: String(tile.matches), l: t.matches }, { v: per.toFixed(1), u: c.units.distanceKm, l: t.perMatch }, { v: (tile.perMatch.at(-1) ?? 0).toFixed(1), u: c.units.distanceKm, l: t.lastMatch }]}>
-      <Ring frac={tile.passed ? 1 : tile.totalKm / tile.milestone} color={TEAL} big={km(tile.totalKm)} sub={t.sub(name)} />
     </Card>
   );
 }
@@ -654,13 +639,35 @@ function DribbleDuel({ tile, c, now }: P<"dribbleDuel">) {
   const theyWon = tile.other.won > tile.me.won;
   const diff = Math.abs(tile.other.won - tile.me.won);
   const note = theyWon && tile.other.tries > tile.me.tries && rate(tile.me.won, tile.me.tries) > rate(tile.other.won, tile.other.tries);
+  const totalWon = tile.me.won + tile.other.won;
+  const myBar = totalWon ? tile.me.won : 1;
+  const theirBar = totalWon ? tile.other.won : 1;
   return (
     <Card testId="dribbleDuel" href={tile.match.watch ?? report(tile.match.code)} title={d.title} when={matchWhen(tile.match.startLocal, now, c.locale)}
       line={<>{d.head(tile.other.name, diff, theyWon)}{note && d.note}</>}
-      foot={[{ v: pct(rate(tile.me.won, tile.me.tries)), l: c.you }, { v: pct(rate(tile.other.won, tile.other.tries)), l: tile.other.name }, { v: String(diff), l: d.won }]}>
-      <div className="grid grid-cols-2 gap-3">
-        <SmallRing frac={rate(tile.me.won, tile.me.tries)} color={VIOLET} big={`${tile.me.won}/${tile.me.tries}`} label={c.you} />
-        <SmallRing frac={rate(tile.other.won, tile.other.tries)} color={MUTED} big={`${tile.other.won}/${tile.other.tries}`} label={tile.other.name} />
+      foot={[{ v: pct(rate(tile.me.won, tile.me.tries)), l: d.yourSuccess }, { v: pct(rate(tile.other.won, tile.other.tries)), l: d.theirSuccess }, { v: String(tile.me.tries + tile.other.tries), l: d.dribblesInDuel }]}>
+      <div className="flex flex-col justify-center gap-5" dir={c.locale === "ar" ? "rtl" : "ltr"}>
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-center">
+          <div className="min-w-0">
+            <N className="block text-[72px] font-semibold leading-[.85] tracking-tight text-[#9B85FF]">{tile.me.won}</N>
+            <p className="mt-2 truncate text-sm font-semibold text-text">{c.you}</p>
+            <p className="mt-1 text-xs text-muted-text"><span>{d.of}</span>{" "}<N>{tile.me.tries}</N>{" "}<span>{d.tries(tile.me.tries)}</span></p>
+          </div>
+          <span className="pb-8 text-xs font-medium text-muted-text">{d.won}</span>
+          <div className="min-w-0">
+            <N className="block text-[72px] font-semibold leading-[.85] tracking-tight text-[#C9CFDA]">{tile.other.won}</N>
+            <p className="mt-2 truncate text-sm font-semibold text-text" title={tile.other.name}>{tile.other.name}</p>
+            <p className="mt-1 text-xs text-muted-text"><span>{d.of}</span>{" "}<N>{tile.other.tries}</N>{" "}<span>{d.tries(tile.other.tries)}</span></p>
+          </div>
+        </div>
+        <div className="flex h-2 w-full gap-1" role="img" aria-label={`${tile.me.won} ${c.you}, ${tile.other.won} ${tile.other.name}`}>
+          <span className="min-w-0 overflow-hidden rounded-full" style={{ flex: `${myBar} 1 0%` }}>
+            <span className="tile-grow-x block h-full w-full rounded-full bg-[#9B85FF]" />
+          </span>
+          <span className="min-w-0 overflow-hidden rounded-full" style={{ flex: `${theirBar} 1 0%` }}>
+            <span className="tile-grow-x block h-full w-full rounded-full bg-[#C9CFDA]" />
+          </span>
+        </div>
       </div>
     </Card>
   );
