@@ -33,7 +33,7 @@ export function CoachBubble({
 }) {
   return (
     <motion.div
-      role="dialog"
+      role="note"
       aria-live="polite"
       data-testid={testId}
       initial={{ opacity: 0, y: arrow === "up" ? -6 : 6 }}

@@ -287,7 +287,7 @@ export function FreeMatchRoomCard({ status, code, onShare }: { status: FreeMatch
               </span>
               {friend.found
                 ? <Check className="h-4 w-4 text-floodlight" strokeWidth={3} />
-                : <button type="button" onClick={onShare} className="min-h-9 shrink-0 rounded-full border border-line px-3 text-xs font-semibold">{free.remind}</button>}
+                : <button type="button" onClick={onShare} aria-label={free.remindName(friend.name)} className="min-h-9 shrink-0 rounded-full border border-line px-3 text-xs font-semibold">{free.remind}</button>}
             </li>
           ))}
         </ul>

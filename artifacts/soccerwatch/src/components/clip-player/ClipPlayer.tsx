@@ -760,11 +760,26 @@ export function ClipPlayer({
     commitSeekPosition(videoRef.current.currentTime + delta);
   }, [commitSeekPosition, isLive, isLiveDvr]);
 
-  const { flash: skipFlash, onTouchEnd: skipOnTouchEnd } = useSkipTap({
+  const { flash: skipFlash, onTouchEnd: skipOnTouchEnd, onDoubleClick: skipOnDoubleClick } = useSkipTap({
     onSkip: handleSkip,
     onSingleTap: resetControlsTimer,
     disabled: clipMode !== "idle" || (isLive && !isLiveDvr),
   });
+
+  // Mouse and trackpad: the wheel (or a trackpad pinch, which arrives as ctrl+wheel)
+  // zooms the frame, as two fingers do on a phone. Native listener so the page itself doesn't zoom or scroll.
+  useEffect(() => {
+    const box = frameBoxRef.current;
+    if (!box) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.deltaY === 0) return;
+      event.preventDefault();
+      const step = event.ctrlKey ? 0.01 : 0.0015;
+      applyFrameChange(frameZoomRef.current * Math.exp(event.deltaY * step), selectedRatioRef.current);
+    };
+    box.addEventListener("wheel", onWheel, { passive: false });
+    return () => box.removeEventListener("wheel", onWheel);
+  }, [applyFrameChange, frameBoxRef, frameZoomRef, selectedRatioRef]);
 
   useEffect(() => {
     const element = videoRef.current;
@@ -1246,7 +1261,9 @@ export function ClipPlayer({
   };
 
   const startRecording = () => {
-    if (showRecordCoach) dismissRecordCoach();
+    // Using Clip answers both tips: don't explain looking around or Clip to someone who just clipped.
+    dismissLookCoach();
+    dismissRecordCoach();
     if (!canSave && !isLiveDvr) {
       const now = videoRef.current?.currentTime ?? 0;
       requireAuth(buildDraft(now, now + 0.1, [{ t: 0, ...computeCropRect() }], clipTitle || title));
@@ -1492,10 +1509,12 @@ export function ClipPlayer({
           onPointerMove={onFramePointerMove}
           onPointerUp={handleFramePointerUp}
           onPointerCancel={handleFramePointerUp}
+          onLostPointerCapture={handleFramePointerUp}
           onTouchEnd={(event) => {
             if (draggedRef.current) return;
             skipOnTouchEnd(event);
           }}
+          onDoubleClick={skipOnDoubleClick}
           onClick={() => {
             if (draggedRef.current) {
               draggedRef.current = false;

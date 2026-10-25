@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import { and, eq, inArray } from "drizzle-orm";
@@ -16,14 +16,26 @@ import {
   usersTable,
 } from "@workspace/db";
 
-// Which recordings each room's booking overlaps. The real lookup needs tracked footage on the
-// field's clock; what matters here is who found themselves in it.
-const roomRecordings = vi.hoisted(() => new Map<number, number[]>());
+// Which recordings each room's booking overlaps, and how much of each recording's match it
+// covers (0..1). The real lookup needs tracked footage on the field's clock; what matters
+// here is who found themselves in it.
+const roomRecordings = vi.hoisted(() => new Map<number, Array<{ recordingId: number; share: number }>>());
 
 vi.mock("../lib/matchFeed", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/matchFeed")>()),
   recordingsForRoom: vi.fn(async (ctx: { room: { id: number } }) =>
-    (roomRecordings.get(ctx.room.id) ?? []).map((recordingId) => ({ recordingId }))),
+    (roomRecordings.get(ctx.room.id) ?? []).map(({ recordingId, share }) => ({
+      recordingId, bundleId: 0, manifest: { version: 1, duration: 3600 }, fromSeconds: 0, toSeconds: 3600 * share, recordingOffsetSec: 0,
+    }))),
+}));
+
+// The camera service: accepts every job unless a test says otherwise.
+const camera = vi.hoisted(() => ({ ok: true }));
+vi.mock("./contabo", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./contabo")>()),
+  controlFetch: vi.fn(async () => (camera.ok
+    ? { ok: true, status: 200, body: { jobId: `job-${Math.random().toString(36).slice(2, 8)}`, status: "scheduled" } }
+    : { ok: false, status: 503, body: { error: "camera offline" } })),
 }));
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -41,7 +53,8 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import ownerRouter from "./owner";
-import { freeMatchStatus } from "../lib/freeMatch";
+import matchRoomsRouter from "./matchRooms";
+import { bookingRecordings, freeMatchStatus } from "../lib/freeMatch";
 import { ensureRoomForRequest } from "../lib/matchRooms";
 
 const TAG = `fm_${Date.now()}`;
@@ -50,6 +63,7 @@ const users: Record<string, number> = {};
 let fieldId: number;
 const recordingIds: number[] = [];
 const bundleByRecording = new Map<number, number>();
+const FRIENDS = ["f1", "f2", "f3", "f4", "f5"];
 
 function localString(ms: number): string {
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", {
@@ -61,11 +75,13 @@ function localString(ms: number): string {
 
 const as = (who: string) => ({ "x-test-user": String(users[who]) });
 const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
 
-/** A finished booking by `who`, paid the given way, with its own recording. */
-async function playedMatch(who: string, method: "cliq" | "field", hoursAgo: number) {
+/** A booking by `who` starting `hoursAgo` ago (negative = in the future), paid the given way, with its own recording. */
+async function booking(who: string, method: "cliq" | "field", hoursAgo: number, opts: { status?: string; paid?: boolean; readyAt?: Date } = {}) {
   const quarter = 15 * 60 * 1000;
   const start = Math.floor((Date.now() - hoursAgo * HOUR) / quarter) * quarter;
+  const future = hoursAgo < 0;
   const [row] = await db.insert(footageRequestsTable).values({
     fieldId,
     cameraId: `cam-${TAG}`,
@@ -74,13 +90,13 @@ async function playedMatch(who: string, method: "cliq" | "field", hoursAgo: numb
     endLocal: localString(start + HOUR),
     requestedSeconds: 3600,
     rateFils: 0,
-    status: "ready",
-    readyAt: new Date(start + HOUR),
+    status: opts.status ?? (future ? "scheduled" : "ready"),
+    readyAt: future ? null : (opts.readyAt ?? new Date(start + HOUR)),
   }).returning();
   const room = await ensureRoomForRequest(row);
   await db.insert(statUnlocksTable).values({
     userId: users[who], matchId: room.id, kind: "booking", amountFils: 2000,
-    reference: `RB${room.code}-${TAG}-${Math.random().toString(36).slice(2, 6)}`, method, status: "paid",
+    reference: `RB${room.code}-${TAG}-${Math.random().toString(36).slice(2, 6)}`, method, status: opts.paid === false ? "pending" : "paid",
   });
   const [recording] = await db.insert(recordingsTable).values({
     fieldId, court: "1", date: localString(start).slice(0, 10), timeSlot: localString(start).slice(11),
@@ -91,8 +107,8 @@ async function playedMatch(who: string, method: "cliq" | "field", hoursAgo: numb
     recordingId: recording.id, uploadedBy: users.booker, manifest: { version: 1, duration: 3600 } as never,
   }).returning({ id: recordingTrackingBundlesTable.id });
   bundleByRecording.set(recording.id, bundle.id);
-  roomRecordings.set(room.id, [recording.id]);
-  return { room, recordingId: recording.id };
+  roomRecordings.set(room.id, [{ recordingId: recording.id, share: 1 }]);
+  return { room, request: row, recordingId: recording.id };
 }
 
 /** `who` finished finding himself in a recording. */
@@ -105,21 +121,49 @@ async function found(who: string, recordingId: number) {
   });
 }
 
+async function everyoneFinds(recordingId: number, who = ["booker", ...FRIENDS]) {
+  for (const person of who) await found(person, recordingId);
+}
+
+const rewardsOf = (who: string) => db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users[who]));
+
+function slot(daysAhead: number, hour: number, minutes: number) {
+  const day = localString(Date.now() + daysAhead * DAY).slice(0, 10);
+  const endMinutes = hour * 60 + minutes;
+  return {
+    fieldId,
+    startLocal: `${day} ${String(hour).padStart(2, "0")}:00`,
+    endLocal: `${day} ${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`,
+  };
+}
+
+/** Clear one player's free-match state between scenarios. */
+async function resetPlayer(who: string) {
+  await db.delete(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users[who]));
+  await db.update(footageRequestsTable).set({ status: "cancelled" }).where(eq(footageRequestsTable.requestedBy, users[who]));
+}
+
 beforeAll(async () => {
   process.env.CONTABO_CONTROL_URL = "https://control.example.test";
   process.env.CONTABO_CONTROL_KEY = "test-key";
   app = express();
   app.use(express.json());
   app.use("/api", ownerRouter);
-  for (const key of ["booker", "f1", "f2", "f3", "f4", "f5", "guest"]) {
+  app.use("/api", matchRoomsRouter);
+  for (const key of ["booker", "other", ...FRIENDS, "guest", "admin"]) {
     const [u] = await db.insert(usersTable).values({
-      name: `${key} ${TAG}`, email: `${TAG}_${key}@test.local`, profileComplete: true, isGuest: key === "guest",
+      name: `${key} ${TAG}`, email: `${TAG}_${key}@test.local`, profileComplete: true,
+      isGuest: key === "guest", isAdmin: key === "admin",
     }).returning({ id: usersTable.id });
     users[key] = u.id;
   }
   const [field] = await db.insert(fieldsTable).values({ name: `Free Field ${TAG}`, location: "Test", cameraId: `cam-${TAG}` })
     .returning({ id: fieldsTable.id });
   fieldId = field.id;
+});
+
+beforeEach(() => {
+  camera.ok = true;
 });
 
 afterAll(async () => {
@@ -136,27 +180,25 @@ afterAll(async () => {
   await db.delete(usersTable).where(inArray(usersTable.id, ids));
 });
 
-describe("free match challenge", () => {
-  let source: Awaited<ReturnType<typeof playedMatch>>;
+describe("free match: earning", () => {
+  let source: Awaited<ReturnType<typeof booking>>;
 
   it("does not count a match paid at the field", async () => {
-    const fieldPaid = await playedMatch("booker", "field", 30);
-    await found("booker", fieldPaid.recordingId);
-    for (const friend of ["f1", "f2", "f3", "f4", "f5"]) await found(friend, fieldPaid.recordingId);
+    const fieldPaid = await booking("booker", "field", 30);
+    await everyoneFinds(fieldPaid.recordingId);
     const status = await freeMatchStatus(users.booker);
     expect(status.attempt).toBeNull();
     expect(status.reward).toBeNull();
   });
 
   it("tracks the booker and his friends on a CliQ booking", async () => {
-    source = await playedMatch("booker", "cliq", 3);
+    source = await booking("booker", "cliq", 3);
     let status = await freeMatchStatus(users.booker);
     expect(status.attempt?.code).toBe(source.room.code);
     expect(status.attempt?.paid).toBe(true);
     expect(status.attempt?.bookerFound).toBe(false);
 
-    await found("booker", source.recordingId);
-    for (const friend of ["f1", "f2", "f3", "f4"]) await found(friend, source.recordingId);
+    await everyoneFinds(source.recordingId, ["booker", "f1", "f2", "f3", "f4"]);
     // A guest finding himself doesn't count.
     await found("guest", source.recordingId);
     status = await freeMatchStatus(users.booker);
@@ -174,71 +216,176 @@ describe("free match challenge", () => {
     expect(status.latestEarned?.sourceCode).toBe(source.room.code);
     // Seen twice, still one reward.
     await freeMatchStatus(users.booker);
-    const rows = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users.booker));
-    expect(rows).toHaveLength(1);
+    expect(await rewardsOf("booker")).toHaveLength(1);
   });
 
   it("a second full match the same month earns nothing more", async () => {
-    const again = await playedMatch("booker", "cliq", 2);
-    for (const who of ["booker", "f1", "f2", "f3", "f4", "f5"]) await found(who, again.recordingId);
+    const again = await booking("booker", "cliq", 2);
+    await everyoneFinds(again.recordingId);
     const status = await freeMatchStatus(users.booker);
     expect(status.attempt?.code).toBe(again.room.code);
     expect(status.attempt?.capped).toBe(true);
-    const rows = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users.booker));
-    expect(rows).toHaveLength(1);
+    expect(await rewardsOf("booker")).toHaveLength(1);
+    const fields = await request(app).get("/api/bookings/fields").set(as("booker"));
+    expect(fields.body.freeMatch.canEarn).toBe(false);
   });
 
-  function slot(daysAhead: number, hour: number, minutes: number) {
-    const day = localString(Date.now() + daysAhead * 24 * HOUR).slice(0, 10);
-    const start = `${day} ${String(hour).padStart(2, "0")}:00`;
-    const endMinutes = hour * 60 + minutes;
-    const end = `${day} ${String(Math.floor(endMinutes / 60)).padStart(2, "0")}:${String(endMinutes % 60).padStart(2, "0")}`;
-    return { fieldId, startLocal: start, endLocal: end };
-  }
+  it("a newer upcoming booking does not hide an older match that just finished", async () => {
+    await resetPlayer("other");
+    const played = await booking("other", "cliq", 5);
+    await booking("other", "cliq", -48); // booked the next game before his friends finished
+    await everyoneFinds(played.recordingId, ["other", ...FRIENDS]);
+    const status = await freeMatchStatus(users.other);
+    expect(status.reward?.sourceCode).toBe(played.room.code);
+  });
+
+  it("still earns when the booker only looks after the video was deleted", async () => {
+    await resetPlayer("other");
+    const old = await booking("other", "cliq", 17 * 24, { readyAt: new Date(Date.now() - 16 * DAY) });
+    await everyoneFinds(old.recordingId, ["other", ...FRIENDS]);
+    const status = await freeMatchStatus(users.other);
+    expect(status.reward?.sourceCode).toBe(old.room.code);
+    // ...but a lapsed match with work left is not shown as something to do.
+    await resetPlayer("other");
+    await booking("other", "cliq", 17 * 24, { readyAt: new Date(Date.now() - 16 * DAY) });
+    expect((await freeMatchStatus(users.other)).attempt).toBeNull();
+  });
+
+  it("counts only the recording that is this booking's match", async () => {
+    await resetPlayer("other");
+    const mine = await booking("other", "cliq", 4);
+    const neighbour = await booking("f1", "cliq", 5); // the previous group, whose pull ran into this slot
+    roomRecordings.set(mine.room.id, [
+      { recordingId: neighbour.recordingId, share: 0.1 },
+      { recordingId: mine.recordingId, share: 0.9 },
+    ]);
+    await everyoneFinds(neighbour.recordingId, ["f2", "f3", "f4", "f5"]);
+    await found("other", mine.recordingId);
+    const status = await freeMatchStatus(users.other);
+    expect(status.attempt?.findRecordingId).toBe(mine.recordingId);
+    expect(status.attempt?.friendsFound).toBe(0);
+    expect(bookingRecordings([
+      { recordingId: 1, bundleId: 0, manifest: { duration: 3600 } as never, fromSeconds: 0, toSeconds: 300, recordingOffsetSec: 0 },
+    ]).map((r) => r.recordingId)).toEqual([1]); // a lone small overlap is still better than nothing
+  });
+
+  it("a partly free CliQ booking never counts toward another free match", async () => {
+    await resetPlayer("other");
+    const played = await booking("other", "cliq", 6);
+    await everyoneFinds(played.recordingId, ["other", ...FRIENDS]);
+    await freeMatchStatus(users.other); // earns
+    // Spend it on a 3-hour booking (1 extra hour paid by CliQ), then play it and get everyone in.
+    const res = await request(app).post("/api/bookings").set(as("other")).send({ ...slot(2, 9, 180), payWith: "cliq", useFreeMatch: true });
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ method: "cliq", amountFils: 2000 });
+    const [usedRoom] = await db.select().from(matchRoomsTable).where(eq(matchRoomsTable.code, res.body.code));
+    await db.update(footageRequestsTable).set({ status: "ready", readyAt: new Date() }).where(eq(footageRequestsTable.id, res.body.requestId));
+    await db.update(statUnlocksTable).set({ status: "paid" }).where(eq(statUnlocksTable.reference, res.body.reference));
+    const [rec] = await db.insert(recordingsTable).values({
+      fieldId, court: "1", date: "2026-01-01", timeSlot: "09:00", duration: "01:00:00", videoUrl: `https://example.test/${TAG}-partial.m3u8`, isVisible: true,
+    }).returning({ id: recordingsTable.id });
+    recordingIds.push(rec.id);
+    const [bundle] = await db.insert(recordingTrackingBundlesTable).values({ recordingId: rec.id, uploadedBy: users.booker, manifest: { version: 1, duration: 3600 } as never }).returning({ id: recordingTrackingBundlesTable.id });
+    bundleByRecording.set(rec.id, bundle.id);
+    roomRecordings.set(usedRoom.id, [{ recordingId: rec.id, share: 1 }]);
+    await everyoneFinds(rec.id, ["other", ...FRIENDS]);
+    await db.update(freeMatchRewardsTable).set({ earnedAt: new Date(Date.now() - 40 * DAY) }).where(eq(freeMatchRewardsTable.userId, users.other)); // not the monthly cap stopping it
+    await freeMatchStatus(users.other);
+    expect(await rewardsOf("other")).toHaveLength(1);
+  });
+
+  it("two loads at once never earn past the monthly cap", async () => {
+    await resetPlayer("other");
+    const a = await booking("other", "cliq", 8);
+    const b = await booking("other", "cliq", 7);
+    await everyoneFinds(a.recordingId, ["other", ...FRIENDS]);
+    await everyoneFinds(b.recordingId, ["other", ...FRIENDS]);
+    await Promise.all([freeMatchStatus(users.other), freeMatchStatus(users.other), freeMatchStatus(users.other)]);
+    expect(await rewardsOf("other")).toHaveLength(1);
+  });
+});
+
+describe("free match: spending", () => {
+  let rewardId: number;
 
   it("books up to two hours for nothing and spends the free match", async () => {
+    const [reward] = await rewardsOf("booker");
+    rewardId = reward.id;
     const res = await request(app).post("/api/bookings").set(as("booker"))
       .send({ ...slot(2, 10, 120), payWith: "cliq", useFreeMatch: true });
     expect(res.status).toBe(201);
-    expect(res.body).toMatchObject({ amountFils: 0, method: "free", freeMatch: true });
-    const [reward] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users.booker));
-    expect(reward.status).toBe("used");
+    expect(res.body).toMatchObject({ amountFils: 0, method: "free", freeMatch: true, status: "scheduled" });
+    const [after] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.id, rewardId));
+    expect(after.status).toBe("used");
     const [payment] = await db.select().from(statUnlocksTable).where(eq(statUnlocksTable.reference, res.body.reference));
     expect(payment).toMatchObject({ method: "free", status: "paid", amountFils: 0 });
 
-    const twice = await request(app).post("/api/bookings").set(as("booker"))
-      .send({ ...slot(3, 10, 60), useFreeMatch: true });
+    // The match page says it's a free match, not "paid".
+    const room = await request(app).get(`/api/m/${res.body.code}`).set(as("booker"));
+    expect(room.body.booking).toMatchObject({ method: "free", status: "paid", mine: true });
+
+    const twice = await request(app).post("/api/bookings").set(as("booker")).send({ ...slot(3, 10, 60), useFreeMatch: true });
     expect(twice.status).toBe(409);
-  });
 
-  it("a free-match booking never counts toward another", async () => {
-    const [reward] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users.booker));
-    const status = await freeMatchStatus(users.booker);
-    expect(status.attempt?.code).not.toBe(
-      (await db.select({ code: matchRoomsTable.code }).from(matchRoomsTable).where(eq(matchRoomsTable.id, reward.usedMatchId!)))[0].code,
-    );
-  });
-
-  it("charges only the extra hours, and cancelling hands the free match back", async () => {
-    // Give the free match back from the free booking first, by cancelling it before kick-off.
-    const [reward] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.userId, users.booker));
-    const [usedRoom] = await db.select({ requestId: matchRoomsTable.footageRequestId }).from(matchRoomsTable)
-      .where(eq(matchRoomsTable.id, reward.usedMatchId!));
-    // The camera job can't be reached in tests; drop the job id so cancelling doesn't call it.
-    await db.update(footageRequestsTable).set({ vpsJobId: null, status: "scheduled" }).where(eq(footageRequestsTable.id, usedRoom.requestId));
-    const cancel = await request(app).delete(`/api/bookings/${usedRoom.requestId}`).set(as("booker"));
+    // Cancelling it before kick-off hands the free match back.
+    const cancel = await request(app).delete(`/api/bookings/${res.body.requestId}`).set(as("booker"));
     expect(cancel.status).toBe(204);
-    const [back] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.id, reward.id));
+    const [back] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.id, rewardId));
     expect(back).toMatchObject({ status: "available", usedMatchId: null });
+  });
 
+  it("a double tap spends the free match once", async () => {
+    const [a, b] = await Promise.all([
+      request(app).post("/api/bookings").set(as("booker")).send({ ...slot(5, 10, 60), payWith: "cliq", useFreeMatch: true }),
+      request(app).post("/api/bookings").set(as("booker")).send({ ...slot(5, 14, 60), payWith: "cliq", useFreeMatch: true }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    const won = a.status === 201 ? a : b;
+    await request(app).delete(`/api/bookings/${won.body.requestId}`).set(as("booker"));
+    const [back] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.id, rewardId));
+    expect(back.status).toBe("available");
+  });
+
+  it("a booking the camera couldn't start gives the free match back", async () => {
+    camera.ok = false;
+    const res = await request(app).post("/api/bookings").set(as("booker")).send({ ...slot(6, 10, 60), useFreeMatch: true });
+    expect(res.status).toBe(201);
+    expect(res.body.status).toBe("failed");
+    const status = await freeMatchStatus(users.booker);
+    expect(status.reward?.id).toBe(rewardId);
+  });
+
+  it("a booking the owner cancelled gives the free match back, with the time it was held", async () => {
+    const [before] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.id, rewardId));
+    const res = await request(app).post("/api/bookings").set(as("booker")).send({ ...slot(7, 10, 60), useFreeMatch: true });
+    expect(res.status).toBe(201);
+    await db.update(freeMatchRewardsTable).set({ usedAt: new Date(Date.now() - DAY) }).where(eq(freeMatchRewardsTable.id, rewardId));
+    await db.update(footageRequestsTable).set({ status: "cancelled", message: "Cancelled by owner" }).where(eq(footageRequestsTable.id, res.body.requestId));
+    const status = await freeMatchStatus(users.booker);
+    expect(status.reward?.id).toBe(rewardId);
+    expect(Date.parse(status.reward!.expiresAt)).toBeGreaterThan(before.expiresAt.getTime() + DAY - 60_000);
+  });
+
+  it("charges only the extra hours; an admin rejecting that transfer gives the free match back", async () => {
     const res = await request(app).post("/api/bookings").set(as("booker"))
       .send({ ...slot(4, 18, 180), payWith: "cliq", useFreeMatch: true });
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({ amountFils: 2000, method: "cliq", status: "awaiting_payment" });
-    const unpaid = await request(app).delete(`/api/bookings/${res.body.requestId}`).set(as("booker"));
-    expect(unpaid.status).toBe(204);
-    const [again] = await db.select().from(freeMatchRewardsTable).where(eq(freeMatchRewardsTable.id, reward.id));
-    expect(again.status).toBe("available");
+    const [payment] = await db.select().from(statUnlocksTable).where(eq(statUnlocksTable.reference, res.body.reference));
+    const reject = await request(app).post(`/api/admin/stat-unlocks/${payment.id}/reject`).set(as("admin"));
+    expect(reject.status).toBe(200);
+    const status = await freeMatchStatus(users.booker);
+    expect(status.reward?.id).toBe(rewardId);
+  });
+
+  it("a fully free booking can't be cancelled here after kick-off", async () => {
+    const res = await request(app).post("/api/bookings").set(as("booker")).send({ ...slot(8, 10, 60), useFreeMatch: true });
+    expect(res.status).toBe(201);
+    await db.update(footageRequestsTable).set({ startLocal: localString(Date.now() - HOUR), endLocal: localString(Date.now()) })
+      .where(eq(footageRequestsTable.id, res.body.requestId));
+    const cancel = await request(app).delete(`/api/bookings/${res.body.requestId}`).set(as("booker"));
+    expect(cancel.status).toBe(409);
+    await db.update(footageRequestsTable).set({ status: "cancelled" }).where(eq(footageRequestsTable.id, res.body.requestId));
   });
 
   it("offers the free match on the Book page", async () => {
@@ -248,10 +395,10 @@ describe("free match challenge", () => {
   });
 
   it("is off for everyone when the setting is off, but an earned one still shows", async () => {
-    const status = await freeMatchStatus(users.booker, {
+    const status = await freeMatchStatus(users.booker, { commerce: {
       ...(await (await import("../lib/commerce")).loadCommerce({ userId: users.booker })),
       freeMatchEnabled: false,
-    });
+    } });
     expect(status.enabled).toBe(false);
     expect(status.attempt).toBeNull();
     expect(status.reward?.status).toBe("available");

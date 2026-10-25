@@ -114,6 +114,13 @@ export function usePanoramaFrame() {
 
   const handleFramePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
+    // The first finger of a new gesture starts clean: a pointerup the browser
+    // never delivered must not leave a phantom finger that turns every later
+    // drag into a pinch.
+    if (event.isPrimary) {
+      pointersRef.current.clear();
+      pinchRef.current.active = false;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pointersRef.current.size === 2) {
@@ -142,8 +149,9 @@ export function usePanoramaFrame() {
       const distance = pointerDistance();
       if (distance > 0 && pinchRef.current.startDistance > 0) {
         onDragStart?.();
+        // Zoom is the frame's width: fingers apart shows less of the pitch (zooms in).
         applyFrameChange(
-          pinchRef.current.startZoom * (distance / pinchRef.current.startDistance),
+          pinchRef.current.startZoom * (pinchRef.current.startDistance / distance),
           selectedRatioRef.current,
         );
       }
@@ -174,7 +182,12 @@ export function usePanoramaFrame() {
       // The browser may release capture before pointerup.
     }
     pointersRef.current.delete(event.pointerId);
-    if (pointersRef.current.size < 2) pinchRef.current.active = false;
+    if (pointersRef.current.size < 2) {
+      pinchRef.current.active = false;
+    } else {
+      // A third finger lifted: carry on pinching with the two that are left, from where the zoom is now.
+      pinchRef.current = { active: true, startDistance: pointerDistance(), startZoom: frameZoomRef.current };
+    }
     // Lifting one finger of a pinch must not turn the other into a pan jump.
     dragRef.current.active = false;
   }, []);

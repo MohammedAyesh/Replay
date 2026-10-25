@@ -152,7 +152,8 @@ export default function MatchPage() {
   const now = useServerNow(room?.serverNow);
   const join = useJoinMatch(code);
   // Only the player who booked this match has free-match progress on it.
-  const myMatches = useMyMatches(Boolean(user) && !isGuest && Boolean(realRoom?.booking?.mine));
+  // Only a CliQ booking by this player can have free-match progress on it.
+  const myMatches = useMyMatches(Boolean(user) && !isGuest && Boolean(realRoom?.booking?.mine) && realRoom?.booking?.method === "cliq");
   const replay = useMatchReplay(code, Boolean(room) && ["processing", "ready", "expired"].includes(room!.phase));
   const [tab, setTab] = useState<Tab | null>(null);
   const autoJoinDone = useRef(false);
@@ -427,12 +428,9 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
   const [, setLocation] = useLocation();
   const post = ["processing", "ready", "expired"].includes(room.phase);
   const explainerCopy = useExplainerCopy();
-  // First visit to a match page before or during the game: point at Share,
-  // the way the squad gets in.
-  const [showInviteCoach, dismissInviteCoach] = useFirstTime(
-    "match-page.invite.v1",
-    !post && room.phase !== "cancelled" && room.phase !== "failed",
-  );
+  // First visit to a match page before the game: point at Share, the way the
+  // squad gets in. Not while it's live: the VAR player has its own tips then.
+  const [showInviteCoach, dismissInviteCoach] = useFirstTime("match-page.invite.v1", room.phase === "pre");
   return (
     <section className={cn("relative", showInviteCoach ? "z-30" : "overflow-hidden")}>
       <div className="absolute inset-0">
@@ -2063,6 +2061,7 @@ function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchString
   const fail = (e: unknown) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" });
   const field = booking.method === "field";
   const jod = formatJod(booking.amountFils);
+  if (booking.method === "free") return <FreeBookingCard room={room} copy={copy} />;
 
   if (booking.status === "paid") {
     return (
@@ -2163,6 +2162,51 @@ function BookingPaymentCard({ room, copy }: { room: MatchRoom; copy: MatchString
               </div>
             </div>
           )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** A booking a free match paid for: nothing to pay, and it can be dropped before kick-off to get the free match back. */
+function FreeBookingCard({ room, copy }: { room: MatchRoom; copy: MatchStrings }) {
+  const booking = room.booking!;
+  const free = useExplainerCopy().free;
+  const cancel = useCancelBooking(room.code);
+  const { toast } = useToast();
+  const [confirm, setConfirm] = useState(false);
+  if (booking.status === "rejected") {
+    return <Card><p className="text-sm text-muted-text">{free.freeBookingCancelled}</p></Card>;
+  }
+  const canCancel = booking.mine && Boolean(booking.requestId) && room.phase === "pre";
+  return (
+    <section className="rounded-2xl border border-floodlight/40 bg-floodlight/5 p-4" data-testid="booking-free-card">
+      <p className="flex items-center gap-2 text-sm font-bold text-floodlight"><Check className="h-4 w-4" />{free.freeBooking}</p>
+      <p className="mt-0.5 text-xs text-muted-text">{free.freeBookingDesc}</p>
+      {canCancel && !confirm && (
+        <button type="button" onClick={() => setConfirm(true)} className="mt-3 text-xs font-semibold text-muted-text underline underline-offset-2" data-testid="button-cancel-free-booking">
+          {free.cancelFree}
+        </button>
+      )}
+      {canCancel && confirm && (
+        <div role="alertdialog" aria-label={free.cancelFreeConfirm} className="mt-3 rounded-xl border border-live/40 bg-live/10 p-3">
+          <p className="text-sm font-bold">{free.cancelFreeConfirm}</p>
+          <div className="mt-3 flex gap-2">
+            <button type="button" onClick={() => setConfirm(false)} className="min-h-11 flex-1 rounded-full border border-line text-sm font-semibold">
+              {copy.book.keepBooking}
+            </button>
+            <button
+              type="button"
+              disabled={cancel.isPending}
+              onClick={() => void cancel.mutateAsync(booking.requestId!)
+                .then(() => { setConfirm(false); toast({ title: copy.book.cancelled }); })
+                .catch((e: unknown) => toast({ title: e instanceof Error ? e.message : copy.error, variant: "destructive" }))}
+              className="flex min-h-11 flex-1 items-center justify-center rounded-full bg-live text-sm font-bold text-text"
+              data-testid="button-confirm-cancel-free-booking"
+            >
+              {free.cancelFree}
+            </button>
+          </div>
         </div>
       )}
     </section>

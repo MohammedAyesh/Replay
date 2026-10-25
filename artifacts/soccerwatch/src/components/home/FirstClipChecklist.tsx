@@ -23,10 +23,13 @@ export function FirstClipChecklist({ matches, clips, now }: { matches: MyMatches
   const [notShared] = useFirstTime("home.first-clip.shared.v1");
 
   const latest = matches.recent[0] ?? matches.live[0] ?? null;
-  const anyMatch = latest ?? matches.upcoming[0] ?? matches.invites[0] ?? null;
+  // A pitch counts once he has a match of his own (an unanswered invite isn't one yet).
+  const anyMatch = latest ?? matches.upcoming[0] ?? null;
   const matchHref = latest ? (latest.inviteToken ? `/m/${latest.code}?i=${latest.inviteToken}` : `/m/${latest.code}`) : "/fields";
   const cut = clips.length > 0;
-  const shared = !notShared || clips.some((clip) => clip.visibility !== "private" || Boolean(clip.exportedUrl));
+  // Sent = downloaded or shared from this phone, shared publicly, or rendered for download.
+  // "match" visibility doesn't count: clips cut from a match page are saved that way automatically.
+  const shared = !notShared || clips.some((clip) => clip.visibility === "public" || clip.visibility === "followers" || Boolean(clip.exportedUrl));
 
   const steps = [
     { key: "account", label: copy.account, done: true, href: "/account" },
@@ -41,7 +44,8 @@ export function FirstClipChecklist({ matches, clips, now }: { matches: MyMatches
     { key: "share", label: copy.share, done: cut && shared, href: "/my-clips" },
   ];
   const done = steps.filter((step) => step.done).length;
-  if (!open || done === steps.length) return null;
+  // A starter checklist: players who have already cut a few clips are past it, whatever this phone remembers.
+  if (!open || done === steps.length || clips.length >= 3) return null;
   const next = steps.findIndex((step) => !step.done);
 
   return (

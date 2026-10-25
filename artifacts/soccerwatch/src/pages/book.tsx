@@ -137,7 +137,8 @@ export default function BookPage() {
   const priceFils = usingFree ? Math.max(0, Math.ceil(duration / 60) - reward!.freeHours) * pricePerHour : fullPriceFils;
   const nothingToPay = usingFree && priceFils === 0;
   // The challenge only counts CliQ bookings that didn't use a free match.
-  const countsForFreeMatch = Boolean(freeMatch?.enabled) && !usingFree;
+  // Only when this booking really could earn one: not this month's second, and not one paid for with a free match.
+  const countsForFreeMatch = Boolean(freeMatch?.enabled) && freeMatch?.canEarn !== false && !usingFree;
   const payAtField = Boolean(fieldsQuery.data?.payAtField) && !nothingToPay;
   const method: PayMethod = payAtField ? payWith : "cliq";
   const field = fields.find((f) => f.id === fieldId) ?? null;

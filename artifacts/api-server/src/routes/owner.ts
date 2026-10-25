@@ -26,7 +26,7 @@ import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
-import { availableReward, releaseRewardForMatch, spendReward } from "../lib/freeMatch";
+import { attachReward, availableReward, canEarnThisMonth, claimReward, releaseReward, releaseRewardForMatch } from "../lib/freeMatch";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -1899,6 +1899,8 @@ router.get("/bookings/fields", async (req, res): Promise<void> => {
       const reward = await availableReward(viewer.id).catch(() => null);
       return {
         enabled: commerce.freeMatchEnabled,
+        // False once he has earned this month's free match: a new booking can't count, so don't say it does.
+        canEarn: await canEarnThisMonth(viewer.id, commerce).catch(() => false),
         friendsRequired: commerce.freeMatchFriendsRequired,
         freeHours: commerce.freeMatchHours,
         reward: reward ? { id: reward.id, freeHours: reward.freeHours, expiresAt: reward.expiresAt.toISOString() } : null,
@@ -2034,53 +2036,65 @@ router.post("/bookings", async (req, res): Promise<void> => {
   const amountFils = reward
     ? Math.max(0, Math.ceil(durationSeconds / 3600) - reward.freeHours) * commerce.playerBookingFilsPerHour
     : bookingPriceFils(durationSeconds, commerce.playerBookingFilsPerHour);
-  const [created] = await db.insert(footageRequestsTable).values({
-    fieldId: field.id,
-    cameraId: field.cameraId,
-    requestedBy: user.id,
-    startLocal: start.value,
-    endLocal: end.value,
-    requestedSeconds: durationSeconds,
-    // Paid by the players, so the field owner's ledger charges nothing for it.
-    rateFils: 0,
-    status: "awaiting_payment",
-    message: "Waiting for payment",
-  }).returning();
-  const room = await ensureRoomForRequest(created);
-  await db.update(matchRoomsTable).set({
-    captainUserId: user.id,
-    title: body.data.title || null,
-    updatedAt: new Date(),
-  }).where(eq(matchRoomsTable.id, room.id));
-  await db.insert(matchPlayersTable).values({
-    matchId: room.id,
-    userId: user.id,
-    displayName: user.name,
-    inviteToken: randomToken(10),
-    rsvp: "in",
-    rsvpAt: new Date(),
-    shirtNumber: user.shirtNumber ?? null,
-  }).onConflictDoNothing();
-  if (reward && !(await spendReward(reward.id, user.id, room.id))) {
-    // Spent a moment ago by another tap: undo this booking rather than charge for it.
-    await db.update(footageRequestsTable).set({ status: "cancelled", message: "Free match already used", updatedAt: new Date() })
-      .where(eq(footageRequestsTable.id, created.id));
+  // Claim the free match before anything is created, so a double tap is turned away cleanly.
+  if (reward && !(await claimReward(reward.id, user.id))) {
     res.status(409).json({ error: "You don't have a free match to use" });
     return;
   }
   const fullyFree = Boolean(reward) && amountFils === 0;
   const method = fullyFree ? "free" : payWith;
-  const reference = `${fullyFree ? "RF" : "RB"}${room.code}-${randomToken(3).toUpperCase()}`;
-  await db.insert(statUnlocksTable).values({
-    userId: user.id,
-    matchId: room.id,
-    kind: "booking",
-    amountFils,
-    reference,
-    method,
-    // Nothing to collect on a fully free booking.
-    ...(fullyFree ? { status: "paid", confirmedAt: new Date() } : {}),
-  });
+  let created: typeof footageRequestsTable.$inferSelect | undefined;
+  let room: Awaited<ReturnType<typeof ensureRoomForRequest>>;
+  let reference: string;
+  try {
+    [created] = await db.insert(footageRequestsTable).values({
+      fieldId: field.id,
+      cameraId: field.cameraId,
+      requestedBy: user.id,
+      startLocal: start.value,
+      endLocal: end.value,
+      requestedSeconds: durationSeconds,
+      // Paid by the players, so the field owner's ledger charges nothing for it.
+      rateFils: 0,
+      status: "awaiting_payment",
+      message: "Waiting for payment",
+    }).returning();
+    room = await ensureRoomForRequest(created);
+    if (reward) await attachReward(reward.id, room.id);
+    await db.update(matchRoomsTable).set({
+      captainUserId: user.id,
+      title: body.data.title || null,
+      updatedAt: new Date(),
+    }).where(eq(matchRoomsTable.id, room.id));
+    await db.insert(matchPlayersTable).values({
+      matchId: room.id,
+      userId: user.id,
+      displayName: user.name,
+      inviteToken: randomToken(10),
+      rsvp: "in",
+      rsvpAt: new Date(),
+      shirtNumber: user.shirtNumber ?? null,
+    }).onConflictDoNothing();
+    reference = `${fullyFree ? "RF" : "RB"}${room.code}-${randomToken(3).toUpperCase()}`;
+    await db.insert(statUnlocksTable).values({
+      userId: user.id,
+      matchId: room.id,
+      kind: "booking",
+      amountFils,
+      reference,
+      method,
+      // Nothing to collect on a fully free booking.
+      ...(fullyFree ? { status: "paid", confirmedAt: new Date() } : {}),
+    });
+  } catch (error) {
+    // Don't leave a half-made booking holding the slot or the free match.
+    if (created) {
+      await db.update(footageRequestsTable).set({ status: "cancelled", message: "Booking could not be completed", updatedAt: new Date() })
+        .where(eq(footageRequestsTable.id, created.id)).catch(() => undefined);
+    }
+    if (reward) await releaseReward(reward.id).catch(() => undefined);
+    throw error;
+  }
   // Pay at the field, or nothing to pay: the recording is locked in now.
   const activated = payWith === "field" || fullyFree ? await activatePaidBooking(created.id) : null;
   res.status(201).json({

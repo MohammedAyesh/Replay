@@ -419,7 +419,8 @@ async function roomPayload(req: Request, ctx: RoomContext, viewer: LocalUser | n
     booking: bookingPayment ? {
       status: bookingPayment.status,
       /** cliq | field: pay-at-field bookings record straight away; staff collect the cash. */
-      method: bookingPayment.method === "field" ? "field" : "cliq",
+      /** free: a free match covered it all; nothing to pay, cancellable before kick-off. */
+      method: bookingPayment.method === "field" ? "field" : bookingPayment.method === "free" ? "free" : "cliq",
       payAtFieldAllowed: commerce.payAtField,
       amountFils: bookingPayment.amountFils,
       reference: (member || isOwner || bookingPayment.userId === viewerId) ? bookingPayment.reference : null,
@@ -716,6 +717,11 @@ router.get("/me/matches", async (req, res): Promise<void> => {
   const ownedSet = new Set(ownedFieldIds);
   const base = publicBaseUrl(req);
   const fieldRecordings: FieldRecordingCache = new Map();
+  // The free-match challenge runs alongside the list (it shares the recordings cache) rather than after it.
+  const freeMatchPromise = freeMatchStatus(user.id, { fieldRecordings }).catch((error) => {
+    logger.warn({ userId: user.id, err: error }, "Could not work out the free match");
+    return null;
+  });
   const items = await Promise.all(rooms.map(async (ctx) => {
     const roster = await rosterFor(ctx.room.id);
     const me = roster.find((p) => p.userId === user.id) ?? null;
@@ -867,11 +873,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     logger.warn({ userId: user.id, err: error }, "Could not choose the home stat tiles");
     return [];
   });
-  // The free-match challenge: where his newest CliQ booking has got, and any free match he can use.
-  const freeMatch = await freeMatchStatus(user.id).catch((error) => {
-    logger.warn({ userId: user.id, err: error }, "Could not work out the free match");
-    return null;
-  });
+  const freeMatch = await freeMatchPromise;
   res.json({
     live: active.filter((i) => i.phase === "live").sort(byStart),
     upcoming: upcomingItems,

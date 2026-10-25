@@ -398,7 +398,6 @@ export function GameClaim({
   const [labelError, setLabelError] = useState(false);
   const t0 = useRef<number | null>(null);
   const pendingNextGuess = useRef<string | null>(null);
-  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     setClaimName(identityName);
@@ -630,10 +629,7 @@ export function GameClaim({
     save();
   };
 
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
+  // No 1-second ticker: the timer is no longer shown, and re-rendering the whole game every second cost phones.
 
   /* --------------------------------------------------------------- media */
 
@@ -1257,7 +1253,7 @@ export function GameClaim({
 
   /* -------------------------------------------------------------- render */
 
-  const elapsed = t0.current ? ((S.step === "done" || S.step === "stats") && S.elapsed ? S.elapsed : now - t0.current) : S.elapsed;
+  const elapsed = t0.current ? ((S.step === "done" || S.step === "stats") && S.elapsed ? S.elapsed : Date.now() - t0.current) : S.elapsed;
   const span = (k: number) => {
     const c = chunkMeta(ctx, k);
     return `\u2066${mmss(c.start + game.matchOffset)}–${mmss(c.start + c.dur + game.matchOffset)}\u2069`;

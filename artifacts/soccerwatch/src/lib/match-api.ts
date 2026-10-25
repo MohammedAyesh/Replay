@@ -147,8 +147,8 @@ export type MatchRoom = {
   prices: { bookingFils: number };
   booking: {
     status: "pending" | "paid" | "rejected";
-    /** cliq: waits for the transfer. field: recording locked in, cash collected at the field. */
-    method: PayMethod;
+    /** cliq: waits for the transfer. field: recording locked in, cash collected at the field. free: a free match covered it. */
+    method: PayMethod | "free";
     payAtFieldAllowed: boolean;
     amountFils: number;
     reference: string | null;
@@ -604,6 +604,8 @@ export type BookingFields = {
   /** Signed-in players only: the free-match challenge and any free match they can use. */
   freeMatch?: {
     enabled: boolean;
+    /** False once he has earned this month's free match: a new booking can't count toward another. */
+    canEarn?: boolean;
     friendsRequired: number;
     freeHours: number;
     reward: { id: number; freeHours: number; expiresAt: string } | null;

@@ -56,8 +56,10 @@ export function useSkipTap(options: {
     [disabled, onSkip, onSingleTap],
   );
 
+  const lastTouchRef = useRef(0);
   const onTouchEnd = useCallback(
     (e: React.TouchEvent) => {
+      lastTouchRef.current = Date.now();
       if (e.changedTouches.length !== 1) return;
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       handleTap(e.changedTouches[0].clientX, rect);
@@ -65,5 +67,22 @@ export function useSkipTap(options: {
     [handleTap],
   );
 
-  return { flash, onTouchEnd };
+  /** Mouse and trackpad: a double-click on either half skips, like a double-tap. */
+  const onDoubleClick = useCallback(
+    (e: React.MouseEvent) => {
+      // Phones can fire a synthetic dblclick after a double-tap the touch handler already used.
+      if (disabled || Date.now() - lastTouchRef.current < 1000) return;
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const now = Date.now();
+      const side = e.clientX - rect.left < rect.width / 2 ? "left" : "right";
+      const amount = ESCALATION[1];
+      onSkip(side === "left" ? -amount : amount);
+      if (r.current.flashTimeout) clearTimeout(r.current.flashTimeout);
+      setFlash({ side, amount, key: now });
+      r.current.flashTimeout = setTimeout(() => setFlash(null), 900);
+    },
+    [disabled, onSkip],
+  );
+
+  return { flash, onTouchEnd, onDoubleClick };
 }

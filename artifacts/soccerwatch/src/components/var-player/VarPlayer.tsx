@@ -442,6 +442,7 @@ export function VarPlayer({
             onPointerMove={handleFramePointerMove}
             onPointerUp={handleFramePointerUp}
             onPointerCancel={handleFramePointerUp}
+            onLostPointerCapture={handleFramePointerUp}
             onClick={() => {
               if (draggedRef.current) {
                 draggedRef.current = false;
