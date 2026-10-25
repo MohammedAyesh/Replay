@@ -59,6 +59,9 @@ import {
   playerMoments,
   playerPlay,
   sideOfKit,
+  bibPick,
+  bibObservedKits,
+  isBibKit,
   teamDribbles,
   teamStats,
   type ClaimedPart,
@@ -387,7 +390,10 @@ function sideKits(room: MatchRoom, roster: MatchPlayer[], play: RecordingPlay, r
     const segs = new Set(play.manifest.segments
       .filter((s) => s.endSeconds > window.fromSeconds && s.startSeconds < window.toSeconds)
       .map((s) => s.index));
-    const observed = observedTeamKits(play.sidecars, segs);
+    // With bibs on one side the two shirts are the bib and everything else;
+    // the light/dark 2-means put the bibs with the other side's white shirts.
+    const bibKits = play.bib ? bibObservedKits(play.sidecars, play.bib, segs) : null;
+    const observed = bibKits ? { kits: bibKits } : observedTeamKits(play.sidecars, segs);
     if (observed) {
       const side = (key: "A" | "B") => ({
         measured: kits[key]?.measured ? kits[key].lab : null,
@@ -423,10 +429,19 @@ export async function joinMatchesFromClaim(userId: number, recordingId: number, 
     let team: string | null = null;
     if (own && play) {
       const kits = sideKits(room, roster.filter((p) => p.userId !== userId), play, recordingId, { fromSeconds, toSeconds });
-      let best = Number.POSITIVE_INFINITY;
-      for (const [side, kit] of Object.entries(kits)) {
-        const d = kitDistance(own, kit.lab) - (kit.measured ? 5 : 0); // a measured shirt beats a picked swatch at a tie
-        if (d < best) { best = d; team = side; }
+      // With bibs on one side, a claimant joins the side on his side of the bib
+      // line (recording 401: a white shirt went to the bibs' side by colour).
+      const entries = Object.entries(kits);
+      const byBib = play.bib && entries.length === 2 && bibPick(play.bib, entries[0][1].lab, entries[1][1].lab)
+        ? entries.find(([, kit]) => isBibKit(kit.lab, play.bib!) === isBibKit(own, play.bib!))
+        : undefined;
+      if (byBib) team = byBib[0];
+      else {
+        let best = Number.POSITIVE_INFINITY;
+        for (const [side, kit] of entries) {
+          const d = kitDistance(own, kit.lab) - (kit.measured ? 5 : 0); // a measured shirt beats a picked swatch at a tie
+          if (d < best) { best = d; team = side; }
+        }
       }
     }
     const existing = roster.find((p) => p.userId === userId);
@@ -562,7 +577,7 @@ async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: 
       if (play.hasKits) {
         kits = sideKits(ctx.room, roster, play, link.recordingId, window, sideAt, validAt);
         const x = game?.teamX ?? "A", y = game?.teamY ?? "B";
-        if (kits[x] && kits[y]) pick = { a: kits[x].lab, b: kits[y].lab };
+        if (kits[x] && kits[y]) pick = bibPick(play.bib, kits[x].lab, kits[y].lab) ?? { a: kits[x].lab, b: kits[y].lab };
       }
       out.push({
         link: { ...link, fromSeconds: from, toSeconds: to },

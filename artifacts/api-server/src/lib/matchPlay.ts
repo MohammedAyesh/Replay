@@ -371,6 +371,46 @@ export function bibKit(sidecars: Array<BallSidecar | null>): BibKit | null {
   return { lab, radius: Math.round(radius * 10) / 10 };
 }
 
+/** Whether a shirt is inside the bib line. */
+export function isBibKit(kit: Lab, bib: BibKit): boolean {
+  return kitDistance(kit, bib.lab) <= bib.radius;
+}
+
+/**
+ * Match rooms (2026-10-25, recording 401): with bibs on one side, the room's two
+ * sides are "in a bib" and "not in a bib", whatever the shirts under them. Given
+ * the room's two side colours, the bib-aware pick when they fall on opposite
+ * sides of the bib line, else null (the caller keeps the nearest-colour split).
+ */
+export function bibPick(bib: BibKit | null | undefined, a: Lab, b: Lab): TeamPick | null {
+  if (!bib || isBibKit(a, bib) === isBibKit(b, bib)) return null;
+  return { a, b, bib };
+}
+
+/**
+ * The two shirts a bib game shows: the bib colour, and the kit-seconds-weighted
+ * mean of every shirt outside the bib line. Stands in for observedTeamKits'
+ * 2-means, which on recording 401 split light from dark and put the yellow bibs
+ * with the white shirts of the other side.
+ */
+export function bibObservedKits(
+  sidecars: Array<BallSidecar | null>,
+  bib: BibKit,
+  segmentIndexes?: ReadonlySet<number>,
+): [Lab, Lab] | null {
+  let w = 0;
+  const sum = [0, 0, 0];
+  sidecars.forEach((sc, index) => {
+    if (!sc || (segmentIndexes && !segmentIndexes.has(index))) return;
+    for (const [L, a, b, secs] of Object.values(sc.kits ?? {})) {
+      if (!(secs > 0) || ![L, a, b].every(Number.isFinite) || isBibKit([L, a, b], bib)) continue;
+      sum[0] += L * secs; sum[1] += a * secs; sum[2] += b * secs; w += secs;
+    }
+  });
+  if (!(w > 0)) return null;
+  return [bib.lab, sum.map((v) => Math.round((v / w) * 10) / 10) as Lab];
+}
+
 /** Which side of a pick a shirt is on: 0 = a (the claimant's), 1 = b. */
 export function sideOfPick(kit: Lab, pick: TeamPick): 0 | 1 {
   if (pick.bib) {

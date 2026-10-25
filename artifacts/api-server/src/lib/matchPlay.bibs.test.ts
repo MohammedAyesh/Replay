@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bibKit, passEvents, seedTeams, sideOfKit, type Lab, type Touch } from "./matchPlay";
+import { bibKit, bibObservedKits, bibPick, isBibKit, passEvents, seedTeams, sideOfKit, type Lab, type Touch } from "./matchPlay";
 
 // Shirt colours measured on recording 401 (yellow bibs against a no-bib side in
 // whatever they wore), seconds on camera as the bundle's kits carry them.
@@ -59,5 +59,43 @@ describe("teams when one side wears bibs", () => {
 
   it("finds no bib in a white-against-black match and leaves the old split alone", () => {
     expect(bibKit(plainMatch)).toBeNull();
+  });
+});
+
+describe("match rooms when one side wears bibs", () => {
+  // the room on recording 401 measured these two side colours from its claimants:
+  // a white shirt on one side, red + purple on the other -- all three not in bibs
+  const roomWhite: Lab = [165.9, 128.3, 129.6];
+  const roomDark: Lab = [84.5, 142.6, 133.4];
+
+  it("shows the bib colour against the mean of every shirt outside the bib line", () => {
+    const bib = bibKit(bibMatch)!;
+    const kits = bibObservedKits(bibMatch, bib)!;
+    expect(kits[0]).toEqual(bib.lab);
+    expect(isBibKit(kits[1], bib)).toBe(false);
+    const pick = bibPick(bib, kits[0], kits[1])!;
+    for (const lab of YELLOW) expect(sideOfKit(lab, pick)).toBe(0);
+    for (const lab of Object.values(NO_BIB)) expect(sideOfKit(lab, pick)).toBe(1);
+  });
+
+  it("splits on the bib line once the room's sides are bib and not-bib", () => {
+    const bib = bibKit(bibMatch)!;
+    const pick = bibPick(bib, roomDark, bib.lab)!;
+    expect(sideOfKit(NO_BIB.white6, pick)).toBe(0);
+    expect(sideOfKit(NO_BIB.pink10, pick)).toBe(0);
+    expect(sideOfKit(YELLOW[3], pick)).toBe(1);
+  });
+
+  it("keeps the colour split when both room sides are outside the bib line", () => {
+    const bib = bibKit(bibMatch)!;
+    expect(bibPick(bib, roomWhite, roomDark)).toBeNull();
+    expect(bibPick(null, roomWhite, roomDark)).toBeNull();
+  });
+
+  it("would have put the white shirt with the bibs by plain colour distance", () => {
+    // the old room colours for an unclaimed side came from a light/dark 2-means;
+    // against white, the yellow bibs are nearer white than the dark side
+    const nearest = { a: roomWhite, b: roomDark };
+    expect(sideOfKit(YELLOW[0], nearest)).toBe(0);
   });
 });
