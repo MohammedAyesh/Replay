@@ -47,3 +47,4 @@ export * from "./friends";
 export * from "./matchPlayerStatsCache";
 export * from "./demoLeads";
 export * from "./freeMatchRewards";
+export * from "./goalVotes";

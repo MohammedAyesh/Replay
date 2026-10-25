@@ -309,6 +309,15 @@ export const PASS = {
   ambiguousKit: 5,
   /** possession credited per interval is capped, so a dead ball cannot swamp it */
   possessionCapSeconds: 8,
+  /**
+   * a "pass" faster than this between the two touches is a ball-tracker jump,
+   * not a pass: it counts as a contested ball, metres per second. On four cam1
+   * matches (394 and jobs 26, 27, 29, 2026-10-25) every judged long pass over
+   * 30 m/s was a glitch (17.8 m, 20.3 m and 17.9 m "in 0.4 s" with the ball
+   * moving a metre between two players); the fastest real one was 28.4 m/s.
+   * About 5% of long passes are dropped.
+   */
+  maxBallSpeed: 30,
 } as const;
 
 /**
@@ -465,7 +474,7 @@ export function passEvents(
     const metres = u.ball && v.ball ? Math.hypot(v.ball[0] - u.ball[0], v.ball[1] - u.ball[1]) : null;
     const kind: PlayEvent["kind"] = v.trackId === u.trackId || metres === null || metres < PASS.contestMetres
       ? "carry"
-      : metres < PASS.passMetres ? "contest" : "pass";
+      : metres < PASS.passMetres || metres / gap > PASS.maxBallSpeed ? "contest" : "pass";
     events.push({ kind, from: u, to: v, sameTeam, metres: metres === null ? null : round1(metres) });
   }
   return events;
@@ -838,6 +847,21 @@ export const DRIBBLE = {
   /** and is "passed" once he is this far behind the carrier (and still within passedRadius) */
   behindMetres: 0.5,
   passedRadiusMetres: 6,
+  /**
+   * and he has to have come this close to the carrier during the run, metres
+   * (feet to feet on the minimap). Without it a man standing still 4-6 m away
+   * counted as beaten. On 81 judged dribbles from four cam1 matches (2026-10-25)
+   * no real or plausible dribble had its man further than 2.9 m; 11 wrong ones
+   * did ("never engaged", "a run into space").
+   */
+  engageMetres: 3,
+  /**
+   * with the attacking direction known: a run that goes this far back toward
+   * the carrier's own goal...
+   */
+  backwardMetres: 3,
+  /** ...past men who all started at least this far behind him is not a take-on, metres */
+  behindStartMetres: 1.5,
   /** the next touch decides it only when it comes within this long, seconds */
   outcomeSeconds: 4,
   /** without team colours: another shirt this far from his is an opponent... */
@@ -902,8 +926,10 @@ export function dribbleEvents(
   touches: Touch[],
   kits: Map<string, Lab>,
   pick: TeamPick | null,
+  direction: PitchDirection | null = null,
 ): Dribble[] {
   if (!hasUsablePitchModel(manifest) || touches.length < 2) return [];
+  const length = manifest.pitchModel?.pitchWidthMetres ?? 0;
   const T = touches;
   const sideOf = (id: string, fallback: Lab | null) => kits.get(id) ?? fallback ?? null;
   type Run = { i: number; j: number };
@@ -977,6 +1003,8 @@ export function dribbleEvents(
     const ux = (c1.x - c0.x) / L, uy = (c1.y - c0.y) / L;
     const beaten: string[] = [];
     for (const [id, seq] of opp) {
+      // he has to have been at the carrier at some point of the run
+      if (!seq.some(({ p, mp }) => Math.hypot(p.x - mp.x, p.y - mp.y) <= DRIBBLE.engageMetres)) continue;
       let ahead = false;
       for (const { p, mp } of seq) {
         const rx = p.x - mp.x, ry = p.y - mp.y;
@@ -986,6 +1014,21 @@ export function dribbleEvents(
       }
     }
     if (!beaten.length) continue;
+    // with the direction from the minimap: running back toward his own goal past
+    // men who were already behind him is not getting past anyone
+    const side = direction?.sideOf(own) ?? null;
+    if (direction && side !== null && length > 0) {
+      const goal = direction.attacking(0, first.t) === side ? 0 : direction.attacking(length, first.t) === side ? length : null;
+      if (goal !== null) {
+        const toGoal = (x: number) => Math.abs(x - goal);
+        const progress = toGoal(c0.x) - toGoal(c1.x);
+        const allBehind = beaten.every((id) => {
+          const start = opp.get(id)?.[0];
+          return start ? toGoal(start.p.x) - toGoal(start.mp.x) > DRIBBLE.behindStartMetres : false;
+        });
+        if (progress < -DRIBBLE.backwardMetres && allBehind) continue;
+      }
+    }
     const next = T[r.j + 1];
     let outcome: Dribble["outcome"] = null;
     if (next && next.t - last.t <= DRIBBLE.outcomeSeconds) {
@@ -1092,7 +1135,7 @@ export const RESTART = {
 export type BallPoint = { t: number; p: [number, number] };
 
 /** What `detectedGoals` needs beyond the touches: the ball's positions and when play ended. */
-export type GoalContext = { ball?: BallPoint[]; ends?: number[] };
+export type GoalContext = { ball?: BallPoint[]; ends?: number[]; direction?: PitchDirection | null };
 
 /** What `detectedShots` needs beyond events and touches. */
 export type ShotContext = { ball?: BallPoint[]; inPlay?: Array<[number, number]> | null };
@@ -1102,10 +1145,135 @@ export function goalContext(play: {
   manifest: Pick<TrackingManifest, "width" | "height" | "pitchModel" | "frameRate" | "duration">;
   sidecars?: Array<BallSidecar | null> | null;
   phases?: Array<{ kind: string; start: number; end: number }> | null;
+  segments?: ReadonlyArray<{ tracks: ReadonlyArray<{ id: string; boxes: ReadonlyArray<{ frame: number; x: number; y: number; w: number; h: number }> }> }> | null;
+  kits?: Map<string, Lab> | null;
+  bib?: BibKit | null;
+  inPlay?: Array<[number, number]> | null;
+  /** already read by the loader (matchPlayLoad) */
+  direction?: PitchDirection | null;
 }): GoalContext {
   const ends = (play.phases ?? []).filter((p) => p.kind === "game").map((p) => p.end);
   if (play.manifest.duration > 0) ends.push(play.manifest.duration);
-  return { ball: ballOnPitch(play.manifest, play.sidecars), ends };
+  const direction = play.direction !== undefined ? play.direction : pitchDirection(play);
+  return { ball: ballOnPitch(play.manifest, play.sidecars), ends, direction };
+}
+
+/* ------------------------------------------------------ attacking direction */
+
+/**
+ * Which goal each side defends, from the minimap: every player's feet (box
+ * bottom centre) through the pitch model every half second, the same positions
+ * the app's minimap draws. Measured on recordings 392 and 394 (2026-10-25): in
+ * every 5-minute window of play the side defending x = 0 stands 5-9 m nearer it
+ * on average, and almost all the time spent in front of a goal is that goal's
+ * keeper's side. Both matches' real goals were all scored into the end the
+ * scorer's side attacks.
+ */
+export const DIRECTION = {
+  /** one verdict per window, seconds; sides change ends only at breaks */
+  windowSeconds: 300,
+  /** the two sides' mean distance along the pitch must differ by this, metres */
+  minGapMetres: 3,
+  /** and each side must have this many half-second positions in the window */
+  minDots: 100,
+  /**
+   * and the window must hold at least this share of a typical (median) window's
+   * positions: a warm-up or a half-empty window says little. Recording 394's
+   * 10-15 min warm-up window pointed the wrong way on 1,900 positions against
+   * ~6,000 in a played window.
+   */
+  minShareOfMedian: 0.5,
+  /** a window without a verdict borrows the nearest one this many windows away */
+  maxBorrow: 2,
+  stepSeconds: 0.5,
+} as const;
+
+export type PitchDirection = {
+  /** the two sides' shirts: [0] and [1] (with bibs, [0] is the bib side) */
+  kits: [Lab, Lab];
+  /** which side a shirt is on */
+  sideOf: (kit: Lab | null | undefined) => 0 | 1 | null;
+  /** which side attacks the goal at goalX at time t; null when the minimap cannot say */
+  attacking: (goalX: number, t: number) => 0 | 1 | null;
+};
+
+const directionCache = new WeakMap<object, PitchDirection | null>();
+
+export function pitchDirection(play: Parameters<typeof goalContext>[0]): PitchDirection | null {
+  const { manifest, sidecars, segments, kits } = play;
+  if (!sidecars || !segments || !kits || !manifest.pitchModel) return null;
+  if (directionCache.has(sidecars)) return directionCache.get(sidecars)!;
+  const result = computeDirection(play);
+  directionCache.set(sidecars, result);
+  return result;
+}
+
+function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirection | null {
+  const { manifest, sidecars, segments, kits } = play;
+  const pitch = pitchSizeOf(manifest);
+  if (!pitch || !sidecars || !segments || !kits) return null;
+  const bib = play.bib ?? bibKit(sidecars);
+  let sideKits: [Lab, Lab] | null = null;
+  let sideOf: PitchDirection["sideOf"];
+  if (bib) {
+    const shown = bibObservedKits(sidecars, bib);
+    if (!shown) return null;
+    sideKits = shown;
+    sideOf = (kit) => (kit ? (isBibKit(kit, bib) ? 0 : 1) : null);
+  } else {
+    const observed = observedTeamKits(sidecars);
+    if (!observed) return null;
+    sideKits = observed.kits;
+    const [k0, k1] = observed.kits;
+    sideOf = (kit) => (kit ? (kitDistance(kit, k0) <= kitDistance(kit, k1) ? 0 : 1) : null);
+  }
+  const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
+  const step = Math.max(1, Math.round(fps * DIRECTION.stepSeconds));
+  const acc = new Map<number, { n: [number, number]; sx: [number, number] }>();
+  for (const segment of segments) {
+    for (const track of segment.tracks) {
+      const side = sideOf(kits.get(track.id));
+      if (side === null) continue;
+      for (const box of track.boxes) {
+        if (box.frame % step) continue;
+        const t = box.frame / fps;
+        if (play.inPlay?.length && !inSpans(play.inPlay, t)) continue;
+        const p = interpolatePitchPosition(box.x + box.w / 2, box.y + box.h, manifest as TrackingManifest);
+        if (!p || p.x < 0 || p.x > pitch.length || p.y < 0 || p.y > pitch.width) continue;
+        const k = Math.floor(t / DIRECTION.windowSeconds);
+        const w = acc.get(k) ?? { n: [0, 0], sx: [0, 0] };
+        w.n[side]++; w.sx[side] += p.x;
+        acc.set(k, w);
+      }
+    }
+  }
+  /** per window: the side that defends x = 0 */
+  const defendsZero = new Map<number, 0 | 1>();
+  const sizes = [...acc.values()].map((w) => w.n[0] + w.n[1]).sort((a, b) => a - b);
+  const typical = sizes.length ? sizes[Math.floor(sizes.length / 2)] : 0;
+  for (const [k, w] of acc) {
+    if (w.n[0] < DIRECTION.minDots || w.n[1] < DIRECTION.minDots) continue;
+    if (w.n[0] + w.n[1] < DIRECTION.minShareOfMedian * typical) continue;
+    const m0 = w.sx[0] / w.n[0], m1 = w.sx[1] / w.n[1];
+    if (Math.abs(m0 - m1) < DIRECTION.minGapMetres) continue;
+    defendsZero.set(k, m0 < m1 ? 0 : 1);
+  }
+  if (!defendsZero.size) return null;
+  const attacking = (goalX: number, t: number): 0 | 1 | null => {
+    const k = Math.floor(t / DIRECTION.windowSeconds);
+    for (let d = 0; d <= DIRECTION.maxBorrow; d++) {
+      // the window itself, then earlier before later: an end switch happens at a
+      // break, so the play just before a goal is the better neighbour
+      for (const kk of d === 0 ? [k] : [k - d, k + d]) {
+        const zero = defendsZero.get(kk);
+        if (zero === undefined) continue;
+        const defending = goalX === 0 ? zero : (1 - zero) as 0 | 1;
+        return (1 - defending) as 0 | 1;
+      }
+    }
+    return null;
+  };
+  return { kits: sideKits, sideOf, attacking };
 }
 
 /** The shot context of a loaded recording: pitch-mapped ball samples and in-play spans. */
@@ -1156,6 +1324,17 @@ export type DetectedGoal = {
   lead: number | null;
   /** frame of that touch */
   touchF: number | null;
+  /** which goal the ball went into (0 or the pitch length), when known */
+  goalX?: number | null;
+  /**
+   * The last touch was by the side DEFENDING that goal: an own goal. It has no
+   * scorer (trackId and touchF are null) and `kit` is the attacking side's shirt,
+   * so every consumer that sides a goal by `kit` credits the right team and none
+   * calls it anybody's goal (2026-10-25).
+   */
+  ownGoal?: boolean;
+  /** the defender or keeper whose touch put it in */
+  ownGoalTrackId?: string | null;
 };
 
 export type DetectedShot = { t: number; trackId: string | null; kit: Lab | null; touchF: number | null };
@@ -1420,7 +1599,7 @@ function strikerBefore(touches: Touch[], t: number, window: number, pitch: Pitch
 export function detectedGoals(events: BundleEvent[], touches: Touch[], pitch: PitchSize | null = null, context: GoalContext = {}): DetectedGoal[] {
   const samples = pitch ? ballSamples(context.ball ?? [], touches) : [];
   if (!pitch || !samples.length) {
-    return mergedGoalTimes(events).map((t) => credit(t, touches, pitch));
+    return mergedGoalTimes(events).map((t) => credit(t, touches, pitch, null, context.direction ?? null));
   }
   const raw = events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t).sort((a, b) => a - b);
   const restarts = halfwayRests(samples, pitch);
@@ -1438,19 +1617,47 @@ export function detectedGoals(events: BundleEvent[], touches: Touch[], pitch: Pi
     const [kickoff] = answers[k];
     // never look back past the restart that answered the previous goal
     const floor = restarts.reduce((m, [, end]) => (end < times[0] - 2 && end > m ? end : m), -Infinity);
-    let at: number | null = null;
+    let at: { t: number; goalX: number } | null = null;
     for (const t of times) {
       at = entryIntoMouth(samples, Math.max(t - GOAL.lookbackSeconds, floor), Math.min(t + 1, kickoff), pitch);
       if (at !== null) break;
     }
-    if (at !== null) out.push(credit(at, touches, pitch));
+    if (at !== null) out.push(credit(at.t, touches, pitch, at.goalX, context.direction ?? null));
   }
   return out;
 }
 
-function credit(t: number, touches: Touch[], pitch: PitchSize | null): DetectedGoal {
+/**
+ * A goal at t credited the way detectedGoals credits one (the strike before
+ * it, never the keeper; an own goal when the last touch was the defending
+ * side's). For goals a player confirmed at a moment the detector did not keep
+ * (goalReview).
+ */
+export function creditGoalAt(t: number, touches: Touch[], pitch: PitchSize | null, goalX: number | null = null, direction: PitchDirection | null = null): DetectedGoal {
+  return credit(t, touches, pitch, goalX, direction);
+}
+
+/** The ball's last entry into a goal mouth in the GOAL.lookbackSeconds before t, with that goal's end. */
+export function mouthEntryBefore(t: number, touches: Touch[], pitch: PitchSize | null, context: GoalContext = {}): { t: number; goalX: number } | null {
+  if (!pitch || !context.ball?.length) return null;
+  const samples = ballSamples(context.ball, touches);
+  return entryIntoMouth(samples, t - GOAL.lookbackSeconds, t + 1, pitch);
+}
+
+function credit(t: number, touches: Touch[], pitch: PitchSize | null, goalX: number | null = null, direction: PitchDirection | null = null): DetectedGoal {
   const touch = strikerBefore(touches, t, GOAL.scorerSeconds, pitch);
-  return { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null };
+  const end = goalX ?? (pitch ? attackedGoalX(touches, t, touch ?? undefined, pitch) : null);
+  const goal: DetectedGoal = { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null, goalX: end };
+  const attacking = direction && end !== null ? direction.attacking(end, t) : null;
+  if (!direction || attacking === null) return goal;
+  const strikerSide = direction.sideOf(touch?.kit);
+  if (touch && strikerSide !== null && strikerSide !== attacking) {
+    // the last touch was the defending side's (a defender or the keeper): an own
+    // goal for the attacking side, never anyone's own "goal"
+    return { t, trackId: null, kit: direction.kits[attacking], lead: null, touchF: null, goalX: end, ownGoal: true, ownGoalTrackId: touch.trackId };
+  }
+  // with nobody credited, the goal still counts for the side attacking that end
+  return touch ? goal : { ...goal, kit: direction.kits[attacking] };
 }
 
 /** The ball tracker's samples and the touches' ball positions together, by time. */
@@ -1480,7 +1687,7 @@ function halfwayRests(samples: BallPoint[], pitch: PitchSize): Array<[number, nu
  * latest spell of samples in a mouth. Null when there was none, or when the
  * ball was in the other goal's area after it (that visit was not the goal).
  */
-function entryIntoMouth(samples: BallPoint[], from: number, to: number, pitch: PitchSize): number | null {
+function entryIntoMouth(samples: BallPoint[], from: number, to: number, pitch: PitchSize): { t: number; goalX: number } | null {
   const mid = pitch.width / 2;
   const mouthOf = (p: [number, number]): number | null => {
     for (const x of [0, pitch.length]) {
@@ -1504,7 +1711,7 @@ function entryIntoMouth(samples: BallPoint[], from: number, to: number, pitch: P
   const other = pitch.length - last.goalX;
   const away = samples.some((s) => s.t > last!.end && s.t <= to
     && Math.abs(s.p[0] - other) <= STRIKE.areaDepthMetres && Math.abs(s.p[1] - mid) <= STRIKE.areaHalfWidthMetres);
-  return away ? null : last.start;
+  return away ? null : { t: last.start, goalX: last.goalX };
 }
 
 function mergedGoalTimes(events: BundleEvent[]): number[] {

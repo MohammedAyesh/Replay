@@ -64,8 +64,10 @@ import {
   readOptionalMatchTeamSpans,
   warnOptionalMatchTeamSpansFailureOnce,
 } from "../lib/optionalMatchTeamSpans";
+import { setGoalVote } from "../lib/goalReview";
+import { resyncChainClaimsForRecording } from "./claimChain";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
-import { buildMatchCompetition, cachedCompetitionSummariesForUser, playerMatchForm } from "../lib/matchStatsCache";
+import { buildMatchCompetition, cachedCompetitionSummariesForUser, invalidateMatchStatsCacheForRecording, playerMatchForm } from "../lib/matchStatsCache";
 import { canViewMatchPlayerRows } from "../lib/matchStatsRules";
 import { loadStatTiles } from "../lib/homeStatTileLoad";
 import { freeMatchStatus } from "../lib/freeMatch";
@@ -671,13 +673,74 @@ router.get("/m/:code/stats", async (req, res): Promise<void> => {
 router.get("/m/:code/replay", async (req, res): Promise<void> => {
   const ctx = await loadOr404(req, res);
   if (!ctx) return;
+  const viewer = await optionalUser(req);
+  const canVoteGoals = viewer && !viewer.isGuest ? await canConfirmGoals(viewer, ctx) : false;
   try {
-    const viewer = await optionalUser(req);
-    res.json(await matchReplay(ctx, viewer && !viewer.isGuest ? viewer.id : null));
+    res.json({ ...(await matchReplay(ctx, viewer && !viewer.isGuest ? viewer.id : null)), canVoteGoals });
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "match replay failed");
-    res.json({ recordings: [], goals: [], shots: null, suggested: null, flow: { phases: null, inPlay: null } });
+    res.json({ recordings: [], goals: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals });
   }
+});
+
+/** Anyone playing in the match, its captain, the field's owner or an admin may say whether a chance was a goal. */
+async function canConfirmGoals(user: LocalUser, ctx: RoomContext): Promise<boolean> {
+  if (isPlaying(await playerForUser(ctx.room.id, user.id))) return true;
+  return canManage(user, ctx);
+}
+
+const goalVoteSchema = z.object({
+  recordingId: z.number().int().positive(),
+  /** the candidate's key (tracking seconds x 10), as GET /m/:code/replay gave it */
+  key: z.number().int().min(0),
+  /** null takes the viewer's verdict back */
+  verdict: z.enum(["goal", "not_goal"]).nullable(),
+});
+
+/**
+ * POST /m/:code/goals/vote -- "was this a goal?" (2026-10-25). One "goal"
+ * from anyone in the match confirms it: it then counts in the score Replay
+ * offers, the match stats and the players' moments, and every claim on the
+ * recording is re-synced so the scorer's "Your goal" clip appears.
+ */
+router.post("/m/:code/goals/vote", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  if (!(await canConfirmGoals(user, ctx))) {
+    res.status(403).json({ error: "Only players in this match can confirm goals" });
+    return;
+  }
+  const body = goalVoteSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Invalid goal vote" });
+    return;
+  }
+  const { recordingId, key, verdict } = body.data;
+  const linked = await recordingsForRoom(ctx);
+  if (!linked.some((link) => link.recordingId === recordingId)) {
+    res.status(404).json({ error: "That recording is not this match's" });
+    return;
+  }
+  // only a chance Replay offered (or one already voted on) can be voted on
+  const before = await matchReplay(ctx, user.id);
+  if (!before.goals.some((g) => g.recordingId === recordingId && g.key === key)) {
+    res.status(404).json({ error: "No such chance in this match" });
+    return;
+  }
+  try {
+    await setGoalVote(recordingId, key, user.id, verdict, ctx.room.id);
+  } catch (error) {
+    logger.error({ code: ctx.room.code, recordingId, key, err: error }, "goal vote failed");
+    res.status(503).json({ error: "Goal confirmation is not available yet" });
+    return;
+  }
+  await invalidateMatchStatsCacheForRecording(recordingId);
+  // the scorer's and his team's goal clips follow the confirmed goals
+  void resyncChainClaimsForRecording(req, recordingId).catch((error) =>
+    logger.warn({ recordingId, err: error }, "re-sync after a goal vote failed"));
+  res.json({ ...(await matchReplay(ctx, user.id)), canVoteGoals: true });
 });
 
 router.get("/me/matches", async (req, res): Promise<void> => {
