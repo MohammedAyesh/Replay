@@ -153,7 +153,8 @@ export function FreeMatchHomeCard({ status, canBook }: { status: FreeMatchStatus
       </CardShell>
     );
   }
-  if (!status.enabled || attempt?.capped) return null;
+  // Once per player: after his one free match, the challenge stops showing.
+  if (!status.enabled || !status.canEarn || attempt?.capped) return null;
   if (!attempt && !introOpen) return null;
 
   const steps = stepsFor(attempt, status);

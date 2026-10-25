@@ -277,6 +277,8 @@ export type FreeMatchReward = {
 };
 export type FreeMatchStatus = {
   enabled: boolean;
+  /** He hasn't had his one free match yet (it's once per player). */
+  canEarn: boolean;
   friendsRequired: number;
   freeHours: number;
   useWithinDays: number;

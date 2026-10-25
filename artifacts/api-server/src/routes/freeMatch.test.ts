@@ -219,13 +219,19 @@ describe("free match: earning", () => {
     expect(await rewardsOf("booker")).toHaveLength(1);
   });
 
-  it("a second full match the same month earns nothing more", async () => {
+  it("is once per player: a second full match never earns another", async () => {
     const again = await booking("booker", "cliq", 2);
     await everyoneFinds(again.recordingId);
     const status = await freeMatchStatus(users.booker);
-    expect(status.attempt?.code).toBe(again.room.code);
-    expect(status.attempt?.capped).toBe(true);
+    expect(status.canEarn).toBe(false);
+    expect(status.attempt).toBeNull();
     expect(await rewardsOf("booker")).toHaveLength(1);
+    // Even after he has used it, it doesn't come round again.
+    await db.update(freeMatchRewardsTable).set({ status: "used", usedAt: new Date(), earnedAt: new Date(Date.now() - 400 * DAY) })
+      .where(eq(freeMatchRewardsTable.userId, users.booker));
+    await freeMatchStatus(users.booker);
+    expect(await rewardsOf("booker")).toHaveLength(1);
+    await db.update(freeMatchRewardsTable).set({ status: "available", usedAt: null }).where(eq(freeMatchRewardsTable.userId, users.booker));
     const fields = await request(app).get("/api/bookings/fields").set(as("booker"));
     expect(fields.body.freeMatch.canEarn).toBe(false);
   });
@@ -289,12 +295,36 @@ describe("free match: earning", () => {
     bundleByRecording.set(rec.id, bundle.id);
     roomRecordings.set(usedRoom.id, [{ recordingId: rec.id, share: 1 }]);
     await everyoneFinds(rec.id, ["other", ...FRIENDS]);
-    await db.update(freeMatchRewardsTable).set({ earnedAt: new Date(Date.now() - 40 * DAY) }).where(eq(freeMatchRewardsTable.userId, users.other)); // not the monthly cap stopping it
     await freeMatchStatus(users.other);
     expect(await rewardsOf("other")).toHaveLength(1);
   });
 
-  it("two loads at once never earn past the monthly cap", async () => {
+  it("a friend counts only with a real account and his own player confirmed", async () => {
+    await resetPlayer("other");
+    const played = await booking("other", "cliq", 9);
+    await everyoneFinds(played.recordingId, ["other", "f1", "f2", "f3", "f4"]);
+    // f5 finished, but the player he picked isn't confirmed as him yet.
+    await db.insert(claimMatchProgressTable).values({ userId: users.f5, recordingId: played.recordingId, completed: true, stage: "done" });
+    await db.insert(claimMatchIdentityBindingsTable).values({
+      userId: users.f5, recordingId: played.recordingId, personId: "p-f5", trackingBundleId: bundleByRecording.get(played.recordingId)!,
+      bundleFingerprint: "fp", personParts: ["p-f5"], vouchedFragments: [], resolutionMethod: "track-fallback",
+      supportCount: 1, acceptedAnswerCount: 1, supportPercent: 100, state: "pending",
+    });
+    // A deleted account that had found himself doesn't count either.
+    const [gone] = await db.insert(usersTable).values({ name: `gone ${TAG}`, email: "deleted-player@soccerwatch.local", profileComplete: true })
+      .returning({ id: usersTable.id });
+    users.gone = gone.id;
+    await found("gone", played.recordingId);
+    let status = await freeMatchStatus(users.other);
+    expect(status.attempt?.friendsFound).toBe(4);
+    expect(status.reward).toBeNull();
+    await db.update(claimMatchIdentityBindingsTable).set({ state: "confirmed" })
+      .where(and(eq(claimMatchIdentityBindingsTable.userId, users.f5), eq(claimMatchIdentityBindingsTable.recordingId, played.recordingId)));
+    status = await freeMatchStatus(users.other);
+    expect(status.reward?.sourceCode).toBe(played.room.code);
+  });
+
+  it("two loads at once never earn twice", async () => {
     await resetPlayer("other");
     const a = await booking("other", "cliq", 8);
     const b = await booking("other", "cliq", 7);

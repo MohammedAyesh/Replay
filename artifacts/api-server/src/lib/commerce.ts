@@ -24,7 +24,6 @@ export interface Commerce {
   freeMatchFriendsRequired: number;
   freeMatchHours: number;
   freeMatchUseWithinDays: number;
-  freeMatchPerMonth: number;
   statsEnabled: boolean;
   statsPaywall: boolean;
   statsTeamPack: boolean;
@@ -65,7 +64,6 @@ export async function loadCommerce(ctx: SettingsContext = {}): Promise<Commerce>
     freeMatchFriendsRequired: Math.max(1, int(all["booking.freeMatchFriendsRequired"], 5)),
     freeMatchHours: Math.max(1, int(all["booking.freeMatchHours"], 2)),
     freeMatchUseWithinDays: Math.max(1, int(all["booking.freeMatchUseWithinDays"], 30)),
-    freeMatchPerMonth: Math.max(1, int(all["booking.freeMatchPerMonth"], 1)),
     statsEnabled: bool(all["stats.enabled"], false),
     statsPaywall: bool(all["stats.paywallEnabled"], false),
     statsTeamPack: bool(all["stats.teamPackEnabled"], true),

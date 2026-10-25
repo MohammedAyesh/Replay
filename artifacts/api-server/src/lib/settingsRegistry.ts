@@ -193,8 +193,8 @@ export const SETTINGS: readonly SettingDefinition[] = [
     label: "Free match challenge",
     description:
       "Book a match, pay by CliQ, find yourself and get enough friends to find themselves in the " +
-      "same match: the next booking is free. Off hides the challenge everywhere; rewards already " +
-      "earned can still be used.",
+      "same match: the next booking is free. Once per player. Off hides the challenge everywhere; " +
+      "rewards already earned can still be used.",
     type: "boolean",
     defaultValue: true,
   },
@@ -202,7 +202,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: "booking.freeMatchFriendsRequired",
     group: "Bookings",
     label: "Free match: friends who must find themselves",
-    description: "Other accounts, besides the booker, that must find themselves in the same match.",
+    description: "Other players, besides the booker, who must find themselves in the same match. Each needs their own Replay account (not a guest) and must finish finding themselves, with the player they picked confirmed as them. Each player can earn the free match once.",
     type: "number",
     defaultValue: 5,
     min: 1,
@@ -233,18 +233,6 @@ export const SETTINGS: readonly SettingDefinition[] = [
     max: 365,
     integer: true,
     unit: "days",
-  },
-  {
-    key: "booking.freeMatchPerMonth",
-    group: "Bookings",
-    label: "Free match: earned per player per month",
-    description: "How many free matches one player can earn in a calendar month (Amman time).",
-    type: "number",
-    defaultValue: 1,
-    min: 1,
-    max: 10,
-    integer: true,
-    unit: "matches",
   },
 
   // ── Match stats ────────────────────────────────────────────────────────

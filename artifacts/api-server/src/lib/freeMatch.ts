@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, notInArray, sql } from "drizzle-orm";
 import {
   db,
   claimMatchIdentityBindingsTable,
@@ -12,6 +12,7 @@ import {
   usersTable,
   type FreeMatchReward,
 } from "@workspace/db";
+import { DELETED_PLAYER_EMAIL } from "./accountDeletion";
 import { loadCommerce, type Commerce } from "./commerce";
 import { recordingsForRoom, type FieldRecordingCache, type LinkedRecording } from "./matchFeed";
 import { clipRangeToMatchWindow } from "./matchWindow";
@@ -33,8 +34,10 @@ import {
  * accounts (Admin -> Settings, default 5) find themselves in the same match
  * before the full video is deleted. His next booking is then free for up to a
  * set number of hours (default 2), used within a set number of days (default
- * 30). A player earns at most a set number a month (default 1). A booking
- * that used a free match never counts toward another.
+ * 30). Each player can earn it once, ever. Friends must be real accounts
+ * (not guests, not deleted) who finished finding themselves with the player
+ * they picked confirmed as them. A booking that used a free match never
+ * counts.
  *
  * Nothing runs in the background: progress is worked out when the player
  * looks (Home, the match page), and the reward row is written the first time
@@ -91,6 +94,8 @@ export type FreeMatchStatus = {
   useWithinDays: number;
   deadlineDays: number;
   pricePerHourFils: number;
+  /** He hasn't had his one free match yet, so a CliQ booking can still earn it. */
+  canEarn: boolean;
   attempt: FreeMatchAttempt | null;
   /** An unused free match he can book with now. */
   reward: FreeMatchRewardView | null;
@@ -113,10 +118,8 @@ export function attemptDeadlineMs(request: RoomContext["request"]): number | nul
   return Number.isFinite(expires) ? expires : null;
 }
 
-function ammanMonthStart(now = Date.now()): Date {
-  const local = new Date(now + AMMAN_UTC_OFFSET_MS);
-  return new Date(Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), 1) - AMMAN_UTC_OFFSET_MS);
-}
+/** Each player can earn the free match once, ever. */
+const REWARDS_PER_PLAYER = 1;
 
 /** "YYYY-MM-DD HH:MM" in Amman, the format footage requests store. */
 function ammanLocalString(ms: number): string {
@@ -153,9 +156,12 @@ export async function foundUserIds(recordingIds: number[]): Promise<Set<number>>
     .innerJoin(usersTable, eq(usersTable.id, claimMatchProgressTable.userId))
     .where(and(
       inArray(claimMatchProgressTable.recordingId, recordingIds),
+      // Finished finding himself, and the player he picked is confirmed as him.
       eq(claimMatchProgressTable.completed, true),
       eq(claimMatchIdentityBindingsTable.state, "confirmed"),
+      // A real account: not a guest, not a deleted one.
       eq(usersTable.isGuest, false),
+      ne(usersTable.email, DELETED_PLAYER_EMAIL),
     ));
   return new Set(rows.map((row) => row.userId));
 }
@@ -242,8 +248,8 @@ async function attemptView(progress: Progress, bookerId: number, capped: boolean
 
 /**
  * Write the reward for a finished match, unless the player already earned
- * this month's. Serialised per player so two devices can't both slip under
- * the cap. Returns whether a reward was written.
+ * his one. Serialised per player so two devices can't both earn it. Returns
+ * whether a reward was written.
  */
 async function earnReward(userId: number, progress: Progress, commerce: Commerce): Promise<boolean> {
   const friendIds = [...progress.found].filter((id) => id !== userId);
@@ -253,8 +259,8 @@ async function earnReward(userId: number, progress: Progress, commerce: Commerce
   return db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${EARN_LOCK_NAMESPACE}, ${userId})`);
     const [count] = await tx.select({ n: sql<number>`count(*)::int` }).from(freeMatchRewardsTable)
-      .where(and(eq(freeMatchRewardsTable.userId, userId), gte(freeMatchRewardsTable.earnedAt, ammanMonthStart())));
-    if ((count?.n ?? 0) >= commerce.freeMatchPerMonth) return false;
+      .where(eq(freeMatchRewardsTable.userId, userId));
+    if ((count?.n ?? 0) >= REWARDS_PER_PLAYER) return false;
     const inserted = await tx.insert(freeMatchRewardsTable).values({
       userId,
       sourceMatchId: progress.ctx.room.id,
@@ -306,12 +312,12 @@ export async function reconcileRewards(userId: number): Promise<void> {
        )`);
 }
 
-/** Whether a new CliQ booking could still earn him a free match this month. */
-export async function canEarnThisMonth(userId: number, commerce: Commerce): Promise<boolean> {
+/** Whether a new CliQ booking could still earn him the free match: he hasn't had his one yet. */
+export async function canEarn(userId: number, commerce: Commerce): Promise<boolean> {
   if (!commerce.freeMatchEnabled) return false;
   const [row] = await db.select({ n: sql<number>`count(*)::int` }).from(freeMatchRewardsTable)
-    .where(and(eq(freeMatchRewardsTable.userId, userId), gte(freeMatchRewardsTable.earnedAt, ammanMonthStart())));
-  return (row?.n ?? 0) < commerce.freeMatchPerMonth;
+    .where(eq(freeMatchRewardsTable.userId, userId));
+  return (row?.n ?? 0) < REWARDS_PER_PLAYER;
 }
 
 /** His unused, unexpired free match, if he has one. */
@@ -390,7 +396,8 @@ export async function freeMatchStatus(
     .orderBy(desc(freeMatchRewardsTable.earnedAt));
   let attempt: FreeMatchAttempt | null = null;
 
-  if (commerce.freeMatchEnabled) {
+  // Once he has earned his one free match, there is nothing left to track.
+  if (commerce.freeMatchEnabled && rewards.length < REWARDS_PER_PLAYER) {
     const excluded = rewards.flatMap((row) => [row.sourceMatchId, ...(row.usedMatchId === null ? [] : [row.usedMatchId])]);
     const now = Date.now();
     // His CliQ bookings from the last few weeks that haven't earned or used a free match, newest first.
@@ -417,7 +424,7 @@ export async function freeMatchStatus(
       .limit(10));
 
     const progress = await Promise.all(candidates.map((ctx) => progressFor(ctx, options.fieldRecordings)));
-    // Earn for every finished match (oldest first, so the cap goes to the one that finished first).
+    // Earn from the oldest finished match first; after his one, the rest earn nothing.
     let earnedAny = false;
     for (const entry of [...progress].reverse()) {
       if (entry.afterWhistle && isComplete(entry, userId, commerce)) {
@@ -430,8 +437,7 @@ export async function freeMatchStatus(
         .orderBy(desc(freeMatchRewardsTable.earnedAt));
     }
     const rewarded = new Set(rewards.map((row) => row.sourceMatchId));
-    const monthStart = ammanMonthStart().getTime();
-    const capped = rewards.filter((row) => row.earnedAt.getTime() >= monthStart).length >= commerce.freeMatchPerMonth;
+    const capped = rewards.length >= REWARDS_PER_PLAYER;
     // What to show: the newest match past the whistle that still has work to do, else the next one coming up.
     const live = progress.filter((entry) => !rewarded.has(entry.ctx.room.id) && (entry.deadlineMs === null || entry.deadlineMs >= now));
     const pick = live.find((entry) => entry.afterWhistle)
@@ -452,6 +458,7 @@ export async function freeMatchStatus(
     : []);
   return {
     ...base,
+    canEarn: commerce.freeMatchEnabled && rewards.length < REWARDS_PER_PLAYER,
     attempt,
     reward: available ? rewardView(available, codes) : null,
     latestEarned: latest ? rewardView(latest, codes) : null,

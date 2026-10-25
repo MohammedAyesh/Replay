@@ -26,7 +26,7 @@ import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
-import { attachReward, availableReward, canEarnThisMonth, claimReward, releaseReward, releaseRewardForMatch } from "../lib/freeMatch";
+import { attachReward, availableReward, canEarn, claimReward, releaseReward, releaseRewardForMatch } from "../lib/freeMatch";
 
 const router: IRouter = Router();
 const AMMAN_TIME_ZONE = "Asia/Amman";
@@ -1899,8 +1899,8 @@ router.get("/bookings/fields", async (req, res): Promise<void> => {
       const reward = await availableReward(viewer.id).catch(() => null);
       return {
         enabled: commerce.freeMatchEnabled,
-        // False once he has earned this month's free match: a new booking can't count, so don't say it does.
-        canEarn: await canEarnThisMonth(viewer.id, commerce).catch(() => false),
+        // False once he has had his one free match: a new booking can't count, so don't say it does.
+        canEarn: await canEarn(viewer.id, commerce).catch(() => false),
         friendsRequired: commerce.freeMatchFriendsRequired,
         freeHours: commerce.freeMatchHours,
         reward: reward ? { id: reward.id, freeHours: reward.freeHours, expiresAt: reward.expiresAt.toISOString() } : null,
