@@ -524,9 +524,8 @@ function drawCta(ctx: SKRSContext2D, spec: EndScreen, tt: number, portrait: bool
   const h = portrait ? 150 : 140;
   const y = (portrait ? 1340 : 860) + (1 - p) * 40;
   const label =
-    spec.kind === "academy" ? "للأهل: شوفوا الحصة كاملة"
-      : spec.kind === "signOff" ? "شوف كل ماتشاتك"
-        : "شوف الماتش كامل";
+    // The QR opens this clip's share card, so the line promises only that.
+    spec.kind === "academy" ? "للأهل: شوفوا الكليب" : "شوف الكليب";
   ctx.save();
   ctx.globalAlpha = p;
   const qr = h;

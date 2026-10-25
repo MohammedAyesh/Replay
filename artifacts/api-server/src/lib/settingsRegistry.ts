@@ -578,7 +578,7 @@ export const SETTINGS: readonly SettingDefinition[] = [
     key: "branding.endScreen.seconds",
     group: "Clip branding",
     label: "End screen length",
-    description: "How long the end screen lasts. Clips under 6 s get it after their last frame instead of over it.",
+    description: "How long the end screen lasts. A clip shorter than this plus 3 s (and at least 6 s) gets it after its last frame instead of over it, so it runs longer.",
     type: "number",
     defaultValue: 3,
     min: 2,

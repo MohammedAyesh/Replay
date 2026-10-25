@@ -197,6 +197,44 @@ describe("applyEndScreen", () => {
     }
   }, 120_000);
 
+  it("joins frame-accurately with the real export settings (B-frames)", async () => {
+    const { EXPORT_ENCODE_ARGS } = await import("../ffmpegExport");
+    const main = path.join(work, "bframes.mp4");
+    const start = endScreenStart(10, 3)!;
+    execFileSync("ffmpeg", [
+      "-nostdin", "-y", "-v", "error",
+      "-f", "lavfi", "-i", "testsrc2=s=608x1080:r=30:d=10",
+      "-f", "lavfi", "-i", "sine=f=440:r=44100:d=10",
+      ...EXPORT_ENCODE_ARGS.video, ...EXPORT_ENCODE_ARGS.audio,
+      "-force_key_frames", String(start), "-shortest", main,
+    ]);
+    const out = await applyEndScreen({
+      mainPath: main,
+      dims: { w: 608, h: 1080 },
+      job: { spec: sampleEndScreen("signOff", LOOK), seconds: 3, blur: 22, dim: 0.5 },
+      start,
+      encode: EXPORT_ENCODE_ARGS,
+      hasAudio: true,
+    });
+    try {
+      const frames = (file: string) => execFileSync("ffmpeg", [
+        "-nostdin", "-v", "error", "-i", file, "-map", "0:v", "-f", "framemd5", "-",
+      ]).toString().split("\n").filter((l) => l && !l.startsWith("#"));
+      const before = frames(main);
+      const after = frames(out);
+      expect(after).toHaveLength(before.length);
+      const hash = (line: string) => line.split(",").pop()!.trim();
+      const pts = (line: string) => Number(line.split(",")[2]);
+      // The untouched part is the same footage, frame for frame…
+      const cut = Math.round(start * FPS);
+      for (let i = 0; i < cut; i++) expect(hash(after[i]), `frame ${i}`).toBe(hash(before[i]));
+      // …and time only moves forward across the join.
+      for (let i = 1; i < after.length; i++) expect(pts(after[i])).toBeGreaterThan(pts(after[i - 1]));
+    } finally {
+      fs.rmSync(out, { force: true });
+    }
+  }, 120_000);
+
   it("appends to a clip too short to cover", async () => {
     const short = path.join(work, "short.mp4");
     execFileSync("ffmpeg", [
@@ -260,6 +298,8 @@ describe("planClipBranding", () => {
       expect(plan.endScreen?.spec.kind).toBe("signOff");
       expect(plan.endScreen?.seconds).toBe(4);
       expect(plan.endScreen?.spec.look.crest).not.toBeNull();
+      // The QR is the clip's own share card, never a match room code.
+      expect(plan.endScreen?.spec.link).toMatch(/\/s\/1\/[A-Za-z0-9_-]+$/);
       for (const t of plan.temps) fs.rmSync(t, { force: true });
     } finally {
       await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, keys));

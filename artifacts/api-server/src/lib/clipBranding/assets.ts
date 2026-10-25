@@ -106,7 +106,6 @@ export type BrandingPreset = {
   bookingPhone: string | null;
   instagram: string | null;
   crestFile: string;
-  showPlayerNames: boolean;
 };
 
 export const BRANDING_PRESETS: readonly BrandingPreset[] = [
@@ -122,7 +121,6 @@ export const BRANDING_PRESETS: readonly BrandingPreset[] = [
     bookingPhone: "07 9920 4098",
     instagram: null,
     crestFile: "jordan-galaxy-crest.png",
-    showPlayerNames: true,
   },
   {
     key: "jufa",
@@ -137,7 +135,6 @@ export const BRANDING_PRESETS: readonly BrandingPreset[] = [
     bookingPhone: "07 9543 3320",
     instagram: "jufa_academy",
     crestFile: "jufa-crest.png",
-    showPlayerNames: false,
   },
 ];
 

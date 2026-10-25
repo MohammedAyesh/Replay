@@ -279,8 +279,20 @@ async function buildEndScreen(
   fieldId: number | null,
 ): Promise<EndScreen | null> {
   const dateLabel = dateLabelFromLocal(room?.request.startLocal);
-  const link = room ? `${publicBase()}/m/${room.room.code}` : `${publicBase()}${shareCardPath(clip.id)}`;
+  // Always this clip's own share card. Never the match room: its code lets
+  // anyone join the match, see its roster and reach the full (often paid)
+  // footage, and an export is posted publicly.
+  const link = `${publicBase()}${shareCardPath(clip.id)}`;
   const common = { look, dateLabel, link };
+
+  // On an academy clip, names appear only when the academy's own profile says
+  // so: most of its players are children. One rule for every kind below, so a
+  // switched-off academy card cannot fall through to a card that prints names.
+  let namesAllowed = true;
+  if (clip.academyId) {
+    const profile = await loadBrandingProfile({ academyId: clip.academyId, fieldId });
+    namesAllowed = profile?.scopeType === "academy" && profile.scopeId === clip.academyId ? profile.showPlayerNames : false;
+  }
 
   // Stats are only ever the clip owner's own, and only when he can see them.
   let mine: { stats: MatchPlayerStatsCacheValue; matchPlayerId: number } | null = null;
@@ -322,8 +334,7 @@ async function buildEndScreen(
         ))
         .limit(1);
       if (player) {
-        const profile = await loadBrandingProfile({ academyId: clip.academyId, fieldId });
-        const showNames = profile?.scopeType === "academy" ? profile.showPlayerNames : false;
+        const showNames = namesAllowed;
         const number = player.jerseyNumber != null && String(player.jerseyNumber).trim() !== "" ? `#${player.jerseyNumber}` : null;
         const firstName = player.name?.trim().split(/\s+/)[0] ?? "";
         const big = number ?? (showNames && firstName ? firstName.toUpperCase() : "PLAYER");
@@ -347,7 +358,7 @@ async function buildEndScreen(
       .from(matchPlayersTable).where(eq(matchPlayersTable.id, mine.matchPlayerId));
     const [user] = await db.select({ name: usersTable.name, shirtNumber: usersTable.shirtNumber })
       .from(usersTable).where(eq(usersTable.id, clip.userId));
-    const name = (me?.displayName || user?.name || "").trim().split(/\s+/)[0] ?? "";
+    const name = namesAllowed ? (me?.displayName || user?.name || "").trim().split(/\s+/)[0] ?? "" : "";
     const shirt = me?.shirtNumber ?? user?.shirtNumber ?? null;
     const number = shirt != null && String(shirt).trim() !== "" ? `#${shirt}` : null;
     let awardAr: string | null = null;
@@ -404,7 +415,13 @@ async function buildEndScreen(
         if (winners.length === 1) {
           const [p] = await db.select({ displayName: matchPlayersTable.displayName, shirtNumber: matchPlayersTable.shirtNumber })
             .from(matchPlayersTable).where(inArray(matchPlayersTable.id, winners));
-          if (p) motm = p.shirtNumber ? `#${p.shirtNumber} ${p.displayName.split(/\s+/)[0]}` : p.displayName.split(/\s+/)[0];
+          if (p) {
+            const first = p.displayName.split(/\s+/)[0];
+            // Without names allowed, only a shirt number — or nothing.
+            motm = namesAllowed
+              ? (p.shirtNumber ? `#${p.shirtNumber} ${first}` : first)
+              : (p.shirtNumber ? `#${p.shirtNumber}` : null);
+          }
         }
       }
     } catch { /* MOTM is optional */ }

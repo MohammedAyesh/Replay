@@ -209,6 +209,37 @@ async function renderTail(options: {
   return out;
 }
 
+/**
+ * Everything before the forced keyframe at `start`, stream-copied: no second
+ * encode of the clip.
+ *
+ * Not `-t start -c copy`: that cuts in decode order, and with B-frames the
+ * keyframe at `start` and the frame after it end up in the head as well, so the
+ * footage jumps back two frames where the end screen begins. The segment muxer
+ * splits on the keyframe itself, so the head ends on the frame before it.
+ */
+async function cutHead(mainPath: string, start: number, temps: string[]): Promise<string> {
+  const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "soccerwatch-endscreen-head-"));
+  try {
+    await runFfmpeg([
+      "-nostdin", "-y", "-i", mainPath,
+      "-map", "0", "-c", "copy",
+      "-f", "segment",
+      // Half a frame early, so the split lands on the keyframe at `start`.
+      "-segment_times", Math.max(0, start - 0.5 / FPS).toFixed(4),
+      "-reset_timestamps", "1",
+      "-segment_format", "mp4",
+      path.join(dir, "seg%d.mp4"),
+    ]);
+    const head = path.join(os.tmpdir(), `soccerwatch-endscreen-head-${randomUUID()}.mp4`);
+    await fs.promises.rename(path.join(dir, "seg0.mp4"), head);
+    temps.push(head);
+    return head;
+  } finally {
+    fs.rm(dir, { recursive: true, force: true }, () => {});
+  }
+}
+
 async function concat(parts: string[]): Promise<string> {
   const list = path.join(os.tmpdir(), `soccerwatch-endscreen-list-${randomUUID()}.txt`);
   const out = path.join(os.tmpdir(), `soccerwatch-endscreen-final-${randomUUID()}.mp4`);
@@ -257,10 +288,7 @@ export async function applyEndScreen(options: {
 
     let head = mainPath;
     if (!appended) {
-      head = path.join(os.tmpdir(), `soccerwatch-endscreen-head-${randomUUID()}.mp4`);
-      temps.push(head);
-      // A stream copy up to the forced keyframe: no second encode of the clip.
-      await runFfmpeg(["-nostdin", "-y", "-i", mainPath, "-t", start.toFixed(3), "-c", "copy", "-avoid_negative_ts", "make_zero", head]);
+      head = await cutHead(mainPath, start, temps);
     }
     const final = await concat([head, tail]);
     logger.info({ kind: job.spec.kind, appended, start, seconds: job.seconds }, "End screen applied");

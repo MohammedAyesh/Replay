@@ -326,7 +326,8 @@ router.post("/admin/branding/preset", async (req, res): Promise<void> => {
       accentColor: preset.accentColor,
       bookingPhone: preset.bookingPhone,
       instagram: preset.instagram,
-      showPlayerNames: preset.showPlayerNames,
+      // Never showPlayerNames: whether a children's academy prints names is
+      // that academy's own decision, not something a preset can switch on.
       crestUrl: `preset:${preset.crestFile}`,
       crestWidth: crest?.width ?? null,
       crestHeight: crest?.height ?? null,
@@ -372,9 +373,17 @@ router.get("/admin/branding/preview", async (req, res): Promise<void> => {
 
   const temps: string[] = [];
   try {
+    // An academy's clips fall back on the look of the field it plays at, as
+    // exports do, so its preview has to as well.
+    let fieldId: number | null = scope.scopeType === "field" ? scope.scopeId : null;
+    if (scope.scopeType === "academy") {
+      const [a] = await db.select({ fieldId: academiesTable.fieldId }).from(academiesTable)
+        .where(eq(academiesTable.id, scope.scopeId));
+      fieldId = a?.fieldId ?? null;
+    }
     const look = await lookFor({
       academyId: scope.scopeType === "academy" ? scope.scopeId : null,
-      fieldId: scope.scopeType === "field" ? scope.scopeId : null,
+      fieldId,
     }, temps);
     if (!look) { res.status(404).json({ error: "Nothing to preview yet: give this venue a name first." }); return; }
     if (req.query.format === "mp4" && isKind) {

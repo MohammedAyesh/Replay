@@ -1226,12 +1226,14 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
       // With an end screen the main encode always carries an audio track
       // (willConcat above adds silence when the source has none).
       withEndScreen(tmpPath, is9to16, options.endScreen, endStart, true)
-        .then((mainPath) => withBookends(
+        .then(({ path: mainPath, applied }) => withBookends(
           mainPath,
           is9to16,
           options.introUrl,
           options.introReferer,
-          options.endCardUrl,
+          // The drawn end screen replaces the uploaded end card; if it could
+          // not be drawn, the card is still there to fall back on.
+          applied ? undefined : options.endCardUrl,
           options.brandingReferer,
         ))
         .then(resolve, reject);
@@ -1249,8 +1251,8 @@ async function withEndScreen(
   job: EndScreenJob | undefined,
   start: number | null,
   hasAudio: boolean,
-): Promise<string> {
-  if (!job) return mainPath;
+): Promise<{ path: string; applied: boolean }> {
+  if (!job) return { path: mainPath, applied: false };
   try {
     const out = await applyEndScreen({
       mainPath,
@@ -1261,10 +1263,10 @@ async function withEndScreen(
       hasAudio,
     });
     cleanupTempFile(mainPath);
-    return out;
+    return { path: out, applied: true };
   } catch (err) {
     logger.error({ err, kind: job.spec.kind }, "End screen failed — exporting the clip without it");
-    return mainPath;
+    return { path: mainPath, applied: false };
   }
 }
 

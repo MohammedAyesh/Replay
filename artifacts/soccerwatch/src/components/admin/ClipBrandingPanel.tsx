@@ -305,6 +305,9 @@ function LookSection(props: {
 
 type RuleRef = {
   id: number;
+  key?: string;
+  enabled?: boolean;
+  excludes?: unknown[];
   scopeType: string;
   scopeId: number | null;
   daysOfWeek: number[] | null;
@@ -337,13 +340,19 @@ const STYLE_LABEL: Record<string, string> = {
   academyFrame: "Academy frame",
 };
 
-/** A rule this panel owns: scoped to exactly this venue, no time window. */
-function ownRule(e: Explained | undefined, scope: Scope): RuleRef | null {
-  if (!e || scope.type === "global") return null;
-  return e.resolution.matched.find((r) =>
-    r.scopeType === scope.type && r.scopeId === scope.id &&
-    !r.daysOfWeek?.length && r.startMinute == null && !r.effectiveFrom && !r.effectiveUntil,
-  ) ?? null;
+/**
+ * The rules this panel owns for a key: scoped to exactly this venue, with no
+ * time window or exclusions. Read from the full rule list rather than from what
+ * currently matches, so a rule someone switched off in Settings is found and
+ * reused instead of a second one being created beside it.
+ */
+function ownRules(rules: RuleRef[], key: string, scope: Scope): RuleRef[] {
+  if (scope.type === "global") return [];
+  return rules.filter((r) =>
+    r.key === key && r.scopeType === scope.type && r.scopeId === scope.id &&
+    !r.daysOfWeek?.length && r.startMinute == null && !r.effectiveFrom && !r.effectiveUntil &&
+    !(r.excludes?.length),
+  );
 }
 
 function SliderRow(props: {
@@ -389,17 +398,28 @@ function SliderRow(props: {
 function SwitchesSection(props: {
   scope: Scope;
   scopeLabel: string;
+  /** For an academy, the field it plays at: its exports resolve field rules too. */
+  academyFieldId?: number | null;
   onChanged: (values: Record<string, unknown>) => void;
 }) {
   const { scope } = props;
   const [explained, setExplained] = useState<Record<string, Explained>>({});
+  const [rules, setRules] = useState<RuleRef[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const q = scope.type === "field" ? `?fieldId=${scope.id}` : scope.type === "academy" ? `?academyId=${scope.id}` : "";
+    const q = scope.type === "field"
+      ? `?fieldId=${scope.id}`
+      : scope.type === "academy"
+        ? `?academyId=${scope.id}${props.academyFieldId ? `&fieldId=${props.academyFieldId}` : ""}`
+        : "";
     try {
-      const data = await api(`/admin/settings/preview${q}`);
+      const [data, ruleList] = await Promise.all([
+        api(`/admin/settings/preview${q}`),
+        scope.type === "global" ? Promise.resolve({ rules: [] }) : api("/admin/settings/rules"),
+      ]);
+      setRules((ruleList.rules ?? []) as RuleRef[]);
       const map: Record<string, Explained> = {};
       for (const row of (data.settings ?? []) as Explained[]) map[row.definition.key] = row;
       setExplained(map);
@@ -407,7 +427,7 @@ function SwitchesSection(props: {
     } catch (err) {
       setError((err as Error).message);
     }
-  }, [scope.type, scope.id]);
+  }, [scope.type, scope.id, props.academyFieldId]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -430,9 +450,9 @@ function SwitchesSection(props: {
       if (scope.type === "global") {
         await api(`/admin/settings/defaults/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ value: next }) });
       } else {
-        const own = ownRule(explained[key], scope);
+        const [own] = ownRules(rules, key, scope);
         if (own) {
-          await api(`/admin/settings/rules/${own.id}`, { method: "PATCH", body: JSON.stringify({ value: next }) });
+          await api(`/admin/settings/rules/${own.id}`, { method: "PATCH", body: JSON.stringify({ value: next, enabled: true }) });
         } else {
           await api("/admin/settings/rules", {
             method: "POST",
@@ -458,11 +478,11 @@ function SwitchesSection(props: {
   }
 
   async function reset(key: string) {
-    const own = ownRule(explained[key], scope);
-    if (!own) return;
+    const own = ownRules(rules, key, scope);
+    if (!own.length) return;
     setBusy(key);
     try {
-      await api(`/admin/settings/rules/${own.id}`, { method: "DELETE" });
+      for (const r of own) await api(`/admin/settings/rules/${r.id}`, { method: "DELETE" });
       await load();
     } catch (err) {
       setError((err as Error).message);
@@ -471,18 +491,25 @@ function SwitchesSection(props: {
     }
   }
 
-  const origin = (key: string) => {
+  const origin = (key: string): { text: string; own: boolean; locked?: boolean } | null => {
     const e = explained[key];
     if (!e) return null;
+    const winner = e.resolution.rule;
     if (scope.type !== "global") {
-      const own = ownRule(e, scope);
-      if (own && e.resolution.rule?.id === own.id) return { text: `set for ${props.scopeLabel}`, own: true };
-      if (own) return { text: "set here, but a stronger rule in Settings wins", own: true };
+      const own = ownRules(rules, key, scope);
+      if (own.some((r) => r.id === winner?.id)) return { text: `set for ${props.scopeLabel}`, own: true };
+      if (own.length && own.every((r) => r.enabled === false)) return { text: "set here, switched off in Settings", own: true };
+      if (own.length) return { text: "set here, but a stronger rule in Settings wins", own: true };
+      if (winner?.scopeType === "field" && scope.type === "academy") return { text: "from its field's setting", own: false };
       if (e.resolution.source === "rule") return { text: "from a rule in Settings", own: false };
       return { text: "same as everyone", own: false };
     }
+    // A base value under a rule that applies everywhere changes nothing, so the
+    // control is locked rather than silently snapping back.
+    if (e.resolution.source === "rule") return { text: "a rule in Settings decides this", own: false, locked: true };
     return { text: e.resolution.source === "shipped" ? "shipped default" : "base value", own: false };
   };
+  const locked = (key: string) => origin(key)?.locked === true;
 
   const originNode = (k: string) => {
     const o = origin(k);
@@ -503,7 +530,7 @@ function SwitchesSection(props: {
         <input
           type="checkbox"
           checked={value(k) === true}
-          disabled={busy === k || !explained[k]}
+          disabled={busy === k || !explained[k] || locked(k)}
           onChange={(e) => void change(k, e.target.checked)}
         />
         {label}
@@ -522,7 +549,7 @@ function SwitchesSection(props: {
       max={max}
       step={step}
       current={Number(value(k) ?? min)}
-      disabled={busy === k || !explained[k]}
+      disabled={busy === k || !explained[k] || locked(k)}
       origin={originNode(k)}
       onCommit={(v) => void change(k, v)}
     />
@@ -558,7 +585,7 @@ function SwitchesSection(props: {
               type="button"
               role="radio"
               aria-checked={style === s}
-              disabled={busy === KEYS.style || !explained[KEYS.style]}
+              disabled={busy === KEYS.style || !explained[KEYS.style] || locked(KEYS.style)}
               onClick={() => style !== s && void change(KEYS.style, s)}
               className={cn(
                 "px-3 py-1.5 rounded-full text-xs font-semibold border",
@@ -712,6 +739,7 @@ export default function ClipBrandingPanel(props: {
       <SwitchesSection
         scope={scope}
         scopeLabel={props.scopeLabel}
+        academyFieldId={scope.type === "academy" ? props.academyFieldId : null}
         onChanged={(values) => { setSettings(values); setVersion((v) => v + 1); }}
       />
       <PreviewSection scope={scope} version={version} settings={settings} />

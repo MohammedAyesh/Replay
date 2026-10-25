@@ -802,12 +802,12 @@ async function runBackgroundExport(
       const bufEndFraction = Math.min(1, (adjustedOffsetSec + clipDuration) / bufferedDuration);
 
       const clipFieldId = await fieldIdForClip(clipId);
-      const brandingCtx = { academyId: clip.academyId, fieldId: clipFieldId, userId: clip.userId };
-      const branding = await resolveBrandingForClip(clip.academyId, clipFieldId, brandingCtx);
+      const branding = await resolveBrandingForClip(clip.academyId, clipFieldId, { academyId: clip.academyId, fieldId: clipFieldId });
       overlayUrlForBackup = branding.overlayUrl ?? null;
 
       // Drawn branding (Admin → Branding): a generated overlay replaces the
-      // uploaded one, and a drawn end screen replaces the uploaded end card.
+      // uploaded one. A drawn end screen replaces the uploaded end card, which
+      // renderClip keeps only as the fallback if the end screen fails.
       // Planning never throws; anything it cannot do it leaves out.
       const drawn = await planClipBranding(
         {
@@ -819,11 +819,10 @@ async function runBackgroundExport(
         },
         clipFieldId,
         clip.aspectRatio === "9:16",
-        brandingCtx,
+        { academyId: clip.academyId, fieldId: clipFieldId, userId: clip.userId },
       );
       assetTmpFiles.push(...drawn.temps);
       if (drawn.overlayPath) branding.overlayUrl = undefined;
-      if (drawn.endScreen) branding.endCardUrl = undefined;
 
       // Every branding asset is fetched here, with its own timeout and its own
       // HTTP status in the log, before FFmpeg starts. FFmpeg then only reads
@@ -843,7 +842,7 @@ async function runBackgroundExport(
             clipId,
             intro: !!introPath,
             overlay: drawn.overlayPath ? "drawn" : !!overlayPath,
-            endCard: !!endCardPath,
+            endCard: drawn.endScreen ? (endCardPath ? "fallback" : false) : !!endCardPath,
             endScreen: drawn.endScreen?.spec.kind ?? null,
           },
           "Branding this export",

@@ -224,6 +224,10 @@ describe("drawn branding profiles", () => {
     const res = await request(app).post("/api/admin/branding/preset").send({ scope: `academy:${academyId}`, preset: "jufa" });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ nameEn: "JUFA", primaryColor: "#2B3DA8", crestPreset: "jufa-crest.png", showPlayerNames: false });
+    // A preset never switches names on for an academy's players.
+    await request(app).post("/api/admin/branding/preset").send({ scope: `academy:${academyId}`, preset: "jordan-galaxy" }).expect(200);
+    const [row] = await db.select().from(brandingProfilesTable).where(eq(brandingProfilesTable.scopeId, academyId));
+    expect(row.showPlayerNames).toBe(false);
     const crest = await request(app).get(`/api/admin/branding/preset-crest/${res.body.crestPreset}`);
     expect(crest.status).toBe(200);
     expect(crest.headers["content-type"]).toContain("image/png");

@@ -33,7 +33,7 @@ interface Asset {
   fitsPortrait: boolean | null;
 }
 
-interface Scope { id: number; name: string }
+interface Scope { id: number; name: string; fieldId?: number | null }
 
 const basePath = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
 
@@ -221,7 +221,11 @@ export default function BrandingTab() {
       </div>
 
       <ClipBrandingPanel
+        // Remounted per venue, so a request still in flight for the previous
+        // one cannot land on this one's switches.
+        key={scopeKey(scope.type, scope.id)}
         scope={scope}
+        academyFieldId={scope.type === "academy" ? academies.find((a) => a.id === scope.id)?.fieldId ?? null : null}
         scopeLabel={scopeLabel}
         profiles={profiles}
         presets={presets}
@@ -233,7 +237,7 @@ export default function BrandingTab() {
         <p className="text-text text-sm font-semibold">Uploaded files</p>
         <p className="text-muted-text text-xs mt-0.5">
           The older way: your own PNG and video. The uploaded overlay is used only while the overlay
-          is set to "Uploaded PNG"; the uploaded end card is skipped whenever the end screen is on.
+          is set to "Uploaded PNG". The uploaded end card is used when the end screen is off, or as the fallback if it cannot be drawn.
         </p>
       </div>
 
