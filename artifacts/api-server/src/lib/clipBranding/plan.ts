@@ -447,6 +447,27 @@ async function buildEndScreen(
 }
 
 /**
+ * Whether the console has drawn branding switched on for this clip's venue.
+ *
+ * The vps1 renderer cannot draw it, so a clip that wants it waits for a local
+ * render slot rather than overflowing there. Errors read as "no": overflow then
+ * behaves exactly as it did before drawn branding existed.
+ */
+export async function clipWantsDrawnBranding(ctx: SettingsContext): Promise<boolean> {
+  try {
+    const [overlayOn, style, endOn] = await Promise.all([
+      getSettingValue<boolean>("branding.overlayEnabled", ctx),
+      getSettingValue<string>("branding.overlayStyle", ctx),
+      getSettingValue<boolean>("branding.endScreenEnabled", ctx),
+    ]);
+    return endOn === true
+      || (overlayOn === true && style !== "uploaded" && (OVERLAY_STYLES as readonly string[]).includes(style));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Decide and prepare the drawn branding for one clip. Never throws.
  */
 export async function planClipBranding(

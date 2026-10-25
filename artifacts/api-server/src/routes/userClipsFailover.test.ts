@@ -356,6 +356,39 @@ describe("Method A overflow to vps1", () => {
     }
   });
 
+  it("keeps a clip with drawn branding local instead of overflowing to vps1", async () => {
+    exportMocks.primaryEnabled = true;
+    const { settingsDefaultsTable } = await import("@workspace/db");
+    const { invalidateSettingsCache } = await import("../lib/settings");
+    await db.insert(settingsDefaultsTable).values({ key: "branding.endScreenEnabled", value: true })
+      .onConflictDoUpdate({ target: settingsDefaultsTable.key, set: { value: true } });
+    invalidateSettingsCache();
+    const gate = deferred<void>();
+    const localBlocker = renderQueue.run("branded-overflow-blocker", () => gate.promise);
+    await tick();
+
+    try {
+      const id = await clip(null);
+      const res = await request(app).post(`/api/user-clips/${id}/export`);
+      expect(res.body.status).toBe("pending");
+      await tick();
+      expect((await rowOf(id)).exportStatus).toBe("pending");
+      expect(seen.some((entry) => entry.url === "/export/clip")).toBe(false);
+      expect(exportMocks.renderClip).not.toHaveBeenCalled();
+
+      gate.resolve();
+      await localBlocker;
+      await waitForExportStatus(id, "done");
+      expect(exportMocks.renderClip).toHaveBeenCalledTimes(1);
+      expect(seen.some((entry) => entry.url === "/export/clip")).toBe(false);
+    } finally {
+      gate.resolve();
+      await localBlocker;
+      await db.delete(settingsDefaultsTable).where(eq(settingsDefaultsTable.key, "branding.endScreenEnabled"));
+      invalidateSettingsCache();
+    }
+  });
+
   it("queues locally when vps1 is disabled and resumes after local capacity opens", async () => {
     exportMocks.primaryEnabled = true;
     exportMocks.backupEnabled = false;
