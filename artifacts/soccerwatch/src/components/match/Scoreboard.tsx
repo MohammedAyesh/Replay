@@ -31,7 +31,8 @@ export function Scoreboard({ room, copy, now, colors, names, replay }: {
   const post = ["processing", "ready", "expired"].includes(room.phase);
   const score = room.score;
   const minute = live ? Math.max(1, Math.floor((now - room.startMs) / 60000) + 1) : null;
-  const goals = replay?.goals ?? [];
+  // every chance with its status; an older server sends only "goals"
+  const goals = replay?.review ?? replay?.goals ?? [];
   const suggested = replay?.suggested ?? null;
   // "Was it a goal?" (2026-10-25): only confirmed chances count; an older
   // server sends no status, and then every listed goal counted

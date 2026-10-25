@@ -390,6 +390,7 @@ export function useMatchClips(code: string, enabled = true) {
 /** What Replay saw of the match (GET /m/:code/replay): claimable recordings and the goals it spotted. */
 export type MatchReplay = {
   recordings: number[];
+  /** the goals: confirmed ones only, so anything listing or counting goals reads this */
   goals: Array<{
     atSeconds: number;
     side: "A" | "B" | "C" | null;
@@ -413,6 +414,8 @@ export type MatchReplay = {
     rejectedBy?: string[];
     myVote?: "goal" | "not_goal" | null;
   }>;
+  /** every chance with its review status, for "Was it a goal?"; absent on older servers */
+  review?: MatchReplay["goals"];
   shots: [number, number] | null;
   /** the confirmed goals per side, offered as the score */
   suggested: { a: number; b: number } | null;

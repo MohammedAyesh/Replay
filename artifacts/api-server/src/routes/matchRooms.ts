@@ -679,7 +679,7 @@ router.get("/m/:code/replay", async (req, res): Promise<void> => {
     res.json({ ...(await matchReplay(ctx, viewer && !viewer.isGuest ? viewer.id : null)), canVoteGoals });
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "match replay failed");
-    res.json({ recordings: [], goals: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals });
+    res.json({ recordings: [], goals: [], review: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals });
   }
 });
 
@@ -725,7 +725,7 @@ router.post("/m/:code/goals/vote", async (req, res): Promise<void> => {
   }
   // only a chance Replay offered (or one already voted on) can be voted on
   const before = await matchReplay(ctx, user.id);
-  if (!before.goals.some((g) => g.recordingId === recordingId && g.key === key)) {
+  if (!before.review.some((g) => g.recordingId === recordingId && g.key === key)) {
     res.status(404).json({ error: "No such chance in this match" });
     return;
   }

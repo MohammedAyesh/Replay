@@ -979,7 +979,14 @@ export function replaySideForGoal(
  */
 export async function matchReplay(ctx: RoomContext, viewerUserId: number | null = null): Promise<{
   recordings: number[];
+  /**
+   * The goals: confirmed ones only. Every screen that lists or counts goals
+   * reads this, so an unconfirmed chance must never be in it (2026-10-25: with
+   * every open shot in it the match report listed ~100 "goals").
+   */
   goals: ReplayGoal[];
+  /** every chance with its review status, for the scoreboard's "Was it a goal?" */
+  review: ReplayGoal[];
   shots: [number, number] | null;
   suggested: { a: number; b: number } | null;
   /** where the game was on, and where the ball was in play, booking seconds */
@@ -1057,7 +1064,8 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
     : null;
   return {
     recordings: [...new Set(plays.map((p) => p.link.recordingId))],
-    goals,
+    goals: counted,
+    review: goals,
     shots: ctx.room.teamCount < 3 ? shots : null,
     suggested,
     flow: matchFlow([...shares.values()]),
