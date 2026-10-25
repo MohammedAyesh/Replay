@@ -266,7 +266,12 @@ describe("personal moments", () => {
       sidecars: [{ v: 1, fps: 20, touches: [], kits: {}, ball: [[1900, 3200, 400], [2000, 3400, 420], [2100, 3500, 430]] }],
       phases: [],
     } as never;
-    const goals = teamGoalMoments(play, [{ startSeconds: 50, endSeconds: 300 }], { width: 3840, height: 1080, frameRate: 20 });
+    const on = [{ startSeconds: 50, endSeconds: 300 }];
+    const size = { width: 3840, height: 1080, frameRate: 20 };
+    // a goal counts once a player in the match confirmed it (goalReview, 2026-10-25)
+    expect(teamGoalMoments(play, on, size)).toEqual([]);
+    const confirmed = [{ atTenths: 1000, userId: 1, verdict: "goal" as const }, { atTenths: 6000, userId: 2, verdict: "goal" as const }];
+    const goals = teamGoalMoments(play, on, size, [], confirmed);
     expect(goals.map((g) => g.momentSeconds)).toEqual([100]);
     const follow = goals[0].follow!;
     expect(follow).toHaveLength(17);

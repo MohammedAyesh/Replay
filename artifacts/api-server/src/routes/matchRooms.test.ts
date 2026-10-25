@@ -191,7 +191,7 @@ describe("a match from invite to vote", () => {
     // What Replay saw: nothing yet, and open to anyone with the link.
     const replay = await request(app).get(`/api/m/${room.code}/replay`);
     expect(replay.status).toBe(200);
-    expect(replay.body).toEqual({ recordings: [], goals: [], shots: null, suggested: null, flow: { phases: null, inPlay: null } });
+    expect(replay.body).toEqual({ recordings: [], goals: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals: false });
 
     // The owner sees the captain link.
     const owner = await request(app).get(`/api/m/${room.code}`).set(as("owner"));
@@ -322,6 +322,15 @@ describe("a match from invite to vote", () => {
     const v2 = await request(app).post(`/api/m/${room.code}/vote`).set(as("omar")).send({ candidatePlayerId: aliPlayer.id });
     expect(v2.body.vote.votesCast).toBe(2);
     expect((await request(app).post(`/api/m/${room.code}/vote`).set(as("outsider")).send({ candidatePlayerId: samiPlayer.id })).status).toBe(403);
+
+    // "Was this a goal?": anyone playing may answer; nobody outside the match,
+    // and only on a chance in this match's own footage.
+    const asked = await request(app).get(`/api/m/${room.code}/replay`).set(as("ali"));
+    expect(asked.body.canVoteGoals).toBe(true);
+    expect((await request(app).get(`/api/m/${room.code}/replay`).set(as("outsider"))).body.canVoteGoals).toBe(false);
+    expect((await request(app).post(`/api/m/${room.code}/goals/vote`).set(as("outsider")).send({ recordingId: 1, key: 10, verdict: "goal" })).status).toBe(403);
+    expect((await request(app).post(`/api/m/${room.code}/goals/vote`).set(as("ali")).send({ recordingId: 1, key: 10, verdict: "maybe" })).status).toBe(400);
+    expect((await request(app).post(`/api/m/${room.code}/goals/vote`).set(as("ali")).send({ recordingId: 999999, key: 10, verdict: "goal" })).status).toBe(404);
 
     // The story renderer's context for a clip cut from this match.
     await request(app).post(`/api/m/${room.code}/teams/auto`).set(as("omar")).send({});

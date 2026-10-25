@@ -1627,6 +1627,23 @@ export function detectedGoals(events: BundleEvent[], touches: Touch[], pitch: Pi
   return out;
 }
 
+/**
+ * A goal at t credited the way detectedGoals credits one (the strike before
+ * it, never the keeper; an own goal when the last touch was the defending
+ * side's). For goals a player confirmed at a moment the detector did not keep
+ * (goalReview).
+ */
+export function creditGoalAt(t: number, touches: Touch[], pitch: PitchSize | null, goalX: number | null = null, direction: PitchDirection | null = null): DetectedGoal {
+  return credit(t, touches, pitch, goalX, direction);
+}
+
+/** The ball's last entry into a goal mouth in the GOAL.lookbackSeconds before t, with that goal's end. */
+export function mouthEntryBefore(t: number, touches: Touch[], pitch: PitchSize | null, context: GoalContext = {}): { t: number; goalX: number } | null {
+  if (!pitch || !context.ball?.length) return null;
+  const samples = ballSamples(context.ball, touches);
+  return entryIntoMouth(samples, t - GOAL.lookbackSeconds, t + 1, pitch);
+}
+
 function credit(t: number, touches: Touch[], pitch: PitchSize | null, goalX: number | null = null, direction: PitchDirection | null = null): DetectedGoal {
   const touch = strikerBefore(touches, t, GOAL.scorerSeconds, pitch);
   const end = goalX ?? (pitch ? attackedGoalX(touches, t, touch ?? undefined, pitch) : null);

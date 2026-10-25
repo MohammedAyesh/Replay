@@ -39,9 +39,7 @@ import {
 } from "@workspace/db";
 import { normaliseChain, type ChainPart } from "../lib/claimChain";
 import {
-  detectedGoals,
   detectedShots,
-  goalContext,
   shotContext,
   pitchSizeOf,
   DRIBBLE,
@@ -60,6 +58,7 @@ import {
   type TeamPick,
 } from "../lib/matchPlay";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
+import { confirmedGoals, goalVotesFor } from "../lib/goalReview";
 import { joinMatchesFromClaim } from "../lib/matchFeed";
 import {
   isMissingMatchTeamSpansTable,
@@ -604,7 +603,9 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
   const events = passEvents(touches, pick);
   const mine = playerPlay(touches, events, parts, Boolean(pick));
   const pitch = pitchSizeOf(play.manifest);
-  const goals = detectedGoals(playEvents, touches, pitch, goalContext(play));
+  // only goals a player in the match confirmed count (goalReview)
+  const goalVotes = (await goalVotesFor([recordingId])).get(recordingId) ?? [];
+  const goals = confirmedGoals(play, goalVotes).filter((g) => inWindow(g.t));
   const shots = detectedShots(playEvents, touches, pitch, shotContext(play));
   const own = playerMoments(parts, playDribbles, goals, shots);
   const perSide = <T extends { kit: Lab | null }>(rows: T[]): [number, number] => {

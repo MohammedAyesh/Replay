@@ -17,10 +17,8 @@ import type { DeepReadonly } from "./claimBundleSegments";
 
 import type { ChainEarnedClip } from "./claimChainState";
 import {
-  goalContext,
   shotContext,
   inSpans,
-  detectedGoals,
   detectedShots,
   pitchSizeOf,
   kitOfParts,
@@ -31,6 +29,7 @@ import {
   sideOfKit,
   type ClaimedPart,
 } from "./matchPlay";
+import { confirmedGoals, type GoalVote } from "./goalReview";
 import type { RecordingPlay } from "./matchPlayLoad";
 import { clipPartsToMatchWindow } from "./matchWindow";
 
@@ -144,13 +143,15 @@ export function personalMoments(
   parts: ClaimedPart[],
   segments: readonly DeepReadonly<TrackingSegmentPayload>[],
   manifest: TrackingManifest,
+  /** players' verdicts on this recording's goal candidates: only confirmed goals are his goals (goalReview) */
+  goalVotes: GoalVote[] = [],
 ): PersonalMoment[] {
   // A moment outside the recording's match window is not this match's: the
   // claimant's parts are cut to it before anything is credited to them.
   parts = clipPartsToMatchWindow(parts, manifest);
   if (!play.hasBall || !parts.length) return [];
   const pitch = pitchSizeOf(play.manifest);
-  const goals = detectedGoals(play.events, play.touches, pitch, goalContext(play));
+  const goals = confirmedGoals(play, goalVotes);
   const shots = detectedShots(play.events, play.touches, pitch, shotContext(play));
   const own = playerMoments(parts, play.dribbles, goals, shots);
   const live = (t: number) => inSpans(play.inPlay, t);
@@ -193,7 +194,8 @@ export function personalMoments(
  * stood for seven real goals -- a kick-off wait, a stoppage before a penalty,
  * a keeper walking out, each its own event, and the real ones timed when play
  * stopped, up to fifteen seconds after the ball went in (so the clip opened on
- * the kick-off). detectedGoals keeps only events a restart answers, one per
+ * the kick-off). Since 2026-10-25 only goals a player in the match confirmed
+ * count (goalReview); before that, detectedGoals kept only events a restart answers, one per
  * restart, timed at the ball entering the mouth -- the same goals the match
  * stats count. Each clip follows the ball, so it is framed on the goal rather
  * than on the middle of the panorama.
@@ -203,16 +205,17 @@ export function teamGoalMoments(
   attributed: ReadonlyArray<{ startSeconds: number; endSeconds: number }>,
   manifest: Pick<TrackingManifest, "frameRate" | "width" | "height">,
   parts: ClaimedPart[] = [],
+  /** only goals a player confirmed are goals (goalReview) */
+  goalVotes: GoalVote[] = [],
 ): PersonalMoment[] {
   if (!play.hasBall) return [];
-  const pitch = pitchSizeOf(play.manifest);
   // Only his own side's goals. With the claimant's parts, the scorer's shirt is
   // put on a side the same way his passes are (bibs aware); a goal the other
   // side scored is not his moment. Recording 401: Mousa got the 76:04 goal a
   // yellow bib scored. Unknown scorer or shirt keeps the goal, as before.
   const own = parts.length ? kitOfParts(parts, play.sidecars, play.fps) : null;
   const pick = own ? seedTeams(own, play.kitOptions, play.bib ?? null) : null;
-  return detectedGoals(play.events, play.touches, pitch, goalContext(play))
+  return confirmedGoals(play, goalVotes)
     .filter((g) => attributed.some((span) => g.t >= span.startSeconds && g.t <= span.endSeconds))
     .filter((g) => !pick || sideOfKit(g.kit, pick) !== 1)
     .map((g) => ({

@@ -25,6 +25,7 @@ import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { mergeMoments, personalMoments, teamGoalMoments, type FollowPoint } from "../lib/personalMoments";
+import { goalVotesFor } from "../lib/goalReview";
 import type { ClaimEarnedClip } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import { createHash } from "crypto";
@@ -731,10 +732,13 @@ export async function syncChainClaim(
             chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
             ctx.manifest,
           );
+          // only goals a player in the match confirmed (goalReview); a goal
+          // confirmed later re-syncs every claim on the recording
+          const goalVotes = (await goalVotesFor([ctx.recordingId])).get(ctx.recordingId) ?? [];
           earnedClips = mergeMoments(
             earnedClips,
-            personalMoments(play, parts, ctx.segments, ctx.manifest),
-            teamGoalMoments(play, state.attributed, ctx.manifest, parts),
+            personalMoments(play, parts, ctx.segments, ctx.manifest, goalVotes),
+            teamGoalMoments(play, state.attributed, ctx.manifest, parts, goalVotes),
           );
         }
       } catch (error) {

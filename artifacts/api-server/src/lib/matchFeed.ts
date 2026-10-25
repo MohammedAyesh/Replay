@@ -43,9 +43,7 @@ import { queueMatchStatsCacheForMatch } from "./matchStatsCacheJobs";
 import { logger } from "./logger";
 import { readOptionalMatchTeamSpans } from "./optionalMatchTeamSpans";
 import {
-  goalContext,
   shotContext,
-  detectedGoals,
   detectedShots,
   pitchSizeOf,
   hexToLab,
@@ -72,6 +70,7 @@ import {
   type TeamPick,
   type Touch,
 } from "./matchPlay";
+import { goalVotesFor, reviewedGoalsOf, type ReviewedGoal } from "./goalReview";
 import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { buildPlayerMetrics } from "./playerMetrics";
 import { matchFlow, mergeSpans, type MatchFlow, type RecordingFlowInput } from "./matchFlow";
@@ -518,7 +517,10 @@ type LinkPlay = {
   pick: TeamPick | null;
   kits: ReturnType<typeof sideKits> | null;
   dribbles: Dribble[];
+  /** goals a player in the match confirmed (goalReview) */
   goals: DetectedGoal[];
+  /** every goal candidate in the window with the players' verdicts */
+  review: ReviewedGoal[];
   shots: DetectedShot[];
 };
 
@@ -526,6 +528,7 @@ async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: 
   id: number; fromOffsetSec: number; toOffsetSec?: number | null; team: string | null; source: string; changedShirt?: boolean; createdAt: Date | string | number;
 }>>(), shirtEpochs = new Map<string, number[]>()) : Promise<LinkPlay[]> {
   const linked = await recordingsForRoom(ctx);
+  const votes = await goalVotesFor(linked.map((link) => link.recordingId));
   const out: LinkPlay[] = [];
   for (const link of linked) {
     const windowFrom = game ? Math.max(link.fromSeconds, game.startOffsetSec - link.recordingOffsetSec) : link.fromSeconds;
@@ -533,6 +536,7 @@ async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: 
     if (windowTo <= windowFrom) continue;
     const play = await loadRecordingPlay(link.recordingId, { keepSegments });
     if (!play) continue;
+    const reviewed = play.hasBall ? reviewedGoalsOf(play, votes.get(link.recordingId) ?? []) : [];
     const spansInBookingClock = roster.flatMap((p) => spans.get(p.id) ?? []);
     const points = [windowFrom, windowTo];
     for (const span of spansInBookingClock) {
@@ -586,7 +590,8 @@ async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: 
         pick,
         kits,
         dribbles: play.dribbles.filter((d) => within(d.t0)),
-        goals: detectedGoals(play.events.filter((e) => within(e.t)), play.touches.filter((t) => within(t.t)), pitchSizeOf(play.manifest), goalContext(play)),
+        goals: reviewed.filter((g) => g.status === "confirmed" && within(g.t)),
+        review: reviewed.filter((g) => within(g.t)),
         shots: detectedShots(play.events.filter((e) => within(e.t)), play.touches.filter((t) => within(t.t)), pitchSizeOf(play.manifest), shotContext(play)),
       });
     }
@@ -925,6 +930,23 @@ export type ReplayGoal = {
   gameIndex: number | null;
   /** tracking seconds on that recording (for the footage player) */
   t: number;
+  /**
+   * Goal review (2026-10-25): every chance Replay found, and what the players
+   * said. Only "confirmed" goals count anywhere; "open" ones wait for anyone
+   * in the match to say goal or not.
+   */
+  status: "confirmed" | "rejected" | "open";
+  /** what found it: the goal detector, a shot on target, a goals.py goal event */
+  source: "goal" | "shot" | "event";
+  /** the key a vote on it is cast with: tracking seconds x 10 */
+  key: number;
+  /** the touch before it was the defending side's: the attacking side's goal, nobody's */
+  ownGoal: boolean;
+  /** roster names of the players who said goal / not a goal */
+  confirmedBy: string[];
+  rejectedBy: string[];
+  /** the viewer's own verdict, if any */
+  myVote: "goal" | "not_goal" | null;
 };
 
 export function replaySideForGoal(
@@ -968,7 +990,8 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
   const plays = await linkPlays(ctx, roster, false);
   const goals: ReplayGoal[] = [];
   let shots: [number, number] | null = null;
-  for (const { link, play, pick, kits, goals: found, shots: sh } of plays) {
+  const nameOf = (userId: number) => roster.find((p) => p.userId === userId)?.displayName ?? null;
+  for (const { link, play, pick, kits, review: found, shots: sh } of plays) {
     const claimed = roster
       .filter((p) => p.userId)
       .map((p) => ({ p, test: mineTest(clipParts(partsOf(play.manifest, p.userId!, link.recordingId), link.fromSeconds, link.toSeconds, play.fps)) }));
@@ -991,6 +1014,15 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
         recordingId: link.recordingId,
         gameIndex: game?.idx ?? null,
         t: g.t,
+        status: g.status,
+        source: g.source,
+        key: g.key,
+        ownGoal: g.ownGoal === true,
+        confirmedBy: g.confirmedBy.map(nameOf).filter((n): n is string => Boolean(n)),
+        rejectedBy: g.rejectedBy.map(nameOf).filter((n): n is string => Boolean(n)),
+        myVote: viewerUserId === null ? null
+          : g.confirmedBy.includes(viewerUserId) ? "goal"
+          : g.rejectedBy.includes(viewerUserId) ? "not_goal" : null,
       });
     }
     if (ctx.room.teamCount < 3 && pick) {
@@ -1017,8 +1049,10 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
       });
     }
   }
-  const sided = goals.filter((g) => g.side);
-  const suggested = ctx.room.teamCount < 3 && goals.length && sided.length === goals.length
+  // only goals a player confirmed are offered as the score
+  const counted = goals.filter((g) => g.status === "confirmed");
+  const sided = counted.filter((g) => g.side);
+  const suggested = ctx.room.teamCount < 3 && counted.length && sided.length === counted.length
     ? { a: sided.filter((g) => g.side === "A").length, b: sided.filter((g) => g.side === "B").length }
     : null;
   return {

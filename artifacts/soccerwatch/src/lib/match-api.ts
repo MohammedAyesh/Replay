@@ -384,9 +384,27 @@ export type MatchReplay = {
     recordingId: number;
     gameIndex: number | null;
     t: number;
+    /**
+     * "Was this a goal?" (2026-10-25): every chance Replay found. Only a
+     * confirmed one counts; one "goal" from anyone in the match confirms it.
+     * Absent on older servers, where every listed goal counted.
+     */
+    status?: "confirmed" | "rejected" | "open";
+    /** what found it: the goal detector, a shot on target, a goal event */
+    source?: "goal" | "shot" | "event";
+    /** the key a vote is cast with */
+    key?: number;
+    /** the attacking side's goal off a defender or the keeper: nobody's goal */
+    ownGoal?: boolean;
+    confirmedBy?: string[];
+    rejectedBy?: string[];
+    myVote?: "goal" | "not_goal" | null;
   }>;
   shots: [number, number] | null;
+  /** the confirmed goals per side, offered as the score */
   suggested: { a: number; b: number } | null;
+  /** may the viewer say whether a chance was a goal (anyone playing, the captain, the owner) */
+  canVoteGoals?: boolean;
   /** where the game was on and where the ball was in play, booking seconds; absent on older servers */
   flow?: MatchFlowData;
 };
@@ -479,6 +497,19 @@ export const useFlagMoment = (code: string) =>
 
 export const useVote = (code: string) =>
   useRoomMutation(code, (candidatePlayerId: number) => call<MatchRoom>(`/m/${code}/vote`, { method: "POST", body: json({ candidatePlayerId }) }));
+
+/** "Was this a goal?": goal, not_goal, or null to take the viewer's answer back. */
+export function useGoalVote(code: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { recordingId: number; key: number; verdict: "goal" | "not_goal" | null }) =>
+      call<MatchReplay>(`/m/${encodeURIComponent(code)}/goals/vote`, { method: "POST", body: json(body) }),
+    onSuccess: (data) => {
+      qc.setQueryData([...matchKey(code), "replay"], data);
+      void qc.invalidateQueries({ queryKey: matchKey(code) });
+    },
+  });
+}
 
 export const useUnlockStats = (code: string) =>
   useRoomMutation(code, (kind: "match" | "team") => call<StatUnlockResult>(`/m/${code}/stats/unlock`, { method: "POST", body: json({ kind }) }));
