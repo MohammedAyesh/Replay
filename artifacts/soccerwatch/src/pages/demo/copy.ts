@@ -39,6 +39,10 @@ export interface DemoCopy {
       body: PersonaText;
       nameLabel: PersonaText;
       defaultName: PersonaText;
+      tryTitle: PersonaText;
+      namePlaceholder: PersonaText;
+      duringClip: string;
+      endOfClip: string;
       points: Record<Persona, string[]>;
       endBook: PersonaText;
       endFilmed: string;
@@ -68,6 +72,10 @@ export interface DemoCopy {
       gameLabel: (n: number) => string;
       passes: string;
       leaderboard: string;
+      previous: string;
+      next: string;
+      of: (index: number, total: number) => string;
+      best: string;
     };
     tryIt: {
       kicker: string;
@@ -247,9 +255,9 @@ const ar: DemoCopy = {
   sections: {
     clips: {
       kicker: "من اللاعبين",
-      title: { pitch: "شو بوصل للاعبين", academy: "شو بوصل للاعبين والأهل" },
-      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي من التطبيق. أخفينا الأسماء.",
-      bodyBranded: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي، بنفس هوية جوردان جالاكسي اللي بتطلع على مقاطعهم: الشعار بالزاوية وبطاقة الحجز بالآخر. أخفينا الأسماء.",
+      title: { pitch: "كل مقطع إعلان لملعبك", academy: "كل مقطع إعلان لأكاديميتك" },
+      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي، وبتوصل لكل لاعب أوتوماتيك. أخفينا الأسماء.",
+      bodyBranded: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي: الشعار بالزاوية وبطاقة الحجز بالآخر، وبتوصل لكل لاعب أوتوماتيك. أخفينا الأسماء.",
       loss: "بدون كاميرا، كل مباراة على ملعبك الليلة بتخلص وما بيضل منها إشي.",
       mute: "اكتم الصوت",
       unmute: "شغّل الصوت",
@@ -266,6 +274,10 @@ const ar: DemoCopy = {
       },
       nameLabel: { pitch: "اكتب اسم ملعبك وشوفه على المقاطع", academy: "اكتب اسم أكاديميتك وشوفه على المقاطع" },
       defaultName: { pitch: "ملعبك", academy: "أكاديميتك" },
+      tryTitle: { pitch: "جرّبها باسم ملعبك", academy: "جرّبها باسم أكاديميتك" },
+      namePlaceholder: { pitch: "اسم ملعبك", academy: "اسم أكاديميتك" },
+      duringClip: "خلال المقطع",
+      endOfClip: "بآخر المقطع",
       points: {
         pitch: ["أوتوماتيك: ما حدا بحتاج يمنتج إشي", "شعارك على كل مقطع", "بطاقة بالآخر فيها وين يحجزوا"],
         academy: ["أوتوماتيك لكل لاعب", "شعار الأكاديمية على كل مقطع", "بطاقة بالآخر فيها كيف يسجّلوا"],
@@ -309,6 +321,10 @@ const ar: DemoCopy = {
       gameLabel: (n) => `م${n}`,
       passes: "تمريرات وصلت",
       leaderboard: "كل اللاعبين",
+      previous: "اللاعب اللي قبل",
+      next: "اللاعب اللي بعد",
+      of: (i, n) => `${i} من ${n}`,
+      best: "الأعلى بالمباراة",
     },
     tryIt: {
       kicker: "جرّبها بإيدك",
@@ -377,8 +393,8 @@ const ar: DemoCopy = {
     },
     report: {
       kicker: "بعد الصافرة",
-      title: { pitch: "بعد الصافرة", academy: "بعد الصافرة" },
-      body: (date) => `الكاميرا قاستها، ما حدا كتبها. من مباراة حقيقية بتاريخ ${date}، والأسماء مخفية.`,
+      title: { pitch: "كل لاعب بتوصله أرقامه", academy: "كل لاعب بتوصله أرقامه" },
+      body: (date) => `من مباراة حقيقية بتاريخ ${date}. الكاميرا قاستها، والأسماء مخفية.`,
       loading: "عم نحسب التقرير من المباراة… أول مرة بتاخد شوي.",
       teamA: "فريق أ",
       teamB: "فريق ب",
@@ -569,9 +585,9 @@ const en: DemoCopy = {
   sections: {
     clips: {
       kicker: "Made by players",
-      title: { pitch: "What your players get", academy: "What players and parents get" },
-      body: "Real clips players cut at Jordan Galaxy in the app. Names hidden.",
-      bodyBranded: "Real clips players cut at Jordan Galaxy, in the Jordan Galaxy branding their clips go out with: the crest in the corner and a booking card at the end. Names hidden.",
+      title: { pitch: "Every clip is an ad for your pitch", academy: "Every clip is an ad for your academy" },
+      body: "Real clips players cut at Jordan Galaxy, sent to every player automatically. Names hidden.",
+      bodyBranded: "Real clips players cut at Jordan Galaxy: the crest in the corner and a booking card at the end, sent to every player automatically. Names hidden.",
       loss: "Without a camera, every match on your pitch tonight ends and nothing of it is left.",
       mute: "Mute",
       unmute: "Unmute",
@@ -588,6 +604,10 @@ const en: DemoCopy = {
       },
       nameLabel: { pitch: "Type your pitch's name and see it on the clips", academy: "Type your academy's name and see it on the clips" },
       defaultName: { pitch: "Your pitch", academy: "Your academy" },
+      tryTitle: { pitch: "Try it with your pitch's name", academy: "Try it with your academy's name" },
+      namePlaceholder: { pitch: "Your pitch's name", academy: "Your academy's name" },
+      duringClip: "During the clip",
+      endOfClip: "At the end",
       points: {
         pitch: ["Automatic: nobody edits anything", "Your logo on every clip", "An end card that says where to book"],
         academy: ["Automatic for every player", "Your academy's badge on every clip", "An end card that says how to join"],
@@ -631,6 +651,10 @@ const en: DemoCopy = {
       gameLabel: (n) => `G${n}`,
       passes: "Passes completed",
       leaderboard: "All players",
+      previous: "Previous player",
+      next: "Next player",
+      of: (i, n) => `${i} of ${n}`,
+      best: "Best in the match",
     },
     tryIt: {
       kicker: "Try it",
@@ -699,8 +723,8 @@ const en: DemoCopy = {
     },
     report: {
       kicker: "After the whistle",
-      title: { pitch: "After the whistle", academy: "After the whistle" },
-      body: (date) => `Measured by the camera, not typed in. From a real match on ${date}, names hidden.`,
+      title: { pitch: "Every player gets his numbers", academy: "Every player gets his numbers" },
+      body: (date) => `From a real match on ${date}, measured by the camera. Names hidden.`,
       loading: "Working out the report from the match… the first time takes a moment.",
       teamA: "Team A",
       teamB: "Team B",

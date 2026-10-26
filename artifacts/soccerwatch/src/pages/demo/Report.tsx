@@ -81,9 +81,7 @@ export function Report({ report, copy, locale }: { report: DemoReport; copy: Cop
             <span className="dm-team dm-team--end">{copy.teamB}<i style={{ background: readable(team.colours[1]) }} /></span>
           </div>
           <Bar label={copy.possession} a={team.possessionPercent[0]} b={team.possessionPercent[1]} colours={team.colours} suffix="%" locale={locale} />
-          <Bar label={copy.passes} a={team.passesCompleted[0]} b={team.passesCompleted[1]} colours={team.colours} locale={locale} />
           <Bar label={copy.shots} a={team.shots[0]} b={team.shots[1]} colours={team.colours} locale={locale} />
-          <Bar label={copy.dribbles} a={team.dribblesWon[0]} b={team.dribblesWon[1]} colours={team.colours} locale={locale} />
         </div>
       )}
 

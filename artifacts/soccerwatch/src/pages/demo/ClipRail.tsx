@@ -144,9 +144,13 @@ export function HeroVideo({ clip, fallbackPoster }: { clip: DemoClip | null; fal
     if (!video || !clip) return;
     if (inView && (active === null || active === id)) {
       claimPlayback(id);
-      void video.play().catch(() => undefined);
-    } else if (!video.paused) {
-      video.pause();
+      // A phone that blocks autoplay leaves it paused: give the claim back,
+      // or no other player on the page (the live block) could ever start.
+      void video.play().catch(() => releasePlayback(id));
+    } else {
+      if (!video.paused) video.pause();
+      // Released whether or not it was playing: a hero that never started
+      // (still loading, autoplay blocked) used to keep the claim for good.
       if (!inView) releasePlayback(id);
     }
   }, [inView, active, clip]);

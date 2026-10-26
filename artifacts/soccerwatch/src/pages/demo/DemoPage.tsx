@@ -113,8 +113,10 @@ export default function DemoPage() {
   const { ref: contactRef, inView: contactInView } = useInView<HTMLElement>("0px", 0.05);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [brandName, setBrandName] = useState("");
-  const [brandLook, setBrandLook] = useState<"galaxy" | "custom">("galaxy");
-  const [brandColor, setBrandColor] = useState("#D4FF4F");
+  // Null = Jordan Galaxy's own colour. Typing a name or picking a colour
+  // switches every preview on the page to the owner's own look.
+  const [brandColor, setBrandColor] = useState<string | null>(null);
+  const brandLook: "galaxy" | "custom" = brandName.trim() || brandColor ? "custom" : "galaxy";
   // With the Jordan Galaxy look the story's clips carry Galaxy's crest, so its
   // words name Galaxy too; a typed name (or the custom look) names the owner's.
   const brand = brandName.trim()
@@ -224,9 +226,8 @@ export default function DemoPage() {
       case "products":
         return (
           <Section key={key} id="products" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={data?.clips[0]?.branded ? s.clips.bodyBranded : s.clips.body}>
-            {persona === "pitch" && <p className="dm-loss">{s.clips.loss}</p>}
             {data?.clips.length ? <ClipRail clips={data.clips} copy={s.clips} /> : null}
-            <SocialSection persona={persona} copy={s.social} name={brandName} onName={setBrandName} look={brandLook} onLook={setBrandLook} color={brandColor} onColor={setBrandColor} />
+            <SocialSection persona={persona} copy={s.social} name={brandName} onName={setBrandName} color={brandColor} onColor={setBrandColor} />
           </Section>
         );
       case "try":
@@ -271,10 +272,10 @@ export default function DemoPage() {
         return (
           <Section key={key} id="after" index={index} kicker={s.report.kicker} title={s.report.title[persona]} body={dateLabel ? s.report.body(dateLabel) : undefined} tone="raised">
             {report ? (
-              <>
+              <div className="dm-after">
                 <Report report={report} copy={s.report} locale={lang} />
                 {report.players.length >= 2 && <PlayerSection report={report} persona={persona} copy={s.players} reportCopy={s.report} locale={lang} />}
-              </>
+              </div>
             ) : (
               <div className="dm-loading" role="status">
                 <span className="dm-loading-bar" aria-hidden="true" />
@@ -427,7 +428,7 @@ export default function DemoPage() {
                 clip={socialClips.find((item) => item.aspectRatio === "9:16") ?? socialClips[0] ?? null}
                 brandName={brand}
                 brandLook={brandLook}
-                brandColor={brandColor}
+                brandColor={brandColor ?? "#F4CF1F"}
                 previewLabels={s.social.showcases}
                 returnRatePercent={data?.returnRatePercent ?? null}
                 clipCount={data?.counts.clips ?? null}
