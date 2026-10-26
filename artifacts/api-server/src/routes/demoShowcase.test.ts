@@ -7,7 +7,16 @@ vi.mock("../lib/demoShowcase", () => ({
   buildDemoReport: vi.fn(),
 }));
 
+vi.mock("./share", () => ({
+  proxyStorageObject: vi.fn(async (_req: unknown, res: { status: (n: number) => { send: (b: string) => void } }, storagePath: string) => {
+    res.status(206).send(storagePath);
+  }),
+}));
+
+vi.mock("../lib/bunny", () => ({ isBunnyStorageConfigured: () => true }));
+
 import { buildDemoReport, buildDemoShowcase } from "../lib/demoShowcase";
+import { proxyStorageObject } from "./share";
 import demoShowcaseRouter, { resetDemoShowcaseCache } from "./demoShowcase";
 
 const app = express();
@@ -71,5 +80,29 @@ describe("GET /api/demo/showcase/report", () => {
     expect(a.status).toBe(200);
     expect(b.body.report.recordingId).toBe(387);
     expect(buildDemoReport).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("GET /api/demo/clips/:file", () => {
+  const clip = (id: number, branded: boolean) => ({
+    id, aspectRatio: "16:9", branded, src: "", poster: "", videoId: "v", viewCount: 0, startFraction: 0, endFraction: 1,
+  });
+
+  it("serves the branded copy of a clip the demo is showing", async () => {
+    vi.mocked(buildDemoShowcase).mockResolvedValue({ ...showcase, clips: [clip(5, true)], socialClips: [clip(8, true)] } as never);
+    const video = await request(app).get("/api/demo/clips/5.mp4").expect(206);
+    expect(video.text).toBe("demo/branded/galaxy-v1/c5.mp4");
+    const poster = await request(app).get("/api/demo/clips/8.jpg").expect(206);
+    expect(poster.text).toBe("demo/branded/galaxy-v1/c8.jpg");
+  });
+
+  it("serves nothing else", async () => {
+    vi.mocked(proxyStorageObject).mockClear();
+    vi.mocked(buildDemoShowcase).mockResolvedValue({ ...showcase, clips: [clip(5, false), clip(6, true)] } as never);
+    await request(app).get("/api/demo/clips/5.mp4").expect(404);
+    await request(app).get("/api/demo/clips/7.mp4").expect(404);
+    await request(app).get("/api/demo/clips/6.png").expect(404);
+    await request(app).get("/api/demo/clips/..%2Fsecret.mp4").expect(404);
+    expect(proxyStorageObject).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 
 import type { DemoCopy, Persona } from "./copy";
 import { withBase } from "./data";
+import { DemoLoader } from "./Loader";
 
 type BrandLook = "galaxy" | "custom";
 type ShowcaseWhat = "cornerCrest" | "broadcastBar" | "academyFrame" | "signOff" | "player" | "match" | "academy";
@@ -50,7 +51,7 @@ function LazyShowcase({ what, title, look, name, color, persona, aspect }: {
         setNear(true);
         observer.disconnect();
       }
-    }, { rootMargin: "240px 0px" });
+    }, { rootMargin: "600px 0px" });
     observer.observe(node);
     return () => observer.disconnect();
   }, [what]);
@@ -83,7 +84,7 @@ function LazyShowcase({ what, title, look, name, color, persona, aspect }: {
       <figcaption>{title}</figcaption>
       <div className={`dm-branding-image dm-branding-image--${aspect === "9:16" ? "tall" : "wide"}`}>
         {src && <img src={src} alt={title} loading="lazy" />}
-        {!src && !failed && <span className="dm-branding-skeleton" aria-label={title} />}
+        {!src && !failed && <DemoLoader label={title} />}
         {failed && !loadedSrc && <span className="dm-branding-error">{title}</span>}
       </div>
     </figure>
@@ -121,10 +122,6 @@ export function SocialSection({ persona, copy, name, onName, look, onLook, color
       { what: "player", title: copy.showcases.player },
       { what: "match", title: copy.showcases.match },
     ];
-  const nameDescription = hasArabic(effectiveName)
-    ? `${copy.nameLanguage}: nameAr`
-    : `${copy.nameLanguage}: nameEn`;
-
   useEffect(() => {
     setColorDraft(color);
   }, [color]);
@@ -168,7 +165,6 @@ export function SocialSection({ persona, copy, name, onName, look, onLook, color
           data-testid="branding-name"
         />
         <div className="dm-branding-meta">
-          <span data-testid="branding-name-language">{nameDescription}</span>
           <span>{name.length}/28</span>
         </div>
 

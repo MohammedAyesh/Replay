@@ -831,7 +831,7 @@ export async function ensureClipPoster(clip: ClipRow): Promise<string | null> {
  *  Range is not optional: Safari will not start an inline <video> against an
  *  origin that answers 200 to a ranged request, which is every iPhone opening
  *  the share card. */
-async function proxyStorageObject(
+export async function proxyStorageObject(
   req: Request,
   res: import("express").Response,
   storagePath: string,

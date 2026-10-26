@@ -39,6 +39,7 @@ import {
   teamStats,
   type Lab,
 } from "./matchPlay";
+import { demoBrandedReadyIds } from "./demoBrandedClips";
 import { demoLeadsReady } from "./demoLeads";
 import { buildPlayerMetrics } from "./playerMetrics";
 import { extractBunnyVideoId } from "./publicFootage";
@@ -60,6 +61,8 @@ const MAX_BELIEVABLE_TOP_SPEED_KMH = 38;
 export type DemoClip = {
   id: number;
   aspectRatio: "16:9" | "9:16";
+  /** True when src and poster are the demo's own copy in the Jordan Galaxy branding. */
+  branded: boolean;
   src: string;
   poster: string;
   videoId: string;
@@ -278,13 +281,16 @@ function matchMedia(recording: typeof recordingsTable.$inferSelect, analysed: bo
  * Finished player clips, newest-and-most-watched first, or the admin's list.
  * Deleted, reported and admin-hidden clips never appear.
  */
-function toDemoClip(row: { id: number; aspectRatio: string; videoId: string; viewCount: number; startTime: string; endTime: string }): DemoClip {
+type ClipRow = typeof userClipsTable.$inferSelect;
+
+function toDemoClip(row: ClipRow, branded: boolean): DemoClip {
   const token = shareToken(row.id);
   return {
     id: row.id,
     aspectRatio: row.aspectRatio === "9:16" ? "9:16" : "16:9",
-    src: `/api/s/${row.id}/${token}/clip.mp4`,
-    poster: `/api/s/${row.id}/${token}/poster.jpg`,
+    branded,
+    src: branded ? `/api/demo/clips/${row.id}.mp4` : `/api/s/${row.id}/${token}/clip.mp4`,
+    poster: branded ? `/api/demo/clips/${row.id}.jpg` : `/api/s/${row.id}/${token}/poster.jpg`,
     videoId: row.videoId,
     viewCount: row.viewCount,
     startFraction: Number(row.startTime),
@@ -292,8 +298,20 @@ function toDemoClip(row: { id: number; aspectRatio: string; videoId: string; vie
   };
 }
 
+/**
+ * The demo shows its own copies of the clips, in the Jordan Galaxy branding
+ * (lib/demoBrandedClips.ts). Until enough of them exist — the first minutes
+ * after a deploy — it shows the players' own exports instead, so the section
+ * is never empty.
+ */
+export function brandedOrOriginal(rows: ClipRow[], ready: Set<number>, minimum: number): DemoClip[] {
+  const branded = rows.filter((row) => ready.has(row.id));
+  if (branded.length > 0 && branded.length >= Math.min(minimum, rows.length)) return branded.map((row) => toDemoClip(row, true));
+  return rows.map((row) => toDemoClip(row, false));
+}
+
 /** The best finished vertical clips, for the social-media section. */
-async function pickSocialClips(): Promise<DemoClip[]> {
+async function pickSocialClips(): Promise<ClipRow[]> {
   const rows = await db
     .select()
     .from(userClipsTable)
@@ -313,10 +331,10 @@ async function pickSocialClips(): Promise<DemoClip[]> {
     picked.push(row);
     if (picked.length >= 3) break;
   }
-  return picked.map(toDemoClip);
+  return picked;
 }
 
-async function pickDemoClips(): Promise<DemoClip[]> {
+async function pickDemoClips(): Promise<ClipRow[]> {
   const pinned = parseIdList(await settingString("demo.clipIds"));
   const base = and(
     eq(userClipsTable.exportStatus, "done"),
@@ -350,7 +368,7 @@ async function pickDemoClips(): Promise<DemoClip[]> {
     if (picked.length >= MAX_DEMO_CLIPS) break;
   }
 
-  return picked.map(toDemoClip);
+  return picked;
 }
 
 function parseDemoDurationSeconds(value: string): number | null {
@@ -385,7 +403,7 @@ async function demoCounts(): Promise<DemoShowcase["counts"]> {
 }
 
 export async function buildDemoShowcase(): Promise<DemoShowcase> {
-  const [counts, picked, clips, socialClips, whatsapp, leadsEnabled, returnRate, fieldRows, quoteAr, quoteEn, quoteName, quoteRole, quotePitch] = await Promise.all([
+  const [counts, picked, clipRows, socialRows, whatsapp, leadsEnabled, returnRate, fieldRows, quoteAr, quoteEn, quoteName, quoteRole, quotePitch] = await Promise.all([
     demoCounts(),
     pickDemoRecording(),
     pickDemoClips(),
@@ -401,6 +419,10 @@ export async function buildDemoShowcase(): Promise<DemoShowcase> {
     settingString("demo.testimonial.pitch"),
   ]);
   const values = [quoteAr, quoteEn, quoteName, quoteRole, quotePitch];
+  const unique = new Map([...clipRows, ...socialRows].map((row) => [row.id, row]));
+  const ready = await demoBrandedReadyIds([...unique.values()]).catch(() => new Set<number>());
+  const clips = brandedOrOriginal(clipRows, ready, 3);
+  const socialClips = brandedOrOriginal(socialRows, ready, 1);
   return {
     counts,
     returnRatePercent: returnRate > 0 && returnRate <= 100 ? Math.round(returnRate) : null,

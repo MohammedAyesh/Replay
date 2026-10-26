@@ -1,7 +1,10 @@
 import { Router, type IRouter } from "express";
 
+import { isBunnyStorageConfigured } from "../lib/bunny";
+import { demoBrandedPosterPath, demoBrandedVideoPath, onDemoBrandedReady } from "../lib/demoBrandedClips";
 import { buildDemoReport, buildDemoShowcase, type DemoReport, type DemoShowcase } from "../lib/demoShowcase";
 import { logger } from "../lib/logger";
+import { proxyStorageObject } from "./share";
 
 const router: IRouter = Router();
 
@@ -22,6 +25,11 @@ let showcaseCache: { at: number; data: DemoShowcase } | null = null;
 let showcaseInFlight: Promise<DemoShowcase> | null = null;
 const reportCache = new Map<number, { at: number; data: DemoReport | null }>();
 const reportInFlight = new Map<number, Promise<DemoReport | null>>();
+
+// A branded copy that just finished should show on the next visit, not in five minutes.
+onDemoBrandedReady(() => {
+  showcaseCache = null;
+});
 
 export function resetDemoShowcaseCache(): void {
   showcaseCache = null;
@@ -88,6 +96,39 @@ router.get("/demo/showcase/report", async (_req, res): Promise<void> => {
   } catch (error) {
     logger.error({ err: error }, "demo report failed");
     res.status(500).json({ error: "Could not build the match report" });
+  }
+});
+
+/**
+ * The demo's branded copies (lib/demoBrandedClips.ts). Only clips the demo is
+ * showing right now are served, so this is not a way to read any clip.
+ */
+router.get("/demo/clips/:file", async (req, res): Promise<void> => {
+  const match = /^(\d{1,9})\.(mp4|jpg)$/.exec(String(req.params.file ?? ""));
+  if (!match) {
+    res.status(404).end();
+    return;
+  }
+  const id = Number(match[1]);
+  const kind = match[2] as "mp4" | "jpg";
+  try {
+    const current = await showcase();
+    const shown = [...current.clips, ...current.socialClips].some((clip) => clip.id === id && clip.branded);
+    if (!shown || !isBunnyStorageConfigured()) {
+      res.status(404).end();
+      return;
+    }
+    await proxyStorageObject(
+      req,
+      res,
+      kind === "mp4" ? demoBrandedVideoPath(id) : demoBrandedPosterPath(id),
+      kind === "mp4" ? "video/mp4" : "image/jpeg",
+      86400,
+      "public, max-age=86400",
+    );
+  } catch (error) {
+    logger.error({ err: error, id }, "demo clip copy failed");
+    if (!res.headersSent) res.status(500).end();
   }
 });
 

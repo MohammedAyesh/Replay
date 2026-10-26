@@ -16,7 +16,7 @@ vi.mock("../lib/clipBranding/preview", () => ({
   renderPreviewMp4,
 }));
 
-import demoBrandingRouter, { demoBrandLook, resetDemoBrandingPreviewCache } from "./demoBranding";
+import demoBrandingRouter, { demoBrandLook, resetDemoBrandingPreviewCache, warmDemoBrandingPreviews } from "./demoBranding";
 
 const app = express();
 app.use("/api", demoBrandingRouter);
@@ -112,5 +112,37 @@ describe("public demo branding previews", () => {
       .get("/api/demo/branding/preview.mp4?look=custom&kind=signOff&aspect=9%3A16")
       .expect(400);
     expect(renderPreviewMp4).not.toHaveBeenCalled();
+  });
+
+  it("warms the preset under the same keys a visitor's request uses", async () => {
+    await warmDemoBrandingPreviews();
+    const warmedPngs = renderPreviewPng.mock.calls.length;
+    const warmedMp4s = renderPreviewMp4.mock.calls.length;
+    expect(warmedPngs).toBe(20);
+    expect(warmedMp4s).toBe(7);
+
+    await request(app).get("/api/demo/branding/preview.png?look=galaxy&what=match&persona=pitch&aspect=9%3A16").expect(200);
+    await request(app).get("/api/demo/branding/preview.png?look=galaxy&what=academyFrame&persona=academy&aspect=16%3A9").expect(200);
+    await request(app)
+      .get("/api/demo/branding/preview.mp4?look=galaxy&kind=signOff&persona=pitch&aspect=9%3A16")
+      .set("Range", "bytes=0-1")
+      .expect(206);
+    expect(renderPreviewPng).toHaveBeenCalledTimes(warmedPngs);
+    // The route's in-flight map is per request; the renderer's own cache is
+    // what is shared, so the request reaches it with the warm-up's key.
+    expect(renderPreviewMp4.mock.calls.at(-1)?.[0]).toMatchObject({ lookKey: JSON.stringify(["galaxy", "pitch", "jordan-galaxy"]), keepMs: Number.POSITIVE_INFINITY });
+    expect(renderPreviewMp4.mock.calls[0]?.[0]).toMatchObject({ lookKey: JSON.stringify(["galaxy", "pitch", "jordan-galaxy"]), keepMs: Number.POSITIVE_INFINITY });
+  });
+
+  it("never rate-limits the preset, only typed branding", async () => {
+    for (let i = 0; i < 60; i++) {
+      await request(app).get("/api/demo/branding/preview.png?look=galaxy&what=signOff&persona=pitch&aspect=9%3A16").expect(200);
+    }
+    let limited = 0;
+    for (let i = 0; i < 45; i++) {
+      const res = await request(app).get(`/api/demo/branding/preview.png?look=custom&what=signOff&name=P${i}&color=%23AABBCC&aspect=9%3A16`);
+      if (res.status === 429) limited += 1;
+    }
+    expect(limited).toBeGreaterThan(0);
   });
 });

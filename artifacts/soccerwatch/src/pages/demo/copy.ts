@@ -27,13 +27,12 @@ export interface DemoCopy {
   proof: {
     returnRate: string;
     recordings: string;
-    recordingHours: string;
     clips: string;
     analysed: string;
     note: string;
   };
   sections: {
-    clips: { kicker: string; title: PersonaText; body: string; loss: string; mute: string; unmute: string; play: string; pause: string };
+    clips: { kicker: string; title: PersonaText; body: string; loss: string; mute: string; unmute: string; play: string; pause: string; loading: string };
     social: {
       kicker: string;
       title: PersonaText;
@@ -49,7 +48,6 @@ export interface DemoCopy {
       looks: { galaxy: string; custom: string };
       colorLabel: string;
       colorHint: string;
-      nameLanguage: string;
       previewKicker: string;
       previewDescription: PersonaText;
       aspectLabel: string;
@@ -216,6 +214,8 @@ export interface DemoCopy {
     revenueCards: Record<Persona, Array<{ title: string; body: string; driver: string; driverIndex: 0 | 1 }>>;
     calculatorExampleNote: string;
     nav: { timeline: string; flywheel: string; revenue: string; calculator: string };
+    endScreensTitle: string;
+    loading: string;
   };
 }
 
@@ -240,7 +240,6 @@ const ar: DemoCopy = {
   proof: {
     returnRate: "بملعب جوردان جالاكسي، من الزباين اللي بدفعوا بيرجعوا يحجزوا",
     recordings: "تسجيل محفوظ",
-    recordingHours: "ساعة تصوير محفوظة",
     clips: "مقطع قصّه اللاعبين",
     analysed: "مباراة حللها الذكاء الاصطناعي",
     note: "اللي بدّه فيديو لمبارياته، بضل يرجع.",
@@ -249,19 +248,20 @@ const ar: DemoCopy = {
     clips: {
       kicker: "من اللاعبين",
       title: { pitch: "شو بوصل للاعبين", academy: "شو بوصل للاعبين والأهل" },
-      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي من التطبيق، وكل مقطع بطلع وعليه شعار الملعب. أخفينا الأسماء.",
+      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي، بنفس هوية جوردان جالاكسي اللي بتطلع على مقاطعهم: الشعار بالزاوية وبطاقة الحجز بالآخر. أخفينا الأسماء.",
       loss: "بدون كاميرا، كل مباراة على ملعبك الليلة بتخلص وما بيضل منها إشي.",
       mute: "اكتم الصوت",
       unmute: "شغّل الصوت",
       play: "شغّل",
       pause: "وقّف",
+      loading: "عم بحمّل",
     },
     social: {
       kicker: "سوشال ميديا",
       title: { pitch: "كل مقطع إعلان لملعبك", academy: "كل مقطع إعلان لأكاديميتك" },
       body: {
-        pitch: "بعد الصافرة، كل لاعب بتوصله مقاطعه جاهزة وعليها هوية ملعبك. شوف صور التصدير الحقيقية وبدّل الاسم واللون قبل ما تنشرها.",
-        academy: "كل لاعب بتوصله مقاطعه بهوية أكاديميتك. شوف صور التصدير الحقيقية لإطار الأكاديمية ومقاطع اللاعبين، وجرّب اسمك ولونك.",
+        pitch: "بعد الصافرة، كل لاعب بتوصله مقاطعه جاهزة وعليها هوية ملعبك. هاي نفس الهوية اللي بتطلع على المقاطع؛ جرّب اسم ملعبك ولونك.",
+        academy: "كل لاعب بتوصله مقاطعه بهوية أكاديميتك. هاي نفس الإطارات والبطاقات اللي بتطلع على المقاطع؛ جرّب اسم أكاديميتك ولونك.",
       },
       nameLabel: { pitch: "اكتب اسم ملعبك وشوفه على المقاطع", academy: "اكتب اسم أكاديميتك وشوفه على المقاطع" },
       defaultName: { pitch: "ملعبك", academy: "أكاديميتك" },
@@ -272,16 +272,15 @@ const ar: DemoCopy = {
       endBook: { pitch: "احجز مباراتك الجاية", academy: "سجّل ابنك معنا" },
       endFilmed: "مصوّرة بـ ريبلاي",
       platforms: "إنستغرام · تيك توك · واتساب · سناب",
-      sample: "المعاينات أمثلة من المصدّر الحقيقي؛ بيانات الملعب والأرقام توضيحية.",
+      sample: "البطاقات فيها أرقام للتوضيح؛ الصورة والهوية زي ما بتطلع بالضبط.",
       lookLabel: "شكل الهوية",
       looks: { galaxy: "هوية جوردان جالاكسي", custom: "هوية مخصّصة" },
       colorLabel: "لون الهوية",
       colorHint: "اكتب لون HEX من 6 خانات، مثل #D4FF4F.",
-      nameLanguage: "الاسم المرسل للمصدّر",
-      previewKicker: "معاينة من المصدّر",
+      previewKicker: "كيف بتطلع المقاطع",
       previewDescription: {
-        pitch: "صور حقيقية من القوالب اللي بتنحط على مقاطع الملعب.",
-        academy: "صور حقيقية من قوالب الأكاديمية ومقاطع اللاعبين.",
+        pitch: "الشعار والبطاقات زي ما بتطلع على مقاطع ملعبك.",
+        academy: "الإطار والبطاقات زي ما بتطلع على مقاطع الأكاديمية.",
       },
       aspectLabel: "نسبة العرض",
       showcases: {
@@ -494,7 +493,7 @@ const ar: DemoCopy = {
     subtitle: "هاي قصة مباراة عادية على ملعبك، من الصافرة لحد الحجز الجاي.",
     chapters: {
       pitch: [
-        { time: "الخميس، 10 بالليل", body: "عشر شباب بيلعبوا على ملعبك. الكاميرا بتصوّر لحالها، وما حدا من موظفينك بعمل إشي.", visual: "panorama" },
+        { time: "الخميس، 10 بالليل", body: "فريقين بيلعبوا على ملعبك. الكاميرا بتصوّر لحالها، وما حدا من موظفينك بعمل إشي.", visual: "panorama" },
         { time: "بعد الصافرة بـ20 دقيقة", body: "كل لاعب بتوصله مقاطعه على جواله، جاهزة وعليها شعار ملعبك.", visual: "phone" },
         { time: "نفس الليلة", body: "واحد منهم بنزّل هدفه ستوري. أصحابه بشوفوه، وبآخره بطاقة: احجز مباراتك الجاية · [اسم ملعبك].", visual: "clip" },
         { time: "تاني يوم", body: "أصحابه بسألوه عن الملعب، وهو بيبعتلهم اللوكيشن.", visual: "chat" },
@@ -536,6 +535,8 @@ const ar: DemoCopy = {
     },
     calculatorExampleNote: "مدخلات الحاسبة أمثلة للتوضيح. عدّلها حسب أرقامك الفعلية.",
     nav: { timeline: "القصة", flywheel: "الدورة", revenue: "المصاري", calculator: "احسبها" },
+    endScreensTitle: "البطاقة اللي بتطلع بآخر كل مقطع",
+    loading: "عم بحمّل",
   },
 };
 
@@ -560,7 +561,6 @@ const en: DemoCopy = {
   proof: {
     returnRate: "of paying customers at Jordan Galaxy come back to book again",
     recordings: "recordings on file",
-    recordingHours: "hours of footage recorded",
     clips: "clips cut by players",
     analysed: "matches analysed by AI",
     note: "Players who want their videos keep coming back.",
@@ -569,19 +569,20 @@ const en: DemoCopy = {
     clips: {
       kicker: "Made by players",
       title: { pitch: "What your players get", academy: "What players and parents get" },
-      body: "Real clips players cut at Jordan Galaxy in the app. Every clip goes out with the pitch's logo on it. Names hidden.",
+      body: "Real clips players cut at Jordan Galaxy, in the Jordan Galaxy branding their clips go out with: the crest in the corner and a booking card at the end. Names hidden.",
       loss: "Without a camera, every match on your pitch tonight ends and nothing of it is left.",
       mute: "Mute",
       unmute: "Unmute",
       play: "Play",
       pause: "Pause",
+      loading: "Loading",
     },
     social: {
       kicker: "Social media",
       title: { pitch: "Every clip is an ad for your pitch", academy: "Every clip is an ad for your academy" },
       body: {
-        pitch: "After the whistle each player gets clips carrying your pitch identity. Preview real renderer exports, then try your name and colour before sharing.",
-        academy: "Every player gets clips carrying your academy identity. Preview actual academy frames and player exports, then try your name and colour.",
+        pitch: "After the whistle each player gets clips carrying your pitch's identity. This is exactly how they look; try your pitch's name and colour.",
+        academy: "Every player gets clips carrying your academy's identity. These are the frames and cards clips go out with; try your academy's name and colour.",
       },
       nameLabel: { pitch: "Type your pitch's name and see it on the clips", academy: "Type your academy's name and see it on the clips" },
       defaultName: { pitch: "Your pitch", academy: "Your academy" },
@@ -592,16 +593,15 @@ const en: DemoCopy = {
       endBook: { pitch: "Book your next match", academy: "Join the academy" },
       endFilmed: "Filmed by Replay",
       platforms: "Instagram · TikTok · WhatsApp · Snapchat",
-      sample: "These are examples from the real renderer; pitch details and figures are illustrative.",
+      sample: "The cards show sample numbers; the look is exactly what goes out.",
       lookLabel: "Brand look",
       looks: { galaxy: "Jordan Galaxy preset", custom: "Custom brand" },
       colorLabel: "Brand colour",
       colorHint: "Enter a 6-digit hex colour, for example #D4FF4F.",
-      nameLanguage: "Name sent to renderer",
-      previewKicker: "Renderer previews",
+      previewKicker: "How clips look",
       previewDescription: {
-        pitch: "Actual exported images used on pitch clips.",
-        academy: "Actual exported images from academy and player templates.",
+        pitch: "The crest and cards exactly as they appear on your pitch's clips.",
+        academy: "The frame and cards exactly as they appear on your academy's clips.",
       },
       aspectLabel: "Preview aspect ratio",
       showcases: {
@@ -814,7 +814,7 @@ const en: DemoCopy = {
     subtitle: "An ordinary match at your pitch, from kick-off to the next booking.",
     chapters: {
       pitch: [
-        { time: "Thursday, 10 pm", body: "Ten guys play at your pitch. The camera films on its own; your staff don't lift a finger.", visual: "panorama" },
+        { time: "Thursday, 10 pm", body: "Two teams play at your pitch. The camera films on its own; your staff don't lift a finger.", visual: "panorama" },
         { time: "20 minutes after the whistle", body: "Every player has his clips on his phone, ready, with your logo on them.", visual: "phone" },
         { time: "Same night", body: "One of them posts his goal to his story. His friends watch, and it ends on a card: Book your next match · [your pitch].", visual: "clip" },
         { time: "Next day", body: "His friends ask about the pitch, and he sends them the location.", visual: "chat" },
@@ -856,6 +856,8 @@ const en: DemoCopy = {
     },
     calculatorExampleNote: "The calculator inputs are examples. Adjust them to match your real numbers.",
     nav: { timeline: "The story", flywheel: "The loop", revenue: "Revenue", calculator: "Calculator" },
+    endScreensTitle: "The card at the end of every clip",
+    loading: "Loading",
   },
 };
 

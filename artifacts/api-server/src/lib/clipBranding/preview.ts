@@ -114,7 +114,7 @@ export async function renderPreviewPng(input: {
   return canvas.toBuffer("image/png");
 }
 
-const mp4Cache = new Map<string, { file: string; at: number }>();
+const mp4Cache = new Map<string, { file: string; at: number; ttl: number }>();
 const keyedSampleCache = new Map<string, { file: string; at: number }>();
 const keyedSampleInFlight = new Map<string, Promise<string>>();
 const MP4_TTL_MS = 15 * 60 * 1000;
@@ -189,15 +189,22 @@ export async function renderPreviewMp4(input: {
   seconds: number;
   blur: number;
   dim: number;
+  /**
+   * How long the file is kept. The public demo's fixed preset passes
+   * Infinity: it never changes, and re-encoding it after a quarter of an
+   * hour left prospects looking at black boxes while it rendered.
+   */
+  keepMs?: number;
 }): Promise<string> {
+  const ttl = input.keepMs ?? MP4_TTL_MS;
   const key = createHash("sha1")
     .update(JSON.stringify([input.lookKey, input.kind, input.dims, input.seconds, input.blur, input.dim]))
     .digest("hex");
   const hit = mp4Cache.get(key);
-  if (hit && Date.now() - hit.at < MP4_TTL_MS && fs.existsSync(hit.file)) return hit.file;
+  if (hit && Date.now() - hit.at < hit.ttl && fs.existsSync(hit.file)) return hit.file;
 
   for (const [k, v] of mp4Cache) {
-    if (Date.now() - v.at >= MP4_TTL_MS) { fs.unlink(v.file, () => {}); mp4Cache.delete(k); }
+    if (Date.now() - v.at >= v.ttl) { fs.unlink(v.file, () => {}); mp4Cache.delete(k); }
   }
   for (const [k, v] of keyedSampleCache) {
     if (Date.now() - v.at >= MP4_TTL_MS) { fs.unlink(v.file, () => {}); keyedSampleCache.delete(k); }
@@ -229,6 +236,6 @@ export async function renderPreviewMp4(input: {
     await fs.promises.copyFile(out, kept);
     fs.unlink(out, () => {});
   });
-  mp4Cache.set(key, { file: kept, at: Date.now() });
+  mp4Cache.set(key, { file: kept, at: Date.now(), ttl });
   return kept;
 }

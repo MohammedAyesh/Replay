@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DemoLocale, Persona } from "./copy";
 import { withBase, formatNumber, type DemoClip, type DemoMatch } from "./data";
 import { FieldLogo } from "./FieldLogo";
+import { DemoLoader } from "./Loader";
 import { claimPlayback, releasePlayback, useActivePlayback, useInView } from "./playback";
 import "./story.css";
 
@@ -26,6 +27,8 @@ export type StoryTabCopy = {
   revenueCards: Array<{ title: string; body: string; driver: string; driverIndex: 0 | 1 }>;
   calculatorExampleNote: string;
   nav: { timeline: string; flywheel: string; revenue: string; calculator: string };
+  endScreensTitle: string;
+  loading: string;
 };
 
 type StoryTabProps = {
@@ -78,6 +81,7 @@ function StoryVisualPanel({
   clip,
   brandName,
   fallback,
+  signOffSrc,
 }: {
   visual: StoryVisual;
   persona: Persona;
@@ -85,6 +89,8 @@ function StoryVisualPanel({
   clip: DemoClip | null;
   brandName: string;
   fallback: string;
+  /** The real sign-off card, drawn by the same code as an export. */
+  signOffSrc: string | null;
 }) {
   const [posterFailed, setPosterFailed] = useState(false);
   const [videoFailed, setVideoFailed] = useState(false);
@@ -126,7 +132,7 @@ function StoryVisualPanel({
                 aria-label={fallback}
               />
             )}
-            <span className="dm-story-brand-bug"><FieldLogo name={logoName} size={22} /><b>{logoName}</b></span>
+            {!clip?.branded && <span className="dm-story-brand-bug"><FieldLogo name={logoName} size={22} /><b>{logoName}</b></span>}
           </div>
           <div className="dm-story-phone-base" aria-hidden="true" />
         </div>
@@ -159,13 +165,17 @@ function StoryVisualPanel({
               aria-label={fallback}
             />
           )}
-          <span className="dm-story-brand-bug"><FieldLogo name={logoName} size={24} /><b>{logoName}</b></span>
+          {!clip?.branded && <span className="dm-story-brand-bug"><FieldLogo name={logoName} size={24} /><b>{logoName}</b></span>}
         </div>
-        <div className="dm-story-end-card">
-          <FieldLogo name={logoName} size={34} />
-          <span className="dm-story-end-rule" aria-hidden="true" />
-          <strong>{logoName}</strong>
-        </div>
+        {signOffSrc ? (
+          <img className="dm-story-end-card dm-story-end-card--real" src={signOffSrc} alt="" loading="lazy" />
+        ) : (
+          <div className="dm-story-end-card">
+            <FieldLogo name={logoName} size={34} />
+            <span className="dm-story-end-rule" aria-hidden="true" />
+            <strong>{logoName}</strong>
+          </div>
+        )}
       </div>
     );
   }
@@ -272,6 +282,12 @@ export function StoryTab({
   copy,
   calculator,
 }: StoryTabProps) {
+  const signOffParams = new URLSearchParams({ look: brandLook, what: "signOff", persona, aspect: "9:16" });
+  if (brandLook === "custom") {
+    signOffParams.set("name", brandName);
+    signOffParams.set("color", brandColor);
+  }
+  const signOffSrc = withBase(`/api/demo/branding/preview.png?${signOffParams.toString()}`);
   return (
     <div className="dm-story" lang={locale === "ar" ? "ar" : "en"} dir={locale === "ar" ? "rtl" : "ltr"}>
       <section className="dm-story-intro">
@@ -285,7 +301,8 @@ export function StoryTab({
         name={brandName}
         color={brandColor}
         labels={previewLabels}
-        label={locale === "ar" ? "معاينات فيديو من المصدّر الحقيقي" : "Real renderer video previews"}
+        label={copy.endScreensTitle}
+        loading={copy.loading}
       />
 
       <div id="story-timeline" className="dm-story-timeline" aria-label={copy.nav.timeline}>
@@ -299,6 +316,7 @@ export function StoryTab({
             clip={clip}
             brandName={brandName}
             fallback={copy.visualFallback}
+            signOffSrc={signOffSrc}
           />
         ))}
       </div>
@@ -341,7 +359,9 @@ function RendererStoryPreviews({
   color,
   labels,
   label,
+  loading,
 }: {
+  loading: string;
   persona: Persona;
   look: "galaxy" | "custom";
   name: string;
@@ -367,6 +387,7 @@ function RendererStoryPreviews({
             name={name}
             color={color}
             aspect={aspect}
+            loading={loading}
           />
         ))}
       </div>
@@ -374,7 +395,8 @@ function RendererStoryPreviews({
   );
 }
 
-function RendererStoryVideo({ kind, title, persona, look, name, color, aspect }: {
+function RendererStoryVideo({ kind, title, persona, look, name, color, aspect, loading }: {
+  loading: string;
   kind: "signOff" | "player" | "match" | "academy";
   title: string;
   persona: Persona;
@@ -393,6 +415,8 @@ function RendererStoryVideo({ kind, title, persona, look, name, color, aspect }:
     params.set(/[\u0600-\u06FF]/.test(name) ? "nameAr" : "nameEn", name);
   }
   const src = withBase(`/api/demo/branding/preview.mp4?${params.toString()}`);
+  const [ready, setReady] = useState(false);
+  useEffect(() => setReady(false), [src]);
 
   useEffect(() => {
     const video = ref.current?.querySelector("video");
@@ -417,11 +441,13 @@ function RendererStoryVideo({ kind, title, persona, look, name, color, aspect }:
             muted
             playsInline
             loop
-            preload="none"
+            preload="auto"
+            onLoadedData={() => setReady(true)}
             aria-label={title}
             data-testid={`story-video-player-${kind}`}
           />
         )}
+        {!ready && <DemoLoader label={loading} />}
       </div>
       <figcaption>{title}</figcaption>
     </figure>
@@ -436,6 +462,7 @@ function StoryChapter({
   clip,
   brandName,
   fallback,
+  signOffSrc,
 }: {
   chapter: StoryTabCopy["chapters"][number];
   index: number;
@@ -444,6 +471,7 @@ function StoryChapter({
   clip: DemoClip | null;
   brandName: string;
   fallback: string;
+  signOffSrc: string | null;
 }) {
   const { ref, visible } = useReveal();
 
@@ -462,6 +490,7 @@ function StoryChapter({
           clip={clip}
           brandName={brandName}
           fallback={fallback}
+          signOffSrc={signOffSrc}
         />
       </div>
     </article>

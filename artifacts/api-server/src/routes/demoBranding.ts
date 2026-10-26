@@ -2,9 +2,9 @@ import { Router, type IRouter } from "express";
 import fs from "node:fs";
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import { BRANDING_PRESETS, loadLocalImage, presetCrestPath } from "../lib/clipBranding/assets";
+import { demoBrandLook } from "../lib/clipBranding/demoLook";
 import { PREVIEW_DIMS, renderPreviewMp4, renderPreviewPng } from "../lib/clipBranding/preview";
-import type { BrandLook, EndScreenKind } from "../lib/clipBranding/types";
+import type { EndScreenKind } from "../lib/clipBranding/types";
 import { ADMIN_PREVIEW_RANGE_MAX_BYTES, planExportRange } from "../lib/exportPlayback";
 
 const router: IRouter = Router();
@@ -62,44 +62,7 @@ function requestValues(query: Record<string, unknown>) {
   return { look, persona, name, color, aspect };
 }
 
-export async function demoBrandLook(input: {
-  look: "galaxy" | "custom";
-  name: string;
-  color: string;
-  persona: "pitch" | "academy";
-}): Promise<BrandLook> {
-  if (input.look === "galaxy") {
-    const preset = BRANDING_PRESETS.find((entry) => entry.key === "jordan-galaxy");
-    if (!preset) throw new Error("Jordan Galaxy branding preset is missing");
-    const crest = await loadLocalImage(presetCrestPath(preset));
-    if (!crest) throw new Error("Jordan Galaxy crest could not be loaded");
-    return {
-      nameEn: preset.nameEn,
-      nameAr: preset.nameAr,
-      taglineAr: preset.taglineAr,
-      primaryColor: preset.primaryColor,
-      accentColor: preset.accentColor,
-      bookingPhone: preset.bookingPhone,
-      instagram: preset.instagram,
-      crest,
-      isAcademy: input.persona === "academy",
-    };
-  }
-
-  const name = input.name.trim().slice(0, 28) || "YOUR PITCH";
-  const hasArabic = /[\u0600-\u06ff]/u.test(name);
-  return {
-    nameEn: hasArabic ? "" : name,
-    nameAr: hasArabic ? name : null,
-    taglineAr: null,
-    primaryColor: HEX.test(input.color) ? input.color.toUpperCase() : DEFAULT_COLOR,
-    accentColor: null,
-    bookingPhone: null,
-    instagram: null,
-    crest: null,
-    isAcademy: input.persona === "academy",
-  };
-}
+export { demoBrandLook };
 
 function previewKey(values: ValidRequestValues, what: string): string {
   const lookOptions = values.look === "galaxy" ? ["jordan-galaxy"] : [values.name, values.color];
@@ -133,11 +96,14 @@ async function cachedPng(key: string, render: () => Promise<Buffer>): Promise<Bu
 }
 
 router.get("/demo/branding/preview.png", async (req, res): Promise<void> => {
-  if (!allowRequest(req.ip || "unknown")) {
+  const values = requestValues(req.query as Record<string, unknown>);
+  // Only a typed name or colour can cost a fresh render. The preset is a fixed
+  // set, warmed at start-up, and one video alone makes several range requests,
+  // so counting it locked out phones behind a shared carrier address.
+  if (values.look === "custom" && !allowRequest(req.ip || "unknown")) {
     res.status(429).json({ error: "Too many preview requests. Please wait a moment." });
     return;
   }
-  const values = requestValues(req.query as Record<string, unknown>);
   const what = String(req.query.what ?? "signOff");
   if (!isValidRequestValues(values) || !(PNG_WHATS as readonly string[]).includes(what)) {
     res.status(400).json({ error: "Invalid branding preview options." });
@@ -168,9 +134,20 @@ router.get("/demo/branding/preview.png", async (req, res): Promise<void> => {
   }
 });
 
-async function getMp4(values: ValidRequestValues, kind: EndScreenKind): Promise<string> {
+/**
+ * One key for a request and for the warm-up. They used to differ (the warm-up
+ * keyed the preset by name and colour, a request by "jordan-galaxy"), so every
+ * warmed video was rendered again on the first visit.
+ */
+function mp4LookKey(values: Pick<ValidRequestValues, "look" | "persona" | "name" | "color">): string {
   const lookOptions = values.look === "galaxy" ? ["jordan-galaxy"] : [values.name, values.color];
-  const lookKey = JSON.stringify([values.look, values.persona, ...lookOptions]);
+  return JSON.stringify([values.look, values.persona, ...lookOptions]);
+}
+
+const MP4_SETTINGS = { seconds: 3, blur: 22, dim: 0.5 } as const;
+
+async function getMp4(values: ValidRequestValues, kind: EndScreenKind): Promise<string> {
+  const lookKey = mp4LookKey(values);
   const key = JSON.stringify([lookKey, kind, values.aspect]);
   let pending = mp4InFlight.get(key);
   if (!pending) {
@@ -181,9 +158,9 @@ async function getMp4(values: ValidRequestValues, kind: EndScreenKind): Promise<
         lookKey,
         kind,
         dims: PREVIEW_DIMS[values.aspect!],
-        seconds: 3,
-        blur: 22,
-        dim: 0.5,
+        ...MP4_SETTINGS,
+        // The preset never changes: keep it for the life of the server.
+        keepMs: values.look === "galaxy" ? Number.POSITIVE_INFINITY : undefined,
       });
     })();
     mp4InFlight.set(key, pending);
@@ -196,11 +173,14 @@ async function getMp4(values: ValidRequestValues, kind: EndScreenKind): Promise<
 }
 
 router.get("/demo/branding/preview.mp4", async (req, res): Promise<void> => {
-  if (!allowRequest(req.ip || "unknown")) {
+  const values = requestValues(req.query as Record<string, unknown>);
+  // Only a typed name or colour can cost a fresh render. The preset is a fixed
+  // set, warmed at start-up, and one video alone makes several range requests,
+  // so counting it locked out phones behind a shared carrier address.
+  if (values.look === "custom" && !allowRequest(req.ip || "unknown")) {
     res.status(429).json({ error: "Too many preview requests. Please wait a moment." });
     return;
   }
-  const values = requestValues(req.query as Record<string, unknown>);
   const kind = String(req.query.kind ?? "signOff");
   if (!isValidRequestValues(values) || !(MP4_KINDS as readonly string[]).includes(kind)) {
     res.status(400).json({ error: "Invalid branding video preview options." });
@@ -243,28 +223,36 @@ router.get("/demo/branding/preview.mp4", async (req, res): Promise<void> => {
   }
 });
 
-/** Pre-render the bundled preset in all four formats and both aspect ratios, in series. */
+/**
+ * Pre-render everything the demo shows for the bundled preset, in series:
+ * the stills first (fast, and the first thing a visitor scrolls to), then the
+ * story's videos. Both go through the same caches and keys as a request.
+ */
 export async function warmDemoBrandingPreviews(): Promise<void> {
-  const values = {
-    look: "galaxy" as const,
-    name: "YOUR PITCH",
-    color: DEFAULT_COLOR,
-    persona: "pitch" as const,
-    aspect: "9:16" as const,
-  };
-  const galaxy = await demoBrandLook(values);
-  const lookKey = JSON.stringify(["galaxy", "pitch", values.name, values.color]);
-  for (const kind of MP4_KINDS) {
+  const personas = ["pitch", "academy"] as const;
+  for (const persona of personas) {
+    const values = { look: "galaxy" as const, name: "YOUR PITCH", color: DEFAULT_COLOR, persona };
+    const look = await demoBrandLook(values);
+    const whats: Array<(typeof PNG_WHATS)[number]> = persona === "academy"
+      ? ["academyFrame", "broadcastBar", "signOff", "player", "academy"]
+      : ["cornerCrest", "broadcastBar", "signOff", "player", "match"];
     for (const aspect of ["9:16", "16:9"] as const) {
-      await renderPreviewMp4({
-        look: galaxy,
-        lookKey,
-        kind,
-        dims: PREVIEW_DIMS[aspect],
-        seconds: 3,
-        blur: 22,
-        dim: 0.5,
-      });
+      for (const what of whats) {
+        await cachedPng(previewKey({ ...values, aspect }, what), () => renderPreviewPng({
+          look,
+          what,
+          dims: PREVIEW_DIMS[aspect],
+          blur: 22,
+          dim: 0.5,
+        }));
+      }
+    }
+  }
+  for (const persona of personas) {
+    // The story shows the preset in portrait only (StoryTab.tsx).
+    const kinds: EndScreenKind[] = persona === "academy" ? ["signOff", "player", "academy"] : ["signOff", "player", "match", "academy"];
+    for (const kind of kinds) {
+      await getMp4({ look: "galaxy", name: "YOUR PITCH", color: DEFAULT_COLOR, persona, aspect: "9:16" }, kind);
     }
   }
 }

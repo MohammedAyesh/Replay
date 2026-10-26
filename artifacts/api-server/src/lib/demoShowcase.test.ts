@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { hexToLab } from "./matchPlay";
-import { labToHex, parseIdList, pickBroadcastWindow, playerLabels, whatsappDigits } from "./demoShowcase";
+import { brandedOrOriginal, labToHex, parseIdList, pickBroadcastWindow, playerLabels, whatsappDigits } from "./demoShowcase";
 
 describe("labToHex", () => {
   it("inverts hexToLab closely enough to show a kit colour", () => {
@@ -52,5 +52,35 @@ describe("pickBroadcastWindow", () => {
 
   it("falls back to a fixed window when nothing was detected", () => {
     expect(pickBroadcastWindow([], 3600)).toEqual({ start: 600, end: 780 });
+  });
+});
+
+describe("brandedOrOriginal", () => {
+  const row = (id: number) => ({
+    id,
+    aspectRatio: "16:9",
+    videoId: `v${id}`,
+    viewCount: 0,
+    startTime: "0.1",
+    endTime: "0.2",
+  }) as unknown as Parameters<typeof brandedOrOriginal>[0][number];
+  const rows = [row(1), row(2), row(3), row(4)];
+
+  it("shows only the demo's branded copies once enough exist", () => {
+    const clips = brandedOrOriginal(rows, new Set([1, 3, 4]), 3);
+    expect(clips.map((clip) => clip.id)).toEqual([1, 3, 4]);
+    expect(clips.every((clip) => clip.branded)).toBe(true);
+    expect(clips[0]).toMatchObject({ src: "/api/demo/clips/1.mp4", poster: "/api/demo/clips/1.jpg" });
+  });
+
+  it("falls back to the players' own exports until then, never a mix", () => {
+    const clips = brandedOrOriginal(rows, new Set([2]), 3);
+    expect(clips.map((clip) => clip.id)).toEqual([1, 2, 3, 4]);
+    expect(clips.some((clip) => clip.branded)).toBe(false);
+    expect(clips[0].src).toMatch(/^\/api\/s\/1\/[^/]+\/clip\.mp4$/);
+  });
+
+  it("needs only as many as there are clips", () => {
+    expect(brandedOrOriginal([row(9)], new Set([9]), 3)[0].branded).toBe(true);
   });
 });

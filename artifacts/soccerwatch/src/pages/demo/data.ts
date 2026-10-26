@@ -7,6 +7,8 @@ export const withBase = (path: string) => (path.startsWith("/") ? `${basePath}${
 export type DemoClip = {
   id: number;
   aspectRatio: "16:9" | "9:16";
+  /** The demo's own copy in the Jordan Galaxy branding (crest + sign-off card in the video). */
+  branded?: boolean;
   src: string;
   poster: string;
   videoId: string;

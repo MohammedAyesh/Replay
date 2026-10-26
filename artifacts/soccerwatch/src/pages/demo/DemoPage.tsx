@@ -115,7 +115,10 @@ export default function DemoPage() {
   const [brandName, setBrandName] = useState("");
   const [brandLook, setBrandLook] = useState<"galaxy" | "custom">("galaxy");
   const [brandColor, setBrandColor] = useState("#D4FF4F");
-  const brand = brandName.trim() || copy.sections.social.defaultName[persona];
+  // With the Jordan Galaxy look the story's clips carry Galaxy's crest, so its
+  // words name Galaxy too; a typed name (or the custom look) names the owner's.
+  const brand = brandName.trim()
+    || (brandLook === "galaxy" && persona === "pitch" ? (lang === "ar" ? "جوردان جالاكسي" : "Jordan Galaxy") : copy.sections.social.defaultName[persona]);
   const s = copy.sections;
   const setView = (next: DemoView) => {
     if (next === view) return;
@@ -222,7 +225,7 @@ export default function DemoPage() {
         return (
           <Section key={key} id="products" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={s.clips.body}>
             {persona === "pitch" && <p className="dm-loss">{s.clips.loss}</p>}
-            {data?.clips.length ? <ClipRail clips={data.clips} copy={s.clips} brandName={data.fieldName || "Jordan Galaxy"} /> : null}
+            {data?.clips.length ? <ClipRail clips={data.clips} copy={s.clips} /> : null}
             <SocialSection persona={persona} copy={s.social} name={brandName} onName={setBrandName} look={brandLook} onLook={setBrandLook} color={brandColor} onColor={setBrandColor} />
           </Section>
         );
@@ -372,12 +375,6 @@ export default function DemoPage() {
                   <dd className="dm-num">{formatNumber(data.returnRatePercent, lang)}%</dd>
                 </div>
               )}
-              {data?.counts.recordingHours != null && (
-                <div className="dm-proof-tile">
-                  <dt>{copy.proof.recordingHours}</dt>
-                  <dd className="dm-num">{formatNumber(data.counts.recordingHours, lang, 1)}</dd>
-                </div>
-              )}
               {data?.counts.clips != null && (
                 <div className="dm-proof-tile">
                   <dt>{copy.proof.clips}</dt>
@@ -450,6 +447,8 @@ export default function DemoPage() {
                   revenueCards: copy.story.revenueCards[persona],
                   calculatorExampleNote: copy.story.calculatorExampleNote,
                   nav: copy.story.nav,
+                  endScreensTitle: copy.story.endScreensTitle,
+                  loading: copy.story.loading,
                 }}
                 calculator={<Calculator key={persona} persona={persona} copy={s.numbers} jod={copy.jod} locale={lang} />}
               />

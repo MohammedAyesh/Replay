@@ -36,7 +36,6 @@ export function PlayerSection({ report, persona, copy, reportCopy, locale }: {
   const metrics = useMemo(() => {
     const all: Metric[] = [
       { key: "distanceKm", label: reportCopy.distance, unit: reportCopy.km, digits: 1 },
-      { key: "touches", label: reportCopy.touches, unit: "", digits: 0 },
       { key: "passesCompleted", label: copy.passes, unit: "", digits: 0 },
       { key: "topSpeedKmh", label: reportCopy.topSpeed, unit: reportCopy.kmh, digits: 1 },
       { key: "minutes", label: reportCopy.minutes, unit: "", digits: 1 },

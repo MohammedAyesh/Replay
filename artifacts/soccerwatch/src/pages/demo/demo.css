@@ -729,7 +729,7 @@
 .dm-branding-options { display: flex; flex-wrap: wrap; gap: 8px; }
 .dm-branding-choice { min-height: 42px; padding-inline: 12px; font-size: 13px; }
 .dm-branding-choice.is-on { background: var(--dm-ink); color: var(--dm-bg); border-color: var(--dm-ink); }
-.dm-branding-meta { display: flex; max-width: 360px; justify-content: space-between; gap: 12px; margin-top: 6px; color: var(--dm-faint); font-size: 12px; }
+.dm-branding-meta { display: flex; max-width: 360px; justify-content: flex-end; gap: 12px; margin-top: 6px; color: var(--dm-faint); font-size: 12px; }
 .dm-branding-meta span:last-child { font-family: 'Rajdhani', sans-serif; font-size: 14px; }
 .dm-color-field { margin-top: 18px; }
 .dm-branding-color-row { display: flex; align-items: center; gap: 10px; }
@@ -921,4 +921,27 @@
   .dm-bridge-row { align-items: stretch; flex-direction: column; gap: 16px; }
   .dm-bridge-row .dm-btn { width: 100%; }
   .dm-tab-switch-btn { font-size: 14px; }
+}
+
+/* Loading: the Replay mark breathing over a clip or preview still on its way. */
+.dm-loader {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 50% 45%, #141b2c 0, #0b0f1a 70%);
+  pointer-events: none;
+}
+.dm-loader-mark {
+  width: clamp(40px, 22%, 64px);
+  height: auto;
+  animation: dm-loader-breathe 1.2s ease-in-out infinite;
+}
+@keyframes dm-loader-breathe {
+  0%, 100% { opacity: 0.45; transform: scale(0.92); }
+  50% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dm-loader-mark { animation: none; opacity: 0.8; }
 }

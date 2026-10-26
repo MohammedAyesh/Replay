@@ -1,5 +1,5 @@
 .dm-story {
-  width: min(1080px, 100%);
+  width: min(1080px, calc(100% - 32px));
   margin-inline: auto;
   padding: clamp(28px, 5vw, 64px) 0 clamp(56px, 8vw, 96px);
   color: var(--dm-ink);
@@ -39,6 +39,7 @@
 }
 .dm-story-renderer-frame.is-vertical { aspect-ratio: 9 / 16; }
 .dm-story-renderer-frame.is-horizontal { aspect-ratio: 16 / 9; }
+.dm-story-renderer-frame { position: relative; }
 .dm-story-renderer-frame video { display: block; width: 100%; height: 100%; object-fit: contain; }
 .dm-story-renderer-item figcaption {
   padding: 8px 9px;
@@ -338,6 +339,17 @@
   color: var(--dm-ink);
 }
 
+/* The real sign-off card (a still from the export's own drawing code). */
+.dm-story-end-card.dm-story-end-card--real {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 9 / 16;
+  align-self: center;
+  padding: 0;
+  object-fit: cover;
+}
+
 .dm-story-end-card strong { max-width: 100%; overflow-wrap: anywhere; font-size: clamp(14px, 2vw, 20px); }
 .dm-story-end-rule { width: 34px; height: 3px; background: var(--dm-lime); }
 
@@ -480,7 +492,7 @@
 
 @media (max-width: 767px) {
   .dm-story-renderer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
-  .dm-story { width: 100%; }
+  .dm-story { width: auto; margin-inline: 16px; }
   .dm-story-timeline { gap: 32px; }
   .dm-story-timeline::before { inset-inline-start: 12px; }
   .dm[dir="rtl"] .dm-story-timeline::before { inset-inline-start: auto; inset-inline-end: 12px; }
