@@ -4,40 +4,32 @@ import type { DemoCopy, Persona } from "./copy";
 import { withBase } from "./data";
 import { DemoLoader } from "./Loader";
 
-type BrandLook = "galaxy" | "custom";
-type ShowcaseWhat = "cornerCrest" | "broadcastBar" | "academyFrame" | "signOff" | "player" | "match" | "academy";
-type Aspect = "9:16" | "16:9";
+type ShowcaseWhat = "cornerCrest" | "academyFrame" | "signOff";
 
-const HEX = /^#[0-9a-fA-F]{6}$/;
+/** The colours an owner can try. The first is Jordan Galaxy's own. */
+export const BRAND_SWATCHES = ["#F4CF1F", "#D4FF4F", "#2FD8C4", "#7B5CFF", "#FF5A3C", "#F2F4F8"] as const;
 
-function hasArabic(value: string) {
-  return /[\u0600-\u06FF]/.test(value);
-}
-
-function previewUrl(what: ShowcaseWhat, look: BrandLook, name: string, color: string, persona: Persona, aspect: Aspect) {
-  const params = new URLSearchParams({ look, what, persona, aspect });
-  if (look === "custom") {
-    params.set("name", name);
-    params.set("color", color);
-    params.set(hasArabic(name) ? "nameAr" : "nameEn", name);
+function previewUrl(what: ShowcaseWhat, name: string, color: string | null, persona: Persona) {
+  const custom = Boolean(name.trim()) || color !== null;
+  const params = new URLSearchParams({ look: custom ? "custom" : "galaxy", what, persona, aspect: "9:16" });
+  if (custom) {
+    params.set("name", name.trim());
+    params.set("color", color ?? BRAND_SWATCHES[0]);
   }
   return withBase(`/api/demo/branding/preview.png?${params.toString()}`);
 }
 
-function LazyShowcase({ what, title, look, name, color, persona, aspect }: {
+function Preview({ what, title, name, color, persona }: {
   what: ShowcaseWhat;
   title: string;
-  look: BrandLook;
   name: string;
-  color: string;
+  color: string | null;
   persona: Persona;
-  aspect: Aspect;
 }) {
   const [near, setNear] = useState(false);
-  const [loadedSrc, setLoadedSrc] = useState("");
-  const [failed, setFailed] = useState(false);
   const [src, setSrc] = useState("");
-  const url = useMemo(() => previewUrl(what, look, name, color, persona, aspect), [what, look, name, color, persona, aspect]);
+  const [failed, setFailed] = useState(false);
+  const url = useMemo(() => previewUrl(what, name, color, persona), [what, name, color, persona]);
 
   useEffect(() => {
     const node = document.getElementById(`branding-showcase-${what}`);
@@ -56,180 +48,89 @@ function LazyShowcase({ what, title, look, name, color, persona, aspect }: {
     return () => observer.disconnect();
   }, [what]);
 
+  // A typed name waits for a pause in typing; the preset loads at once.
   useEffect(() => {
     if (!near) return;
     let cancelled = false;
     const load = () => {
       setFailed(false);
       const image = new Image();
-      image.onload = () => {
-        if (cancelled) return;
-        setLoadedSrc(url);
-        setSrc(url);
-      };
-      image.onerror = () => {
-        if (!cancelled) setFailed(true);
-      };
+      image.onload = () => { if (!cancelled) setSrc(url); };
+      image.onerror = () => { if (!cancelled) setFailed(true); };
       image.src = url;
     };
-    const timer = window.setTimeout(load, look === "custom" ? 400 : 0);
+    const timer = window.setTimeout(load, name.trim() ? 450 : 0);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [near, url, look]);
+  }, [near, url, name]);
 
   return (
     <figure id={`branding-showcase-${what}`} className="dm-branding-showcase" data-testid={`preview-${what}`}>
-      <figcaption>{title}</figcaption>
-      <div className={`dm-branding-image dm-branding-image--${aspect === "9:16" ? "tall" : "wide"}`}>
-        {src && <img src={src} alt={title} loading="lazy" />}
-        {!src && !failed && <DemoLoader label={title} />}
-        {failed && !loadedSrc && <span className="dm-branding-error">{title}</span>}
+      <div className="dm-branding-image dm-branding-image--tall">
+        {src && <img src={src} alt={title} />}
+        {src !== url && !failed && <DemoLoader label={title} />}
       </div>
+      <figcaption>{title}</figcaption>
     </figure>
   );
 }
 
-export function SocialSection({ persona, copy, name, onName, look, onLook, color, onColor }: {
+/**
+ * "Try it with your pitch": a name and a colour, and the two things every clip
+ * carries, drawn by the same code an export runs.
+ */
+export function SocialSection({ persona, copy, name, onName, color, onColor }: {
   persona: Persona;
   copy: DemoCopy["sections"]["social"];
   name: string;
   onName: (value: string) => void;
-  look: BrandLook;
-  onLook: (value: BrandLook) => void;
-  color: string;
-  onColor: (value: string) => void;
+  color: string | null;
+  onColor: (value: string | null) => void;
 }) {
   const inputId = useId();
-  const colorId = useId();
-  const [aspect, setAspect] = useState<Aspect>("9:16");
-  const [colorDraft, setColorDraft] = useState(color);
-  const effectiveName = name.trim() || copy.defaultName[persona];
-  const acceptedColor = HEX.test(colorDraft) ? colorDraft.toUpperCase() : "#D4FF4F";
-  const whatItems: Array<{ what: ShowcaseWhat; title: string }> = persona === "academy"
-    ? [
-      { what: "academyFrame", title: copy.showcases.academyFrame },
-      { what: "broadcastBar", title: copy.showcases.broadcastBar },
-      { what: "signOff", title: copy.showcases.signOff },
-      { what: "player", title: copy.showcases.player },
-      { what: "academy", title: copy.showcases.academy },
-    ]
-    : [
-      { what: "cornerCrest", title: copy.showcases.cornerCrest },
-      { what: "broadcastBar", title: copy.showcases.broadcastBar },
-      { what: "signOff", title: copy.showcases.signOff },
-      { what: "player", title: copy.showcases.player },
-      { what: "match", title: copy.showcases.match },
-    ];
-  useEffect(() => {
-    setColorDraft(color);
-  }, [color]);
+  const items: Array<{ what: ShowcaseWhat; title: string }> = [
+    { what: persona === "academy" ? "academyFrame" : "cornerCrest", title: copy.duringClip },
+    { what: "signOff", title: copy.endOfClip },
+  ];
 
   return (
-    <div className="dm-social" data-testid="branding-studio">
-      <div className="dm-social-text">
-        <p className="dm-lead dm-lead--flush">{copy.body[persona]}</p>
-        <ul className="dm-points">
-          {copy.points[persona].map((point) => <li key={point}>{point}</li>)}
-        </ul>
-
-        <fieldset className="dm-branding-fieldset">
-          <legend>{copy.lookLabel}</legend>
-          <div className="dm-branding-options">
-            {(["galaxy", "custom"] as BrandLook[]).map((option) => (
-              <button
-                key={option}
-                type="button"
-                className={`dm-btn dm-branding-choice ${look === option ? "is-on" : ""}`}
-                aria-pressed={look === option}
-                onClick={() => onLook(option)}
-                data-testid={`branding-look-${option}`}
-              >
-                {copy.looks[option]}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-
-        <label className="dm-field" htmlFor={inputId}>
-          <span>{copy.nameLabel[persona]}</span>
-        </label>
+    <div className="dm-brandtry" data-testid="branding-studio">
+      <div className="dm-brandtry-form">
+        <label className="dm-brandtry-title" htmlFor={inputId}>{copy.tryTitle[persona]}</label>
         <input
           id={inputId}
           className="dm-text-input"
           value={name}
           maxLength={28}
+          placeholder={copy.namePlaceholder[persona]}
           onChange={(event) => onName(event.target.value)}
           autoComplete="off"
           data-testid="branding-name"
         />
-        <div className="dm-branding-meta">
-          <span>{name.length}/28</span>
-        </div>
-
-        <label className="dm-field dm-color-field" htmlFor={colorId}>{copy.colorLabel}</label>
-        <div className="dm-branding-color-row">
-          <input
-            id={colorId}
-            className="dm-text-input dm-branding-color"
-            value={colorDraft}
-            maxLength={7}
-            onChange={(event) => {
-              const next = event.target.value;
-              setColorDraft(next);
-              if (HEX.test(next)) onColor(next.toUpperCase());
-            }}
-            onBlur={() => {
-              const next = HEX.test(colorDraft) ? colorDraft.toUpperCase() : "#D4FF4F";
-              setColorDraft(next);
-              onColor(next);
-            }}
-            aria-invalid={!HEX.test(colorDraft)}
-            data-testid="branding-color"
-            dir="ltr"
-          />
-          <span className="dm-branding-swatch" style={{ backgroundColor: acceptedColor }} aria-label={`${copy.colorLabel} ${acceptedColor}`} />
-        </div>
-        <p className="dm-small">{copy.colorHint}</p>
-        <p className="dm-small">{copy.platforms}</p>
-        <p className="dm-small">{copy.sample}</p>
-      </div>
-
-      <div className="dm-branding-preview-area">
-        <div className="dm-branding-preview-head">
-          <div>
-            <p className="dm-kicker">{copy.previewKicker}</p>
-            <p className="dm-small">{copy.previewDescription[persona]}</p>
-          </div>
-          <div className="dm-seg" role="group" aria-label={copy.aspectLabel}>
-            {(["9:16", "16:9"] as Aspect[]).map((value) => (
+        <div className="dm-swatches" role="group" aria-label={copy.colorLabel}>
+          {BRAND_SWATCHES.map((swatch, index) => {
+            const on = (color ?? BRAND_SWATCHES[0]) === swatch;
+            return (
               <button
-                key={value}
+                key={swatch}
                 type="button"
-                className={`dm-seg-btn ${aspect === value ? "is-on" : ""}`}
-                aria-pressed={aspect === value}
-                onClick={() => setAspect(value)}
-                data-testid={`branding-aspect-${value.replace(":", "-")}`}
-              >
-                {value}
-              </button>
-            ))}
-          </div>
+                className={`dm-swatch ${on ? "is-on" : ""}`}
+                style={{ backgroundColor: swatch }}
+                aria-pressed={on}
+                aria-label={`${copy.colorLabel} ${swatch}`}
+                onClick={() => onColor(index === 0 && !name.trim() ? null : swatch)}
+              />
+            );
+          })}
         </div>
-        <div className="dm-branding-grid">
-          {whatItems.map((item) => (
-            <LazyShowcase
-              key={item.what}
-              {...item}
-              look={look}
-              name={effectiveName}
-              color={acceptedColor}
-              persona={persona}
-              aspect={aspect}
-            />
-          ))}
-        </div>
+        <p className="dm-small">{copy.platforms}</p>
+      </div>
+      <div className="dm-brandtry-previews">
+        {items.map((item) => (
+          <Preview key={item.what} {...item} name={name} color={color} persona={persona} />
+        ))}
       </div>
     </div>
   );

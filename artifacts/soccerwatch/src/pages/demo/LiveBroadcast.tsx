@@ -4,7 +4,7 @@ import { ReplayMark } from "@/components/ReplayMark";
 import { applyFrameToVideo, clampOrigin } from "@/lib/cropFrame";
 import { cleanSamples } from "@/lib/follow-ball";
 import type { DemoCopy } from "./copy";
-import { formatClock, withBase, type DemoMatch, type DemoMoment, type DemoReport } from "./data";
+import { withBase, type DemoMatch, type DemoMoment, type DemoReport } from "./data";
 import { claimPlayback, releasePlayback, useActivePlayback, useHlsSource, useInView } from "./playback";
 
 const PLAYER_ID = "broadcast";
@@ -33,6 +33,12 @@ export function ballAtTime(path: Path, t: number): { x: number; y: number } | nu
   const b = path[hi];
   const f = b[0] > a[0] ? (t - a[0]) / (b[0] - a[0]) : 0;
   return { x: a[1] + (b[1] - a[1]) * f, y: a[2] + (b[2] - a[2]) * f };
+}
+
+/** A football clock: minutes keep counting past 60 ("73:53", never "1:13:53"). */
+export function matchClock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 /** Goals per side scored before time t. */
@@ -154,7 +160,7 @@ export function LiveBroadcast({ match, report, copy }: {
           <span className="dm-sb-score">{a}</span>
           <span className="dm-sb-score">{b}</span>
           <span className="dm-sb-team">{copy.teamB}<i style={{ background: colours[1] }} /></span>
-          <span className="dm-sb-clock">{formatClock(clock)}</span>
+          <span className="dm-sb-clock">{matchClock(clock)}</span>
         </div>
         <span className="dm-cast-live"><span className="dm-live-dot" aria-hidden="true" />{copy.liveBadge}</span>
         <span className="dm-cast-brand">

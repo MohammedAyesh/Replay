@@ -1,16 +1,19 @@
 import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import type { DemoCopy, Persona } from "./copy";
 import { formatNumber, type DemoPlayer, type DemoReport } from "./data";
 import { Heatmap, readable } from "./Report";
 
-type Metric = { key: "distanceKm" | "touches" | "passesCompleted" | "minutes" | "topSpeedKmh"; label: string; unit: string; digits: number };
+type MetricKey = "distanceKm" | "topSpeedKmh" | "passesCompleted";
+type Metric = { key: MetricKey; label: string; unit: string; digits: number };
 
-function average(values: number[]): number {
-  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
-}
-
-export function PlayerSection({ report, persona, copy, reportCopy, locale }: {
+/**
+ * One player at a time: three numbers in big type and where he played.
+ * Starts on the player who ran furthest; the arrows step through the rest.
+ * No averages or rank bars: an owner should read it in a glance.
+ */
+export function PlayerSection({ report, copy, reportCopy, locale }: {
   report: DemoReport;
   persona: Persona;
   copy: DemoCopy["sections"]["players"];
@@ -19,9 +22,7 @@ export function PlayerSection({ report, persona, copy, reportCopy, locale }: {
 }) {
   const players = useMemo(() => {
     const hasEveryNumber = report.players.length > 0 && report.players.every((player) => /^\d+$/.test(player.number?.trim() ?? ""));
-    const sorted = [...report.players].sort((a, b) => hasEveryNumber
-      ? Number(a.number) - Number(b.number)
-      : (b.distanceKm ?? -1) - (a.distanceKm ?? -1));
+    const sorted = [...report.players].sort((a, b) => (b.distanceKm ?? -1) - (a.distanceKm ?? -1));
     return sorted.map((player, index) => ({
       ...player,
       label: hasEveryNumber
@@ -30,80 +31,55 @@ export function PlayerSection({ report, persona, copy, reportCopy, locale }: {
     }));
   }, [report.players, locale]);
   const [selected, setSelected] = useState(0);
-  const current: DemoPlayer | undefined = players[selected] ?? players[0];
-  const sideColour = (side: 0 | 1 | null) => (report.team && side !== null ? readable(report.team.colours[side]) : "#8A93A6");
+  const current: (DemoPlayer & { label: string }) | undefined = players[selected] ?? players[0];
 
   const metrics = useMemo(() => {
     const all: Metric[] = [
       { key: "distanceKm", label: reportCopy.distance, unit: reportCopy.km, digits: 1 },
-      { key: "passesCompleted", label: copy.passes, unit: "", digits: 0 },
       { key: "topSpeedKmh", label: reportCopy.topSpeed, unit: reportCopy.kmh, digits: 1 },
-      { key: "minutes", label: reportCopy.minutes, unit: "", digits: 1 },
+      { key: "passesCompleted", label: copy.passes, unit: "", digits: 0 },
     ];
     return all.filter((m) => players.filter((p) => typeof p[m.key] === "number").length >= Math.max(2, players.length / 2));
   }, [players, reportCopy, copy.passes]);
 
   if (!current) return null;
+  const colour = report.team && current.side !== null ? readable(report.team.colours[current.side]) : "#8A93A6";
+  const step = (delta: number) => setSelected((index) => (index + delta + players.length) % players.length);
+  const rtl = locale === "ar";
 
   return (
-    <div className="dm-players">
-      <div className="dm-chips" role="group" aria-label={copy.pick}>
-        {players.map((player, index) => (
-          <button
-            key={`${player.number ?? "player"}-${index}`}
-            type="button"
-            aria-pressed={index === selected}
-            className={`dm-pchip ${index === selected ? "is-on" : ""}`}
-            onClick={() => setSelected(index)}
-          >
-            <i style={{ background: sideColour(player.side) }} aria-hidden="true" />
-            {player.label}
-          </button>
-        ))}
-      </div>
-
-      <div className="dm-pcard-grid">
-        <article className="dm-pcard">
-          <header className="dm-pcard-head">
-            <span className="dm-pcard-badge" style={{ borderColor: sideColour(current.side) }}>{current.label}</span>
-            <span className="dm-small">{copy.vsAverage}</span>
-          </header>
-          <dl className="dm-pstats">
-            {metrics.map((metric) => {
-              const values = players.map((p) => p[metric.key]).filter((v): v is number => typeof v === "number");
-              const value = current[metric.key];
-              const avg = average(values);
-              const rank = typeof value === "number" ? values.filter((v) => v > value).length + 1 : null;
-              const share = typeof value === "number" && avg > 0 ? Math.min(2, value / avg) : 0;
-              return (
-                <div key={metric.key} className="dm-pstat">
-                  <dt>{metric.label}</dt>
-                  <dd>
-                    <span className="dm-num dm-pstat-value">
-                      {typeof value === "number" ? formatNumber(value, locale, metric.digits) : "–"}
-                      {metric.unit && <small> {metric.unit}</small>}
-                    </span>
-                    <span className="dm-pstat-bar" dir="ltr" aria-hidden="true">
-                      <i style={{ width: `${share * 50}%` }} className={share >= 1 ? "is-up" : ""} />
-                      <b />
-                    </span>
-                    <span className="dm-small">
-                      {copy.average} {formatNumber(avg, locale, metric.digits)}
-                      {rank !== null && ` · ${copy.rank(rank, values.length)}`}
-                    </span>
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
-        </article>
-        <div className="dm-pside">
-          {current.heatmap.length > 0 && (
-            <Heatmap player={current} colour="#D4FF4F" label={reportCopy.heatmap(current.label)} />
-          )}
+    <article className="dm-pcard" aria-label={current.label}>
+      <header className="dm-pcard-head">
+        <button type="button" className="dm-icon-btn dm-pstep" onClick={() => step(-1)} aria-label={copy.previous}>
+          {rtl ? <ChevronRight className="dm-icon" /> : <ChevronLeft className="dm-icon" />}
+        </button>
+        <div className="dm-pcard-who" aria-live="polite">
+          <span className="dm-pcard-badge" style={{ borderColor: colour }}>{current.label}</span>
+          <span className="dm-small">{copy.of(selected + 1, players.length)}</span>
         </div>
-      </div>
-      <p className="dm-small">{reportCopy.find}</p>
-    </div>
+        <button type="button" className="dm-icon-btn dm-pstep" onClick={() => step(1)} aria-label={copy.next}>
+          {rtl ? <ChevronLeft className="dm-icon" /> : <ChevronRight className="dm-icon" />}
+        </button>
+      </header>
+      <dl className="dm-ptiles">
+        {metrics.map((metric) => {
+          const value = current[metric.key];
+          const best = typeof value === "number" && players.every((p) => typeof p[metric.key] !== "number" || (p[metric.key] as number) <= value);
+          return (
+            <div key={metric.key} className={`dm-ptile ${best ? "is-best" : ""}`}>
+              <dt>{metric.label}</dt>
+              <dd>
+                <span className="dm-num">{typeof value === "number" ? formatNumber(value, locale, metric.digits) : "–"}</span>
+                {metric.unit && <small>{metric.unit}</small>}
+                {best && <em>{copy.best}</em>}
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+      {current.heatmap.length > 0 && (
+        <Heatmap player={current} colour="#D4FF4F" label={reportCopy.heatmap(current.label)} />
+      )}
+    </article>
   );
 }

@@ -945,3 +945,34 @@
 @media (prefers-reduced-motion: reduce) {
   .dm-loader-mark { animation: none; opacity: 0.8; }
 }
+
+/* After the whistle: the match on one side, one player on the other. */
+.dm-after { display: grid; gap: 16px; }
+@media (min-width: 900px) { .dm-after { grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); align-items: start; } }
+.dm-after .dm-pcard { display: flex; flex-direction: column; gap: 16px; }
+.dm-after .dm-pcard-head { margin: 0; }
+.dm-pcard-who { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.dm-pcard-who .dm-small { margin: 0; }
+.dm-pstep { width: 44px; height: 44px; border: 1px solid var(--dm-line-2); border-radius: 999px; }
+.dm-ptiles { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.dm-ptile { padding: 12px 10px; background: rgba(238, 241, 246, 0.04); border: 1px solid var(--dm-line); border-radius: 12px; min-width: 0; }
+.dm-ptile dt { font-size: 13px; color: var(--dm-muted); margin-bottom: 6px; }
+.dm-ptile dd { margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px; }
+.dm-ptile .dm-num { font-size: 28px; font-weight: 700; line-height: 1; }
+.dm-ptile small { font-size: 13px; color: var(--dm-muted); }
+.dm-ptile em { flex-basis: 100%; font-style: normal; font-size: 12px; color: var(--dm-lime); margin-top: 4px; }
+.dm-ptile.is-best { border-color: rgba(212, 255, 79, 0.5); }
+.dm-after .dm-heat svg { max-height: 220px; }
+
+/* Made by players: the rail, then one compact "try your name" row. */
+.dm-brandtry { display: grid; gap: 18px; margin-top: 22px; padding: 16px; background: var(--dm-bg-2, #141b2c); border: 1px solid var(--dm-line); border-radius: var(--dm-radius); }
+@media (min-width: 760px) { .dm-brandtry { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: center; } }
+.dm-brandtry-form { display: flex; flex-direction: column; gap: 12px; }
+.dm-brandtry-form .dm-small { margin: 0; }
+.dm-brandtry-title { font-weight: 700; font-size: 17px; }
+.dm-swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+.dm-swatch { width: 36px; height: 36px; border-radius: 999px; border: 2px solid rgba(255, 255, 255, 0.18); cursor: pointer; padding: 0; }
+.dm-swatch.is-on { border-color: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25); }
+.dm-brandtry-previews { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: 420px; }
+.dm-brandtry-previews .dm-branding-showcase { margin: 0; }
+.dm-brandtry-previews .dm-branding-showcase figcaption { min-height: 0; margin-top: 6px; padding: 0; border: 0; background: none; font-size: 13px; color: var(--dm-muted); text-align: center; }
