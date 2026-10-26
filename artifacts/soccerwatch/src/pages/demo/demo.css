@@ -976,3 +976,33 @@
 .dm-brandtry-previews { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; max-width: 420px; }
 .dm-brandtry-previews .dm-branding-showcase { margin: 0; }
 .dm-brandtry-previews .dm-branding-showcase figcaption { min-height: 0; margin-top: 6px; padding: 0; border: 0; background: none; font-size: 13px; color: var(--dm-muted); text-align: center; }
+
+/* ── The short /demo (SimpleDemo.tsx) ─────────────────────────────────── */
+.dm-hero.dm-hero--short { min-height: min(78svh, 720px); padding-block: 100px 32px; }
+.dm-hero-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 24px; }
+.dm-section.dm-section--tight { padding-block: clamp(36px, 6vw, 64px); }
+.dm-h2.dm-h2--small { font-size: clamp(26px, 5vw, 40px); margin-bottom: 18px; }
+.dm-simple-note { margin: -8px 0 16px; }
+.dm-values { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+@media (min-width: 820px) { .dm-values { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.dm-value { padding: 18px; background: var(--dm-bg-2); border: 1px solid var(--dm-line); border-radius: var(--dm-radius); }
+.dm-value h3 { margin: 0 0 6px; font-size: 20px; font-weight: 700; }
+.dm-value p { margin: 0; color: var(--dm-muted); font-size: 15px; line-height: 1.5; }
+.dm-value--stat .dm-big-num { display: block; font-size: 48px; margin-bottom: 6px; }
+.dm-money { display: grid; gap: 18px; padding: 18px; background: var(--dm-bg-2); border: 1px solid var(--dm-line); border-radius: var(--dm-radius); }
+@media (min-width: 820px) { .dm-money { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: center; } }
+.dm-money-result { display: flex; flex-direction: column; gap: 6px; }
+.dm-money-result > span:not(.dm-small) { font-size: 18px; font-weight: 600; }
+.dm-money-result .dm-small { margin: 0; }
+.dm-money-inputs { display: flex; flex-direction: column; gap: 14px; }
+.dm-money-inputs .dm-field label { display: flex; justify-content: space-between; gap: 12px; }
+.dm-money-inputs .dm-field label b { font-family: 'Rajdhani', sans-serif; font-size: 20px; color: var(--dm-lime); }
+.dm-money-inputs input[type="range"] { width: 100%; accent-color: var(--dm-lime); height: 32px; }
+.dm-money-inputs .dm-small { margin: 0; }
+.dm-also { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+@media (min-width: 820px) { .dm-also { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.dm-also li { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--dm-line); border-radius: var(--dm-radius); }
+.dm-also strong { font-size: 17px; }
+.dm-also span { color: var(--dm-muted); font-size: 15px; }
+.dm-simple-setup { margin: 18px 0 8px; color: #d5dae4; max-width: 62ch; line-height: 1.55; }
+.dm-simple-full { color: var(--dm-turf, #2FD8C4); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }

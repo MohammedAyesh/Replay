@@ -52,6 +52,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
 import LegacyDemoPage from "@/pages/demo-route";
 import DemoPage from "@/pages/demo/DemoPage";
+import SimpleDemo from "@/pages/demo/SimpleDemo";
 import AcademyConsole from "@/pages/academy-console";
 import AcademyJoinPage from "@/pages/academy-join";
 import AcademyFamilyPage from "@/pages/academy-family";
@@ -584,7 +585,8 @@ function AppRouter() {
         <Route path="/f/:code" component={FriendLinkPage} />
         <Route path="/matches" component={Matches} />
         <Route path="/book" component={BookPage} />
-        <Route path="/demo" component={DemoPage} />
+        <Route path="/demo" component={SimpleDemo} />
+        <Route path="/demo/full" component={DemoPage} />
         <Route path="/demo/old" component={LegacyDemoPage} />
         <Route path="/privacy"><LegalPage doc="privacy" /></Route>
         <Route path="/terms"><LegalPage doc="terms" /></Route>
@@ -638,11 +640,13 @@ function ClerkProviderWithRoutes() {
 
 function AppContent() {
   const [location] = useLocation();
-  const publicDemo = location === "/demo";
+  // /demo is the short page; /demo/full the long one. Both are public, with
+  // no sign-in and no app chrome.
+  const publicDemo = location === "/demo" || location === "/demo/full";
   return (
     <LocaleProvider publicPage={publicDemo}>
       <FullscreenVideoProvider>
-        {publicDemo ? <DemoPage /> : <ClerkProviderWithRoutes />}
+        {publicDemo ? (location === "/demo" ? <SimpleDemo /> : <DemoPage />) : <ClerkProviderWithRoutes />}
       </FullscreenVideoProvider>
     </LocaleProvider>
   );
