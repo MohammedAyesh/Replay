@@ -1534,6 +1534,183 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
   border-color: var(--replay-line);
 }
 
+@media (min-width: 1024px) {
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > header.replay-header {
+    position: fixed;
+    inset-block: 0;
+    inset-inline-start: 0;
+    z-index: 60;
+    display: block;
+    width: 256px;
+    height: 100dvh;
+    margin: 0;
+    padding: 24px 16px;
+    border: 0;
+    border-inline-end: 1px solid var(--replay-line);
+    border-radius: 0;
+    background: var(--replay-surface);
+    backdrop-filter: none;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > header.replay-header > div {
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 24px;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > header.replay-header .replay-lockup {
+    padding: 4px 8px 20px;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > header.replay-header .replay-lockup > .replay-wordmark {
+    display: none;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > header.replay-header .replay-lockup::after {
+    content: "Replay";
+    color: var(--replay-text);
+    font-family: "Rajdhani", "Inter", sans-serif;
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    line-height: 1;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > header.replay-header > div > button {
+    justify-content: center;
+    border-radius: 12px;
+    background: var(--replay-raised);
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > nav {
+    position: fixed;
+    inset-block: 104px auto;
+    inset-inline-start: 16px;
+    inset-inline-end: auto;
+    z-index: 61;
+    display: flex;
+    width: 224px;
+    max-width: none;
+    height: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > nav a {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    height: 44px;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 0 12px;
+    border-radius: 12px;
+    text-align: start;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > nav a[class*="bg-turf"] {
+    background-color: color-mix(in srgb, var(--replay-turf) 10%, transparent) !important;
+    color: var(--replay-turf) !important;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > nav a > span {
+    font-size: 14px;
+    letter-spacing: normal;
+  }
+
+  :is(
+    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
+    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
+  ) > main {
+    margin-block-start: 94px;
+  }
+}
+
 .replay-wordmark {
   display: grid;
   gap: 1px;
