@@ -3,7 +3,6 @@ import { Link, useLocation } from "wouter";
 import { CalendarDays, Crown, Loader2, Sparkles, Trophy, Users } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { MatchCard } from "@/components/match/MatchCard";
-import { RecentFormPanel } from "@/components/match/MatchStats";
 import { PhaseChip, PlayerAvatar, formatDay } from "@/components/match/bits";
 import { Button } from "@/components/ui/button";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
@@ -65,8 +64,6 @@ export default function Matches() {
   });
 
   const data = matches.data;
-  const recentFind = data?.recent.find((match) => match.findRecordingId != null) ?? null;
-  const recentFindRecordingId = recentFind?.findRecordingId ?? null;
   const empty = data && !data.live.length && !data.upcoming.length && !data.recent.length && !data.invites.length;
 
   return (
@@ -162,45 +159,6 @@ export default function Matches() {
         </Form>
         <p className="mt-2 text-xs leading-relaxed text-muted-text">{copy.joinByCodeDesc}</p>
       </section>
-
-      {data && (data.personalForm || data.personalFormPending === true) && (
-        <section className="mb-5 rounded-2xl border border-line bg-surface p-4" data-testid="section-personal-form">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <p className="font-display text-lg font-bold">{copy.competitionForm}</p>
-              <p className="mt-1 text-xs leading-5 text-muted-text">
-                {data.personalForm
-                  ? copy.competitionRecentFormHint(data.personalForm.previousMatchesUsed ?? Math.max(0, data.personalForm.matchesUsed - 1))
-                  : data.personalFormPending === true ? copy.competitionFormPending : null}
-              </p>
-            </div>
-            {data.personalForm && (
-              <span className="shrink-0 rounded-full bg-floodlight/10 px-2 py-1 font-mono text-xs font-bold text-floodlight">
-                {data.personalForm.matchesUsed} {copy.competitionMatches}
-              </span>
-            )}
-          </div>
-          {data.personalForm
-            ? <RecentFormPanel form={data.personalForm} copy={copy} />
-            : <div className="h-20 animate-pulse rounded-xl bg-raised/60" aria-hidden="true" />}
-        </section>
-      )}
-      {data && !data.personalForm && data.personalFormPending !== true && (
-        <section className="mb-5 flex items-center gap-2.5 rounded-[14px] bg-turf/10 px-3 py-3.5" data-testid="section-personal-form-empty">
-          <Sparkles className="h-[18px] w-[18px] shrink-0 text-turf" aria-hidden="true" />
-          <p className="min-w-0 flex-1 text-sm leading-5 text-[#C9CFDB]">{copy.competitionFormStart}</p>
-          {recentFindRecordingId !== null && (
-            <Link
-              href={findPath(recentFindRecordingId, recentFind?.code)}
-              data-testid="button-find-yourself-start-form"
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-turf/40 bg-turf/10 px-3 py-1.5 text-xs font-bold text-turf"
-            >
-              <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-              {copy.competitionFormFind}
-            </Link>
-          )}
-        </section>
-      )}
 
       {matches.isLoading || isLoading ? (
         <div className="flex flex-1 items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-text" /></div>
