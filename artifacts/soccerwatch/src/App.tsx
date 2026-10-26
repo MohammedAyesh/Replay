@@ -231,8 +231,10 @@ function AuthHeroLayout({
         <img src="/replay-mark.svg" alt="Replay" className="h-8 w-9 object-contain" />
       </div>
       {/* Independently centered auth content */}
-      <div className="relative z-[5] flex min-h-[calc(100vh-46px)] flex-col justify-center p-6">
-        {children}
+      <div className="relative z-[5] flex min-h-[calc(100vh-46px)] flex-col items-center justify-center p-6">
+        <div className="mx-auto w-full max-w-[400px]">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -309,7 +311,7 @@ function SignUpPage() {
   return (
     <AuthHeroLayout>
       <div
-        className="flex w-[440px] max-w-full flex-col items-stretch gap-3"
+        className="flex w-full max-w-[400px] self-center flex-col items-stretch gap-3"
         onSubmitCapture={blockWithoutRecordingConsent}
         onClickCapture={(event) => {
           if (event.target instanceof Element && event.target.closest("[data-legal-link]")) return;
