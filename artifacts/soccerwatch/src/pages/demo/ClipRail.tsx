@@ -6,7 +6,7 @@ import { formatClock, withBase, type DemoClip } from "./data";
 import { DemoLoader } from "./Loader";
 import { claimPlayback, releasePlayback, useActivePlayback, useInView } from "./playback";
 
-function ClipCard({ clip, copy, near }: { clip: DemoClip; copy: DemoCopy["sections"]["clips"]; near: boolean }) {
+function ClipCard({ clip, copy, near, autoplay }: { clip: DemoClip; copy: DemoCopy["sections"]["clips"]; near: boolean; autoplay: boolean }) {
   const id = `clip-${useId()}`;
   const videoRef = useRef<HTMLVideoElement>(null);
   const active = useActivePlayback();
@@ -18,7 +18,31 @@ function ClipCard({ clip, copy, near }: { clip: DemoClip; copy: DemoCopy["sectio
   const [posterReady, setPosterReady] = useState(false);
   const [buffering, setBuffering] = useState(false);
   const [duration, setDuration] = useState<number | null>(null);
+  const [seen, setSeen] = useState(false);
+  const [userPaused, setUserPaused] = useState(false);
   const poster = withBase(clip.poster);
+
+  // Autoplay (muted) while most of the card is on screen, unless the visitor
+  // paused it or another video is playing.
+  useEffect(() => {
+    const node = ref.current;
+    if (!autoplay || !node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(([entry]) => setSeen(Boolean(entry?.isIntersecting)), { threshold: 0.6 });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [autoplay, ref]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!autoplay || !video || userPaused || failed) return;
+    if (seen && (active === null || active === id) && video.paused) {
+      claimPlayback(id);
+      setStarted(true);
+      void video.play().catch(() => releasePlayback(id));
+    } else if (!seen && !video.paused) {
+      video.pause();
+    }
+  }, [autoplay, seen, active, id, userPaused, failed]);
 
   // Every poster in the rail starts loading as soon as the rail is near, not
   // when each card scrolls into the rail's own window: they are small stills,
@@ -48,9 +72,11 @@ function ClipCard({ clip, copy, near }: { clip: DemoClip; copy: DemoCopy["sectio
     if (video.paused) {
       claimPlayback(id);
       setStarted(true);
+      setUserPaused(false);
       setBuffering(video.readyState < 3);
       void video.play().catch(() => setFailed(true));
     } else {
+      setUserPaused(true);
       video.pause();
     }
   };
@@ -116,13 +142,18 @@ function ClipCard({ clip, copy, near }: { clip: DemoClip; copy: DemoCopy["sectio
  * branding: the crest and the sign-off card are in the video itself, so
  * nothing is drawn over them here.
  */
-export function ClipRail({ clips, copy }: { clips: DemoClip[]; copy: DemoCopy["sections"]["clips"] }) {
+export function ClipRail({ clips, copy, autoplayWide = false }: {
+  clips: DemoClip[];
+  copy: DemoCopy["sections"]["clips"];
+  /** Wide (16:9) clips play by themselves, muted, while on screen. */
+  autoplayWide?: boolean;
+}) {
   const { ref, inView: near } = useInView<HTMLDivElement>("600px 0px", 0);
   return (
     <div ref={ref} className="dm-rail" role="list">
       {clips.map((clip) => (
         <div role="listitem" key={clip.id} className="dm-rail-item">
-          <ClipCard clip={clip} copy={copy} near={near} />
+          <ClipCard clip={clip} copy={copy} near={near} autoplay={autoplayWide && clip.aspectRatio === "16:9"} />
         </div>
       ))}
     </div>

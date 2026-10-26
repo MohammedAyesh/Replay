@@ -17,9 +17,9 @@ vi.mock("../lib/bunny", () => ({ isBunnyStorageConfigured: () => true }));
 
 const servable = new Set<number>();
 vi.mock("../lib/demoBrandedClips", () => ({
-  demoBrandedVideoPath: (id: number) => `demo/branded/galaxy-v1/c${id}.mp4`,
-  demoBrandedPosterPath: (id: number) => `demo/branded/galaxy-v1/c${id}.jpg`,
-  isServableDemoCopy: async (id: number) => servable.has(id),
+  demoBrandedVideoPath: (id: number, brand = "galaxy") => `demo/branded/${brand === "academy" ? "jufa-v1" : "galaxy-v1"}/c${id}.mp4`,
+  demoBrandedPosterPath: (id: number, brand = "galaxy") => `demo/branded/${brand === "academy" ? "jufa-v1" : "galaxy-v1"}/c${id}.jpg`,
+  isServableDemoCopy: async (id: number, brand = "galaxy") => servable.has(brand === "academy" ? -id : id),
   onDemoBrandedReady: () => () => {},
 }));
 
@@ -36,6 +36,7 @@ const showcase = {
   match: null,
   clips: [],
   socialClips: [],
+  academyClips: [],
   salesWhatsapp: null,
   leadsEnabled: false,
   fieldName: "Jordan Galaxy",
@@ -100,6 +101,14 @@ describe("GET /api/demo/clips/:file", () => {
     expect(video.text).toBe("demo/branded/galaxy-v1/c5.mp4");
     const poster = await request(app).get("/api/demo/clips/8.jpg").expect(206);
     expect(poster.text).toBe("demo/branded/galaxy-v1/c8.jpg");
+  });
+
+  it("serves the academy view's copies from their own set", async () => {
+    servable.clear();
+    servable.add(-5);
+    const video = await request(app).get("/api/demo/clips/academy-5.mp4").expect(206);
+    expect(video.text).toBe("demo/branded/jufa-v1/c5.mp4");
+    await request(app).get("/api/demo/clips/5.mp4").expect(404);
   });
 
   it("serves nothing else", async () => {

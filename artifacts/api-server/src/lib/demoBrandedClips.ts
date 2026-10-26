@@ -43,6 +43,13 @@ import { logger } from "./logger";
 import { renderQueue } from "./renderQueue";
 
 export const DEMO_BRAND_VERSION = "galaxy-v1";
+/**
+ * Two sets of copies: the pitch view's in the Jordan Galaxy preset, and the
+ * academy view's in the JUFA preset (an academy that trains at Galaxy), so an
+ * academy owner sees an academy's badge, not a pitch's (Mohammed, 26 Oct).
+ */
+export type DemoBrand = "galaxy" | "academy";
+const BRAND_VERSIONS: Record<DemoBrand, string> = { galaxy: DEMO_BRAND_VERSION, academy: "jufa-v1" };
 /** The card's length, blur and darkening: the same as field 10's switched-on look. */
 const CARD = { seconds: 2.5, blur: 22, dim: 0.5 } as const;
 /** A clip that failed is tried again after this long, not on every visit... */
@@ -61,17 +68,18 @@ type State =
   | { status: "unrenderable" }
   | { status: "missing"; attempts: number };
 
-const state = new Map<number, State>();
-const checking = new Map<number, Promise<boolean | null>>();
+const state = new Map<string, State>();
+const checking = new Map<string, Promise<boolean | null>>();
+const keyOf = (clipId: number, brand: DemoBrand) => `${brand}:${clipId}`;
 const listeners = new Set<() => void>();
 let queue: Promise<void> = Promise.resolve();
 
-export function demoBrandedVideoPath(clipId: number): string {
-  return `demo/branded/${DEMO_BRAND_VERSION}/c${clipId}.mp4`;
+export function demoBrandedVideoPath(clipId: number, brand: DemoBrand = "galaxy"): string {
+  return `demo/branded/${BRAND_VERSIONS[brand]}/c${clipId}.mp4`;
 }
 
-export function demoBrandedPosterPath(clipId: number): string {
-  return `demo/branded/${DEMO_BRAND_VERSION}/c${clipId}.jpg`;
+export function demoBrandedPosterPath(clipId: number, brand: DemoBrand = "galaxy"): string {
+  return `demo/branded/${BRAND_VERSIONS[brand]}/c${clipId}.jpg`;
 }
 
 /** Called whenever a copy becomes ready, so the showcase cache can let it in. */
@@ -80,8 +88,8 @@ export function onDemoBrandedReady(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
-export function isDemoBrandedReady(clipId: number): boolean {
-  return state.get(clipId)?.status === "ready";
+export function isDemoBrandedReady(clipId: number, brand: DemoBrand = "galaxy"): boolean {
+  return state.get(keyOf(clipId, brand))?.status === "ready";
 }
 
 /** Test hook. */
@@ -113,25 +121,26 @@ async function storageHas(remotePath: string): Promise<boolean> {
  * when Storage could not say (then nothing is rendered on the strength of it).
  * Asked once per server, and again while the copy is missing.
  */
-export async function checkStored(clipId: number): Promise<boolean | null> {
-  const known = state.get(clipId);
+export async function checkStored(clipId: number, brand: DemoBrand = "galaxy"): Promise<boolean | null> {
+  const key = keyOf(clipId, brand);
+  const known = state.get(key);
   if (known?.status === "ready") return true;
   if (known && known.status !== "missing") return false;
-  let pending = checking.get(clipId);
+  let pending = checking.get(key);
   if (!pending) {
-    pending = Promise.all([storageHas(demoBrandedVideoPath(clipId)), storageHas(demoBrandedPosterPath(clipId))])
+    pending = Promise.all([storageHas(demoBrandedVideoPath(clipId, brand)), storageHas(demoBrandedPosterPath(clipId, brand))])
       .then(([video, poster]): boolean => {
         const ready = video && poster;
-        if (ready) state.set(clipId, { status: "ready" });
-        else if (!state.has(clipId)) state.set(clipId, { status: "missing", attempts: 0 });
+        if (ready) state.set(key, { status: "ready" });
+        else if (!state.has(key)) state.set(key, { status: "missing", attempts: 0 });
         return ready;
       })
       .catch((err): null => {
         logger.warn({ err, clipId }, "Could not check a demo clip copy in Storage");
         return null;
       })
-      .finally(() => checking.delete(clipId));
-    checking.set(clipId, pending);
+      .finally(() => checking.delete(key));
+    checking.set(key, pending);
   }
   return pending;
 }
@@ -140,23 +149,24 @@ export async function checkStored(clipId: number): Promise<boolean | null> {
  * Which of these clips have their branded copy ready. Starts rendering the
  * rest in the background, one at a time, behind players' own exports.
  */
-export async function demoBrandedReadyIds(clips: ClipRow[]): Promise<Set<number>> {
+export async function demoBrandedReadyIds(clips: ClipRow[], brand: DemoBrand = "galaxy"): Promise<Set<number>> {
   const ready = new Set<number>();
   if (!isBunnyStorageConfigured() || !isBunnyConfigured()) return ready;
   const unknown = new Set<number>();
   await Promise.all(clips.map(async (clip) => {
-    const stored = await checkStored(clip.id);
+    const stored = await checkStored(clip.id, brand);
     if (stored) ready.add(clip.id);
     else if (stored === null) unknown.add(clip.id);
   }));
   for (const clip of clips) {
     if (ready.has(clip.id) || unknown.has(clip.id)) continue;
-    const current = state.get(clip.id);
+    const key = keyOf(clip.id, brand);
+    const current = state.get(key);
     if (!current || current.status === "rendering" || current.status === "unrenderable" || current.status === "ready") continue;
     if (current.status === "failed" && (current.attempts >= MAX_ATTEMPTS || Date.now() - current.at < RETRY_AFTER_MS)) continue;
     const attempts = current.attempts;
-    state.set(clip.id, { status: "rendering" });
-    queue = queue.then(() => renderAndStore(clip, attempts)).catch(() => {});
+    state.set(key, { status: "rendering" });
+    queue = queue.then(() => renderAndStore(clip, brand, attempts)).catch(() => {});
   }
   return ready;
 }
@@ -183,27 +193,28 @@ function isPermanent(err: unknown): boolean {
     || /no footage|no source content/i.test(String((err as Error)?.message ?? ""));
 }
 
-async function renderAndStore(clip: ClipRow, previousAttempts: number): Promise<void> {
+async function renderAndStore(clip: ClipRow, brand: DemoBrand, previousAttempts: number): Promise<void> {
+  const key = keyOf(clip.id, brand);
   try {
-    await whenIdle(`demo-${clip.id}`, async () => {
-      const file = await renderDemoCopy(clip);
+    await whenIdle(`demo-${brand}-${clip.id}`, async () => {
+      const file = await renderDemoCopy(clip, brand);
       try {
         const poster = await posterFrom(file);
-        await uploadFileToBunnyStoragePath(file, demoBrandedVideoPath(clip.id));
-        await uploadBufferToBunnyStorage(poster, demoBrandedPosterPath(clip.id), "image/jpeg");
+        await uploadFileToBunnyStoragePath(file, demoBrandedVideoPath(clip.id, brand));
+        await uploadBufferToBunnyStorage(poster, demoBrandedPosterPath(clip.id, brand), "image/jpeg");
       } finally {
         cleanupTempFile(file);
       }
     });
-    state.set(clip.id, { status: "ready" });
-    logger.info({ clipId: clip.id, version: DEMO_BRAND_VERSION }, "Demo clip copy rendered in the Jordan Galaxy branding");
+    state.set(key, { status: "ready" });
+    logger.info({ clipId: clip.id, brand, version: BRAND_VERSIONS[brand] }, "Demo clip copy rendered");
     for (const listener of listeners) {
       try { listener(); } catch { /* a listener never stops the queue */ }
     }
   } catch (err) {
     const permanent = isPermanent(err);
-    state.set(clip.id, permanent ? { status: "unrenderable" } : { status: "failed", at: Date.now(), attempts: previousAttempts + 1 });
-    logger.error({ err, clipId: clip.id, permanent, attempts: previousAttempts + 1 }, "Could not render a demo clip copy");
+    state.set(key, permanent ? { status: "unrenderable" } : { status: "failed", at: Date.now(), attempts: previousAttempts + 1 });
+    logger.error({ err, clipId: clip.id, brand, permanent, attempts: previousAttempts + 1 }, "Could not render a demo clip copy");
   }
 }
 
@@ -227,8 +238,11 @@ function exportWindow(startFraction: number, endFraction: number, duration: numb
   return { startSec, clipDuration: endSec - startSec };
 }
 
-/** The clip, from its recording, with the preset's crest and sign-off card. */
-async function renderDemoCopy(clip: ClipRow): Promise<string> {
+/**
+ * The clip, from its recording, with the preset's overlay and sign-off card:
+ * Jordan Galaxy's corner crest, or JUFA's academy frame.
+ */
+async function renderDemoCopy(clip: ClipRow, brand: DemoBrand): Promise<string> {
   const temps: string[] = [];
   try {
     const info = await getBunnyVideoInfo(clip.videoId);
@@ -246,16 +260,16 @@ async function renderDemoCopy(clip: ClipRow): Promise<string> {
     temps.push(buffer.bufferPath);
 
     const portrait = clip.aspectRatio === "9:16";
-    const look = await demoBrandLook({ look: "galaxy", name: "", color: "", persona: "pitch" });
+    const look = await demoBrandLook({ look: brand, name: "", color: "", persona: brand === "academy" ? "academy" : "pitch" });
     const mark = await loadLocalImage(replayMarkPath());
     const dateLabel = await recordingDateLabel(clip.videoId);
     const overlay = path.join(os.tmpdir(), `soccerwatch-demo-overlay-${randomUUID()}.png`);
-    await fs.promises.writeFile(overlay, renderOverlayPng({ style: "cornerCrest", look, dims: getOutputDims(portrait), dateLabel, mark }));
+    await fs.promises.writeFile(overlay, renderOverlayPng({ style: brand === "academy" ? "academyFrame" : "cornerCrest", look, dims: getOutputDims(portrait), dateLabel, mark }));
     temps.push(overlay);
 
     const endScreen: EndScreenJob = {
       // The QR opens the demo, not the player's share card: the copy belongs to the demo.
-      spec: { kind: "signOff", look, dateLabel, link: `${publicBase()}/demo` },
+      spec: { kind: "signOff", look, dateLabel, link: `${publicBase()}/demo${brand === "academy" ? "?for=academy" : ""}` },
       ...CARD,
     };
     return await renderClip({
@@ -265,7 +279,7 @@ async function renderDemoCopy(clip: ClipRow): Promise<string> {
       endTime: Math.min(1, (buffer.adjustedOffsetSec + clipDuration) / buffer.bufferedDuration),
       cropPath: (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
       aspectRatio: clip.aspectRatio,
-      title: `demo-${clip.id}`,
+      title: `demo-${brand}-${clip.id}`,
       overlayUrl: overlay,
       endScreen,
     });
@@ -307,8 +321,8 @@ async function posterFrom(video: string): Promise<Buffer> {
  * or a re-ordered pick, the page can hold a copy's URL another instance has not
  * listed yet.
  */
-export async function isServableDemoCopy(clipId: number): Promise<boolean> {
-  if ((await checkStored(clipId)) !== true) return false;
+export async function isServableDemoCopy(clipId: number, brand: DemoBrand = "galaxy"): Promise<boolean> {
+  if ((await checkStored(clipId, brand)) !== true) return false;
   const [row] = await db
     .select({ id: userClipsTable.id })
     .from(userClipsTable)

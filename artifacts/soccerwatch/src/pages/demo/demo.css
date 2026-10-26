@@ -1006,3 +1006,37 @@
 .dm-also span { color: var(--dm-muted); font-size: 15px; }
 .dm-simple-setup { margin: 18px 0 8px; color: #d5dae4; max-width: 62ch; line-height: 1.55; }
 .dm-simple-full { color: var(--dm-turf, #2FD8C4); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Short page rail: wide and vertical clips side by side, centred, with the
+   vertical ones not much taller than the wide ones. */
+.dm-simple .dm-rail { --rail-h: min(calc(min(86vw, 640px) * 0.9), 480px); align-items: center; }
+
+/* The money breakdown and the full-demo card (short page). */
+.dm-money { grid-template-columns: 1fr; }
+@media (min-width: 820px) { .dm-money { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); } .dm-money-how { grid-column: 1 / -1; } }
+.dm-money-how { border-top: 1px solid var(--dm-line); padding-top: 16px; }
+.dm-money-how h3 { margin: 0 0 10px; font-size: 17px; }
+.dm-money-how ol { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.dm-money-how li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; background: rgba(238, 241, 246, 0.04); border: 1px solid var(--dm-line); border-radius: 12px; }
+.dm-money-how li div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dm-money-how li strong { font-size: 15px; }
+.dm-money-how li .dm-small { margin: 0; }
+.dm-money-how li b { font-family: 'Rajdhani', sans-serif; font-size: 24px; color: var(--dm-lime); white-space: nowrap; }
+.dm-money-how > .dm-small { margin: 0; }
+.dm-btn.dm-btn--ghost { background: transparent; border-color: var(--dm-ink); color: var(--dm-ink); text-decoration: none; display: inline-flex; align-items: center; }
+.dm-full-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 18px; padding: 18px 20px; border-radius: var(--dm-radius); background: var(--dm-lime); color: #0b0f1a; text-decoration: none; }
+.dm-full-card > span:first-child { display: flex; flex-direction: column; gap: 6px; }
+.dm-full-card strong { font-size: 22px; font-weight: 800; }
+.dm-full-card > span:first-child > span { font-size: 15px; line-height: 1.45; }
+.dm-full-card-go { flex-shrink: 0; display: grid; place-items: center; width: 48px; height: 48px; border-radius: 999px; background: #0b0f1a; color: var(--dm-lime); font-size: 22px; font-weight: 700; }
+
+/* Real numbers (short page) and the academy's free-ads count. */
+.dm-real { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 820px) { .dm-real { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.dm-real-tile { padding: 12px 10px; background: var(--dm-bg-2); border: 1px solid var(--dm-line); border-radius: 12px; min-width: 0; }
+.dm-real-tile dt { font-size: 12px; color: var(--dm-muted); margin-bottom: 6px; line-height: 1.3; }
+.dm-real-tile dd { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 3px; }
+.dm-real-tile .dm-num { font-size: 24px; font-weight: 700; line-height: 1; white-space: nowrap; }
+.dm-real-tile small { font-size: 12px; color: var(--dm-muted); }
+.dm-money-ads { margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; }
+.dm-money-ads .dm-num { font-size: 32px; font-weight: 700; color: var(--dm-ink); }
