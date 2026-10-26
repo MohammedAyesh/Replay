@@ -9,7 +9,7 @@ import { brightOnDark, inkOn, safeColor } from "./draw";
 import { applyEndScreen, endScreenRunOn, endScreenStart, FPS } from "./endScreenVideo";
 import { renderOverlayPng } from "./overlay";
 import { cleanChoice, dateLabelFromLocal, presetFileFromUrl, statLines, planClipBranding } from "./plan";
-import { renderPreviewPng, sampleEndScreen } from "./preview";
+import { renderPreviewMp4, renderPreviewPng, sampleEndScreen } from "./preview";
 import { OVERLAY_STYLES, type BrandLook } from "./types";
 import type { PlayerMetricValues } from "../matchStatsRules";
 
@@ -321,6 +321,37 @@ describe("applyEndScreen", () => {
       expect(r).toBeLessThan(60);
     } finally {
       fs.rmSync(out, { force: true });
+    }
+  }, 120_000);
+});
+
+describe("renderPreviewMp4", () => {
+  it("renders the card over moving run-on footage from a keyframed preview source", async () => {
+    const file = await renderPreviewMp4({
+      look: LOOK,
+      lookKey: `moving-preview-test-${Date.now()}`,
+      kind: "signOff",
+      dims: { w: 608, h: 1080 },
+      seconds: 3,
+      blur: 0,
+      dim: 0,
+    });
+    try {
+      // The bundled sample is 7.6 s; the card starts at 4.6 s and runs over
+      // its final 3 s instead of being appended over a held last frame.
+      expect(Math.abs(probeDuration(file) - 7.6)).toBeLessThan(0.2);
+      const hashAt = (seconds: number) => {
+        const lines = execFileSync("ffmpeg", [
+          "-nostdin", "-v", "error", "-ss", String(seconds), "-i", file,
+          "-frames:v", "1", "-f", "framemd5", "-",
+        ]).toString().split("\n").filter((line) => line && !line.startsWith("#"));
+        return lines[0]?.split(",").pop()?.trim();
+      };
+      // The sign-off card has settled by these points, so differing frames
+      // confirm the footage itself keeps moving beneath its fixed branding.
+      expect(hashAt(6.1)).not.toBe(hashAt(7.4));
+    } finally {
+      fs.rmSync(file, { force: true });
     }
   }, 120_000);
 });

@@ -2,10 +2,11 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createHash } from "crypto";
+import { spawn } from "child_process";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { brandingAssetDir, ensureBrandingFonts, loadLocalImage, replayMarkPath } from "./assets";
 import { drawEndScreenFrame } from "./endScreenFrame";
-import { applyEndScreen, endScreenStart, type EndScreenJob } from "./endScreenVideo";
+import { applyEndScreen, endScreenStart, FPS, type EndScreenJob } from "./endScreenVideo";
 import { renderOverlayPng } from "./overlay";
 import { publicBase } from "./plan";
 import type { BrandLook, Dims, EndScreen, EndScreenKind, OverlayStyle } from "./types";
@@ -114,7 +115,66 @@ export async function renderPreviewPng(input: {
 }
 
 const mp4Cache = new Map<string, { file: string; at: number }>();
+const keyedSampleCache = new Map<string, { file: string; at: number }>();
+const keyedSampleInFlight = new Map<string, Promise<string>>();
 const MP4_TTL_MS = 15 * 60 * 1000;
+
+/**
+ * The bundled clips are only source footage, not production renders. Re-encode
+ * them for the console preview so its card boundary is a real keyframe and the
+ * footage can continue behind the card. Production exports still key their
+ * main encode in ffmpegExport.ts.
+ */
+async function keyframePreviewSample(sample: string, aspect: string, start: number): Promise<string> {
+  const key = `${aspect}:${start.toFixed(3)}`;
+  const hit = keyedSampleCache.get(key);
+  if (hit && Date.now() - hit.at < MP4_TTL_MS && fs.existsSync(hit.file)) {
+    hit.at = Date.now();
+    return hit.file;
+  }
+  const pending = keyedSampleInFlight.get(key);
+  if (pending) return pending;
+
+  const promise = (async () => {
+    const out = path.join(os.tmpdir(), `soccerwatch-branding-sample-${createHash("sha1").update(key).digest("hex")}-${Date.now()}.mp4`);
+    const proc = spawn("ffmpeg", [
+      "-nostdin", "-y", "-v", "error", "-i", sample,
+      "-map", "0:v:0", "-map", "0:a?",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p",
+      "-r", String(FPS), "-fps_mode", "cfr",
+      "-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2",
+      "-force_key_frames", start.toFixed(3),
+      "-movflags", "+faststart", out,
+    ], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    proc.stderr?.on("data", (data: Buffer) => { stderr = (stderr + data.toString()).slice(-4000); });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          proc.kill("SIGKILL");
+          reject(new Error("ffmpeg timed out while preparing the branding preview source"));
+        }, 300_000);
+        proc.on("error", (err) => { clearTimeout(timer); reject(err); });
+        proc.on("close", (code) => {
+          clearTimeout(timer);
+          if (code === 0) resolve();
+          else reject(new Error(`ffmpeg could not prepare the branding preview source: ${stderr.slice(-1500)}`));
+        });
+      });
+      keyedSampleCache.set(key, { file: out, at: Date.now() });
+      return out;
+    } catch (err) {
+      fs.unlink(out, () => {});
+      throw err;
+    }
+  })();
+  keyedSampleInFlight.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    keyedSampleInFlight.delete(key);
+  }
+}
 
 /**
  * The end screen played over a real clip, so the transition can be judged.
@@ -139,23 +199,25 @@ export async function renderPreviewMp4(input: {
   for (const [k, v] of mp4Cache) {
     if (Date.now() - v.at >= MP4_TTL_MS) { fs.unlink(v.file, () => {}); mp4Cache.delete(k); }
   }
+  for (const [k, v] of keyedSampleCache) {
+    if (Date.now() - v.at >= MP4_TTL_MS) { fs.unlink(v.file, () => {}); keyedSampleCache.delete(k); }
+  }
 
   const sample = path.join(brandingAssetDir(), "preview", `sample-${aspectKey(input.dims)}.mp4`);
+  const duration = aspectKey(input.dims) === "portrait" ? 7.6 : 8;
+  const start = endScreenStart(Math.max(0, duration - input.seconds));
+  const keyedSample = await keyframePreviewSample(sample, aspectKey(input.dims), start);
   const job: EndScreenJob = {
     spec: sampleEndScreen(input.kind, input.look),
     seconds: input.seconds,
     blur: input.blur,
     dim: input.dim,
   };
-  const duration = aspectKey(input.dims) === "portrait" ? 7.6 : 8;
   const out = await applyEndScreen({
-    mainPath: sample,
+    mainPath: keyedSample,
     dims: input.dims,
     job,
-    // The bundled sample has no interior keyframe, so the last-frame hold is
-    // the only stream-copy-safe boundary for its card. Real exports force a
-    // keyframe at the clip end before this pipeline runs.
-    start: endScreenStart(duration),
+    start,
     encode: {
       video: ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-r", "30", "-fps_mode", "cfr"],
       audio: ["-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2"],
