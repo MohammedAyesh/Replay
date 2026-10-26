@@ -5,6 +5,7 @@ import { attachPostgresIdleErrorListener } from "./lib/postgresPoolErrors";
 import { startOwnerStatusSync } from "./routes/owner";
 import { backfillMatchRooms } from "./lib/matchRooms";
 import { refreshStaleMatchStatsCaches } from "./lib/matchStatsCacheJobs";
+import { warmDemoBrandingPreviews } from "./routes/demoBranding";
 
 attachPostgresIdleErrorListener(pool, logger);
 
@@ -30,6 +31,9 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startOwnerStatusSync();
+  void warmDemoBrandingPreviews()
+    .then(() => logger.info("Public branding video previews warmed"))
+    .catch((err) => logger.warn({ err }, "Public branding video preview warm-up failed"));
   backfillMatchRooms()
     .then((created) => { if (created) logger.info({ created }, "Created match rooms for existing bookings"); })
     .catch((error) => logger.warn({ error }, "Match room backfill failed"));

@@ -152,8 +152,10 @@ export async function renderPreviewMp4(input: {
     mainPath: sample,
     dims: input.dims,
     job,
-    // The sample stands in for a clip followed by the footage the card plays over.
-    start: endScreenStart(Math.max(1, duration - input.seconds)),
+    // The bundled sample has no interior keyframe, so the last-frame hold is
+    // the only stream-copy-safe boundary for its card. Real exports force a
+    // keyframe at the clip end before this pipeline runs.
+    start: endScreenStart(duration),
     encode: {
       video: ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-pix_fmt", "yuv420p", "-r", "30", "-fps_mode", "cfr"],
       audio: ["-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2"],

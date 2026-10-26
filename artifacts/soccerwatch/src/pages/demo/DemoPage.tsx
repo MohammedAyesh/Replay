@@ -113,6 +113,8 @@ export default function DemoPage() {
   const { ref: contactRef, inView: contactInView } = useInView<HTMLElement>("0px", 0.05);
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const [brandName, setBrandName] = useState("");
+  const [brandLook, setBrandLook] = useState<"galaxy" | "custom">("galaxy");
+  const [brandColor, setBrandColor] = useState("#D4FF4F");
   const brand = brandName.trim() || copy.sections.social.defaultName[persona];
   const s = copy.sections;
   const setView = (next: DemoView) => {
@@ -221,7 +223,7 @@ export default function DemoPage() {
           <Section key={key} id="products" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={s.clips.body}>
             {persona === "pitch" && <p className="dm-loss">{s.clips.loss}</p>}
             {data?.clips.length ? <ClipRail clips={data.clips} copy={s.clips} brandName={data.fieldName || "Jordan Galaxy"} /> : null}
-            {socialClips.length > 0 && <SocialSection clips={socialClips} persona={persona} copy={s.social} name={brandName} onName={setBrandName} />}
+            <SocialSection persona={persona} copy={s.social} name={brandName} onName={setBrandName} look={brandLook} onLook={setBrandLook} color={brandColor} onColor={setBrandColor} />
           </Section>
         );
       case "try":
@@ -427,6 +429,9 @@ export default function DemoPage() {
                 match={data?.match ?? null}
                 clip={socialClips.find((item) => item.aspectRatio === "9:16") ?? socialClips[0] ?? null}
                 brandName={brand}
+                brandLook={brandLook}
+                brandColor={brandColor}
+                previewLabels={s.social.showcases}
                 returnRatePercent={data?.returnRatePercent ?? null}
                 clipCount={data?.counts.clips ?? null}
                 copy={{

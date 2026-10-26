@@ -45,6 +45,15 @@ export interface DemoCopy {
       endFilmed: string;
       platforms: string;
       sample: string;
+      lookLabel: string;
+      looks: { galaxy: string; custom: string };
+      colorLabel: string;
+      colorHint: string;
+      nameLanguage: string;
+      previewKicker: string;
+      previewDescription: PersonaText;
+      aspectLabel: string;
+      showcases: Record<"cornerCrest" | "broadcastBar" | "academyFrame" | "signOff" | "player" | "match" | "academy", string>;
     };
     players: {
       kicker: string;
@@ -251,8 +260,8 @@ const ar: DemoCopy = {
       kicker: "سوشال ميديا",
       title: { pitch: "كل مقطع إعلان لملعبك", academy: "كل مقطع إعلان لأكاديميتك" },
       body: {
-        pitch: "بعد الصافرة، كل لاعب بتوصله مقاطعه لحالها: طولية وجاهزة للستوري، عليها شعار ملعبك، وبآخرها بطاقة فيها اسم ملعبك. هو بنشر، وأصحابه بيعرفوا وين يحجزوا.",
-        academy: "كل لاعب بتوصله مقاطعه لحالها وعليها شعار أكاديميتك. الأهل بنشروها، وكل أهل بشوفوها بيعرفوا وين يسجّلوا أولادهم.",
+        pitch: "بعد الصافرة، كل لاعب بتوصله مقاطعه جاهزة وعليها هوية ملعبك. شوف صور التصدير الحقيقية وبدّل الاسم واللون قبل ما تنشرها.",
+        academy: "كل لاعب بتوصله مقاطعه بهوية أكاديميتك. شوف صور التصدير الحقيقية لإطار الأكاديمية ومقاطع اللاعبين، وجرّب اسمك ولونك.",
       },
       nameLabel: { pitch: "اكتب اسم ملعبك وشوفه على المقاطع", academy: "اكتب اسم أكاديميتك وشوفه على المقاطع" },
       defaultName: { pitch: "ملعبك", academy: "أكاديميتك" },
@@ -263,7 +272,27 @@ const ar: DemoCopy = {
       endBook: { pitch: "احجز مباراتك الجاية", academy: "سجّل ابنك معنا" },
       endFilmed: "مصوّرة بـ ريبلاي",
       platforms: "إنستغرام · تيك توك · واتساب · سناب",
-      sample: "الشعار هون مثال. بنحط شعارك الحقيقي.",
+      sample: "المعاينات أمثلة من المصدّر الحقيقي؛ بيانات الملعب والأرقام توضيحية.",
+      lookLabel: "شكل الهوية",
+      looks: { galaxy: "هوية جوردان جالاكسي", custom: "هوية مخصّصة" },
+      colorLabel: "لون الهوية",
+      colorHint: "اكتب لون HEX من 6 خانات، مثل #D4FF4F.",
+      nameLanguage: "الاسم المرسل للمصدّر",
+      previewKicker: "معاينة من المصدّر",
+      previewDescription: {
+        pitch: "صور حقيقية من القوالب اللي بتنحط على مقاطع الملعب.",
+        academy: "صور حقيقية من قوالب الأكاديمية ومقاطع اللاعبين.",
+      },
+      aspectLabel: "نسبة العرض",
+      showcases: {
+        cornerCrest: "شارة زاوية المقطع",
+        broadcastBar: "شريط البث",
+        academyFrame: "إطار الأكاديمية",
+        signOff: "بطاقة الختام",
+        player: "مقطع لاعب",
+        match: "مقطع مباراة",
+        academy: "مقطع أكاديمية",
+      },
     },
     players: {
       kicker: "أرقام كل لاعب",
@@ -551,8 +580,8 @@ const en: DemoCopy = {
       kicker: "Social media",
       title: { pitch: "Every clip is an ad for your pitch", academy: "Every clip is an ad for your academy" },
       body: {
-        pitch: "After the whistle each player gets his clips automatically: vertical and ready for stories, with your logo on them and your end card at the finish. He posts; his friends see where to book.",
-        academy: "Every player gets his clips automatically, with your academy's badge on them. Parents share them, and every parent who sees one knows where to sign their kid up.",
+        pitch: "After the whistle each player gets clips carrying your pitch identity. Preview real renderer exports, then try your name and colour before sharing.",
+        academy: "Every player gets clips carrying your academy identity. Preview actual academy frames and player exports, then try your name and colour.",
       },
       nameLabel: { pitch: "Type your pitch's name and see it on the clips", academy: "Type your academy's name and see it on the clips" },
       defaultName: { pitch: "Your pitch", academy: "Your academy" },
@@ -563,7 +592,27 @@ const en: DemoCopy = {
       endBook: { pitch: "Book your next match", academy: "Join the academy" },
       endFilmed: "Filmed by Replay",
       platforms: "Instagram · TikTok · WhatsApp · Snapchat",
-      sample: "The logo here is a sample. We put yours on.",
+      sample: "These are examples from the real renderer; pitch details and figures are illustrative.",
+      lookLabel: "Brand look",
+      looks: { galaxy: "Jordan Galaxy preset", custom: "Custom brand" },
+      colorLabel: "Brand colour",
+      colorHint: "Enter a 6-digit hex colour, for example #D4FF4F.",
+      nameLanguage: "Name sent to renderer",
+      previewKicker: "Renderer previews",
+      previewDescription: {
+        pitch: "Actual exported images used on pitch clips.",
+        academy: "Actual exported images from academy and player templates.",
+      },
+      aspectLabel: "Preview aspect ratio",
+      showcases: {
+        cornerCrest: "Corner crest",
+        broadcastBar: "Broadcast bar",
+        academyFrame: "Academy frame",
+        signOff: "Sign-off card",
+        player: "Player clip",
+        match: "Match clip",
+        academy: "Academy clip",
+      },
     },
     players: {
       kicker: "Player stats",

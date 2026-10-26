@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DemoLocale, Persona } from "./copy";
 import { withBase, formatNumber, type DemoClip, type DemoMatch } from "./data";
 import { FieldLogo } from "./FieldLogo";
+import { claimPlayback, releasePlayback, useActivePlayback, useInView } from "./playback";
 import "./story.css";
 
 export type StoryVisual = "panorama" | "phone" | "clip" | "chat" | "booking" | "progress";
@@ -33,6 +34,9 @@ type StoryTabProps = {
   match: DemoMatch | null;
   clip: DemoClip | null;
   brandName: string;
+  brandLook: "galaxy" | "custom";
+  brandColor: string;
+  previewLabels: Record<"cornerCrest" | "broadcastBar" | "academyFrame" | "signOff" | "player" | "match" | "academy", string>;
   returnRatePercent: number | null;
   clipCount: number | null;
   copy: StoryTabCopy;
@@ -260,6 +264,9 @@ export function StoryTab({
   match,
   clip,
   brandName,
+  brandLook,
+  brandColor,
+  previewLabels,
   returnRatePercent,
   clipCount,
   copy,
@@ -271,6 +278,15 @@ export function StoryTab({
         <h2 className="dm-story-eyebrow" id="dm-story-title">{copy.title}</h2>
         <p className="dm-story-subtitle">{copy.subtitle}</p>
       </section>
+
+      <RendererStoryPreviews
+        persona={persona}
+        look={brandLook}
+        name={brandName}
+        color={brandColor}
+        labels={previewLabels}
+        label={locale === "ar" ? "معاينات فيديو من المصدّر الحقيقي" : "Real renderer video previews"}
+      />
 
       <div id="story-timeline" className="dm-story-timeline" aria-label={copy.nav.timeline}>
         {copy.chapters.map((chapter, index) => (
@@ -315,6 +331,100 @@ export function StoryTab({
         <div id="story-calculator" className="dm-story-calculator" aria-label={copy.nav.calculator}>{calculator}</div>
       </section>
     </div>
+  );
+}
+
+function RendererStoryPreviews({
+  persona,
+  look,
+  name,
+  color,
+  labels,
+  label,
+}: {
+  persona: Persona;
+  look: "galaxy" | "custom";
+  name: string;
+  color: string;
+  labels: Record<"cornerCrest" | "broadcastBar" | "academyFrame" | "signOff" | "player" | "match" | "academy", string>;
+  label: string;
+}) {
+  const kinds: Array<"signOff" | "player" | "match" | "academy"> = persona === "academy"
+    ? ["signOff", "player", "academy"]
+    : ["signOff", "player", "match", "academy"];
+  const aspect = look === "galaxy" ? "9:16" : "16:9";
+  return (
+    <section className="dm-story-renderer" aria-label={label} data-testid="story-renderer-previews">
+      <p className="dm-story-renderer-heading">{label}</p>
+      <div className="dm-story-renderer-grid">
+        {kinds.map((kind) => (
+          <RendererStoryVideo
+            key={`${kind}-${persona}`}
+            kind={kind}
+            title={labels[kind]}
+            persona={persona}
+            look={look}
+            name={name}
+            color={color}
+            aspect={aspect}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RendererStoryVideo({ kind, title, persona, look, name, color, aspect }: {
+  kind: "signOff" | "player" | "match" | "academy";
+  title: string;
+  persona: Persona;
+  look: "galaxy" | "custom";
+  name: string;
+  color: string;
+  aspect: "9:16" | "16:9";
+}) {
+  const id = `renderer-story-${persona}-${kind}`;
+  const { ref, inView } = useInView<HTMLElement>("160px 0px", 0.15);
+  const activePlayback = useActivePlayback();
+  const params = new URLSearchParams({ look, kind, persona, aspect });
+  if (look === "custom") {
+    params.set("name", name);
+    params.set("color", color);
+    params.set(/[\u0600-\u06FF]/.test(name) ? "nameAr" : "nameEn", name);
+  }
+  const src = withBase(`/api/demo/branding/preview.mp4?${params.toString()}`);
+
+  useEffect(() => {
+    const video = ref.current?.querySelector("video");
+    if (!video) return;
+    if (inView && (activePlayback === null || activePlayback === id)) {
+      claimPlayback(id);
+      void video.play().catch(() => undefined);
+    } else if (!video.paused) {
+      video.pause();
+    }
+    if (!inView) releasePlayback(id);
+  }, [activePlayback, id, inView, ref]);
+
+  useEffect(() => () => releasePlayback(id), [id]);
+
+  return (
+    <figure ref={ref} className="dm-story-renderer-item" data-testid={`story-video-${kind}`}>
+      <div className={`dm-story-renderer-frame ${aspect === "9:16" ? "is-vertical" : "is-horizontal"}`}>
+        {inView && (
+          <video
+            src={src}
+            muted
+            playsInline
+            loop
+            preload="none"
+            aria-label={title}
+            data-testid={`story-video-player-${kind}`}
+          />
+        )}
+      </div>
+      <figcaption>{title}</figcaption>
+    </figure>
   );
 }
 
