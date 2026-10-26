@@ -50,6 +50,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         "app-shell mx-auto w-full bg-background relative flex flex-col rp-glow",
         isGuidedDemo ? "max-w-none app-shell--wide" : isAcademyConsole ? "max-w-none" : isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
         (isLogin || isAuthPage || isWholeGameClaim || isGuidedDemo || isAcademyConsole) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
+        !hideTabBar && "app-shell--player-nav",
       )}
     >
       {!hideHeader && (

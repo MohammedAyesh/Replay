@@ -1146,7 +1146,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 /* ── Responsive app shell ──────────────────────────────────────────────── */
 /*
  * The phone shell is intentionally the default. Larger viewports get a
- * roomy application frame and a compact horizontal nav, while each page
+ * roomy application frame, while each page
  * keeps its own scroll container and mobile spacing below this breakpoint.
  */
 @media (min-width: 768px) {
@@ -1160,31 +1160,6 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     width: min(calc(100% - 48px), 1320px);
     margin: 18px auto 12px;
     padding-inline: 18px;
-  }
-
-  .app-shell > nav {
-    position: fixed;
-    inset: 18px max(24px, calc((100vw - 1320px) / 2)) auto auto;
-    width: auto;
-    max-width: none;
-    height: 52px;
-    margin: 0;
-    padding: 4px 6px;
-    border-radius: 18px;
-  }
-
-  .app-shell > nav a {
-    width: auto;
-    min-width: 74px;
-    height: 42px;
-    flex-direction: row;
-    gap: 7px;
-    padding: 0 12px;
-  }
-
-  .app-shell > nav a span {
-    font-size: 11px;
-    letter-spacing: .02em;
   }
 
   .home-page-scroll,
@@ -1535,14 +1510,11 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 }
 
 @media (min-width: 1024px) {
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > header.replay-header {
+  .app-shell--player-nav {
+    padding-inline-start: 256px;
+  }
+
+  .app-shell--player-nav > header.replay-header {
     position: fixed;
     inset-block: 0;
     inset-inline-start: 0;
@@ -1559,14 +1531,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     backdrop-filter: none;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > header.replay-header > div {
+  .app-shell--player-nav > header.replay-header > div {
     display: flex;
     height: 100%;
     flex-direction: column;
@@ -1575,36 +1540,15 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     gap: 24px;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > header.replay-header .replay-lockup {
+  .app-shell--player-nav > header.replay-header .replay-lockup {
     padding: 4px 8px 20px;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > header.replay-header .replay-lockup > .replay-wordmark {
+  .app-shell--player-nav > header.replay-header .replay-lockup > .replay-wordmark {
     display: none;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > header.replay-header .replay-lockup::after {
+  .app-shell--player-nav > header.replay-header .replay-lockup::after {
     content: "Replay";
     color: var(--replay-text);
     font-family: "Rajdhani", "Inter", sans-serif;
@@ -1614,27 +1558,13 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     line-height: 1;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > header.replay-header > div > button {
+  .app-shell--player-nav > header.replay-header > div > button {
     justify-content: center;
     border-radius: 12px;
     background: var(--replay-raised);
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > nav {
+  .app-shell--player-nav > nav {
     position: fixed;
     inset-block: 104px auto;
     inset-inline-start: 16px;
@@ -1655,14 +1585,7 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     box-shadow: none;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > nav a {
+  .app-shell--player-nav > nav a {
     width: 100%;
     min-width: 0;
     min-height: 44px;
@@ -1675,39 +1598,18 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     text-align: start;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > nav a[class*="bg-turf"] {
+  .app-shell--player-nav > nav a[class*="bg-turf"] {
     background-color: color-mix(in srgb, var(--replay-turf) 10%, transparent) !important;
     color: var(--replay-turf) !important;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > nav a > span {
+  .app-shell--player-nav > nav a > span {
     font-size: 14px;
     letter-spacing: normal;
   }
 
-  :is(
-    .app-shell:has(> nav a[href="/home"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/view"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/matches"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/my-clips"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/account"][class~="bg-turf"]),
-    .app-shell:has(> nav a[href="/academy/me"][class~="bg-turf"])
-  ) > main {
-    margin-block-start: 94px;
+  .app-shell--player-nav > main {
+    margin-block-start: 18px;
   }
 }
 
