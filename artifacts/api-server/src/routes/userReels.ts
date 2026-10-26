@@ -122,6 +122,7 @@ function brandingClip(clip: ClipRow, endScreen?: unknown) {
     academyId: clip.academyId,
     matchCode: clip.matchCode,
     footageRequestId: clip.footageRequestId,
+    videoId: clip.videoId,
     endScreen: endScreen === undefined ? clip.endScreen : endScreen,
   };
 }

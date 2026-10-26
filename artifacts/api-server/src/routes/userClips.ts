@@ -825,6 +825,7 @@ async function runBackgroundExport(
           academyId: clip.academyId,
           matchCode: clip.matchCode,
           footageRequestId: clip.footageRequestId,
+          videoId: clip.videoId,
           endScreen: fresh ? fresh.endScreen : clip.endScreen,
         },
         clipFieldId,
@@ -1109,6 +1110,7 @@ setBackupBrandingProvider(async (clip, uploadedOverlayUrl, exportRevision) => {
       academyId: clip.academyId,
       matchCode: clip.matchCode,
       footageRequestId: clip.footageRequestId,
+      videoId: clip.videoId,
       endScreen: clip.endScreen,
     },
     clip.aspectRatio === "9:16",
@@ -2795,6 +2797,7 @@ function brandingClipOf(clip: typeof userClipsTable.$inferSelect, endScreen?: un
     academyId: clip.academyId,
     matchCode: clip.matchCode,
     footageRequestId: clip.footageRequestId,
+    videoId: clip.videoId,
     endScreen: endScreen === undefined ? clip.endScreen : endScreen,
   };
 }

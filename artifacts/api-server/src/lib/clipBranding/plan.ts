@@ -2,7 +2,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, like, ne } from "drizzle-orm";
 import {
   db,
   academiesTable,
@@ -15,6 +15,7 @@ import {
   matchPlayerStatsCacheTable,
   matchRoomsTable,
   motmVotesTable,
+  recordingsTable,
   usersTable,
   type BrandingProfileRow,
   type MatchPlayerStatsCacheValue,
@@ -66,6 +67,8 @@ export type BrandingClip = {
   footageRequestId: number | null;
   /** The player's choice of card and numbers (user_clips.end_screen), if any. */
   endScreen?: unknown;
+  /** The clip's Bunny video: finds its match when the clip carries no match code. */
+  videoId?: string | null;
 };
 
 export type ClipBrandingPlan = {
@@ -205,11 +208,46 @@ async function roomForClip(clip: BrandingClip): Promise<RoomContext | null> {
       const ctx = await loadRoomByCode(clip.matchCode);
       if (ctx) return ctx;
     }
-    if (clip.footageRequestId) return await loadRoomByRequestId(clip.footageRequestId);
+    if (clip.footageRequestId) {
+      const ctx = await loadRoomByRequestId(clip.footageRequestId);
+      if (ctx) return ctx;
+    }
+    // Clips cut from Find Yourself, his moments or the recording carry no
+    // match code (2026-10-26: every one of Mohammed's 401 clips). Find the
+    // match through the recording instead: the booking on that recording
+    // where this player has stats, else one he played in.
+    if (clip.videoId) return await roomForRecordingClip(clip.userId, clip.videoId);
   } catch (err) {
     logger.warn({ err, clipId: clip.id }, "Could not resolve the clip's match for its end screen");
   }
   return null;
+}
+
+async function roomForRecordingClip(userId: number, videoId: string): Promise<RoomContext | null> {
+  const [recording] = await db.select({ id: recordingsTable.id }).from(recordingsTable)
+    .where(like(recordingsTable.videoUrl, `%${videoId.replace(/[%_\\]/g, "")}%`))
+    .limit(1);
+  if (!recording) return null;
+  // Dynamic: matchFeed pulls in the claim routes, which must not load with this module.
+  const { roomsForRecording } = await import("../matchFeed");
+  const rooms = (await roomsForRecording(recording.id)).map((r) => r.room);
+  if (!rooms.length) return null;
+  const ids = rooms.map((r) => r.id);
+  const [withStats] = await db.select({ matchId: matchPlayerStatsCacheTable.matchId })
+    .from(matchPlayerStatsCacheTable)
+    .where(and(inArray(matchPlayerStatsCacheTable.matchId, ids), eq(matchPlayerStatsCacheTable.userId, userId)))
+    .orderBy(desc(matchPlayerStatsCacheTable.matchId))
+    .limit(1);
+  let room = withStats ? rooms.find((r) => r.id === withStats.matchId) : undefined;
+  if (!room) {
+    const [played] = await db.select({ matchId: matchPlayersTable.matchId }).from(matchPlayersTable)
+      .where(and(inArray(matchPlayersTable.matchId, ids), eq(matchPlayersTable.userId, userId)))
+      .orderBy(desc(matchPlayersTable.matchId))
+      .limit(1);
+    room = played ? rooms.find((r) => r.id === played.matchId) : undefined;
+  }
+  // A match he was not in tells his clip nothing: no card from it.
+  return room ? loadRoomByCode(room.code) : null;
 }
 
 type StatsHistory = { startLocal: string; stats: MatchPlayerStatsCacheValue }[];
