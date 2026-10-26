@@ -33,9 +33,9 @@ export const clerkAppearance = {
   },
   elements: {
     // Modal shell
-    rootBox: "w-full flex justify-center",
+    rootBox: "!w-full flex justify-center",
     cardBox:
-      "!rounded-2xl !w-full !max-w-[400px] !mx-auto !overflow-hidden !border !border-[#232C42] !bg-[#141B2C] !shadow-none",
+      "!rounded-2xl !w-[400px] !max-w-full !mx-auto !overflow-hidden !border !border-[#232C42] !bg-[#141B2C] !shadow-none",
     card:
       "!shadow-none !border-0 !rounded-none !bg-transparent !px-6 !pt-[30px] !pb-[26px]" as string,
     footer:
