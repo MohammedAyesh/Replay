@@ -260,8 +260,19 @@ describe("drawn branding profiles", () => {
       expect(res.headers["content-type"]).toContain("image/png");
       expect((res.body as Buffer).readUInt32BE(16)).toBe(608);
     }
+    const video = await request(app)
+      .get(`/api/admin/branding/preview?scope=field:${fieldId}&what=signOff&aspect=16:9&format=mp4&seconds=4`)
+      .buffer(true)
+      .parse((r, cb) => {
+        const parts: Buffer[] = [];
+        r.on("data", (c: Buffer) => parts.push(c));
+        r.on("end", () => cb(null, Buffer.concat(parts)));
+      });
+    expect(video.status).toBe(200);
+    expect(video.headers["content-type"]).toContain("video/mp4");
+    expect((video.body as Buffer).subarray(4, 8).toString()).toBe("ftyp");
     await request(app).get(`/api/admin/branding/preview?scope=field:${fieldId}&what=uploaded`).expect(400);
-  }, 60_000);
+  }, 120_000);
 
   it("refuses a plain user", async () => {
     mockedGetLocalUserId.mockResolvedValue(plainId);

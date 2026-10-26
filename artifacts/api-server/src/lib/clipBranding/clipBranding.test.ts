@@ -42,6 +42,18 @@ function probeDuration(file: string): number {
   ]).toString().trim());
 }
 
+function probePreview(file: string): {
+  streams: Array<{ codec_name: string; codec_type: string; width?: number; height?: number; avg_frame_rate: string }>;
+  format: { duration: string };
+} {
+  return JSON.parse(execFileSync("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration:stream=codec_name,codec_type,width,height,avg_frame_rate",
+    "-of", "json",
+    file,
+  ]).toString());
+}
+
 async function pixel(png: Buffer, x: number, y: number): Promise<[number, number, number, number]> {
   const img = await loadImage(png);
   const c = createCanvas(img.width, img.height);
@@ -326,20 +338,49 @@ describe("applyEndScreen", () => {
 });
 
 describe("renderPreviewMp4", () => {
-  it("renders the card over moving run-on footage from a keyframed preview source", async () => {
-    const file = await renderPreviewMp4({
-      look: LOOK,
-      lookKey: `moving-preview-test-${Date.now()}`,
-      kind: "signOff",
+  it.each([
+    {
+      aspect: "portrait",
       dims: { w: 608, h: 1080 },
       seconds: 3,
+      sampleDuration: 7.6,
+      firstSettledFrame: 6.9,
+      laterSettledFrame: 7.4,
+    },
+    {
+      aspect: "landscape",
+      dims: { w: 1920, h: 1080 },
+      seconds: 4,
+      sampleDuration: 8,
+      firstSettledFrame: 7,
+      laterSettledFrame: 7.8,
+    },
+  ])("renders a $aspect admin preview at $seconds seconds with moving run-on footage", async ({
+    aspect, dims, seconds, sampleDuration, firstSettledFrame, laterSettledFrame,
+  }) => {
+    const file = await renderPreviewMp4({
+      look: LOOK,
+      lookKey: `moving-preview-test-${aspect}-${seconds}-${Date.now()}`,
+      kind: "signOff",
+      dims,
+      seconds,
       blur: 0,
       dim: 0,
     });
     try {
-      // The bundled sample is 7.6 s; the card starts at 4.6 s and runs over
-      // its final 3 s instead of being appended over a held last frame.
-      expect(Math.abs(probeDuration(file) - 7.6)).toBeLessThan(0.2);
+      const probe = probePreview(file);
+      const video = probe.streams.find((stream) => stream.codec_type === "video");
+      const audio = probe.streams.find((stream) => stream.codec_type === "audio");
+      expect(video).toMatchObject({
+        codec_name: "h264",
+        width: dims.w,
+        height: dims.h,
+        avg_frame_rate: "30/1",
+      });
+      expect(audio?.codec_name).toBe("aac");
+      // The card runs over the end of the bundled footage, not after it.
+      expect(Math.abs(Number(probe.format.duration) - sampleDuration)).toBeLessThan(0.2);
+      expect(Math.abs(probeDuration(file) - sampleDuration)).toBeLessThan(0.2);
       const hashAt = (seconds: number) => {
         const lines = execFileSync("ffmpeg", [
           "-nostdin", "-v", "error", "-ss", String(seconds), "-i", file,
@@ -349,11 +390,11 @@ describe("renderPreviewMp4", () => {
       };
       // The sign-off card has settled by these points, so differing frames
       // confirm the footage itself keeps moving beneath its fixed branding.
-      expect(hashAt(6.1)).not.toBe(hashAt(7.4));
+      expect(hashAt(firstSettledFrame)).not.toBe(hashAt(laterSettledFrame));
     } finally {
       fs.rmSync(file, { force: true });
     }
-  }, 120_000);
+  }, 180_000);
 });
 
 describe("planClipBranding", () => {
