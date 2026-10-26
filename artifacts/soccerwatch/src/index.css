@@ -1611,6 +1611,16 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
   .app-shell--player-nav > main {
     margin-block-start: 18px;
   }
+
+  .app-shell--player-nav :is(
+    .home-page,
+    .view-page,
+    .fields-page,
+    .my-clips-page,
+    .account-page
+  ) {
+    background-color: transparent;
+  }
 }
 
 .replay-wordmark {
