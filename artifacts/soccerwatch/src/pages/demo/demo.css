@@ -1040,3 +1040,15 @@
 .dm-real-tile small { font-size: 12px; color: var(--dm-muted); }
 .dm-money-ads { margin: 0 0 6px; display: flex; align-items: baseline; gap: 8px; }
 .dm-money-ads .dm-num { font-size: 32px; font-weight: 700; color: var(--dm-ink); }
+
+/* Two videos (short page): the sideline clip, and a vertical one in a phone. */
+.dm-pair { display: grid; gap: 22px; justify-items: center; }
+@media (min-width: 820px) { .dm-pair { grid-template-columns: minmax(0, 1.6fr) auto; align-items: center; justify-items: stretch; } }
+.dm-pair-wide { width: 100%; }
+.dm-pair-wide .dm-clip--wide { width: 100%; }
+.dm-phone { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.dm-phone-body { width: 240px; padding: 12px 10px; background: #05070d; border: 2px solid #3a4560; border-radius: 38px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 8px; box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45); }
+.dm-phone-notch { width: 64px; height: 6px; border-radius: 3px; background: #232c42; }
+.dm-phone-bar { width: 76px; height: 4px; border-radius: 2px; background: #3a4560; }
+.dm-phone .dm-clip--tall { width: 100%; height: auto; aspect-ratio: 9 / 16; border-radius: 24px; }
+.dm-phone figcaption { margin: 0; text-align: center; }

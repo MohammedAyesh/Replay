@@ -2,7 +2,7 @@ import { useEffect, useId, useMemo, useState } from "react";
 
 import { ReplayMark } from "@/components/ReplayMark";
 import { useLocale } from "@/i18n/context";
-import { ClipRail, HeroVideo } from "./ClipRail";
+import { ClipCard, HeroVideo } from "./ClipRail";
 import { Contact } from "./Contact";
 import { demoCopy, type DemoLocale, type Persona } from "./copy";
 import { formatMatchDate, formatNumber, useReport, useShowcase, withBase, type DemoReport } from "./data";
@@ -178,16 +178,18 @@ export default function SimpleDemo() {
     return () => { document.title = previous; };
   }, [lang]);
 
-  const heroClip = useMemo(() => {
-    const clips = data?.clips ?? [];
-    return clips.length ? [...clips].sort((x, y) => y.viewCount - x.viewCount)[0] : null;
-  }, [data?.clips]);
-  // Wide clips first (the first one plays by itself), then the vertical ones.
-  // The academy view shows only academy-branded copies, never a pitch's.
-  const railClips = useMemo(() => {
+  // Two videos on the page, no more (Mohammed, 26 Oct): one sideline (16:9)
+  // that plays by itself, and one vertical (9:16) inside a phone frame. The
+  // academy view uses only academy-branded copies, never a pitch's.
+  const { wideClip, tallClip } = useMemo(() => {
     const clips = (persona === "academy" ? data?.academyClips : data?.clips) ?? [];
-    return [...clips.filter((clip) => clip.aspectRatio === "16:9"), ...clips.filter((clip) => clip.aspectRatio !== "16:9")];
-  }, [data?.clips, data?.academyClips, persona]);
+    const byViews = [...clips].sort((x, y) => y.viewCount - x.viewCount);
+    const wide = byViews.find((clip) => clip.aspectRatio === "16:9") ?? null;
+    const tall = byViews.find((clip) => clip.aspectRatio === "9:16")
+      ?? (persona === "pitch" ? (data?.socialClips ?? []).find((clip) => clip.branded && clip.aspectRatio === "9:16") : undefined)
+      ?? null;
+    return { wideClip: wide, tallClip: tall };
+  }, [data?.clips, data?.academyClips, data?.socialClips, persona]);
   const returnRate = data?.returnRatePercent ?? null;
   const values = c.values[persona].filter((value) => value.stat !== "returnRate" || returnRate !== null);
   const scrollToContact = () => document.getElementById("contact")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -211,7 +213,8 @@ export default function SimpleDemo() {
 
       <main id="top">
         <section ref={heroRef} className="dm-hero dm-hero--short" aria-labelledby="dm-hero-title">
-          <HeroVideo clip={heroClip} fallbackPoster={data?.match?.poster ?? null} />
+          {/* A still, not a third video. */}
+          <HeroVideo clip={null} fallbackPoster={wideClip?.poster ?? data?.match?.poster ?? null} />
           <div className="dm-wrap dm-hero-body">
             <p className="dm-hero-kicker">{c.kicker[persona]}</p>
             <h1 id="dm-hero-title" className="dm-h1">{c.title[persona]}</h1>
@@ -247,12 +250,28 @@ export default function SimpleDemo() {
           </div>
         </section>
 
-        {railClips.length ? (
+        {wideClip || tallClip ? (
           <section className="dm-section dm-section--tight dm-section--raised" aria-labelledby="dm-clips-title">
             <div className="dm-wrap">
               <h2 id="dm-clips-title" className="dm-h2 dm-h2--small">{c.clipsTitle[persona]}</h2>
               <p className="dm-small dm-simple-note">{c.clipsNote[persona]}</p>
-              <ClipRail clips={railClips} copy={copy.sections.clips} autoplayWide />
+              <div className="dm-pair">
+                {wideClip && (
+                  <div className="dm-pair-wide">
+                    <ClipCard clip={wideClip} copy={copy.sections.clips} near autoplay />
+                  </div>
+                )}
+                {tallClip && (
+                  <figure className="dm-phone">
+                    <div className="dm-phone-body">
+                      <span className="dm-phone-notch" aria-hidden="true" />
+                      <ClipCard clip={tallClip} copy={copy.sections.clips} near autoplay={false} />
+                      <span className="dm-phone-bar" aria-hidden="true" />
+                    </div>
+                    <figcaption className="dm-small">{c.phoneCaption[persona]}</figcaption>
+                  </figure>
+                )}
+              </div>
             </div>
           </section>
         ) : null}

@@ -6,7 +6,7 @@ import { formatClock, withBase, type DemoClip } from "./data";
 import { DemoLoader } from "./Loader";
 import { claimPlayback, releasePlayback, useActivePlayback, useInView } from "./playback";
 
-function ClipCard({ clip, copy, near, autoplay }: { clip: DemoClip; copy: DemoCopy["sections"]["clips"]; near: boolean; autoplay: boolean }) {
+export function ClipCard({ clip, copy, near, autoplay }: { clip: DemoClip; copy: DemoCopy["sections"]["clips"]; near: boolean; autoplay: boolean }) {
   const id = `clip-${useId()}`;
   const videoRef = useRef<HTMLVideoElement>(null);
   const active = useActivePlayback();

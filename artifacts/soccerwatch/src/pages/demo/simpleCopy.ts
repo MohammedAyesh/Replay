@@ -15,6 +15,7 @@ export type SimpleCopy = {
   values: Record<Persona, Array<{ title: string; body: string; stat?: "returnRate" }>>;
   clipsTitle: PersonaText;
   clipsNote: PersonaText;
+  phoneCaption: PersonaText;
   statsTitle: string;
   statsNote: (date: string) => string;
   stats: {
@@ -70,6 +71,7 @@ const ar: SimpleCopy = {
     pitch: "هيك بتطلع: الشعار بالزاوية وبطاقة الحجز بالآخر. الأسماء مخفية.",
     academy: "هون بشعار أكاديمية JUFA اللي بتتدرب بجوردان جالاكسي: إطار الأكاديمية وبطاقة بالآخر. الأسماء مخفية.",
   },
+  phoneCaption: { pitch: "هيك بشوفها أصحابهم على الستوري.", academy: "هيك بشوفها الأهل والعيلة على الستوري." },
   statsTitle: "أرقام حقيقية من مباراة وحدة",
   statsNote: (date) => `مباراة ${date}. الكاميرا قاستها لحالها، والأسماء مخفية.`,
   stats: {
@@ -148,6 +150,7 @@ const en: SimpleCopy = {
     pitch: "This is how they go out: the crest in the corner, a booking card at the end. Names hidden.",
     academy: "Shown with the badge of JUFA, an academy that trains at Jordan Galaxy: the academy frame, and a card at the end. Names hidden.",
   },
+  phoneCaption: { pitch: "This is how their friends see it on a story.", academy: "This is how parents and family see it on a story." },
   statsTitle: "Real numbers from one match",
   statsNote: (date) => `${date}. Measured by the camera on its own; names hidden.`,
   stats: {
