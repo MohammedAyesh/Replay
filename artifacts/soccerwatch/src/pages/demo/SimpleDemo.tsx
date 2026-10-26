@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { ReplayMark } from "@/components/ReplayMark";
 import { useLocale } from "@/i18n/context";
@@ -29,90 +29,11 @@ function initialPersona(): Persona {
   return "pitch";
 }
 
-function Slider({ label, value, onChange, min, max, step }: {
-  label: string;
-  value: number;
-  onChange: (value: number) => void;
-  min: number;
-  max: number;
-  step: number;
-}) {
-  const id = useId();
-  return (
-    <div className="dm-field">
-      <label htmlFor={id}>{label} <b className="dm-num">{value}</b></label>
-      <input id={id} type="range" min={min} max={max} step={step} value={value} onChange={(event) => onChange(Number(event.target.value))} dir="ltr" />
-    </div>
-  );
-}
-
-function Money({ persona, lang }: { persona: Persona; lang: DemoLocale }) {
-  const c = simpleCopy[lang];
-  const [a, setA] = useState(persona === "pitch" ? 20 : 100);
-  const [b, setB] = useState(persona === "pitch" ? 40 : 35);
-  useEffect(() => {
-    setA(persona === "pitch" ? 20 : 100);
-    setB(persona === "pitch" ? 40 : 35);
-  }, [persona]);
-  const weeks = 52 / 12;
-  // Pitch: 4 in 10 bookings pay 3 JOD more to be filmed, plus one booking a
-  // week from shared clips (the full page's calculator starts from the same).
-  // Academy (Mohammed, 26 Oct: "have the slider be free ads per month"): one
-  // new player for every 50 clips shared.
-  const parts = persona === "pitch"
-    ? [
-      { count: a * weeks * 0.4, unit: 3, value: a * weeks * 0.4 * 3 },
-      { count: weeks, unit: b, value: weeks * b },
-    ]
-    : [
-      { count: a / 50, unit: b, value: (a / 50) * b },
-    ];
-  const monthly = parts.reduce((sum, part) => sum + part.value, 0);
-  return (
-    <div className="dm-money">
-      <div className="dm-money-result" aria-live="polite">
-        {persona === "academy" && (
-          <p className="dm-money-ads">
-            <strong className="dm-num" dir="ltr">{formatNumber(a, lang)}</strong>
-            <span>{c.ads.headline}</span>
-          </p>
-        )}
-        <strong className="dm-big-num" dir="ltr">+{formatNumber(Math.round(monthly), lang)}</strong>
-        <span>{c.perMonth}</span>
-        <span className="dm-small">{c.perYear(formatNumber(Math.round(monthly * 12), lang))}</span>
-        {persona === "academy" && <span className="dm-small">{c.ads.reach}</span>}
-      </div>
-      <div className="dm-money-inputs">
-        {persona === "pitch" ? (
-          <>
-            <Slider label={c.inputs.pitch.a} value={a} onChange={setA} min={5} max={100} step={1} />
-            <Slider label={c.inputs.pitch.b} value={b} onChange={setB} min={10} max={100} step={5} />
-          </>
-        ) : (
-          <>
-            <Slider label={c.inputs.academy.a} value={a} onChange={setA} min={10} max={500} step={10} />
-            <Slider label={c.inputs.academy.b} value={b} onChange={setB} min={10} max={100} step={5} />
-          </>
-        )}
-      </div>
-      <div className="dm-money-how">
-        <h3>{c.howTitle}</h3>
-        <ol>
-          {c.parts[persona].map((part, index) => (
-            <li key={part.title}>
-              <div>
-                <strong>{part.title}</strong>
-                <span className="dm-small">{part.detail(formatNumber(parts[index].count, lang, parts[index].count < 10 && !Number.isInteger(parts[index].count) ? 1 : 0), formatNumber(parts[index].unit, lang))}</span>
-              </div>
-              <b className="dm-num" dir="ltr">+{formatNumber(Math.round(parts[index].value), lang)}</b>
-            </li>
-          ))}
-        </ol>
-        <p className="dm-small">{c.assumption[persona]}</p>
-      </div>
-    </div>
-  );
-}
+/*
+ * No money figure on this page (Mohammed, 26 Oct): for pitches the value is
+ * more bookings, for academies more players who stay longer. The full page's
+ * calculator (/demo/full) is unchanged.
+ */
 
 /** Real numbers from the demo's analysed match: the match, and its standout players. */
 function RealNumbers({ report, lang }: { report: DemoReport; lang: DemoLocale }) {
@@ -277,13 +198,6 @@ export default function SimpleDemo() {
         ) : null}
 
         {report && <RealNumbers report={report} lang={lang} />}
-
-        <section className="dm-section dm-section--tight" aria-labelledby="dm-money-title">
-          <div className="dm-wrap">
-            <h2 id="dm-money-title" className="dm-h2 dm-h2--small">{c.moneyTitle}</h2>
-            <Money persona={persona} lang={lang} />
-          </div>
-        </section>
 
         <section className="dm-section dm-section--tight dm-section--raised" aria-labelledby="dm-also-title">
           <div className="dm-wrap">

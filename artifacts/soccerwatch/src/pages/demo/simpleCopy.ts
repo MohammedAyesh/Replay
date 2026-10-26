@@ -53,16 +53,16 @@ const ar: SimpleCopy = {
     pitch: "كاميرا وحدة بتصوّر كل مباراة. اللاعبين بنشروا مقاطعهم وعليها شعار ملعبك، وأصحابهم بيجوا يحجزوا عندك.",
     academy: "كل حصة مصوّرة. اللاعبين بنشروا مقاطعهم وعليها شعار الأكاديمية، والأهل بتابعوا مباشر من البيت.",
   },
-  valuesTitle: "شو بتستفيد",
+  valuesTitle: "شو بتجيبلك",
   values: {
     pitch: [
-      { title: "إعلان ببلاش كل ليلة", body: "كل مقطع بنزّله لاعب عليه شعارك وبطاقة بتقول وين يحجزوا." },
-      { title: "اللاعبين بيرجعوا", body: "من الزباين اللي بدفعوا بجوردان جالاكسي بيرجعوا يحجزوا.", stat: "returnRate" },
+      { title: "حجوزات أكثر", body: "اللاعبين بنزّلوا مقاطعهم وعليها شعارك وبطاقة حجز. أصحابهم بشوفوا وين انلعبت المباراة، وبيحجزوا عندك." },
+      { title: "الزباين بيرجعوا", body: "من الزباين اللي بدفعوا بجوردان جالاكسي بيرجعوا يحجزوا.", stat: "returnRate" },
       { title: "ما في إشي تشغّله", body: "بتصوّر وبتقصّ وبتبعت المقاطع لحالها. موظفينك ما بعملوا إشي." },
     ],
     academy: [
-      { title: "الأهل بشوفوا كل حصة", body: "مباشر من البيت، وكل مقطع عليه شعار الأكاديمية." },
-      { title: "تطوّر بشوفوه", body: "كل لاعب بتوصله مسافته وسرعته وتمريراته، مباراة بعد مباراة." },
+      { title: "لاعبين أكثر", body: "كل مقطع بنشره الأهل عليه شعار أكاديميتك. أهالي ثانيين بشوفوه وبسألوا وين ابنهم بقدر يتدرّب." },
+      { title: "اللاعبين بضلّوا", body: "الأهل بتابعوا كل حصة مباشر وبشوفوا أرقام ابنهم بتتحسن، فبيضلّوا مسجّلينه." },
       { title: "ما في إشي تشغّله", body: "بتصوّر وبتقصّ وبتبعت المقاطع لحالها. المدربين ما بعملوا إشي." },
     ],
   },
@@ -132,16 +132,16 @@ const en: SimpleCopy = {
     pitch: "One camera films every match. Players share their clips with your logo on them, and their friends book with you.",
     academy: "Every session filmed. Players share clips with your badge on them, and parents watch live from home.",
   },
-  valuesTitle: "What you get",
+  valuesTitle: "What it brings you",
   values: {
     pitch: [
-      { title: "Free ads every night", body: "Every clip a player posts carries your logo and a card that says where to book." },
-      { title: "Players come back", body: "of paying customers at Jordan Galaxy book again.", stat: "returnRate" },
+      { title: "More bookings", body: "Players post their clips with your logo and a booking card. Their friends see where the match was played, and book there." },
+      { title: "Regulars come back", body: "of paying customers at Jordan Galaxy book again.", stat: "returnRate" },
       { title: "Nothing to run", body: "It films, cuts and sends the clips on its own. Your staff do nothing." },
     ],
     academy: [
-      { title: "Parents see every session", body: "Live from home, and every clip carries your badge." },
-      { title: "Progress they can see", body: "Each player gets his distance, speed and passes, game after game." },
+      { title: "More players", body: "Every clip a parent shares carries your badge. Other parents see it and ask where their son can train." },
+      { title: "Players stay longer", body: "Parents watch every session live and see their son's numbers improve, so they keep him enrolled." },
       { title: "Nothing to run", body: "It films, cuts and sends the clips on its own. Your coaches do nothing." },
     ],
   },
