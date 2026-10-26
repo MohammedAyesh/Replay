@@ -166,4 +166,81 @@ router.patch("/admin/recordings/:id/match-window", async (req, res): Promise<voi
   }));
 });
 
+router.post("/admin/recordings/:id/tracking/video-start", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const params = SetRecordingMatchWindowParams.safeParse(req.params);
+  if (!params.success || !Number.isSafeInteger(params.data.id) || params.data.id <= 0) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const recordingId = params.data.id;
+  const { seconds, dryRun = false } = req.body ?? {};
+  if (
+    typeof seconds !== "number"
+    || !Number.isFinite(seconds)
+    || seconds < 0
+    || seconds > 10
+    || typeof dryRun !== "boolean"
+  ) {
+    res.status(400).json({ error: "seconds must be a finite number from 0 to 10; dryRun must be a boolean" });
+    return;
+  }
+
+  let result: { previous: number; next: number } | null;
+  if (dryRun) {
+    const [bundle] = await db
+      .select({ manifest: recordingTrackingBundlesTable.manifest })
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    result = bundle
+      ? { previous: bundle.manifest.videoStartSeconds ?? 0, next: seconds }
+      : null;
+  } else {
+    result = await db.transaction(async (tx) => {
+      const [found] = await tx
+        .select({ id: recordingTrackingBundlesTable.id })
+        .from(recordingTrackingBundlesTable)
+        .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+      if (!found) return null;
+      await tx.execute(sql`select id from ${recordingTrackingBundlesTable} where id = ${found.id} for update`);
+      const [bundle] = await tx
+        .select({ id: recordingTrackingBundlesTable.id, manifest: recordingTrackingBundlesTable.manifest })
+        .from(recordingTrackingBundlesTable)
+        .where(eq(recordingTrackingBundlesTable.id, found.id));
+      if (!bundle) return null;
+
+      const previous = bundle.manifest.videoStartSeconds ?? 0;
+      await tx.update(recordingTrackingBundlesTable)
+        .set({
+          manifest: { ...bundle.manifest, videoStartSeconds: seconds },
+          updatedAt: new Date(),
+        })
+        .where(eq(recordingTrackingBundlesTable.id, bundle.id));
+      return { previous, next: seconds };
+    });
+  }
+
+  if (!result) {
+    res.status(404).json({ error: "Tracking bundle not found" });
+    return;
+  }
+  if (!dryRun) {
+    playCache.delete(recordingId);
+    await invalidateMatchStatsCacheForRecording(recordingId);
+    queueMatchStatsCacheForRecording(recordingId);
+  }
+  logger.info({
+    recordingId,
+    adminId,
+    previous: result.previous,
+    next: result.next,
+    dryRun,
+  }, "Recording tracking video start changed");
+  res.json({ recordingId, ...result, dryRun });
+});
+
 export default router;

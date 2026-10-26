@@ -54,6 +54,7 @@ import { deleteClaimSegment, readClaimSegment, writeClaimSegment } from "../lib/
 import { getLocalAccountUserId, getLocalUserId } from "../lib/clerkUserBridge";
 import { ensureRoomForRequest, loadRoomById } from "../lib/matchRooms";
 import { recordingsForRoom, roomsForRecording } from "../lib/matchFeed";
+import { playCache } from "../lib/matchPlayLoad";
 
 const mockedReadClaimSegment = vi.mocked(readClaimSegment);
 const mockedWriteClaimSegment = vi.mocked(writeClaimSegment);
@@ -151,11 +152,17 @@ async function progress() {
 }
 
 const windowUrl = (id = recordingId) => `/api/admin/recordings/${id}/match-window`;
+const videoStartUrl = (id = recordingId) => `/api/admin/recordings/${id}/tracking/video-start`;
 const chainUrl = () => `/api/recordings/${recordingId}/claim-match/chain`;
 
 async function setWindow(body: unknown) {
   actAs(adminId);
   return request(app).patch(windowUrl()).send(body as object);
+}
+
+async function setVideoStart(body: unknown, id = recordingId) {
+  actAs(adminId);
+  return request(app).post(videoStartUrl(id)).send(body as object);
 }
 
 async function adminSetChain(parts: Array<{ trackId: string; fromFrame: number; toFrame: number }>) {
@@ -241,6 +248,7 @@ beforeEach(async () => {
   await db.update(recordingTrackingBundlesTable)
     .set({ manifest: baseManifest, updatedAt: new Date() })
     .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+  playCache.delete(recordingId);
   actAs(adminId);
 });
 
@@ -327,6 +335,106 @@ describe("the endpoint", () => {
       linker: "relink2.py",
       matchWindow: { startSeconds: 70, endSeconds: 95 },
     });
+  });
+
+  it("restricts video-start changes to admins", async () => {
+    actAs(playerId);
+    expect((await request(app).post(videoStartUrl()).send({ seconds: 1.48 })).status).toBe(403);
+    expect((await storedManifest()).videoStartSeconds).toBe(0);
+  });
+
+  it("validates video-start seconds and dryRun", async () => {
+    for (const body of [
+      {},
+      { seconds: "1.48" },
+      { seconds: -0.01 },
+      { seconds: 10.01 },
+      { seconds: null },
+      { seconds: 1.48, dryRun: "true" },
+    ]) {
+      const res = await setVideoStart(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
+    expect((await storedManifest()).videoStartSeconds).toBe(0);
+  });
+
+  it("returns 404 when the recording has no tracking bundle", async () => {
+    expect((await setVideoStart({ seconds: 1.48 }, 2_000_000_000)).status).toBe(404);
+  });
+
+  it("dry-runs without changing the bundle or clearing its play cache", async () => {
+    const oldUpdatedAt = new Date("2020-01-01T00:00:00.000Z");
+    await db.update(recordingTrackingBundlesTable)
+      .set({ updatedAt: oldUpdatedAt })
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const before = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    const cacheEntry = { key: "dry-run-cache", data: {} as never, at: Date.now() };
+    playCache.set(recordingId, cacheEntry);
+
+    const res = await setVideoStart({ seconds: 1.48, dryRun: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ recordingId, previous: 0, next: 1.48, dryRun: true });
+    expect(await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId))).toEqual(before);
+    expect(playCache.get(recordingId)).toBe(cacheEntry);
+  });
+
+  it("updates only videoStartSeconds and updatedAt, preserving claim data and segments", async () => {
+    const beforeManifest = {
+      ...baseManifest,
+      provenance: { bundleFingerprint: "fingerprint-keep" },
+      identities: [{ id: "person-keep", name: "Player", parts: [{ trackId: "late", fromFrame: 700, toFrame: 999 }] }],
+    } as TrackingManifest;
+    const oldUpdatedAt = new Date("2020-01-01T00:00:00.000Z");
+    await db.update(recordingTrackingBundlesTable)
+      .set({ manifest: beforeManifest, updatedAt: oldUpdatedAt })
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    await db.insert(claimMatchProgressTable).values({
+      userId: playerId,
+      recordingId,
+      currentTrackId: "late",
+      stage: "review",
+      currentPositionSeconds: 84,
+      claimedPercent: 37,
+      completed: false,
+    });
+    await db.insert(claimMatchIdentityBindingsTable).values({
+      userId: playerId,
+      recordingId,
+      personId: "person-keep",
+      trackingBundleId: bundleId,
+      bundleFingerprint: "binding-fingerprint-keep",
+      personParts: ["late"],
+      vouchedFragments: [{ trackId: "late", fromFrame: 700, toFrame: 999 }],
+      resolutionMethod: "chain",
+      state: "confirmed",
+    });
+    const progressBefore = await db.select().from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId));
+    const bindingsBefore = await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
+    const segmentsBefore = await db.select().from(recordingTrackingSegmentsTable)
+      .where(eq(recordingTrackingSegmentsTable.bundleId, bundleId));
+
+    const res = await setVideoStart({ seconds: 1.48 });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ recordingId, previous: 0, next: 1.48, dryRun: false });
+    const [bundleAfter] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
+    expect(bundleAfter.manifest).toEqual({ ...beforeManifest, videoStartSeconds: 1.48 });
+    expect(bundleAfter.updatedAt.getTime()).toBeGreaterThan(oldUpdatedAt.getTime());
+    expect(await db.select().from(recordingTrackingSegmentsTable)
+      .where(eq(recordingTrackingSegmentsTable.bundleId, bundleId))).toEqual(segmentsBefore);
+    expect(await db.select().from(claimMatchProgressTable)
+      .where(eq(claimMatchProgressTable.recordingId, recordingId))).toEqual(progressBefore);
+    expect(await db.select().from(claimMatchIdentityBindingsTable)
+      .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId))).toEqual(bindingsBefore);
+    expect(playCache.has(recordingId)).toBe(false);
+    expect(mockedWriteClaimSegment).not.toHaveBeenCalled();
+    expect(mockedDeleteClaimSegment).not.toHaveBeenCalled();
   });
 });
 
