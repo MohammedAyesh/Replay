@@ -259,6 +259,7 @@ function SignUpPage() {
   const [recordingConsent, setRecordingConsent] = useState(false);
   const [socialMediaConsent, setSocialMediaConsent] = useState(false);
   const [showConsentError, setShowConsentError] = useState(false);
+  const consentRef = useRef<HTMLDivElement>(null);
   const isArabic = locale === "ar";
   const redirectPath = getRedirectPathFromSearch();
   useEffect(() => rememberExplicitAuthRedirect(), []);
@@ -268,9 +269,11 @@ function SignUpPage() {
         recordingDescription: "تقوم الكاميرات بتسجيل المباريات حتى يتمكن اللاعبون من المشاهدة وتحديد لحظاتهم.",
         socialTitle: "أوافق على استخدام مقاطعي على وسائل التواصل الاجتماعي",
         socialDescription: "تسمح هذه الموافقة لـ Replay بمشاركة المقاطع التي تظهر فيها على قنواتها الاجتماعية. هذا اختياري.",
+        consentHeading: "قبل إنشاء حسابك",
+        consentIntro: "موافقة التصوير مطلوبة للمتابعة. مشاركة المقاطع على السوشال ميديا اختيارية.",
         required: "مطلوب",
         optional: "اختياري",
-        error: "يرجى الموافقة على التصوير للمتابعة.",
+        error: "يرجى تحديد موافقة التصوير المطلوبة أدناه للمتابعة.",
          agreementBeforeTerms: "بإنشاء حساب، أنت توافق على ",
          agreementBetween: " و",
          agreementAfterPrivacy: ".",
@@ -282,9 +285,11 @@ function SignUpPage() {
         recordingDescription: "Cameras record matches so players can watch and claim their moments.",
         socialTitle: "I agree to let Replay use my videos on social media",
         socialDescription: "This lets Replay share clips featuring you on its social channels. This is optional.",
+        consentHeading: "Before you create your account",
+        consentIntro: "Recording consent is required to continue. Social media sharing is optional.",
         required: "Required",
         optional: "Optional",
-        error: "Please agree to being recorded to continue.",
+        error: "Please check the required recording consent below to continue.",
          agreementBeforeTerms: "By creating an account you agree to our ",
          agreementBetween: " and ",
          agreementAfterPrivacy: ".",
@@ -297,6 +302,8 @@ function SignUpPage() {
     event.preventDefault();
     event.stopPropagation();
     setShowConsentError(true);
+    consentRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    consentRef.current?.focus({ preventScroll: true });
   };
 
   return (
@@ -325,9 +332,16 @@ function SignUpPage() {
           }}
         />
         <div
+          ref={consentRef}
           dir={isArabic ? "rtl" : "ltr"}
-          className={`rounded-2xl border border-line bg-surface p-4 text-text ${isArabic ? "text-right" : "text-left"}`}
+          role="group"
+          aria-labelledby="signup-consent-heading"
+          aria-describedby={showConsentError ? "signup-recording-consent-error" : undefined}
+          tabIndex={-1}
+          className={`rounded-2xl border bg-surface p-4 text-text outline-none transition-colors ${isArabic ? "text-right" : "text-left"} ${showConsentError ? "border-destructive ring-2 ring-destructive/20" : "border-line"}`}
         >
+          <h2 id="signup-consent-heading" className="text-sm font-bold">{copy.consentHeading}</h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{copy.consentIntro}</p>
           <SignupConsentOption
             id="signup-recording-consent"
             checked={recordingConsent}
@@ -371,8 +385,12 @@ function SignUpPage() {
             {copy.agreementAfterPrivacy}
           </p>
           {showConsentError && (
-            <p className="mt-3 flex items-center gap-2 text-xs font-medium text-muted-foreground" role="alert">
-              <span aria-hidden="true">!</span>{copy.error}
+            <p
+              id="signup-recording-consent-error"
+              className="mt-3 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm font-semibold text-destructive"
+              role="alert"
+            >
+              <span aria-hidden="true">!</span><span>{copy.error}</span>
             </p>
           )}
         </div>
