@@ -145,6 +145,37 @@ function setPlayFixture() {
   });
 }
 
+function makeFfmpegChild() {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    kill: ReturnType<typeof vi.fn>;
+  };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = vi.fn();
+  return child;
+}
+
+function mockSuccessfulFrameCapture(bytes = Buffer.from([0xff, 0xd8, 0xff])) {
+  const child = makeFfmpegChild();
+  spawnMock.mockImplementationOnce(() => {
+    queueMicrotask(() => {
+      child.stdout.end(bytes);
+      child.emit("close", 0);
+    });
+    return child;
+  });
+}
+
+async function waitFor(predicate: () => boolean, description: string) {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for ${description}`);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
 describe("admin recording tracker debug API", () => {
   it("returns 403 to a non-admin", async () => {
     getLocalUserIdMock.mockResolvedValueOnce(nonAdminId);
@@ -192,22 +223,15 @@ describe("admin recording tracker debug API", () => {
     getLocalUserIdMock.mockResolvedValueOnce(adminId);
     setPlayFixture();
     manifest.videoStartSeconds = 10;
-    selectExportSourceMock.mockResolvedValueOnce({ url: "https://example.test/playlist.m3u8" });
-    const child = new EventEmitter() as EventEmitter & {
-      stdout: PassThrough;
-      stderr: PassThrough;
-      kill: ReturnType<typeof vi.fn>;
-    };
-    child.stdout = new PassThrough();
-    child.stderr = new PassThrough();
-    child.kill = vi.fn();
-    spawnMock.mockImplementationOnce(() => {
-      queueMicrotask(() => {
-        child.stdout.end(Buffer.from([0xff, 0xd8, 0xff]));
-        child.emit("close", 0);
-      });
-      return child;
+    const renditionUrl = "https://vz-test.b-cdn.net/12345678-abcd/2160p/video.m3u8";
+    selectExportSourceMock.mockResolvedValueOnce({
+      url: renditionUrl,
+      path: "resolution-matched HLS variant",
+      width: 3840,
+      height: 1080,
+      renditionLabel: "2160p",
     });
+    mockSuccessfulFrameCapture();
 
     const response = await request(app)
       .get(`/api/admin/recordings/${recordingId}/debug/frame?t=1&vo=0.5`);
@@ -222,8 +246,112 @@ describe("admin recording tracker debug API", () => {
     expect(args.slice(secondSeekIndex, secondSeekIndex + 2)).toEqual(["-ss", "6"]);
     expect(firstSeekIndex).toBeLessThan(inputIndex);
     expect(secondSeekIndex).toBeGreaterThan(inputIndex);
+    expect(args.slice(args.indexOf("-headers"), args.indexOf("-headers") + 2))
+      .toEqual(["-headers", "Referer: https://iframe.mediadelivery.net/\r\n"]);
+    expect(args[inputIndex + 1]).toBe(renditionUrl);
+    expect(selectExportSourceMock).toHaveBeenCalledWith({
+      videoId: "12345678-abcd",
+      hasMP4Fallback: false,
+      availableResolutions: "1080p",
+      referer: "https://iframe.mediadelivery.net/",
+    });
     expect(args.join(" ")).toContain("drawbox=x=47:y=97");
     expect(args.join(" ")).toContain("drawbox=x=51:y=51");
+  });
+
+  it("reuses a captured frame for ten minutes, then captures it again", async () => {
+    spawnMock.mockReset();
+    selectExportSourceMock.mockReset();
+    getLocalUserIdMock.mockResolvedValue(adminId);
+    setPlayFixture();
+    selectExportSourceMock.mockResolvedValue({
+      url: "https://vz-test.b-cdn.net/12345678-abcd/2160p/video.m3u8",
+      path: "resolution-matched HLS variant",
+      width: 3840,
+      height: 1080,
+      renditionLabel: "2160p",
+    });
+    const now = Date.now();
+    const dateNow = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const path = `/api/admin/recordings/${recordingId}/debug/frame?t=1&ball=0&claims=0`;
+    mockSuccessfulFrameCapture();
+    mockSuccessfulFrameCapture();
+
+    try {
+      const first = await request(app).get(path);
+      const cached = await request(app).get(path);
+      expect(first.status).toBe(200);
+      expect(cached.status).toBe(200);
+      expect(cached.body).toEqual(first.body);
+      expect(cached.headers["cache-control"]).toBe("private, max-age=600");
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(selectExportSourceMock).toHaveBeenCalledTimes(1);
+
+      dateNow.mockImplementation(() => now + 10 * 60 * 1000 + 1);
+      const expired = await request(app).get(path);
+      expect(expired.status).toBe(200);
+      expect(spawnMock).toHaveBeenCalledTimes(2);
+      expect(selectExportSourceMock).toHaveBeenCalledTimes(2);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  it("limits concurrent FFmpeg frame grabs to two", async () => {
+    spawnMock.mockReset();
+    selectExportSourceMock.mockReset();
+    getLocalUserIdMock.mockResolvedValue(adminId);
+    setPlayFixture();
+    selectExportSourceMock.mockResolvedValue({
+      url: "https://vz-test.b-cdn.net/12345678-abcd/2160p/video.m3u8",
+      path: "resolution-matched HLS variant",
+      width: 3840,
+      height: 1080,
+      renditionLabel: "2160p",
+    });
+
+    let active = 0;
+    let maxActive = 0;
+    const pending: Array<{ child: ReturnType<typeof makeFfmpegChild>; release: () => void }> = [];
+    spawnMock.mockImplementation(() => {
+      const child = makeFfmpegChild();
+      active++;
+      maxActive = Math.max(maxActive, active);
+      let released = false;
+      pending.push({
+        child,
+        release: () => {
+          if (released) return;
+          released = true;
+          active--;
+          child.stdout.end(Buffer.from([0xff, 0xd8, 0xff]));
+          child.emit("close", 0);
+        },
+      });
+      return child;
+    });
+
+    const paths = [0.1, 0.2, 0.3].map((time) =>
+      `/api/admin/recordings/${recordingId}/debug/frame?t=${time}&ball=0&claims=0`,
+    );
+    const responses = paths.map((path) => request(app).get(path).then((response) => response));
+
+    try {
+      await waitFor(() => selectExportSourceMock.mock.calls.length === 3, "all three rendition resolutions");
+      await waitFor(() => spawnMock.mock.calls.length === 2, "the first two FFmpeg grabs");
+      expect(maxActive).toBe(2);
+      pending[0]!.release();
+      await waitFor(() => spawnMock.mock.calls.length === 3, "the queued FFmpeg grab");
+      expect(maxActive).toBe(2);
+      pending[1]!.release();
+      pending[2]!.release();
+
+      const results = await Promise.all(responses);
+      expect(results.map((response) => response.status)).toEqual([200, 200, 200]);
+      expect(maxActive).toBe(2);
+    } finally {
+      pending.forEach(({ release }) => release());
+    }
   });
 
   it("rejects video offsets outside the supported range", async () => {
