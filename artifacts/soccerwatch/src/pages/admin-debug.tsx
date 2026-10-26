@@ -12,6 +12,16 @@ type Claim = { identityId: string | number; userId: number; userName: string; co
 type Box = { identityId: string | number; userName: string; color: string; trackId: string; boxes: Array<[number, number, number, number, number]> };
 type DebugWindow = { manifest?: { width?: number; height?: number; duration?: number }; ball?: Ball[]; touches?: Touch[]; claims?: Claim[]; boxes?: Box[] };
 type Clip = { id: number; title?: string; recordingId?: number; startTime: number; endTime: number };
+type RecordingOption = {
+  id: number;
+  date: string;
+  timeSlot: string;
+  court: string;
+  duration: string;
+  fieldName: string | null;
+  hasTrackingBundle: boolean;
+  trackingSegmentCount: number | null;
+};
 type Tile = { seconds: number; key: string; src: string };
 type TileResult = { status: "loading" | "ready" | "error"; url?: string };
 
@@ -47,6 +57,9 @@ export default function AdminDebug() {
   const [, setLocation] = useLocation();
   const [params, setParams] = useState<Params>(readParams);
   const [windowData, setWindowData] = useState<DebugWindow | null>(null);
+  const [recordings, setRecordings] = useState<RecordingOption[]>([]);
+  const [recordingsLoading, setRecordingsLoading] = useState(true);
+  const [recordingsError, setRecordingsError] = useState("");
   const [loading, setLoading] = useState(false);
   const [windowError, setWindowError] = useState("");
   const [clipBusy, setClipBusy] = useState(false);
@@ -59,6 +72,37 @@ export default function AdminDebug() {
   useEffect(() => {
     if (!isLoading && (!user || !isAdmin)) setLocation("/home");
   }, [isLoading, user, isAdmin, setLocation]);
+
+  const loadRecordings = useCallback(async (signal?: AbortSignal) => {
+    setRecordingsLoading(true);
+    setRecordingsError("");
+    try {
+      const response = await fetch(`${API_BASE}/admin/recordings`, {
+        credentials: "include",
+        signal,
+      });
+      if (!response.ok) throw new Error(response.status === 403
+        ? "Admin access is required to list recordings."
+        : `Could not load recordings (${response.status}).`);
+      const rows = await response.json() as RecordingOption[];
+      setRecordings(Array.isArray(rows) ? rows.filter((recording) =>
+        recording.hasTrackingBundle && Number.isInteger(recording.id),
+      ) : []);
+    } catch (error) {
+      if (signal?.aborted) return;
+      setRecordings([]);
+      setRecordingsError(error instanceof Error ? error.message : "Could not load recordings.");
+    } finally {
+      if (!signal?.aborted) setRecordingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isLoading || !user || !isAdmin) return;
+    const controller = new AbortController();
+    void loadRecordings(controller.signal);
+    return () => controller.abort();
+  }, [isLoading, user, isAdmin, loadRecordings]);
 
   useEffect(() => {
     if (firstUrlSync.current) { firstUrlSync.current = false; return; }
@@ -80,6 +124,7 @@ export default function AdminDebug() {
       return;
     }
     setLoading(true);
+    setWindowData(null);
     setWindowError("");
     try {
       const from = Math.max(0, time - win / 2);
@@ -174,13 +219,34 @@ export default function AdminDebug() {
       <div className="mx-auto max-w-[1500px] space-y-5 px-4 py-5 sm:px-8">
         <section className="rounded-2xl border border-line bg-surface p-4 shadow-sm sm:p-5" aria-label="Debug controls">
           <form onSubmit={(event) => { event.preventDefault(); void loadWindow(); }} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
-            <Field label="Recording ID" testId="input-recording-id"><input id="debug-rec" value={params.rec} onChange={(e) => update("rec", e.target.value)} inputMode="numeric" placeholder="e.g. 1842" data-testid="input-recording-id" className={inputClass} /></Field>
+            <Field label="Recording" testId="select-recording">
+              <select id="debug-rec" value={params.rec} onChange={(e) => update("rec", e.target.value)} data-testid="select-recording" className={inputClass} disabled={recordingsLoading}>
+                <option value="">{recordingsLoading ? "Loading recordings…" : "Choose a recording"}</option>
+                {params.rec && !recordings.some((recording) => String(recording.id) === params.rec) && (
+                  <option value={params.rec}>Recording #{params.rec} · not in available list</option>
+                )}
+                {recordings.map((recording) => (
+                  <option key={recording.id} value={String(recording.id)}>
+                    {recording.date} · {recording.timeSlot} · {recording.fieldName || recording.court} · {recording.duration} · #{recording.id}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="Time (mm:ss or seconds)" testId="input-time"><input id="debug-time" value={params.t} onChange={(e) => update("t", e.target.value)} placeholder="02:14.5" data-testid="input-time" className={inputClass} /></Field>
             <Field label="Window (seconds, max 60)" testId="input-window"><input id="debug-window-size" type="number" min="0.25" max="60" step="0.25" value={params.win} onChange={(e) => update("win", e.target.value === "" ? "" : String(Math.min(60, Math.max(0.25, Number(e.target.value)))))} data-testid="input-window" className={inputClass} /></Field>
             <Field label="Frame step" testId="select-step"><select id="debug-step" value={params.step} onChange={(e) => update("step", e.target.value)} data-testid="select-step" className={inputClass}><option value="0.25">0.25 sec</option><option value="0.5">0.5 sec</option><option value="1">1 sec</option></select></Field>
             <Field label="Video offset (seconds)" testId="input-video-offset"><input id="debug-offset" type="number" min="-5" max="5" step="0.01" value={params.vo} onChange={(e) => update("vo", e.target.value === "" ? "" : String(Math.min(5, Math.max(-5, Number(e.target.value)))))} data-testid="input-video-offset" className={inputClass} /></Field>
             <div className="flex items-end"><button type="submit" data-testid="button-load-window" className="flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-turf px-4 text-sm font-bold text-void transition hover:brightness-105"><Search className="h-4 w-4" /> Load window</button></div>
           </form>
+          {recordingsError && (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-200" role="alert" data-testid="status-recordings-error">
+              <span className="flex items-center gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />{recordingsError}</span>
+              <button type="button" onClick={() => void loadRecordings()} data-testid="button-retry-recordings" className="inline-flex items-center gap-1 rounded-lg border border-amber-300/30 px-3 py-1.5 text-xs font-bold"><RefreshCw className="h-3.5 w-3.5" /> Retry</button>
+            </div>
+          )}
+          {!recordingsLoading && !recordingsError && recordings.length === 0 && (
+            <p className="mt-3 text-sm text-muted-text" role="status" data-testid="empty-debug-recordings">No recordings with tracking data are available.</p>
+          )}
           <div className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2 lg:grid-cols-4">
             <Field label="Zoom center" testId="select-zoom"><select id="debug-zoom" value={params.zoom} onChange={(e) => update("zoom", e.target.value as Zoom)} data-testid="select-zoom" className={inputClass}><option value="frame">Whole frame</option><option value="ball">Ball</option><option value="claimant">Claimant</option></select></Field>
             <Field label="Crop width" testId="select-zoom-width"><select id="debug-width" value={params.zw} onChange={(e) => update("zw", e.target.value)} data-testid="select-zoom-width" disabled={params.zoom === "frame"} className={inputClass}><option value="400">400 px</option><option value="800">800 px</option><option value="1600">1600 px</option></select></Field>
@@ -271,7 +337,7 @@ function Toggle({ checked, onChange, label, testId }: { checked: boolean; onChan
 function FrameTile({ tile, index, state, onRetry }: { tile: Tile; index: number; state: TileResult; onRetry: () => void }) {
   return <article className="overflow-hidden rounded-xl border border-line bg-surface" data-testid={`tile-frame-${index}`}>
     <div className="flex items-center justify-between border-b border-line px-3 py-2"><span className="font-mono text-xs font-bold">{timeLabel(tile.seconds)}</span><span className="text-[10px] uppercase tracking-wider text-muted-text">Frame {String(index + 1).padStart(2, "0")}</span></div>
-    <div className="relative grid aspect-video place-items-center overflow-hidden bg-void">
+    <div className="relative grid aspect-[32/9] place-items-center overflow-hidden bg-void">
       {state.status === "ready" && state.url ? <img src={state.url} alt={`Tracking frame at ${timeLabel(tile.seconds)}`} className="h-full w-full object-contain" data-testid={`img-frame-${index}`} /> : state.status === "error" ? <div className="p-4 text-center"><AlertTriangle className="mx-auto h-5 w-5 text-amber-300" /><p className="mt-2 text-xs text-muted-text">Frame failed to load.</p><button onClick={onRetry} className="mt-2 inline-flex items-center gap-1 rounded-lg border border-line px-3 py-1.5 text-xs font-semibold" data-testid={`button-retry-frame-${index}`}><RefreshCw className="h-3 w-3" /> Retry</button></div> : <div className="flex flex-col items-center gap-2 text-xs text-muted-text" role="status"><LoaderCircle className="h-5 w-5 animate-spin text-turf" />Loading frame</div>}
     </div>
   </article>;
