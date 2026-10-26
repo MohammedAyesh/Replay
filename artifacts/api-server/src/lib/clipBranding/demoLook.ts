@@ -9,16 +9,18 @@ export const DEMO_DEFAULT_COLOR = "#D4FF4F";
  * prospect's typed name and colour with an initials crest.
  */
 export async function demoBrandLook(input: {
-  look: "galaxy" | "custom";
+  /** "academy" is the bundled JUFA preset, for the academy view's clips. */
+  look: "galaxy" | "custom" | "academy";
   name: string;
   color: string;
   persona: "pitch" | "academy";
 }): Promise<BrandLook> {
-  if (input.look === "galaxy") {
-    const preset = BRANDING_PRESETS.find((entry) => entry.key === "jordan-galaxy");
-    if (!preset) throw new Error("Jordan Galaxy branding preset is missing");
+  if (input.look === "galaxy" || input.look === "academy") {
+    const key = input.look === "galaxy" ? "jordan-galaxy" : "jufa";
+    const preset = BRANDING_PRESETS.find((entry) => entry.key === key);
+    if (!preset) throw new Error(`Branding preset ${key} is missing`);
     const crest = await loadLocalImage(presetCrestPath(preset));
-    if (!crest) throw new Error("Jordan Galaxy crest could not be loaded");
+    if (!crest) throw new Error(`Branding preset ${key} crest could not be loaded`);
     return {
       nameEn: preset.nameEn,
       nameAr: preset.nameAr,
@@ -28,7 +30,7 @@ export async function demoBrandLook(input: {
       bookingPhone: preset.bookingPhone,
       instagram: preset.instagram,
       crest,
-      isAcademy: input.persona === "academy",
+      isAcademy: input.look === "academy" || input.persona === "academy",
     };
   }
 

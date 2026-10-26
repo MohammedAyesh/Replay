@@ -34,6 +34,8 @@ export type DemoShowcase = {
   match: DemoMatch | null;
   clips: DemoClip[];
   socialClips?: DemoClip[];
+  /** The rail in an academy's branding (JUFA); empty until enough copies exist. */
+  academyClips?: DemoClip[];
   salesWhatsapp: string | null;
   fieldName: string;
   testimonial: { quoteAr: string; quoteEn: string; name: string; role: string; pitch: string } | null;

@@ -13,8 +13,21 @@ export type SimpleCopy = {
   lead: PersonaText;
   valuesTitle: string;
   values: Record<Persona, Array<{ title: string; body: string; stat?: "returnRate" }>>;
-  clipsTitle: string;
-  clipsNote: string;
+  clipsTitle: PersonaText;
+  clipsNote: PersonaText;
+  statsTitle: string;
+  statsNote: (date: string) => string;
+  stats: {
+    score: string;
+    possession: string;
+    shots: string;
+    players: string;
+    furthest: string;
+    fastest: string;
+    km: string;
+    kmh: string;
+  };
+  ads: { slider: string; fee: string; headline: string; reach: string };
   moneyTitle: string;
   inputs: Record<Persona, { a: string; b: string }>;
   assumption: PersonaText;
@@ -24,6 +37,9 @@ export type SimpleCopy = {
   also: Array<{ title: string; body: string }>;
   setup: string;
   full: string;
+  fullBody: string;
+  howTitle: string;
+  parts: Record<Persona, Array<{ title: string; detail: (n: string, unit: string) => string }>>;
 };
 
 const ar: SimpleCopy = {
@@ -49,16 +65,37 @@ const ar: SimpleCopy = {
       { title: "ما في إشي تشغّله", body: "بتصوّر وبتقصّ وبتبعت المقاطع لحالها. المدربين ما بعملوا إشي." },
     ],
   },
-  clipsTitle: "مقاطع حقيقية من جوردان جالاكسي",
-  clipsNote: "هيك بتطلع: الشعار بالزاوية وبطاقة الحجز بالآخر. الأسماء مخفية.",
+  clipsTitle: { pitch: "مقاطع حقيقية من جوردان جالاكسي", academy: "مقاطع حقيقية، بشعار أكاديمية" },
+  clipsNote: {
+    pitch: "هيك بتطلع: الشعار بالزاوية وبطاقة الحجز بالآخر. الأسماء مخفية.",
+    academy: "هون بشعار أكاديمية JUFA اللي بتتدرب بجوردان جالاكسي: إطار الأكاديمية وبطاقة بالآخر. الأسماء مخفية.",
+  },
+  statsTitle: "أرقام حقيقية من مباراة وحدة",
+  statsNote: (date) => `مباراة ${date}. الكاميرا قاستها لحالها، والأسماء مخفية.`,
+  stats: {
+    score: "النتيجة",
+    possession: "الاستحواذ",
+    shots: "تسديدات",
+    players: "لاعب انقاسوا",
+    furthest: "أبعد مسافة للاعب",
+    fastest: "أعلى سرعة",
+    km: "كم",
+    kmh: "كم/س",
+  },
+  ads: {
+    slider: "إعلانات ببلاش بالشهر",
+    fee: "الاشتراك الشهري (دينار)",
+    headline: "إعلان ببلاش بالشهر",
+    reach: "كل مقطع بنشره لاعب أو أهله إعلان لأكاديميتك، بشوفه أصحابهم وعيلتهم.",
+  },
   moneyTitle: "قديش بتزيد دخلك",
   inputs: {
     pitch: { a: "حجوزات بالأسبوع", b: "سعر الحجز (دينار)" },
-    academy: { a: "عدد اللاعبين", b: "الاشتراك الشهري (دينار)" },
+    academy: { a: "إعلانات ببلاش بالشهر", b: "الاشتراك الشهري (دينار)" },
   },
   assumption: {
     pitch: "على فرض إنه 4 من كل 10 حجوزات بدفعوا 3 دنانير زيادة عشان تتصوّر، وحجز زيادة بالأسبوع من المقاطع اللي بتنتشر.",
-    academy: "على فرض إنه كل لاعب بدفع 3 دنانير زيادة بالشهر للحصص المصوّرة، ولاعبين جداد بالشهر من المقاطع اللي بتنتشر.",
+    academy: "على فرض إنه كل 50 مقطع بنتشر بجيب لاعب جديد واحد.",
   },
   perMonth: "دينار زيادة بالشهر",
   perYear: (value) => `يعني حوالي ${value} دينار بالسنة`,
@@ -70,6 +107,17 @@ const ar: SimpleCopy = {
   ],
   setup: "زيارة وحدة للتركيب: منركّب كاميرا وحدة، بتشتغل على الإنترنت اللي عندك، والتصوير ببلّش لحاله.",
   full: "شوف الديمو كامل",
+  fullBody: "جرّب الكاميرا بإيدك: تنقّل بالملعب كامل، شوف البث المباشر، وشوف أرقام كل لاعب من مباراة حقيقية.",
+  howTitle: "من وين بتجي الزيادة",
+  parts: {
+    pitch: [
+      { title: "اللاعبين بدفعوا زيادة عشان المباراة تتصوّر", detail: (n, unit) => `${n} مباراة مصوّرة بالشهر × ${unit} دنانير زيادة` },
+      { title: "المقاطع اللي بتنتشر بتجيب حجوزات جديدة", detail: (n, unit) => `${n} حجوزات زيادة بالشهر × ${unit} دينار` },
+    ],
+    academy: [
+      { title: "المقاطع اللي بتنتشر بتجيب لاعبين جداد", detail: (n, unit) => `${n} لاعب جديد بالشهر × ${unit} دينار` },
+    ],
+  },
 };
 
 const en: SimpleCopy = {
@@ -95,16 +143,37 @@ const en: SimpleCopy = {
       { title: "Nothing to run", body: "It films, cuts and sends the clips on its own. Your coaches do nothing." },
     ],
   },
-  clipsTitle: "Real clips from Jordan Galaxy",
-  clipsNote: "This is how they go out: the crest in the corner, a booking card at the end. Names hidden.",
+  clipsTitle: { pitch: "Real clips from Jordan Galaxy", academy: "Real clips, with an academy's badge" },
+  clipsNote: {
+    pitch: "This is how they go out: the crest in the corner, a booking card at the end. Names hidden.",
+    academy: "Shown with the badge of JUFA, an academy that trains at Jordan Galaxy: the academy frame, and a card at the end. Names hidden.",
+  },
+  statsTitle: "Real numbers from one match",
+  statsNote: (date) => `${date}. Measured by the camera on its own; names hidden.`,
+  stats: {
+    score: "Score",
+    possession: "Possession",
+    shots: "Shots",
+    players: "players measured",
+    furthest: "Furthest run",
+    fastest: "Top speed",
+    km: "km",
+    kmh: "km/h",
+  },
+  ads: {
+    slider: "Free ads a month",
+    fee: "Monthly fee (JOD)",
+    headline: "free ads a month",
+    reach: "Every clip a player or parent shares is an ad for your academy, seen by their friends and family.",
+  },
   moneyTitle: "What it adds",
   inputs: {
     pitch: { a: "Bookings a week", b: "Booking price (JOD)" },
-    academy: { a: "Players", b: "Monthly fee (JOD)" },
+    academy: { a: "Free ads a month", b: "Monthly fee (JOD)" },
   },
   assumption: {
     pitch: "Assumes 4 in 10 bookings pay 3 JOD more to be filmed, and one extra booking a week from shared clips.",
-    academy: "Assumes each player pays 3 JOD a month more for filmed sessions, and 2 new players a month from shared clips.",
+    academy: "Assumes one new player for every 50 clips shared.",
   },
   perMonth: "JOD more a month",
   perYear: (value) => `About ${value} JOD a year`,
@@ -116,6 +185,17 @@ const en: SimpleCopy = {
   ],
   setup: "One visit to set up: we mount one camera, it uses the internet you already have, and recording starts on its own.",
   full: "See the full demo",
+  fullBody: "Try the camera yourself: look around the whole pitch, watch live, and see every player's numbers from a real match.",
+  howTitle: "Where the extra comes from",
+  parts: {
+    pitch: [
+      { title: "Players pay more to have the match filmed", detail: (n, unit) => `${n} filmed matches a month × ${unit} JOD more` },
+      { title: "Shared clips bring new bookings", detail: (n, unit) => `${n} extra bookings a month × ${unit} JOD` },
+    ],
+    academy: [
+      { title: "Shared clips bring in new players", detail: (n, unit) => `${n} new players a month × ${unit} JOD` },
+    ],
+  },
 };
 
 export const simpleCopy: Record<DemoLocale, SimpleCopy> = { ar, en };

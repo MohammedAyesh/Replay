@@ -166,4 +166,15 @@ describe("demo branded copies", () => {
     }
     expect(h.attempts).toBe(3);
   });
+
+  it("keeps the academy view's copies apart from the pitch view's", async () => {
+    h.stored.add("demo/branded/galaxy-v1/c7.mp4");
+    h.stored.add("demo/branded/galaxy-v1/c7.jpg");
+    expect([...(await demoBrandedReadyIds([clip(7)]))]).toEqual([7]);
+    expect((await demoBrandedReadyIds([clip(7)], "academy")).size).toBe(0);
+    await settle();
+    expect(h.renders).toBe(1);
+    expect(h.stored.has("demo/branded/jufa-v1/c7.mp4")).toBe(true);
+    expect([...(await demoBrandedReadyIds([clip(7)], "academy"))]).toEqual([7]);
+  });
 });

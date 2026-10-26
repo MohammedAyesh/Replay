@@ -110,22 +110,23 @@ router.get("/demo/showcase/report", async (_req, res): Promise<void> => {
  * a way to read any clip.
  */
 router.get("/demo/clips/:file", async (req, res): Promise<void> => {
-  const match = /^(\d{1,9})\.(mp4|jpg)$/.exec(String(req.params.file ?? ""));
+  const match = /^(academy-)?(\d{1,9})\.(mp4|jpg)$/.exec(String(req.params.file ?? ""));
   if (!match) {
     res.status(404).end();
     return;
   }
-  const id = Number(match[1]);
-  const kind = match[2] as "mp4" | "jpg";
+  const brand = match[1] ? "academy" : "galaxy";
+  const id = Number(match[2]);
+  const kind = match[3] as "mp4" | "jpg";
   try {
-    if (!isBunnyStorageConfigured() || !(await isServableDemoCopy(id))) {
+    if (!isBunnyStorageConfigured() || !(await isServableDemoCopy(id, brand))) {
       res.status(404).end();
       return;
     }
     await proxyStorageObject(
       req,
       res,
-      kind === "mp4" ? demoBrandedVideoPath(id) : demoBrandedPosterPath(id),
+      kind === "mp4" ? demoBrandedVideoPath(id, brand) : demoBrandedPosterPath(id, brand),
       kind === "mp4" ? "video/mp4" : "image/jpeg",
       86400,
       "public, max-age=86400",

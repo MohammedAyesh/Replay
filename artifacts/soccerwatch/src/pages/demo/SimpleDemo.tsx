@@ -5,7 +5,7 @@ import { useLocale } from "@/i18n/context";
 import { ClipRail, HeroVideo } from "./ClipRail";
 import { Contact } from "./Contact";
 import { demoCopy, type DemoLocale, type Persona } from "./copy";
-import { formatNumber, useShowcase, withBase } from "./data";
+import { formatMatchDate, formatNumber, useReport, useShowcase, withBase, type DemoReport } from "./data";
 import { useInView } from "./playback";
 import { simpleCopy } from "./simpleCopy";
 import "./demo.css";
@@ -48,23 +48,39 @@ function Slider({ label, value, onChange, min, max, step }: {
 
 function Money({ persona, lang }: { persona: Persona; lang: DemoLocale }) {
   const c = simpleCopy[lang];
-  const [a, setA] = useState(persona === "pitch" ? 20 : 60);
+  const [a, setA] = useState(persona === "pitch" ? 20 : 100);
   const [b, setB] = useState(persona === "pitch" ? 40 : 35);
   useEffect(() => {
-    setA(persona === "pitch" ? 20 : 60);
+    setA(persona === "pitch" ? 20 : 100);
     setB(persona === "pitch" ? 40 : 35);
   }, [persona]);
   const weeks = 52 / 12;
   // Pitch: 4 in 10 bookings pay 3 JOD more to be filmed, plus one booking a
-  // week from shared clips. Academy: 3 JOD more per player, plus two new
-  // players a month. The same figures the full page's calculator starts from.
-  const monthly = persona === "pitch" ? a * weeks * 0.4 * 3 + weeks * b : a * 3 + 2 * b;
+  // week from shared clips (the full page's calculator starts from the same).
+  // Academy (Mohammed, 26 Oct: "have the slider be free ads per month"): one
+  // new player for every 50 clips shared.
+  const parts = persona === "pitch"
+    ? [
+      { count: a * weeks * 0.4, unit: 3, value: a * weeks * 0.4 * 3 },
+      { count: weeks, unit: b, value: weeks * b },
+    ]
+    : [
+      { count: a / 50, unit: b, value: (a / 50) * b },
+    ];
+  const monthly = parts.reduce((sum, part) => sum + part.value, 0);
   return (
     <div className="dm-money">
       <div className="dm-money-result" aria-live="polite">
+        {persona === "academy" && (
+          <p className="dm-money-ads">
+            <strong className="dm-num" dir="ltr">{formatNumber(a, lang)}</strong>
+            <span>{c.ads.headline}</span>
+          </p>
+        )}
         <strong className="dm-big-num" dir="ltr">+{formatNumber(Math.round(monthly), lang)}</strong>
         <span>{c.perMonth}</span>
         <span className="dm-small">{c.perYear(formatNumber(Math.round(monthly * 12), lang))}</span>
+        {persona === "academy" && <span className="dm-small">{c.ads.reach}</span>}
       </div>
       <div className="dm-money-inputs">
         {persona === "pitch" ? (
@@ -74,13 +90,60 @@ function Money({ persona, lang }: { persona: Persona; lang: DemoLocale }) {
           </>
         ) : (
           <>
-            <Slider label={c.inputs.academy.a} value={a} onChange={setA} min={10} max={300} step={5} />
+            <Slider label={c.inputs.academy.a} value={a} onChange={setA} min={10} max={500} step={10} />
             <Slider label={c.inputs.academy.b} value={b} onChange={setB} min={10} max={100} step={5} />
           </>
         )}
+      </div>
+      <div className="dm-money-how">
+        <h3>{c.howTitle}</h3>
+        <ol>
+          {c.parts[persona].map((part, index) => (
+            <li key={part.title}>
+              <div>
+                <strong>{part.title}</strong>
+                <span className="dm-small">{part.detail(formatNumber(parts[index].count, lang, parts[index].count < 10 && !Number.isInteger(parts[index].count) ? 1 : 0), formatNumber(parts[index].unit, lang))}</span>
+              </div>
+              <b className="dm-num" dir="ltr">+{formatNumber(Math.round(parts[index].value), lang)}</b>
+            </li>
+          ))}
+        </ol>
         <p className="dm-small">{c.assumption[persona]}</p>
       </div>
     </div>
+  );
+}
+
+/** Real numbers from the demo's analysed match: the match, and its standout players. */
+function RealNumbers({ report, lang }: { report: DemoReport; lang: DemoLocale }) {
+  const c = simpleCopy[lang];
+  const furthest = Math.max(0, ...report.players.map((p) => p.distanceKm ?? 0));
+  const fastest = Math.max(0, ...report.players.map((p) => p.topSpeedKmh ?? 0));
+  const tiles: Array<{ label: string; value: string; unit?: string }> = [];
+  if (report.team) {
+    tiles.push({ label: c.stats.score, value: `${report.team.goals[0]} – ${report.team.goals[1]}` });
+    tiles.push({ label: c.stats.possession, value: `${Math.round(report.team.possessionPercent[0])}–${Math.round(report.team.possessionPercent[1])}`, unit: "%" });
+    tiles.push({ label: c.stats.shots, value: `${report.team.shots[0]} – ${report.team.shots[1]}` });
+  }
+  if (report.players.length) tiles.push({ label: c.stats.players, value: formatNumber(report.players.length, lang) });
+  if (furthest > 0) tiles.push({ label: c.stats.furthest, value: formatNumber(furthest, lang, 1), unit: c.stats.km });
+  if (fastest > 0) tiles.push({ label: c.stats.fastest, value: formatNumber(fastest, lang, 1), unit: c.stats.kmh });
+  if (!tiles.length) return null;
+  return (
+    <section className="dm-section dm-section--tight" aria-labelledby="dm-real-title">
+      <div className="dm-wrap">
+        <h2 id="dm-real-title" className="dm-h2 dm-h2--small">{c.statsTitle}</h2>
+        <p className="dm-small dm-simple-note">{c.statsNote(formatMatchDate(report.date, lang))}</p>
+        <dl className="dm-real">
+          {tiles.map((tile) => (
+            <div key={tile.label} className="dm-real-tile">
+              <dt>{tile.label}</dt>
+              <dd><span className="dm-num" dir="ltr">{tile.value}</span>{tile.unit && <small>{tile.unit}</small>}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </section>
   );
 }
 
@@ -92,6 +155,8 @@ export default function SimpleDemo() {
   const [persona, setPersonaState] = useState<Persona>(initialPersona);
   const showcase = useShowcase();
   const data = showcase.data;
+  const reportQuery = useReport(Boolean(data?.match?.analysed));
+  const report = reportQuery.data?.available ? reportQuery.data.report : null;
   const { ref: heroRef, inView: heroInView } = useInView<HTMLElement>("0px", 0.05);
   const { ref: contactRef, inView: contactInView } = useInView<HTMLElement>("0px", 0.05);
 
@@ -117,13 +182,12 @@ export default function SimpleDemo() {
     const clips = data?.clips ?? [];
     return clips.length ? [...clips].sort((x, y) => y.viewCount - x.viewCount)[0] : null;
   }, [data?.clips]);
-  // One shape in the rail: mixing tall and wide cards leaves a tall empty band
-  // above the wide ones on a phone. Wide clips if there are a few, else all.
+  // Wide clips first (the first one plays by itself), then the vertical ones.
+  // The academy view shows only academy-branded copies, never a pitch's.
   const railClips = useMemo(() => {
-    const clips = data?.clips ?? [];
-    const wide = clips.filter((clip) => clip.aspectRatio === "16:9");
-    return wide.length >= 3 ? wide : clips;
-  }, [data?.clips]);
+    const clips = (persona === "academy" ? data?.academyClips : data?.clips) ?? [];
+    return [...clips.filter((clip) => clip.aspectRatio === "16:9"), ...clips.filter((clip) => clip.aspectRatio !== "16:9")];
+  }, [data?.clips, data?.academyClips, persona]);
   const returnRate = data?.returnRatePercent ?? null;
   const values = c.values[persona].filter((value) => value.stat !== "returnRate" || returnRate !== null);
   const scrollToContact = () => document.getElementById("contact")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -154,6 +218,7 @@ export default function SimpleDemo() {
             <p className="dm-hero-lead">{c.lead[persona]}</p>
             <div className="dm-hero-actions">
               <button type="button" className="dm-btn dm-btn--primary" onClick={scrollToContact}>{copy.getCamera}</button>
+              <a className="dm-btn dm-btn--ghost" href={withBase(`/demo/full?for=${persona}`)}>{c.full}</a>
               <div className="dm-seg" role="group" aria-label={copy.personaQuestion}>
                 {(["pitch", "academy"] as Persona[]).map((key) => (
                   <button key={key} type="button" aria-pressed={persona === key} className={`dm-seg-btn ${persona === key ? "is-on" : ""}`} onClick={() => setPersona(key)}>
@@ -185,12 +250,14 @@ export default function SimpleDemo() {
         {railClips.length ? (
           <section className="dm-section dm-section--tight dm-section--raised" aria-labelledby="dm-clips-title">
             <div className="dm-wrap">
-              <h2 id="dm-clips-title" className="dm-h2 dm-h2--small">{c.clipsTitle}</h2>
-              <p className="dm-small dm-simple-note">{c.clipsNote}</p>
-              <ClipRail clips={railClips} copy={copy.sections.clips} />
+              <h2 id="dm-clips-title" className="dm-h2 dm-h2--small">{c.clipsTitle[persona]}</h2>
+              <p className="dm-small dm-simple-note">{c.clipsNote[persona]}</p>
+              <ClipRail clips={railClips} copy={copy.sections.clips} autoplayWide />
             </div>
           </section>
         ) : null}
+
+        {report && <RealNumbers report={report} lang={lang} />}
 
         <section className="dm-section dm-section--tight" aria-labelledby="dm-money-title">
           <div className="dm-wrap">
@@ -208,7 +275,13 @@ export default function SimpleDemo() {
               ))}
             </ul>
             <p className="dm-simple-setup">{c.setup}</p>
-            <a className="dm-simple-full" href={withBase(`/demo/full?for=${persona}`)}>{c.full}</a>
+            <a className="dm-full-card" href={withBase(`/demo/full?for=${persona}`)}>
+              <span>
+                <strong>{c.full}</strong>
+                <span>{c.fullBody}</span>
+              </span>
+              <span className="dm-full-card-go" aria-hidden="true">{lang === "ar" ? "←" : "→"}</span>
+            </a>
           </div>
         </section>
 

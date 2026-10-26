@@ -91,6 +91,12 @@ export type DemoShowcase = {
   clips: DemoClip[];
   /** Vertical (9:16) exports for the social-media section; may be empty. */
   socialClips: DemoClip[];
+  /**
+   * The rail's clips as the academy view shows them, in an academy's branding
+   * (JUFA). Empty until enough copies exist: the academy view never shows a
+   * pitch's branding instead.
+   */
+  academyClips: DemoClip[];
   salesWhatsapp: string | null;
   fieldName: string;
   testimonial: { quoteAr: string; quoteEn: string; name: string; role: string; pitch: string } | null;
@@ -283,14 +289,15 @@ function matchMedia(recording: typeof recordingsTable.$inferSelect, analysed: bo
  */
 type ClipRow = typeof userClipsTable.$inferSelect;
 
-function toDemoClip(row: ClipRow, branded: boolean): DemoClip {
+function toDemoClip(row: ClipRow, branded: boolean, brand: "galaxy" | "academy" = "galaxy"): DemoClip {
   const token = shareToken(row.id);
+  const file = brand === "academy" ? `academy-${row.id}` : `${row.id}`;
   return {
     id: row.id,
     aspectRatio: row.aspectRatio === "9:16" ? "9:16" : "16:9",
     branded,
-    src: branded ? `/api/demo/clips/${row.id}.mp4` : `/api/s/${row.id}/${token}/clip.mp4`,
-    poster: branded ? `/api/demo/clips/${row.id}.jpg` : `/api/s/${row.id}/${token}/poster.jpg`,
+    src: branded ? `/api/demo/clips/${file}.mp4` : `/api/s/${row.id}/${token}/clip.mp4`,
+    poster: branded ? `/api/demo/clips/${file}.jpg` : `/api/s/${row.id}/${token}/poster.jpg`,
     videoId: row.videoId,
     viewCount: row.viewCount,
     startFraction: Number(row.startTime),
@@ -423,12 +430,19 @@ export async function buildDemoShowcase(): Promise<DemoShowcase> {
   const ready = await demoBrandedReadyIds([...unique.values()]).catch(() => new Set<number>());
   const clips = brandedOrOriginal(clipRows, ready, 3);
   const socialClips = brandedOrOriginal(socialRows, ready, 1);
+  // Galaxy copies are queued first, so the pitch view (the main one) fills first.
+  const academyReady = await demoBrandedReadyIds(clipRows, "academy").catch(() => new Set<number>());
+  const academyBranded = clipRows.filter((row) => academyReady.has(row.id));
+  const academyClips = academyBranded.length >= Math.min(3, clipRows.length)
+    ? academyBranded.map((row) => toDemoClip(row, true, "academy"))
+    : [];
   return {
     counts,
     returnRatePercent: returnRate > 0 && returnRate <= 100 ? Math.round(returnRate) : null,
     match: picked ? matchMedia(picked.recording, picked.analysed) : null,
     clips,
     socialClips,
+    academyClips,
     salesWhatsapp: whatsappDigits(whatsapp),
     fieldName: fieldRows[0]?.name ?? DEMO_FIELD_NAME,
     testimonial: values.every(Boolean) ? { quoteAr, quoteEn, name: quoteName, role: quoteRole, pitch: quotePitch } : null,
