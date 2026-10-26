@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 
 import { isBunnyStorageConfigured } from "../lib/bunny";
-import { demoBrandedPosterPath, demoBrandedVideoPath, onDemoBrandedReady } from "../lib/demoBrandedClips";
+import { demoBrandedPosterPath, demoBrandedVideoPath, isServableDemoCopy, onDemoBrandedReady } from "../lib/demoBrandedClips";
 import { buildDemoReport, buildDemoShowcase, type DemoReport, type DemoShowcase } from "../lib/demoShowcase";
 import { logger } from "../lib/logger";
 import { proxyStorageObject } from "./share";
@@ -26,8 +26,12 @@ let showcaseInFlight: Promise<DemoShowcase> | null = null;
 const reportCache = new Map<number, { at: number; data: DemoReport | null }>();
 const reportInFlight = new Map<number, Promise<DemoReport | null>>();
 
-// A branded copy that just finished should show on the next visit, not in five minutes.
+// A branded copy that just finished should show on the next visit, not in
+// five minutes. A build already running when it finished may have read the old
+// state, so its result is not kept either.
+let showcaseGeneration = 0;
 onDemoBrandedReady(() => {
+  showcaseGeneration += 1;
   showcaseCache = null;
 });
 
@@ -41,9 +45,10 @@ export function resetDemoShowcaseCache(): void {
 async function showcase(): Promise<DemoShowcase> {
   if (showcaseCache && Date.now() - showcaseCache.at < SHOWCASE_TTL_MS) return showcaseCache.data;
   if (!showcaseInFlight) {
+    const generation = showcaseGeneration;
     showcaseInFlight = buildDemoShowcase()
       .then((data) => {
-        showcaseCache = { at: Date.now(), data };
+        if (generation === showcaseGeneration) showcaseCache = { at: Date.now(), data };
         return data;
       })
       .finally(() => {
@@ -100,8 +105,9 @@ router.get("/demo/showcase/report", async (_req, res): Promise<void> => {
 });
 
 /**
- * The demo's branded copies (lib/demoBrandedClips.ts). Only clips the demo is
- * showing right now are served, so this is not a way to read any clip.
+ * The demo's branded copies (lib/demoBrandedClips.ts). Only a clip with a copy
+ * (which only the demo makes) that is still public is served, so this is not
+ * a way to read any clip.
  */
 router.get("/demo/clips/:file", async (req, res): Promise<void> => {
   const match = /^(\d{1,9})\.(mp4|jpg)$/.exec(String(req.params.file ?? ""));
@@ -112,9 +118,7 @@ router.get("/demo/clips/:file", async (req, res): Promise<void> => {
   const id = Number(match[1]);
   const kind = match[2] as "mp4" | "jpg";
   try {
-    const current = await showcase();
-    const shown = [...current.clips, ...current.socialClips].some((clip) => clip.id === id && clip.branded);
-    if (!shown || !isBunnyStorageConfigured()) {
+    if (!isBunnyStorageConfigured() || !(await isServableDemoCopy(id))) {
       res.status(404).end();
       return;
     }

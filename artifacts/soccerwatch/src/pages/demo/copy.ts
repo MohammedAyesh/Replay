@@ -32,7 +32,7 @@ export interface DemoCopy {
     note: string;
   };
   sections: {
-    clips: { kicker: string; title: PersonaText; body: string; loss: string; mute: string; unmute: string; play: string; pause: string; loading: string };
+    clips: { kicker: string; title: PersonaText; body: string; bodyBranded: string; loss: string; mute: string; unmute: string; play: string; pause: string; loading: string };
     social: {
       kicker: string;
       title: PersonaText;
@@ -248,7 +248,8 @@ const ar: DemoCopy = {
     clips: {
       kicker: "من اللاعبين",
       title: { pitch: "شو بوصل للاعبين", academy: "شو بوصل للاعبين والأهل" },
-      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي، بنفس هوية جوردان جالاكسي اللي بتطلع على مقاطعهم: الشعار بالزاوية وبطاقة الحجز بالآخر. أخفينا الأسماء.",
+      body: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي من التطبيق. أخفينا الأسماء.",
+      bodyBranded: "مقاطع حقيقية قصّها لاعبين في جوردان جالاكسي، بنفس هوية جوردان جالاكسي اللي بتطلع على مقاطعهم: الشعار بالزاوية وبطاقة الحجز بالآخر. أخفينا الأسماء.",
       loss: "بدون كاميرا، كل مباراة على ملعبك الليلة بتخلص وما بيضل منها إشي.",
       mute: "اكتم الصوت",
       unmute: "شغّل الصوت",
@@ -569,7 +570,8 @@ const en: DemoCopy = {
     clips: {
       kicker: "Made by players",
       title: { pitch: "What your players get", academy: "What players and parents get" },
-      body: "Real clips players cut at Jordan Galaxy, in the Jordan Galaxy branding their clips go out with: the crest in the corner and a booking card at the end. Names hidden.",
+      body: "Real clips players cut at Jordan Galaxy in the app. Names hidden.",
+      bodyBranded: "Real clips players cut at Jordan Galaxy, in the Jordan Galaxy branding their clips go out with: the crest in the corner and a booking card at the end. Names hidden.",
       loss: "Without a camera, every match on your pitch tonight ends and nothing of it is left.",
       mute: "Mute",
       unmute: "Unmute",

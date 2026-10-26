@@ -223,7 +223,7 @@ export default function DemoPage() {
     switch (key) {
       case "products":
         return (
-          <Section key={key} id="products" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={s.clips.body}>
+          <Section key={key} id="products" index={index} kicker={s.clips.kicker} title={s.clips.title[persona]} body={data?.clips[0]?.branded ? s.clips.bodyBranded : s.clips.body}>
             {persona === "pitch" && <p className="dm-loss">{s.clips.loss}</p>}
             {data?.clips.length ? <ClipRail clips={data.clips} copy={s.clips} /> : null}
             <SocialSection persona={persona} copy={s.social} name={brandName} onName={setBrandName} look={brandLook} onLook={setBrandLook} color={brandColor} onColor={setBrandColor} />

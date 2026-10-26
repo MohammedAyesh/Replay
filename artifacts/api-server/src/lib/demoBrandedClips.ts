@@ -17,10 +17,11 @@ import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
 import { spawn } from "child_process";
-import { like, sql } from "drizzle-orm";
+import { and, eq, isNull, like, sql } from "drizzle-orm";
 import { db, recordingsTable, userClipsTable } from "@workspace/db";
 
 import {
+  BunnyVideoNotFoundError,
   BUNNY_CDN_HOSTNAME,
   BUNNY_STORAGE_API_KEY,
   BUNNY_STORAGE_HOSTNAME,
@@ -36,7 +37,7 @@ import { demoBrandLook } from "./clipBranding/demoLook";
 import { renderOverlayPng } from "./clipBranding/overlay";
 import { dateLabelFromLocal, publicBase } from "./clipBranding/plan";
 import type { EndScreenJob } from "./clipBranding/endScreenVideo";
-import { selectExportSource } from "./exportSource";
+import { ExportSourceUnavailableError, selectExportSource } from "./exportSource";
 import { bufferRemoteClip, cleanupTempFile, getOutputDims, renderClip } from "./ffmpegExport";
 import { logger } from "./logger";
 import { renderQueue } from "./renderQueue";
@@ -44,14 +45,24 @@ import { renderQueue } from "./renderQueue";
 export const DEMO_BRAND_VERSION = "galaxy-v1";
 /** The card's length, blur and darkening: the same as field 10's switched-on look. */
 const CARD = { seconds: 2.5, blur: 22, dim: 0.5 } as const;
-/** A clip that failed is tried again after this long, not on every visit. */
+/** A clip that failed is tried again after this long, not on every visit... */
 const RETRY_AFTER_MS = 30 * 60 * 1000;
+/** ...and not more than this many times on one server. */
+const MAX_ATTEMPTS = 3;
+/** How often a waiting demo render looks for an idle renderer. */
+const IDLE_POLL_MS = 60_000;
 
 type ClipRow = typeof userClipsTable.$inferSelect;
-type State = { status: "ready" } | { status: "rendering" } | { status: "failed"; at: number } | { status: "missing" };
+type State =
+  | { status: "ready" }
+  | { status: "rendering" }
+  | { status: "failed"; at: number; attempts: number }
+  /** Its recording is gone or cannot be exported: never tried again on this server. */
+  | { status: "unrenderable" }
+  | { status: "missing"; attempts: number };
 
 const state = new Map<number, State>();
-const checking = new Map<number, Promise<boolean>>();
+const checking = new Map<number, Promise<boolean | null>>();
 const listeners = new Set<() => void>();
 let queue: Promise<void> = Promise.resolve();
 
@@ -80,6 +91,12 @@ export function resetDemoBrandedState(): void {
   queue = Promise.resolve();
 }
 
+/** Test hook: how long a queued demo render waits between looks at the renderer. */
+let idlePollMs = IDLE_POLL_MS;
+export function setDemoIdlePollMs(ms: number): void {
+  idlePollMs = ms;
+}
+
 async function storageHas(remotePath: string): Promise<boolean> {
   const response = await fetch(`https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${remotePath}`, {
     headers: { AccessKey: BUNNY_STORAGE_API_KEY, Range: "bytes=0-0" },
@@ -91,23 +108,27 @@ async function storageHas(remotePath: string): Promise<boolean> {
   throw new Error(`Bunny Storage answered ${response.status} for ${remotePath}`);
 }
 
-/** Whether both files of a clip's copy are in Storage, asked once per server. */
-async function checkStored(clipId: number): Promise<boolean> {
+/**
+ * Whether both files of a clip's copy are in Storage: true, false, or null
+ * when Storage could not say (then nothing is rendered on the strength of it).
+ * Asked once per server, and again while the copy is missing.
+ */
+export async function checkStored(clipId: number): Promise<boolean | null> {
   const known = state.get(clipId);
   if (known?.status === "ready") return true;
   if (known && known.status !== "missing") return false;
   let pending = checking.get(clipId);
   if (!pending) {
     pending = Promise.all([storageHas(demoBrandedVideoPath(clipId)), storageHas(demoBrandedPosterPath(clipId))])
-      .then(([video, poster]) => {
+      .then(([video, poster]): boolean => {
         const ready = video && poster;
         if (ready) state.set(clipId, { status: "ready" });
-        else if (!state.has(clipId)) state.set(clipId, { status: "missing" });
+        else if (!state.has(clipId)) state.set(clipId, { status: "missing", attempts: 0 });
         return ready;
       })
-      .catch((err) => {
+      .catch((err): null => {
         logger.warn({ err, clipId }, "Could not check a demo clip copy in Storage");
-        return false;
+        return null;
       })
       .finally(() => checking.delete(clipId));
     checking.set(clipId, pending);
@@ -122,23 +143,49 @@ async function checkStored(clipId: number): Promise<boolean> {
 export async function demoBrandedReadyIds(clips: ClipRow[]): Promise<Set<number>> {
   const ready = new Set<number>();
   if (!isBunnyStorageConfigured() || !isBunnyConfigured()) return ready;
+  const unknown = new Set<number>();
   await Promise.all(clips.map(async (clip) => {
-    if (await checkStored(clip.id)) ready.add(clip.id);
+    const stored = await checkStored(clip.id);
+    if (stored) ready.add(clip.id);
+    else if (stored === null) unknown.add(clip.id);
   }));
   for (const clip of clips) {
-    if (ready.has(clip.id)) continue;
+    if (ready.has(clip.id) || unknown.has(clip.id)) continue;
     const current = state.get(clip.id);
-    if (current?.status === "rendering") continue;
-    if (current?.status === "failed" && Date.now() - current.at < RETRY_AFTER_MS) continue;
+    if (!current || current.status === "rendering" || current.status === "unrenderable" || current.status === "ready") continue;
+    if (current.status === "failed" && (current.attempts >= MAX_ATTEMPTS || Date.now() - current.at < RETRY_AFTER_MS)) continue;
+    const attempts = current.attempts;
     state.set(clip.id, { status: "rendering" });
-    queue = queue.then(() => renderAndStore(clip)).catch(() => {});
+    queue = queue.then(() => renderAndStore(clip, attempts)).catch(() => {});
   }
   return ready;
 }
 
-async function renderAndStore(clip: ClipRow): Promise<void> {
+/**
+ * Run one demo render only when this server's renderer is idle, so a demo copy
+ * never takes a slot a player's export is waiting for, never pushes a player's
+ * export to the backup renderer, and never shows in a player's queue position.
+ */
+async function whenIdle<T>(key: string, job: () => Promise<T>): Promise<T> {
+  for (;;) {
+    const now = renderQueue.snapshot();
+    if (now.active === 0 && now.waiting === 0 && now.yielding === 0) {
+      const attempt = await renderQueue.tryRunImmediately(key, job);
+      if (attempt.started) return attempt.completion;
+    }
+    await new Promise((resolve) => setTimeout(resolve, idlePollMs).unref?.());
+  }
+}
+
+function isPermanent(err: unknown): boolean {
+  return err instanceof BunnyVideoNotFoundError
+    || err instanceof ExportSourceUnavailableError
+    || /no footage|no source content/i.test(String((err as Error)?.message ?? ""));
+}
+
+async function renderAndStore(clip: ClipRow, previousAttempts: number): Promise<void> {
   try {
-    await renderQueue.run(`demo-${clip.id}`, async () => {
+    await whenIdle(`demo-${clip.id}`, async () => {
       const file = await renderDemoCopy(clip);
       try {
         const poster = await posterFrom(file);
@@ -154,8 +201,9 @@ async function renderAndStore(clip: ClipRow): Promise<void> {
       try { listener(); } catch { /* a listener never stops the queue */ }
     }
   } catch (err) {
-    state.set(clip.id, { status: "failed", at: Date.now() });
-    logger.error({ err, clipId: clip.id }, "Could not render a demo clip copy");
+    const permanent = isPermanent(err);
+    state.set(clip.id, permanent ? { status: "unrenderable" } : { status: "failed", at: Date.now(), attempts: previousAttempts + 1 });
+    logger.error({ err, clipId: clip.id, permanent, attempts: previousAttempts + 1 }, "Could not render a demo clip copy");
   }
 }
 
@@ -249,4 +297,22 @@ async function posterFrom(video: string): Promise<Buffer> {
   } finally {
     fs.unlink(out, () => {});
   }
+}
+
+/**
+ * Whether /api/demo/clips may serve this clip's copy: the copy exists and the
+ * clip is still one the demo may show (not hidden, reported or deleted).
+ *
+ * It does not depend on this server's showcase cache: with several instances,
+ * or a re-ordered pick, the page can hold a copy's URL another instance has not
+ * listed yet.
+ */
+export async function isServableDemoCopy(clipId: number): Promise<boolean> {
+  if ((await checkStored(clipId)) !== true) return false;
+  const [row] = await db
+    .select({ id: userClipsTable.id })
+    .from(userClipsTable)
+    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.isHidden, false), isNull(userClipsTable.hiddenReason)))
+    .limit(1);
+  return Boolean(row);
 }

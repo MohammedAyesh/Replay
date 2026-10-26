@@ -15,6 +15,14 @@ vi.mock("./share", () => ({
 
 vi.mock("../lib/bunny", () => ({ isBunnyStorageConfigured: () => true }));
 
+const servable = new Set<number>();
+vi.mock("../lib/demoBrandedClips", () => ({
+  demoBrandedVideoPath: (id: number) => `demo/branded/galaxy-v1/c${id}.mp4`,
+  demoBrandedPosterPath: (id: number) => `demo/branded/galaxy-v1/c${id}.jpg`,
+  isServableDemoCopy: async (id: number) => servable.has(id),
+  onDemoBrandedReady: () => () => {},
+}));
+
 import { buildDemoReport, buildDemoShowcase } from "../lib/demoShowcase";
 import { proxyStorageObject } from "./share";
 import demoShowcaseRouter, { resetDemoShowcaseCache } from "./demoShowcase";
@@ -84,12 +92,10 @@ describe("GET /api/demo/showcase/report", () => {
 });
 
 describe("GET /api/demo/clips/:file", () => {
-  const clip = (id: number, branded: boolean) => ({
-    id, aspectRatio: "16:9", branded, src: "", poster: "", videoId: "v", viewCount: 0, startFraction: 0, endFraction: 1,
-  });
-
-  it("serves the branded copy of a clip the demo is showing", async () => {
-    vi.mocked(buildDemoShowcase).mockResolvedValue({ ...showcase, clips: [clip(5, true)], socialClips: [clip(8, true)] } as never);
+  it("serves a clip's branded copy, whichever showcase this instance has cached", async () => {
+    servable.clear();
+    servable.add(5);
+    servable.add(8);
     const video = await request(app).get("/api/demo/clips/5.mp4").expect(206);
     expect(video.text).toBe("demo/branded/galaxy-v1/c5.mp4");
     const poster = await request(app).get("/api/demo/clips/8.jpg").expect(206);
@@ -97,12 +103,13 @@ describe("GET /api/demo/clips/:file", () => {
   });
 
   it("serves nothing else", async () => {
+    servable.clear();
+    servable.add(6);
     vi.mocked(proxyStorageObject).mockClear();
-    vi.mocked(buildDemoShowcase).mockResolvedValue({ ...showcase, clips: [clip(5, false), clip(6, true)] } as never);
     await request(app).get("/api/demo/clips/5.mp4").expect(404);
-    await request(app).get("/api/demo/clips/7.mp4").expect(404);
     await request(app).get("/api/demo/clips/6.png").expect(404);
     await request(app).get("/api/demo/clips/..%2Fsecret.mp4").expect(404);
+    await request(app).get("/api/demo/clips/6.mp4.mp4").expect(404);
     expect(proxyStorageObject).not.toHaveBeenCalled();
   });
 });

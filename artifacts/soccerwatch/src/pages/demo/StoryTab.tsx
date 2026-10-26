@@ -416,7 +416,8 @@ function RendererStoryVideo({ kind, title, persona, look, name, color, aspect, l
   }
   const src = withBase(`/api/demo/branding/preview.mp4?${params.toString()}`);
   const [ready, setReady] = useState(false);
-  useEffect(() => setReady(false), [src]);
+  // A new source, or the video unmounting as it scrolls away, starts the loader again.
+  useEffect(() => setReady(false), [src, inView]);
 
   useEffect(() => {
     const video = ref.current?.querySelector("video");
@@ -443,6 +444,7 @@ function RendererStoryVideo({ kind, title, persona, look, name, color, aspect, l
             loop
             preload="auto"
             onLoadedData={() => setReady(true)}
+            onError={() => setReady(true)}
             aria-label={title}
             data-testid={`story-video-player-${kind}`}
           />
