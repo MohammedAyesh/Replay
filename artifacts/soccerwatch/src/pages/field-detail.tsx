@@ -6,8 +6,6 @@ import {
   useGetFieldRecordings,
   getGetFieldRecordingsQueryKey,
   useCreateUserClip,
-  useRecordRecordingView,
-  useRecordRecordingWatchTime,
   useListAcademies,
   getListAcademiesQueryKey,
   getListUserClipsQueryKey,
@@ -26,6 +24,7 @@ import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { useClaimCopy } from "@/i18n/claim-strings";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
+import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -435,9 +434,11 @@ export default function FieldDetail() {
   );
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
   const createUserClip = useCreateUserClip();
-  const recordRecordingView = useRecordRecordingView();
-  const recordRecordingWatchTime = useRecordRecordingWatchTime();
-  const pendingWatchSeconds = useRef(0);
+  const viewTracking = useRecordingViewTracking(
+    collection?.id && activeVideo
+      ? { fieldId: collection.id, videoId: activeVideo.guid }
+      : null,
+  );
   const queryClient = useQueryClient();
 
   // Group videos by ISO date
@@ -675,38 +676,12 @@ export default function FieldDetail() {
             source={{ kind: "bunny", videoId: activeVideo.guid }}
             fieldId={collection?.id ?? undefined}
             academyId={academyId}
-            onPlaybackStart={() => {
-              if (collection?.id) {
-                recordRecordingView.mutate({
-                  data: { fieldId: collection.id, videoId: activeVideo.guid },
-                });
-              }
-            }}
-            onPlaybackProgress={(seconds) => {
-              pendingWatchSeconds.current += seconds;
-              const fullSeconds = Math.floor(pendingWatchSeconds.current);
-              if (fullSeconds >= 10 && collection?.id) {
-                const amount = Math.min(30, fullSeconds);
-                pendingWatchSeconds.current -= amount;
-                recordRecordingWatchTime.mutate({
-                  data: {
-                    fieldId: collection.id,
-                    videoId: activeVideo.guid,
-                    seconds: amount,
-                  },
-                });
-              }
-            }}
+            onPlaybackStart={viewTracking.onPlaybackStart}
+            onPlaybackProgress={viewTracking.onPlaybackProgress}
             layout="overlay"
             canSave={Boolean(user) && !isGuest}
             onClose={() => {
-              const seconds = Math.floor(pendingWatchSeconds.current);
-              if (seconds > 0 && collection?.id) {
-                recordRecordingWatchTime.mutate({
-                  data: { fieldId: collection.id, videoId: activeVideo.guid, seconds: Math.min(30, seconds) },
-                });
-              }
-              pendingWatchSeconds.current = 0;
+              viewTracking.flush();
               setActiveVideo(null);
             }}
             onRequireAuth={(_draft) => setLocation("/sign-in")}

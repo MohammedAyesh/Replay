@@ -16,6 +16,8 @@ import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOver
 import { formatAmmanClock, useAcademyLiveStatus } from "@/components/academy-console/use-academy-live-status";
 import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { nextFamilyClaimKey } from "@/lib/academy-family-claim";
+import { getRecordingViewInput } from "@/lib/recording-view-tracking";
+import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -159,6 +161,9 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
     startsAt: string;
     location: string;
   } | null>(null);
+  const viewTracking = useRecordingViewTracking(
+    getRecordingViewInput(playing?.recording),
+  );
   const [liveSession, setLiveSession] = useState<{ id: number; title: string } | null>(null);
   const claim = useClaimAcademyFamily();
   const attemptedToken = useRef<string | null>(null);
@@ -560,9 +565,14 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
           source={{ kind: "bunny", videoId: extractBunnyVideoId(playing.recording.videoUrl) }}
           layout="overlay"
           canSave={false}
+          onPlaybackStart={viewTracking.onPlaybackStart}
+          onPlaybackProgress={viewTracking.onPlaybackProgress}
           onRequireAuth={() => setPlaying(null)}
           onSave={async () => { throw new Error("Saving is unavailable in family view."); }}
-          onClose={() => setPlaying(null)}
+          onClose={() => {
+            viewTracking.flush();
+            setPlaying(null);
+          }}
         />
       </AnimatePresence>}
       {liveSession && <AcademyLiveOverlay

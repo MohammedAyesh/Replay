@@ -17,6 +17,8 @@ import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
+import { getRecordingViewInput } from "@/lib/recording-view-tracking";
+import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
 
 /** Pull the bare Bunny GUID out of a full CDN URL like
  *  https://cdn.example.net/abc-123/playlist.m3u8  →  "abc-123"
@@ -207,6 +209,11 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [liveFor, setLiveFor] = useState<{ cameraId: string; title: string; academyId: number } | null>(null);
   const [recordingFor, setRecordingFor] = useState<{ rec: Recording; academyId: number; title: string } | null>(null);
+  const viewTracking = useRecordingViewTracking(
+    recordingFor?.rec.videoUrl
+      ? getRecordingViewInput({ ...recordingFor.rec, videoUrl: recordingFor.rec.videoUrl })
+      : null,
+  );
 
   const filtered = (academies ?? []).filter(
     (a) => a.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -300,7 +307,12 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
             academyId={recordingFor.academyId}
             layout="overlay"
             canSave={Boolean(user) && !isGuest}
-            onClose={() => setRecordingFor(null)}
+            onPlaybackStart={viewTracking.onPlaybackStart}
+            onPlaybackProgress={viewTracking.onPlaybackProgress}
+            onClose={() => {
+              viewTracking.flush();
+              setRecordingFor(null);
+            }}
             onRequireAuth={(_draft) => setLocation("/sign-in")}
             onSave={async (draft) => {
               await createUserClip.mutateAsync({

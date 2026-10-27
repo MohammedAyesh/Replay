@@ -16,6 +16,8 @@ import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { formatAmmanDateTime } from "@/lib/academy-session-time";
+import { getRecordingViewInput } from "@/lib/recording-view-tracking";
+import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
 
 function extractBunnyGuid(videoUrl: string): string {
   try {
@@ -40,6 +42,9 @@ export function AcademyRecordingsSection({ academyId, academyName }: { academyId
     `${b.date} ${b.timeSlot}`.localeCompare(`${a.date} ${a.timeSlot}`)
   )), [recordingsQuery.data]);
   const [playing, setPlaying] = useState<AcademyConsoleRecording | null>(null);
+  const viewTracking = useRecordingViewTracking(
+    playing?.videoUrl ? getRecordingViewInput(playing) : null,
+  );
   const [assignmentErrors, setAssignmentErrors] = useState<Record<number, boolean>>({});
   const sessions = sessionsQuery.data ?? [];
   const dateFormat = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { dateStyle: "medium", timeZone: "Asia/Amman" });
@@ -133,11 +138,16 @@ export function AcademyRecordingsSection({ academyId, academyName }: { academyId
           academyId={academyId}
           layout="overlay"
           canSave={false}
+          onPlaybackStart={viewTracking.onPlaybackStart}
+          onPlaybackProgress={viewTracking.onPlaybackProgress}
           onRequireAuth={() => setPlaying(null)}
           onSave={async () => {
             throw new Error(copy.description);
           }}
-          onClose={() => setPlaying(null)}
+          onClose={() => {
+            viewTracking.flush();
+            setPlaying(null);
+          }}
         />}
       </AnimatePresence>
     </section>
