@@ -164,6 +164,8 @@ import type {
   PublicPlayerStats,
   PublicProfile,
   Recording,
+  RecordingViewInput,
+  RecordingViewer,
   ReplaceTrackingBundleBodyTwo,
   ResolveClaimMatchDisputeInput,
   SentPlayerIdentificationRequest,
@@ -2926,6 +2928,153 @@ export function useGetFieldRecordings<TData = Awaited<ReturnType<typeof getField
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetFieldRecordingsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRecordRecordingViewUrl = () => {
+
+
+
+
+  return `/api/recording-views`
+}
+
+/**
+ * @summary Record a signed-in viewer starting a recording
+ */
+export const recordRecordingView = async (recordingViewInput: RecordingViewInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRecordRecordingViewUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(recordingViewInput)
+  }
+);}
+
+
+
+
+export const getRecordRecordingViewMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordRecordingView>>, TError,{data: BodyType<RecordingViewInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordRecordingView>>, TError,{data: BodyType<RecordingViewInput>}, TContext> => {
+
+const mutationKey = ['recordRecordingView'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordRecordingView>>, {data: BodyType<RecordingViewInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  recordRecordingView(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordRecordingViewMutationResult = NonNullable<Awaited<ReturnType<typeof recordRecordingView>>>
+    export type RecordRecordingViewMutationBody = BodyType<RecordingViewInput>
+    export type RecordRecordingViewMutationError = ErrorType<void>
+
+    /**
+ * @summary Record a signed-in viewer starting a recording
+ */
+export const useRecordRecordingView = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordRecordingView>>, TError,{data: BodyType<RecordingViewInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordRecordingView>>,
+        TError,
+        {data: BodyType<RecordingViewInput>},
+        TContext
+      > => {
+      return useMutation(getRecordRecordingViewMutationOptions(options));
+    }
+
+export const getGetRecordingViewersUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/recordings/${id}/viewers`
+}
+
+/**
+ * @summary List viewers of a recording
+ */
+export const getRecordingViewers = async (id: number, options?: RequestInit): Promise<RecordingViewer[]> => {
+
+  return customFetch<RecordingViewer[]>(getGetRecordingViewersUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetRecordingViewersQueryKey = (id: number,) => {
+    return [
+    `/api/admin/recordings/${id}/viewers`
+    ] as const;
+    }
+
+
+export const getGetRecordingViewersQueryOptions = <TData = Awaited<ReturnType<typeof getRecordingViewers>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRecordingViewers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetRecordingViewersQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getRecordingViewers>>> = ({ signal }) => getRecordingViewers(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getRecordingViewers>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetRecordingViewersQueryResult = NonNullable<Awaited<ReturnType<typeof getRecordingViewers>>>
+export type GetRecordingViewersQueryError = ErrorType<void>
+
+
+/**
+ * @summary List viewers of a recording
+ */
+
+export function useGetRecordingViewers<TData = Awaited<ReturnType<typeof getRecordingViewers>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getRecordingViewers>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetRecordingViewersQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

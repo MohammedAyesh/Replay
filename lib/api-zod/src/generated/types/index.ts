@@ -273,6 +273,8 @@ export * from './publicProfile';
 export * from './recording';
 export * from './recordingMatchWindow';
 export * from './recordingMatchWindowSource';
+export * from './recordingViewer';
+export * from './recordingViewInput';
 export * from './replaceTrackingBundleBodyTwo';
 export * from './resolveClaimMatchDisputeInput';
 export * from './sentPlayerIdentificationRequest';

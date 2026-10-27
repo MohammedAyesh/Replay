@@ -2,6 +2,7 @@ export * from "./users";
 export * from "./fields";
 export * from "./cameras";
 export * from "./recordings";
+export * from "./recordingViews";
 export * from "./clips";
 export * from "./savedClips";
 export * from "./likes";

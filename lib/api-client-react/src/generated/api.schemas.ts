@@ -560,6 +560,25 @@ export interface FieldRecording {
   viewerClaimState: FieldRecordingViewerClaimState;
 }
 
+export interface RecordingViewInput {
+  /** @minimum 1 */
+  fieldId: number;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  videoId: string;
+}
+
+export interface RecordingViewer {
+  userId: number;
+  name: string;
+  email: string;
+  viewCount: number;
+  firstViewedAt: string;
+  lastViewedAt: string;
+}
+
 export interface PublicProfile {
   id: number;
   name: string;

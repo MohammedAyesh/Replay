@@ -1,15 +1,22 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import {
   db,
   clipsTable,
   fieldsTable,
   footageRequestsTable,
   recordingsTable,
+  recordingViewsTable,
   recordingTrackingBundlesTable,
   usersTable,
 } from "@workspace/db";
-import { GetRecordingParams, GetRecordingResponse } from "@workspace/api-zod";
+import {
+  GetRecordingParams,
+  GetRecordingResponse,
+  GetRecordingViewersParams,
+  GetRecordingViewersResponse,
+  RecordRecordingViewBody,
+} from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import {
   createPublicFootageContext,
@@ -103,6 +110,69 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
   res.json(rows.map(({ recording, fieldName, hasTrackingBundle, trackingManifest }) =>
     toAdminRecording(recording, fieldName ?? null, hasTrackingBundle !== null, trackingManifest),
   ));
+});
+
+router.get("/admin/recordings/:id/viewers", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const parsedParams = GetRecordingViewersParams.safeParse({ id: req.params.id });
+  if (!parsedParams.success) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const recordingId = parsedParams.data.id;
+  const [recording] = await db.select({ id: recordingsTable.id }).from(recordingsTable)
+    .where(eq(recordingsTable.id, recordingId));
+  if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
+
+  const viewers = await db.select({
+    userId: usersTable.id,
+    name: usersTable.name,
+    email: usersTable.email,
+    viewCount: recordingViewsTable.viewCount,
+    firstViewedAt: recordingViewsTable.firstViewedAt,
+    lastViewedAt: recordingViewsTable.lastViewedAt,
+  }).from(recordingViewsTable)
+    .innerJoin(usersTable, eq(usersTable.id, recordingViewsTable.viewerUserId))
+    .where(eq(recordingViewsTable.recordingId, recordingId))
+    .orderBy(desc(recordingViewsTable.lastViewedAt));
+  res.json(GetRecordingViewersResponse.parse(viewers));
+});
+
+router.post("/recording-views", async (req, res): Promise<void> => {
+  const viewerId = await getLocalUserId(req);
+  if (!viewerId) { res.status(401).json({ error: "Sign in required" }); return; }
+  const parsedBody = RecordRecordingViewBody.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.message });
+    return;
+  }
+  const { fieldId, videoId } = parsedBody.data;
+  const [viewer] = await db.select({ isGuest: usersTable.isGuest }).from(usersTable)
+    .where(eq(usersTable.id, viewerId));
+  if (!viewer || viewer.isGuest) { res.status(204).end(); return; }
+
+  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, fieldId));
+  if (!field) { res.status(404).json({ error: "Recording not found" }); return; }
+  const candidates = await db.select().from(recordingsTable).where(eq(recordingsTable.fieldId, fieldId));
+  const recording = candidates.find((candidate) =>
+    extractBunnyVideoId(candidate.videoUrl)?.toLowerCase() === videoId.toLowerCase(),
+  );
+  if (!recording) { res.status(204).end(); return; }
+  const context = await createPublicFootageContext(req, [fieldId]);
+  if (!isPublicRecordingInContext(recording, field, context)) {
+    res.status(404).json({ error: "Recording not found" });
+    return;
+  }
+  await db.insert(recordingViewsTable).values({ recordingId: recording.id, viewerUserId: viewerId })
+    .onConflictDoUpdate({
+      target: [recordingViewsTable.recordingId, recordingViewsTable.viewerUserId],
+      set: {
+        viewCount: sql`${recordingViewsTable.viewCount} + 1`,
+        lastViewedAt: new Date(),
+      },
+    });
+  res.status(204).end();
 });
 
 router.post("/admin/recordings", async (req, res): Promise<void> => {

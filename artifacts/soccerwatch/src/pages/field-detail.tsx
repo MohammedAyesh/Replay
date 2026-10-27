@@ -6,6 +6,7 @@ import {
   useGetFieldRecordings,
   getGetFieldRecordingsQueryKey,
   useCreateUserClip,
+  useRecordRecordingView,
   useListAcademies,
   getListAcademiesQueryKey,
   getListUserClipsQueryKey,
@@ -433,6 +434,7 @@ export default function FieldDetail() {
   );
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
   const createUserClip = useCreateUserClip();
+  const recordRecordingView = useRecordRecordingView();
   const queryClient = useQueryClient();
 
   // Group videos by ISO date
@@ -670,6 +672,13 @@ export default function FieldDetail() {
             source={{ kind: "bunny", videoId: activeVideo.guid }}
             fieldId={collection?.id ?? undefined}
             academyId={academyId}
+            onPlaybackStart={() => {
+              if (collection?.id) {
+                recordRecordingView.mutate({
+                  data: { fieldId: collection.id, videoId: activeVideo.guid },
+                });
+              }
+            }}
             layout="overlay"
             canSave={Boolean(user) && !isGuest}
             onClose={() => setActiveVideo(null)}

@@ -131,6 +131,8 @@ export type ClipPlayerProps = {
   /** Condense idle editing controls into a single docked row. */
   toolbarLayout?: "stacked" | "single-row";
   onClose?: () => void;
+  /** Called once after this source successfully begins playback. */
+  onPlaybackStart?: () => void;
   canSave: boolean;
   onRequireAuth: (draft: ClipDraft) => void;
   onSave: (draft: ClipDraft) => Promise<void>;
@@ -308,6 +310,7 @@ export function ClipPlayer({
   layout,
   toolbarLayout = "stacked",
   onClose,
+  onPlaybackStart,
   canSave,
   onRequireAuth,
   onSave,
@@ -541,6 +544,12 @@ export function ClipPlayer({
   const [clipDurationSeconds, setClipDurationSeconds] = useState(0);
 
   const sourceKey = source.kind === "bunny" ? source.videoId : source.token;
+  const playbackStartCallbackRef = useRef(onPlaybackStart);
+  playbackStartCallbackRef.current = onPlaybackStart;
+  const playbackStartReportedRef = useRef(false);
+  useEffect(() => {
+    playbackStartReportedRef.current = false;
+  }, [sourceKey]);
   const isLiveDvr = Boolean(liveDvr);
   const maxLiveClipSeconds = Math.max(1, Math.min(600, liveDvr?.maxDurationSeconds ?? 600));
   const activeSrc = sourceStage === "fallback"
@@ -932,6 +941,10 @@ export function ClipPlayer({
     };
     const onPlaying = () => {
       setIsPlaying(true);
+      if (!playbackStartReportedRef.current) {
+        playbackStartReportedRef.current = true;
+        playbackStartCallbackRef.current?.();
+      }
       applyPendingResumePosition();
       markPlaybackReady();
     };

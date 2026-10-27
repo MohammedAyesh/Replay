@@ -974,6 +974,50 @@ paths:
                 items:
                   $ref: "#/components/schemas/FieldRecording"
 
+  /recording-views:
+    post:
+      operationId: recordRecordingView
+      tags: [recordings]
+      summary: Record a signed-in viewer starting a recording
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecordingViewInput"
+      responses:
+        "204":
+          description: View recorded, or ignored for an anonymous guest
+        "400":
+          description: Invalid input
+        "404":
+          description: Recording is not available
+
+  /admin/recordings/{id}/viewers:
+    get:
+      operationId: getRecordingViewers
+      tags: [recordings]
+      summary: List viewers of a recording
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Signed-in viewers, most recently active first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecordingViewer"
+        "403":
+          description: Admin access required
+        "404":
+          description: Recording not found
+
   /recordings/{id}:
     get:
       operationId: getRecording
@@ -5823,6 +5867,38 @@ components:
           type: ["string", "null"]
           enum: [in_progress, pending, confirmed, disputed, needs_resolution, released, rejected, null]
           description: The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
+
+    RecordingViewInput:
+      type: object
+      required: [fieldId, videoId]
+      properties:
+        fieldId:
+          type: integer
+          minimum: 1
+        videoId:
+          type: string
+          minLength: 1
+          maxLength: 128
+
+    RecordingViewer:
+      type: object
+      required: [userId, name, email, viewCount, firstViewedAt, lastViewedAt]
+      properties:
+        userId:
+          type: integer
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        viewCount:
+          type: integer
+        firstViewedAt:
+          type: string
+          format: date-time
+        lastViewedAt:
+          type: string
+          format: date-time
 
     PublicProfile:
       type: object

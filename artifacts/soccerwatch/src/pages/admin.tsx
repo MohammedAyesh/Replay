@@ -37,6 +37,9 @@ import {
   getGetFieldQueryKey,
   getGetFieldVideosQueryKey,
   getGetFieldRecordingsQueryKey,
+  getGetRecordingViewersQueryKey,
+  useGetRecordingViewers,
+  type RecordingViewer,
   getListBannersQueryKey,
   getListAdminAcademiesQueryKey,
   getListAcademyMembersQueryKey,
@@ -5928,6 +5931,7 @@ function FieldScheduleSection({
             <div key={recording.id}>
               <TrackingBundleUpload recording={recording} onVisibilityChange={onVisibilityChange} />
               <ReplaceVideoAction recording={recording} onApplied={onVideoReplaced} />
+              <RecordingViewers recordingId={recording.id} />
             </div>
           ))}
         </div>
@@ -6018,6 +6022,47 @@ function FieldScheduleSection({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RecordingViewers({ recordingId }: { recordingId: number }) {
+  const [open, setOpen] = useState(false);
+  const viewersQuery = useGetRecordingViewers(recordingId, {
+    query: { queryKey: getGetRecordingViewersQueryKey(recordingId), enabled: open },
+  });
+
+  return (
+    <div className="mt-2">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="rounded border border-zinc-700 px-2 py-1 text-[10px] font-semibold text-zinc-300 hover:border-primary hover:text-primary"
+        data-testid={`button-recording-viewers-${recordingId}`}
+      >
+        {open ? "Hide viewers" : "Viewers"}
+      </button>
+      {open && (
+        <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-xs">
+          {viewersQuery.isLoading ? <p className="text-zinc-500">Loading viewers…</p>
+            : viewersQuery.error ? <p className="text-red-300">{adminRequestErrorMessage(viewersQuery.error, "Could not load recording viewers")}</p>
+              : !viewersQuery.data?.length ? <p className="text-zinc-500">No signed-in viewers recorded.</p>
+                : <ul className="space-y-2">
+                  {viewersQuery.data.map((viewer: RecordingViewer) => (
+                    <li key={viewer.userId} className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                      <span className="min-w-0">
+                        <span className="block truncate text-zinc-200">{viewer.name}</span>
+                        <span className="block truncate text-zinc-500">{viewer.email}</span>
+                      </span>
+                      <span className="shrink-0 text-end text-zinc-400">
+                        {viewer.viewCount} view{viewer.viewCount === 1 ? "" : "s"} · {new Date(viewer.lastViewedAt).toLocaleString()}
+                      </span>
+                    </li>
+                  ))}
+                </ul>}
+        </div>
+      )}
     </div>
   );
 }

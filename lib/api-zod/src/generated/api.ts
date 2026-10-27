@@ -827,6 +827,40 @@ export const GetFieldRecordingsResponse = zod.array(GetFieldRecordingsResponseIt
 
 
 /**
+ * @summary Record a signed-in viewer starting a recording
+ */
+
+export const recordRecordingViewBodyVideoIdMax = 128;
+
+
+
+export const RecordRecordingViewBody = zod.object({
+  "fieldId": zod.number().min(1),
+  "videoId": zod.string().min(1).max(recordRecordingViewBodyVideoIdMax)
+})
+
+export const RecordRecordingViewResponse = zod.void()
+
+
+/**
+ * @summary List viewers of a recording
+ */
+export const GetRecordingViewersParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetRecordingViewersResponseItem = zod.object({
+  "userId": zod.number(),
+  "name": zod.string(),
+  "email": zod.string().email(),
+  "viewCount": zod.number(),
+  "firstViewedAt": zod.coerce.date(),
+  "lastViewedAt": zod.coerce.date()
+})
+export const GetRecordingViewersResponse = zod.array(GetRecordingViewersResponseItem)
+
+
+/**
  * @summary Get a recording by ID
  */
 export const GetRecordingParams = zod.object({
