@@ -8,6 +8,7 @@ import {
   recordingsTable,
   recordingViewsTable,
   recordingTrackingBundlesTable,
+  userClipsTable,
   usersTable,
 } from "@workspace/db";
 import {
@@ -16,6 +17,7 @@ import {
   GetRecordingViewersParams,
   GetRecordingViewersResponse,
   RecordRecordingViewBody,
+  RecordRecordingWatchTimeBody,
 } from "@workspace/api-zod";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import {
@@ -121,7 +123,7 @@ router.get("/admin/recordings/:id/viewers", async (req, res): Promise<void> => {
     return;
   }
   const recordingId = parsedParams.data.id;
-  const [recording] = await db.select({ id: recordingsTable.id }).from(recordingsTable)
+  const [recording] = await db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl }).from(recordingsTable)
     .where(eq(recordingsTable.id, recordingId));
   if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
 
@@ -129,14 +131,29 @@ router.get("/admin/recordings/:id/viewers", async (req, res): Promise<void> => {
     userId: usersTable.id,
     name: usersTable.name,
     email: usersTable.email,
+    isGuest: usersTable.isGuest,
     viewCount: recordingViewsTable.viewCount,
+    watchedSeconds: recordingViewsTable.watchedSeconds,
     firstViewedAt: recordingViewsTable.firstViewedAt,
     lastViewedAt: recordingViewsTable.lastViewedAt,
   }).from(recordingViewsTable)
     .innerJoin(usersTable, eq(usersTable.id, recordingViewsTable.viewerUserId))
     .where(eq(recordingViewsTable.recordingId, recordingId))
     .orderBy(desc(recordingViewsTable.lastViewedAt));
-  res.json(GetRecordingViewersResponse.parse(viewers));
+  const videoId = extractBunnyVideoId(recording.videoUrl ?? "");
+  const clips = videoId
+    ? await db.select({ userId: userClipsTable.userId, total: sql<number>`count(*)::int` })
+      .from(userClipsTable)
+      .where(eq(userClipsTable.videoId, videoId))
+      .groupBy(userClipsTable.userId)
+    : [];
+  const clipsByUser = new Map(clips.map((row) => [row.userId, row.total]));
+  res.json(GetRecordingViewersResponse.parse(viewers.map((viewer) => ({
+    ...viewer,
+    name: viewer.isGuest ? "Guest" : viewer.name,
+    email: viewer.isGuest ? null : viewer.email,
+    clipCount: clipsByUser.get(viewer.userId) ?? 0,
+  }))));
 });
 
 router.post("/recording-views", async (req, res): Promise<void> => {
@@ -150,7 +167,7 @@ router.post("/recording-views", async (req, res): Promise<void> => {
   const { fieldId, videoId } = parsedBody.data;
   const [viewer] = await db.select({ isGuest: usersTable.isGuest }).from(usersTable)
     .where(eq(usersTable.id, viewerId));
-  if (!viewer || viewer.isGuest) { res.status(204).end(); return; }
+  if (!viewer) { res.status(204).end(); return; }
 
   const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, fieldId));
   if (!field) { res.status(404).json({ error: "Recording not found" }); return; }
@@ -172,6 +189,45 @@ router.post("/recording-views", async (req, res): Promise<void> => {
         lastViewedAt: new Date(),
       },
     });
+  res.status(204).end();
+});
+
+router.post("/recording-views/watch-time", async (req, res): Promise<void> => {
+  const viewerId = await getLocalUserId(req);
+  if (!viewerId) { res.status(401).json({ error: "Sign in required" }); return; }
+  const parsedBody = RecordRecordingWatchTimeBody.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({ error: parsedBody.error.message });
+    return;
+  }
+  const { fieldId, videoId, seconds } = parsedBody.data;
+  const [viewer] = await db.select({ isGuest: usersTable.isGuest }).from(usersTable)
+    .where(eq(usersTable.id, viewerId));
+  if (!viewer) { res.status(204).end(); return; }
+  const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, fieldId));
+  if (!field) { res.status(404).json({ error: "Recording not found" }); return; }
+  const candidates = await db.select().from(recordingsTable).where(eq(recordingsTable.fieldId, fieldId));
+  const recording = candidates.find((candidate) =>
+    extractBunnyVideoId(candidate.videoUrl)?.toLowerCase() === videoId.toLowerCase(),
+  );
+  if (!recording) { res.status(204).end(); return; }
+  const context = await createPublicFootageContext(req, [fieldId]);
+  if (!isPublicRecordingInContext(recording, field, context)) {
+    res.status(404).json({ error: "Recording not found" });
+    return;
+  }
+  await db.insert(recordingViewsTable).values({
+    recordingId: recording.id,
+    viewerUserId: viewerId,
+    viewCount: 0,
+    watchedSeconds: seconds,
+  }).onConflictDoUpdate({
+    target: [recordingViewsTable.recordingId, recordingViewsTable.viewerUserId],
+    set: {
+      watchedSeconds: sql`${recordingViewsTable.watchedSeconds} + ${seconds}`,
+      lastViewedAt: new Date(),
+    },
+  });
   res.status(204).end();
 });
 

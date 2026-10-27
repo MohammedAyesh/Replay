@@ -6047,16 +6047,16 @@ function RecordingViewers({ recordingId }: { recordingId: number }) {
         <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-950/70 p-2 text-xs">
           {viewersQuery.isLoading ? <p className="text-zinc-500">Loading viewers…</p>
             : viewersQuery.error ? <p className="text-red-300">{adminRequestErrorMessage(viewersQuery.error, "Could not load recording viewers")}</p>
-              : !viewersQuery.data?.length ? <p className="text-zinc-500">No signed-in viewers recorded.</p>
+              : !viewersQuery.data?.length ? <p className="text-zinc-500">No viewers recorded.</p>
                 : <ul className="space-y-2">
                   {viewersQuery.data.map((viewer: RecordingViewer) => (
                     <li key={viewer.userId} className="flex flex-wrap justify-between gap-x-4 gap-y-1">
                       <span className="min-w-0">
-                        <span className="block truncate text-zinc-200">{viewer.name}</span>
-                        <span className="block truncate text-zinc-500">{viewer.email}</span>
+                        <span className="block truncate text-zinc-200">{viewer.isGuest ? "Guest" : viewer.name}</span>
+                        {!viewer.isGuest && viewer.email && <span className="block truncate text-zinc-500">{viewer.email}</span>}
                       </span>
                       <span className="shrink-0 text-end text-zinc-400">
-                        {viewer.viewCount} view{viewer.viewCount === 1 ? "" : "s"} · {new Date(viewer.lastViewedAt).toLocaleString()}
+                        {viewer.viewCount} view{viewer.viewCount === 1 ? "" : "s"} · {formatRecordingWatchTime(viewer.watchedSeconds)} watched · {viewer.clipCount} clip{viewer.clipCount === 1 ? "" : "s"} · {new Date(viewer.lastViewedAt).toLocaleString()}
                       </span>
                     </li>
                   ))}
@@ -6065,6 +6065,12 @@ function RecordingViewers({ recordingId }: { recordingId: number }) {
       )}
     </div>
   );
+}
+
+function formatRecordingWatchTime(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
 function RecordingsTab() {

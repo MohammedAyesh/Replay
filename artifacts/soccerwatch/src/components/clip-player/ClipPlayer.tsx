@@ -133,6 +133,8 @@ export type ClipPlayerProps = {
   onClose?: () => void;
   /** Called once after this source successfully begins playback. */
   onPlaybackStart?: () => void;
+  /** Reports elapsed source-video seconds that actually played, excluding seeks and stalls. */
+  onPlaybackProgress?: (seconds: number) => void;
   canSave: boolean;
   onRequireAuth: (draft: ClipDraft) => void;
   onSave: (draft: ClipDraft) => Promise<void>;
@@ -311,6 +313,7 @@ export function ClipPlayer({
   toolbarLayout = "stacked",
   onClose,
   onPlaybackStart,
+  onPlaybackProgress,
   canSave,
   onRequireAuth,
   onSave,
@@ -546,6 +549,8 @@ export function ClipPlayer({
   const sourceKey = source.kind === "bunny" ? source.videoId : source.token;
   const playbackStartCallbackRef = useRef(onPlaybackStart);
   playbackStartCallbackRef.current = onPlaybackStart;
+  const playbackProgressCallbackRef = useRef(onPlaybackProgress);
+  playbackProgressCallbackRef.current = onPlaybackProgress;
   const playbackStartReportedRef = useRef(false);
   useEffect(() => {
     playbackStartReportedRef.current = false;
@@ -817,6 +822,7 @@ export function ClipPlayer({
     let recoveryInProgress = false;
     let seekInProgress = false;
     let lastProgressPosition = Number.isFinite(element.currentTime) ? element.currentTime : 0;
+    let lastWatchedPosition = lastProgressPosition;
     let mediaRecoveryAttempted = false;
     let mediaRecoveryPending = false;
     let watchdog: ReturnType<typeof createPlaybackWatchdog> | null = null;
@@ -926,6 +932,7 @@ export function ClipPlayer({
     };
     const onPause = () => {
       setIsPlaying(false);
+      lastWatchedPosition = element.currentTime;
       watchdog?.pause();
       if (!seekInProgress && element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
         setPlaybackUiState("ready");
@@ -941,6 +948,7 @@ export function ClipPlayer({
     };
     const onPlaying = () => {
       setIsPlaying(true);
+      lastWatchedPosition = element.currentTime;
       if (!playbackStartReportedRef.current) {
         playbackStartReportedRef.current = true;
         playbackStartCallbackRef.current?.();
@@ -956,6 +964,7 @@ export function ClipPlayer({
       seekInProgress = true;
       seekInProgressRef.current = true;
       lastProgressPosition = element.currentTime;
+      lastWatchedPosition = element.currentTime;
       setPlaybackUiState("loading");
       watchdog?.seeking();
     };
@@ -963,6 +972,7 @@ export function ClipPlayer({
       seekInProgress = false;
       seekInProgressRef.current = false;
       lastProgressPosition = element.currentTime;
+      lastWatchedPosition = element.currentTime;
       lastKnownPositionRef.current = element.currentTime;
       markPlaybackReady();
     };
@@ -977,6 +987,11 @@ export function ClipPlayer({
     const onTimeUpdate = () => {
       if (isLiveDvr && fallbackRestoreUtcRef.current != null) return;
       const now = element.currentTime;
+      const watchedDelta = now - lastWatchedPosition;
+      if (!element.paused && !seekInProgress && watchedDelta > 0 && watchedDelta <= 1.5) {
+        playbackProgressCallbackRef.current?.(watchedDelta / Math.max(element.playbackRate, 0.1));
+      }
+      lastWatchedPosition = now;
       if (!seekInProgress && now > lastProgressPosition + 0.02) {
         lastProgressPosition = now;
         lastKnownPositionRef.current = now;

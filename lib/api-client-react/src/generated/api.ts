@@ -166,6 +166,7 @@ import type {
   Recording,
   RecordingViewInput,
   RecordingViewer,
+  RecordingWatchTimeInput,
   ReplaceTrackingBundleBodyTwo,
   ResolveClaimMatchDisputeInput,
   SentPlayerIdentificationRequest,
@@ -3008,6 +3009,76 @@ export const useRecordRecordingView = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getRecordRecordingViewMutationOptions(options));
+    }
+
+export const getRecordRecordingWatchTimeUrl = () => {
+
+
+
+
+  return `/api/recording-views/watch-time`
+}
+
+/**
+ * @summary Add verified playback time to a recording view
+ */
+export const recordRecordingWatchTime = async (recordingWatchTimeInput: RecordingWatchTimeInput, options?: RequestInit): Promise<void> => {
+
+  return customFetch<void>(getRecordRecordingWatchTimeUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(recordingWatchTimeInput)
+  }
+);}
+
+
+
+
+export const getRecordRecordingWatchTimeMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordRecordingWatchTime>>, TError,{data: BodyType<RecordingWatchTimeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recordRecordingWatchTime>>, TError,{data: BodyType<RecordingWatchTimeInput>}, TContext> => {
+
+const mutationKey = ['recordRecordingWatchTime'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recordRecordingWatchTime>>, {data: BodyType<RecordingWatchTimeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  recordRecordingWatchTime(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecordRecordingWatchTimeMutationResult = NonNullable<Awaited<ReturnType<typeof recordRecordingWatchTime>>>
+    export type RecordRecordingWatchTimeMutationBody = BodyType<RecordingWatchTimeInput>
+    export type RecordRecordingWatchTimeMutationError = ErrorType<void>
+
+    /**
+ * @summary Add verified playback time to a recording view
+ */
+export const useRecordRecordingWatchTime = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recordRecordingWatchTime>>, TError,{data: BodyType<RecordingWatchTimeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recordRecordingWatchTime>>,
+        TError,
+        {data: BodyType<RecordingWatchTimeInput>},
+        TContext
+      > => {
+      return useMutation(getRecordRecordingWatchTimeMutationOptions(options));
     }
 
 export const getGetRecordingViewersUrl = (id: number,) => {

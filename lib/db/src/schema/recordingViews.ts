@@ -9,6 +9,7 @@ export const recordingViewsTable = pgTable("recording_views", {
   recordingId: integer("recording_id").notNull().references(() => recordingsTable.id, { onDelete: "cascade" }),
   viewerUserId: integer("viewer_user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
   viewCount: integer("view_count").notNull().default(1),
+  watchedSeconds: integer("watched_seconds").notNull().default(0),
   firstViewedAt: timestamp("first_viewed_at", { withTimezone: true }).notNull().defaultNow(),
   lastViewedAt: timestamp("last_viewed_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

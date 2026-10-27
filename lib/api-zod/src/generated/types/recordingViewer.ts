@@ -9,8 +9,12 @@
 export interface RecordingViewer {
   userId: number;
   name: string;
-  email: string;
+  /** @nullable */
+  email: string | null;
+  isGuest: boolean;
   viewCount: number;
+  watchedSeconds: number;
+  clipCount: number;
   firstViewedAt: Date;
   lastViewedAt: Date;
 }

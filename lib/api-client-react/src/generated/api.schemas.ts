@@ -570,11 +570,30 @@ export interface RecordingViewInput {
   videoId: string;
 }
 
+export interface RecordingWatchTimeInput {
+  /** @minimum 1 */
+  fieldId: number;
+  /**
+     * @minLength 1
+     * @maxLength 128
+     */
+  videoId: string;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  seconds: number;
+}
+
 export interface RecordingViewer {
   userId: number;
   name: string;
-  email: string;
+  /** @nullable */
+  email: string | null;
+  isGuest: boolean;
   viewCount: number;
+  watchedSeconds: number;
+  clipCount: number;
   firstViewedAt: string;
   lastViewedAt: string;
 }

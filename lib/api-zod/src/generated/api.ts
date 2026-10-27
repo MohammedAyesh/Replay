@@ -843,6 +843,25 @@ export const RecordRecordingViewResponse = zod.void()
 
 
 /**
+ * @summary Add verified playback time to a recording view
+ */
+
+export const recordRecordingWatchTimeBodyVideoIdMax = 128;
+
+export const recordRecordingWatchTimeBodySecondsMax = 30;
+
+
+
+export const RecordRecordingWatchTimeBody = zod.object({
+  "fieldId": zod.number().min(1),
+  "videoId": zod.string().min(1).max(recordRecordingWatchTimeBodyVideoIdMax),
+  "seconds": zod.number().min(1).max(recordRecordingWatchTimeBodySecondsMax)
+})
+
+export const RecordRecordingWatchTimeResponse = zod.void()
+
+
+/**
  * @summary List viewers of a recording
  */
 export const GetRecordingViewersParams = zod.object({
@@ -852,8 +871,11 @@ export const GetRecordingViewersParams = zod.object({
 export const GetRecordingViewersResponseItem = zod.object({
   "userId": zod.number(),
   "name": zod.string(),
-  "email": zod.string().email(),
+  "email": zod.string().email().nullable(),
+  "isGuest": zod.boolean(),
   "viewCount": zod.number(),
+  "watchedSeconds": zod.number(),
+  "clipCount": zod.number(),
   "firstViewedAt": zod.coerce.date(),
   "lastViewedAt": zod.coerce.date()
 })

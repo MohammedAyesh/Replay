@@ -7,6 +7,7 @@ import {
   getGetFieldRecordingsQueryKey,
   useCreateUserClip,
   useRecordRecordingView,
+  useRecordRecordingWatchTime,
   useListAcademies,
   getListAcademiesQueryKey,
   getListUserClipsQueryKey,
@@ -435,6 +436,8 @@ export default function FieldDetail() {
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
   const createUserClip = useCreateUserClip();
   const recordRecordingView = useRecordRecordingView();
+  const recordRecordingWatchTime = useRecordRecordingWatchTime();
+  const pendingWatchSeconds = useRef(0);
   const queryClient = useQueryClient();
 
   // Group videos by ISO date
@@ -679,9 +682,33 @@ export default function FieldDetail() {
                 });
               }
             }}
+            onPlaybackProgress={(seconds) => {
+              pendingWatchSeconds.current += seconds;
+              const fullSeconds = Math.floor(pendingWatchSeconds.current);
+              if (fullSeconds >= 10 && collection?.id) {
+                const amount = Math.min(30, fullSeconds);
+                pendingWatchSeconds.current -= amount;
+                recordRecordingWatchTime.mutate({
+                  data: {
+                    fieldId: collection.id,
+                    videoId: activeVideo.guid,
+                    seconds: amount,
+                  },
+                });
+              }
+            }}
             layout="overlay"
             canSave={Boolean(user) && !isGuest}
-            onClose={() => setActiveVideo(null)}
+            onClose={() => {
+              const seconds = Math.floor(pendingWatchSeconds.current);
+              if (seconds > 0 && collection?.id) {
+                recordRecordingWatchTime.mutate({
+                  data: { fieldId: collection.id, videoId: activeVideo.guid, seconds: Math.min(30, seconds) },
+                });
+              }
+              pendingWatchSeconds.current = 0;
+              setActiveVideo(null);
+            }}
             onRequireAuth={(_draft) => setLocation("/sign-in")}
             onSave={async (draft) => {
               await createUserClip.mutateAsync({

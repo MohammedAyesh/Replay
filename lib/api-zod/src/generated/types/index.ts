@@ -275,6 +275,7 @@ export * from './recordingMatchWindow';
 export * from './recordingMatchWindowSource';
 export * from './recordingViewer';
 export * from './recordingViewInput';
+export * from './recordingWatchTimeInput';
 export * from './replaceTrackingBundleBodyTwo';
 export * from './resolveClaimMatchDisputeInput';
 export * from './sentPlayerIdentificationRequest';
