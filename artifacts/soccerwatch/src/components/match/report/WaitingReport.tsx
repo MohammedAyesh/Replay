@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Crown, UserPlus } from "lucide-react";
+import { Check, Crown, Shield, UserPlus, Users } from "lucide-react";
 import { GoalReviewBox } from "@/components/match/GoalReview";
 import { formatDay } from "@/components/match/bits";
 import type { MatchStrings } from "@/i18n/match-strings";
@@ -138,12 +138,12 @@ export function WaitingReport({ room, copy, now, colors, names, replay, onShare,
       {replay?.canVoteGoals && <GoalReviewBox room={room} copy={copy} colors={colors} names={names} replay={replay} className="pt-4" />}
 
       <div className="mt-4 flex flex-col">
-        <Disclosure title={r.squad} icon={<UserPlus />} tone="turf">
+        <Disclosure title={r.squad} icon={<Users />} tone="turf">
           <SquadBlock room={room} copy={copy} r={r} colors={colors} claimedIds={null} findRecordingId={replay?.recordings[0] ?? null} />
         </Disclosure>
-        {slots.teams && <Disclosure title={r.teamsAndSwitches} icon={<UserPlus />} tone="turf" testId="report-teams">{slots.teams}</Disclosure>}
+        {slots.teams && <Disclosure title={r.teamsAndSwitches} icon={<Users />} tone="turf" testId="report-teams">{slots.teams}</Disclosure>}
         {slots.invite && <Disclosure title={r.inviteSomeone} icon={<UserPlus />} tone="turf" testId="report-invite">{slots.invite}</Disclosure>}
-        {slots.captainTools && <Disclosure title={r.captainTools} icon={<Crown />} tone="turf" open={toolsOpen} onOpenChange={setToolsOpen} testId="report-captain-tools">{slots.captainTools}</Disclosure>}
+        {slots.captainTools && <Disclosure title={r.captainTools} icon={<Shield />} tone="lime" open={toolsOpen} onOpenChange={setToolsOpen} testId="report-captain-tools">{slots.captainTools}</Disclosure>}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import type { MatchRoom } from "@/lib/match-api";
+import type { Stats } from "@/components/match/MatchStats";
 
 export type WaitingStepKey = "whistle" | "processing" | "footage" | "find" | "stats";
 export type WaitingStep = {
@@ -10,6 +11,15 @@ export type WaitingStep = {
   clockTime?: boolean;
   progressPercent?: number;
 };
+
+export function shouldShowWaiting(
+  room: Pick<MatchRoom, "footage" | "phase">,
+  stats: Pick<Stats, "available"> | null | undefined,
+): boolean {
+  return !room.footage.ready
+    && !["expired", "failed", "cancelled"].includes(room.phase)
+    && stats?.available !== true;
+}
 
 export function waitingSteps(room: Pick<MatchRoom, "startMs" | "endMs" | "progress" | "stats">, now: number): WaitingStep[] {
   const minutesSinceEnd = Math.max(0, Math.floor((now - room.endMs) / 60_000));

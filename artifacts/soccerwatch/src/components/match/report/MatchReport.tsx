@@ -31,6 +31,7 @@ import { ReportHeader } from "./ReportHeader";
 import { ReportScoreRows } from "./ReportScoreRows";
 import { VoteSheet } from "./ReportVoteSheet";
 import { WaitingReport, waitingNotifyStorageKey } from "./WaitingReport";
+import { shouldShowWaiting } from "./waiting-steps";
 import { useClientSettings } from "@/lib/client-settings";
 import { resolveReportLayout } from "@/lib/report-layout";
 import { useReportLayoutCopy } from "@/i18n/report-layout-strings";
@@ -127,7 +128,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
   const mightBeShort = statsOn && Boolean(room.me) && viewOverride !== "full";
   const layoutWaiting = mightBeShort && (settingsQuery.isLoading || (layout !== "full" && !stats && !statsQuery.isError));
   const shortLayout = layout !== "full" && me && stats?.available ? layout : null;
-  if (layoutWaiting) {
+  if (layoutWaiting && room.footage.ready) {
     return (
       <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
         <ReportHeader copy={copy} r={r} onShare={onShare} />
@@ -169,7 +170,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
       </div>
     );
   }
-  if (!shortLayout && !room.footage.ready && !["expired", "failed", "cancelled"].includes(room.phase) && !statsOn && !stats?.available) {
+  if (shouldShowWaiting(room, stats)) {
     return <WaitingReport room={room} copy={copy} now={now} colors={colors} names={names} replay={replay} onShare={onShare} inviteText={inviteText}
       slots={slots} />;
   }

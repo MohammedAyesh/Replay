@@ -54,3 +54,17 @@ mtime_ms = 1793216690533
 storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:02542170-793e-431b-bc1d-96ad706e2191/81cc1233-e681-400f-ab89-5f3c2422eecb/55a2193e-8db4-44d5-9709-547c4284d3dc"
 storage_version_token = "1793216717469953"
 content_type = "image/jpeg"
+
+[[outputs]]
+id = "X4BuQWIM0ogqVztwH-010"
+uri = "file://.local/screenshots/match-processing-ar-stats-enabled.jpg"
+type = "image"
+title = "Processing match · Arabic · stats enabled"
+description = "390px wide Arabic RTL screenshot of a processing match where stats are enabled and unlocked."
+logical_id = "d33c9145-9171-4db0-bf55-39c8690ddbd2"
+content_hash = "sha256:d7d2b1994dab573de29efac9872b33768a566ca5eb871187442c948332ddb234"
+size = 36233
+mtime_ms = 1793217784477
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:02542170-793e-431b-bc1d-96ad706e2191/d33c9145-9171-4db0-bf55-39c8690ddbd2/800c5220-92f1-4c26-80ca-36b26749a004"
+storage_version_token = "1793217807957191"
+content_type = "image/jpeg"

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation, useParams } from "wouter";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { ClerkProvider, SignIn, SignUp, useClerk, useUser } from "@clerk/react";
@@ -38,7 +38,6 @@ import Owner from "@/pages/owner";
 import OwnerVar from "@/pages/owner-var";
 import OwnerShare from "@/pages/owner-share";
 import MatchPage from "@/pages/match";
-import MatchReportDevPreview from "@/pages/match-report-dev-preview";
 import Matches from "@/pages/matches";
 import FriendsPage from "@/pages/friends";
 import FriendLinkPage from "@/pages/friend-link";
@@ -57,6 +56,10 @@ import SimpleDemo from "@/pages/demo/SimpleDemo";
 import AcademyConsole from "@/pages/academy-console";
 import AcademyJoinPage from "@/pages/academy-join";
 import AcademyFamilyPage from "@/pages/academy-family";
+
+const MatchReportDevPreview = import.meta.env.DEV
+  ? lazy(() => import("@/pages/match-report-dev-preview"))
+  : null;
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -602,7 +605,11 @@ function AppRouter() {
         <Route path="/owner" component={Owner} />
         <Route path="/owner/var/:requestId" component={OwnerVar} />
         <Route path="/w/:token" component={OwnerShare} />
-        {import.meta.env.DEV && <Route path="/__dev/match-report" component={MatchReportDevPreview} />}
+        {MatchReportDevPreview && (
+          <Route path="/__dev/match-report">
+            <Suspense fallback={null}><MatchReportDevPreview /></Suspense>
+          </Route>
+        )}
         <Route path="/m/:code" component={MatchPage} />
         <Route path="/friends" component={FriendsPage} />
         <Route path="/f/:code" component={FriendLinkPage} />

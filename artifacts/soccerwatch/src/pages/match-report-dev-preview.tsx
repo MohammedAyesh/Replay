@@ -27,7 +27,7 @@ const fixture = (ready: boolean): MatchRoom => ({
     ? { ready: true, readyAt: new Date().toISOString(), shareUrl: null, shareToken: "preview-token", expiresAt: new Date(Date.now() + 86400000).toISOString() }
     : { ready: false, readyAt: null, shareUrl: null, shareToken: null, expiresAt: null },
   games: [], vote: { open: true, closed: false, closesAt: null, myVote: null, votesCast: 5, eligibleVoters: 8, tallies: [], winners: [] },
-  stats: { unlocked: false, pending: null, enabled: true, paywall: false, teamPack: false, monthly: false, prices: { matchFils: 0, monthlyFils: 0, teamFils: 0 }, cliqAlias: "" },
+  stats: { unlocked: true, pending: null, enabled: true, paywall: false, teamPack: false, monthly: false, prices: { matchFils: 0, monthlyFils: 0, teamFils: 0 }, cliqAlias: "" },
   clips: { mine: 0, match: 0 }, prices: { bookingFils: 0 }, booking: null,
 });
 
