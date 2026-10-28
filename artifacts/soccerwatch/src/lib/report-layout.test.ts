@@ -45,6 +45,7 @@ describe("resolveReportLayout", () => {
     expect(resolveReportLayout(undefined, null)).toBe("full");
     expect(resolveReportLayout("compact", null)).toBe("compact");
     expect(resolveReportLayout("sheet", "")).toBe("sheet");
+    expect(resolveReportLayout("sofa", null)).toBe("sofa");
     expect(resolveReportLayout("nonsense", null)).toBe("full");
   });
 

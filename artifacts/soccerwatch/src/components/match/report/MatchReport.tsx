@@ -27,7 +27,8 @@ import { cn } from "@/lib/utils";
 import { findPath } from "@/lib/find-nav";
 import { GameBar, Num, Section, visibleColour } from "./ReportParts";
 import { GoalReviewBox } from "@/components/match/GoalReview";
-import { CompactLayout, MatchReelRow, SheetLayout } from "./CompactReport";
+import { CompactLayout, GoalsToCheck, MatchReelRow, SheetLayout } from "./CompactReport";
+import { SofaLayout } from "./SofaReport";
 import { useClientSettings } from "@/lib/client-settings";
 import { resolveReportLayout } from "@/lib/report-layout";
 import { useReportLayoutCopy } from "@/i18n/report-layout-strings";
@@ -96,6 +97,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
   // Which layout: the admin setting (Match stats → Match report layout), or
   // ?view= on the link. The short layouts are only for someone who has found
   // himself; everyone else, and anything still loading, gets the full report.
+  const layoutCopy = useReportLayoutCopy();
   const search = useSearch();
   const settingsQuery = useClientSettings(room.field.id);
   const viewOverride = new URLSearchParams(search).get("view");
@@ -115,9 +117,9 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
   }
   if (shortLayout && me && stats) {
     const layoutProps = { room, copy, r, now, colors, names, replay, stats, me, players: players ?? [], durationSeconds, onShare };
-    return (
-      <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
-        {shortLayout === "compact" ? <CompactLayout {...layoutProps} /> : <SheetLayout {...layoutProps} />}
+    const rest = (
+      <>
+        {shortLayout === "sofa" && <GoalsToCheck room={room} copy={copy} r={r} colors={colors} names={names} replay={replay} L={layoutCopy} />}
         <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
         <FlaggedMoments room={room} copy={copy} r={r} />
         {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}
@@ -136,6 +138,12 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
           <button type="button" onClick={() => setMethods(true)} className="flex min-h-11 items-center gap-2 self-start text-xs font-semibold text-turf"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-turf/15"><Clock3 className="h-4 w-4" /></span>{r.howWeMeasure}</button>
         </footer>
         <MethodsSheet open={methods} onClose={() => setMethods(false)} r={r} />
+      </>
+    );
+    return (
+      <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
+        {shortLayout === "sofa" ? <SofaLayout {...layoutProps} overviewExtras={rest} />
+          : <>{shortLayout === "compact" ? <CompactLayout {...layoutProps} /> : <SheetLayout {...layoutProps} />}{rest}</>}
       </div>
     );
   }
