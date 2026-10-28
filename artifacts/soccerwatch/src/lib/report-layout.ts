@@ -22,9 +22,9 @@ import {
 import type { PlayerForm } from "@/lib/match-api";
 import { clipShape } from "@/lib/end-screen";
 
-export type ReportLayout = "full" | "compact" | "sheet";
+export type ReportLayout = "full" | "compact" | "sheet" | "sofa";
 
-const LAYOUTS: readonly ReportLayout[] = ["full", "compact", "sheet"];
+const LAYOUTS: readonly ReportLayout[] = ["full", "compact", "sheet", "sofa"];
 
 /**
  * The admin setting decides; `?view=` on the match link overrides it, so a

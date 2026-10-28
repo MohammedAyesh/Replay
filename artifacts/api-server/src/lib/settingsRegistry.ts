@@ -326,10 +326,13 @@ export const SETTINGS: readonly SettingDefinition[] = [
       "pinned on it, one headline, four numbers and the pitch board on the first screen. " +
       "sheet: one row per stat with his rank on the pitch and how it compares with his " +
       "last games. Everything else (splits, head-to-head, team numbers) folds away under " +
-      "'More stats'. Anyone who hasn't found himself still gets the full report. Add a " +
-      "rule for just your own account to try a layout before switching everyone.",
+      "'More stats'. sofa: a SofaScore-style match page — score header with Overview, " +
+      "Players and You tabs, two-sided team stats, a Replay rating for every player found " +
+      "(scored against the others in the match, needs 3), and a player page with a style " +
+      "radar, heat map and grouped stats. Anyone who hasn't found himself still gets the " +
+      "full report. Add a rule for just your own account to try a layout before switching everyone.",
     type: "enum",
-    options: ["full", "compact", "sheet"],
+    options: ["full", "compact", "sheet", "sofa"],
     defaultValue: "full",
   },
   // ── Downloads ──────────────────────────────────────────────────────────

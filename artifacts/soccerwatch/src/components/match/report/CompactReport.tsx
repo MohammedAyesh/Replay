@@ -109,7 +109,7 @@ function openChances(replay: MatchReplay | undefined) {
 }
 
 /** The goal review, folded into one row that opens it in a sheet. */
-function GoalsToCheck({ room, copy, r, colors, names, replay, L }: { room: MatchRoom; copy: Copy; r: R; colors: Record<TeamSide, string>; names: Record<TeamSide, string>; replay: MatchReplay | undefined; L: L }) {
+export function GoalsToCheck({ room, copy, r, colors, names, replay, L }: { room: MatchRoom; copy: Copy; r: R; colors: Record<TeamSide, string>; names: Record<TeamSide, string>; replay: MatchReplay | undefined; L: L }) {
   const [open, setOpen] = useState(false);
   const chances = openChances(replay);
   const likely = chances.filter((goal) => goal.source === "goal").length;
