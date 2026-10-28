@@ -116,7 +116,7 @@ export function pickHeadline<T extends ReportPlayer>(me: T, claimed: T[], form: 
     .map((metric) => ({ metric, standing: myStanding(claimed, metric, me.playerId) }))
     .filter((entry) => entry.standing?.ranked && entry.standing.of >= 2)
     .sort((a, b) => a.standing!.rank - b.standing!.rank);
-  if (ranks[0] && ranks[0].standing!.rank <= 3) {
+  if (ranks[0] && ranks[0].standing!.rank <= 3 && ranks[0].standing!.rank < ranks[0].standing!.of) {
     const s = ranks[0].standing!;
     return { kind: "rank", metric: ranks[0].metric, value: s.value, rank: s.rank, shared: s.shared, of: s.of };
   }

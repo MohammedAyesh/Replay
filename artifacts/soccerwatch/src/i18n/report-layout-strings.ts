@@ -20,6 +20,7 @@ type TopMetric = ReportMetric;
 const en = {
   km: "km",
   kmh: "km/h",
+  kmPer10: "km /10′",
   played: (n: number) => `${n} played`,
   scoreNotIn: "score not in",
   watchMatch: "Watch the match",
@@ -121,6 +122,7 @@ type LayoutStrings = typeof en;
 const ar: LayoutStrings = {
   km: "كم",
   kmh: "كم/س",
+  kmPer10: "كم كل 10 د",
   played: (n: number) => `${arCount(n, "لاعب واحد", "لاعبين", "لاعبين", "لاعب")} لعبوا`,
   scoreNotIn: "النتيجة لسا ما انحطت",
   watchMatch: "شوف الماتش",

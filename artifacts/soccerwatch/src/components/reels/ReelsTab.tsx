@@ -34,7 +34,7 @@ import { useMatchCopy } from "@/i18n/match-strings";
 import { formatClipTitle } from "@/lib/clip-title";
 import { fetchDownloadQuota, formatQuotaLabel, isQuotaExhausted } from "@/lib/downloadQuota";
 import { EndScreenSheet } from "@/components/end-screen/EndScreenSheet";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useReportLayoutCopy } from "@/i18n/report-layout-strings";
 import { useMyMatchClipIds } from "@/lib/match-reel";
 import { matchReelPicks } from "@/lib/report-layout";
@@ -71,17 +71,34 @@ export function ReelsTab({ clips, clipsLoading, matchCode = null }: { clips: Use
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [matchCode, clips, matchClips.ids],
   );
+  const [, setLocation] = useLocation();
   const [autoOpened, setAutoOpened] = useState<string | null>(null);
+  const [shortFor, setShortFor] = useState<{ code: string; count: number } | null>(null);
   const [initialPicks, setInitialPicks] = useState<number[]>([]);
+  // Moment clips can be created while My Clips loads, so the clip list may
+  // arrive before they are in it. Decide once every match clip is listed, or
+  // after a short wait for one that never will be (a deleted clip).
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    if (!matchCode) return;
+    const timer = window.setTimeout(() => setWaited(true), 4000);
+    return () => window.clearTimeout(timer);
+  }, [matchCode]);
+  const allListed = [...matchClips.ids].every((id) => clipsById.has(id));
   useEffect(() => {
     if (!matchCode || autoOpened === matchCode || clipsLoading || matchClips.loading || !clips) return;
+    if (!allListed && !waited) return;
     setAutoOpened(matchCode);
+    // Done with ?match=: coming back to Reels must not open the builder again.
+    setLocation("/my-clips?tab=reels", { replace: true });
     if (matchPicks.length >= REEL_MIN_CLIPS) {
       setInitialPicks(matchPicks);
       setBuilding(true);
+    } else {
+      setShortFor({ code: matchCode, count: matchPicks.length });
     }
-  }, [matchCode, autoOpened, clipsLoading, matchClips.loading, clips, matchPicks]);
-  const matchShort = Boolean(matchCode) && autoOpened === matchCode && matchPicks.length < REEL_MIN_CLIPS;
+  }, [matchCode, autoOpened, clipsLoading, matchClips.loading, clips, matchPicks, allListed, waited, setLocation]);
+  const matchShort = shortFor !== null;
 
   return (
     <div className="flex flex-col gap-4" data-testid="reels-tab">
@@ -107,12 +124,12 @@ export function ReelsTab({ clips, clipsLoading, matchCode = null }: { clips: Use
         {!clipsLoading && !canBuild && <p className="mt-2 text-center text-xs text-muted-text">{copy.needClips}</p>}
       </div>
 
-      {matchShort && matchCode && (
+      {matchShort && shortFor && (
         <div className="flex items-center gap-3 rounded-2xl border border-dashed border-line p-3" data-testid="reel-match-short">
           <p className="min-w-0 flex-1 text-xs leading-5 text-muted-text">
-            {matchPicks.length > 0 ? `${L.reelClips(matchPicks.length)} · ` : ""}{L.reelNeedClips}
+            {shortFor.count > 0 ? `${L.reelClips(shortFor.count)} · ` : ""}{L.reelNeedClips}
           </p>
-          <Link href={`/m/${matchCode}`} className="flex min-h-11 shrink-0 items-center text-xs font-bold text-turf">{L.cutClips} ›</Link>
+          <Link href={`/m/${shortFor.code}`} className="flex min-h-11 shrink-0 items-center text-xs font-bold text-turf">{L.cutClips} ›</Link>
         </div>
       )}
 
@@ -138,7 +155,7 @@ export function ReelsTab({ clips, clipsLoading, matchCode = null }: { clips: Use
           onOpenChange={(next) => { setBuilding(next); if (!next) setInitialPicks([]); }}
           clips={usable}
           initialPicked={initialPicks}
-          focusIds={initialPicks.length ? matchClips.ids : undefined}
+          focusIds={initialPicks.length ? new Set(initialPicks) : undefined}
         />
       )}
     </div>

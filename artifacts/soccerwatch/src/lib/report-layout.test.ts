@@ -89,9 +89,19 @@ describe("pickHeadline", () => {
     expect(pickHeadline(clearPasser, [clearPasser, ...others], null)).toMatchObject({ kind: "top", metric: "passes", shared: false });
   });
 
+  it("never leads with last place", () => {
+    const last = player(1, "Me", { topSpeedKmh: 20, distanceKm: 3, touches: 50, passesCompleted: 1, dribblesWon: 0 });
+    const others = [
+      player(2, "B", { topSpeedKmh: 32, distanceKm: 9, touches: 400, passesCompleted: 40, dribblesWon: 5 }),
+      player(3, "C", { topSpeedKmh: 28, distanceKm: 7, touches: 250, passesCompleted: 30, dribblesWon: 4 }),
+    ];
+    expect(pickHeadline(last, [last, ...others], null)).toEqual({ kind: "total", distanceKm: 3 });
+  });
+
   it("falls back to a podium rank, then to the distance", () => {
     const third = player(1, "Me", { topSpeedKmh: 24, distanceKm: 5, touches: 100, passesCompleted: 1, dribblesWon: 0 });
     const ahead = [
+      player(4, "D", { topSpeedKmh: 18, distanceKm: 3, touches: 60, passesCompleted: 0, dribblesWon: 0 }),
       player(2, "B", { topSpeedKmh: 32, distanceKm: 9, touches: 400, passesCompleted: 40, dribblesWon: 5 }),
       player(3, "C", { topSpeedKmh: 28, distanceKm: 7, touches: 250, passesCompleted: 30, dribblesWon: 4 }),
     ];

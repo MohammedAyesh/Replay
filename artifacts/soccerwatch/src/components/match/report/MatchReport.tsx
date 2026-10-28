@@ -98,8 +98,10 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
   // himself; everyone else, and anything still loading, gets the full report.
   const search = useSearch();
   const settingsQuery = useClientSettings(room.field.id);
-  const layout = resolveReportLayout(settingsQuery.data?.settings?.["report.layout"], new URLSearchParams(search).get("view"));
-  const layoutWaiting = statsOn && (settingsQuery.isLoading || (layout !== "full" && !stats && !statsQuery.isError));
+  const viewOverride = new URLSearchParams(search).get("view");
+  const layout = resolveReportLayout(settingsQuery.data?.settings?.["report.layout"], viewOverride);
+  const mightBeShort = statsOn && Boolean(room.me) && viewOverride !== "full";
+  const layoutWaiting = mightBeShort && (settingsQuery.isLoading || (layout !== "full" && !stats && !statsQuery.isError));
   const shortLayout = layout !== "full" && me && stats?.available ? layout : null;
   if (layoutWaiting) {
     return (

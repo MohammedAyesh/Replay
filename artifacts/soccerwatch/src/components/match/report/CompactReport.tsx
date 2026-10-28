@@ -11,8 +11,9 @@ import { useReportLayoutCopy, type LayoutStrings } from "@/i18n/report-layout-st
 import type { MatchReplay, MatchRoom, TeamSide } from "@/lib/match-api";
 import { clock, compareHalves, foldBlocks, formatMetric, isPersonalBest, metricValue, type Direction, type ReportMetric } from "@/lib/match-report";
 import { matchReelPath, useMyMatchClipIds } from "@/lib/match-reel";
-import { barShare, boardRows, formMarks, myStanding, pickHeadline, type Headline, type MyStanding } from "@/lib/report-layout";
-import { REEL_MIN_CLIPS } from "@/lib/end-screen";
+import { barShare, boardRows, formMarks, matchReelPicks, myStanding, pickHeadline, type Headline, type MyStanding } from "@/lib/report-layout";
+import { REEL_MAX_CLIPS, REEL_MIN_CLIPS } from "@/lib/end-screen";
+import { getListUserClipsQueryKey, useListUserClips } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { Num, visibleColour } from "./ReportParts";
 import { Disclosure, EveryoneSection, NightSection, RivalSection, TwoSidesSection, watchHref } from "./StatsReport";
@@ -46,9 +47,16 @@ function kickOff(ms: number): string {
   return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Amman", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ms));
 }
 
+/** First place is only claimed against at least one other ranked player, on something he actually did. */
+function isFirst(standing: MyStanding | null): boolean {
+  return Boolean(standing && standing.ranked && standing.rank === 1 && standing.of >= 2 && standing.value > 0);
+}
+
 function rankText(L: L, standing: MyStanding | null): string | null {
   if (!standing) return null;
   if (!standing.ranked) return L.notRanked;
+  if (standing.of < 2) return null;
+  if (standing.rank === 1 && !isFirst(standing)) return null;
   return L.rank(standing.rank, standing.shared, standing.of);
 }
 
@@ -134,9 +142,11 @@ function GoalsToCheck({ room, copy, r, colors, names, replay, L }: { room: Match
 /** "A reel of this match": straight into the reel builder with his clips from the match picked. */
 export function MatchReelRow({ room, L, r }: { room: MatchRoom; L: L; r: R }) {
   const { ids, loading } = useMyMatchClipIds(room.code, room.signedIn);
-  if (!room.signedIn || loading) return null;
-  const count = ids.size;
-  const watch = room.footage.shareToken ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
+  const userClips = useListUserClips({ query: { enabled: room.signedIn, queryKey: getListUserClipsQueryKey() } });
+  if (!room.signedIn || loading || userClips.isLoading) return null;
+  // Count what the reel builder will actually start with: visible, one shape.
+  const count = matchReelPicks(userClips.data ?? [], ids, REEL_MAX_CLIPS).length;
+  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
   if (count >= REEL_MIN_CLIPS) {
     return (
       <Link href={matchReelPath(room.code)} className="flex min-h-14 items-center gap-3 rounded-2xl border border-turf/40 bg-turf/10 px-3.5" data-testid="link-match-reel">
@@ -184,7 +194,8 @@ function headlineView(h: Headline, me: PlayerStats, L: L): HeadlineView {
   const valueOf = (metric: ReportMetric, value: number): { value: string; unit: string } => {
     switch (metric) {
       case "topSpeed": return { value: String(Math.round(value)), unit: L.kmh };
-      case "distanceRate": case "distance": return { value: (me.distanceKm ?? 0).toFixed(1), unit: L.km };
+      case "distanceRate": return { value: formatMetric("distanceRate", value), unit: L.kmPer10 };
+      case "distance": return { value: value.toFixed(1), unit: L.km };
       case "touchRate": return { value: String(Math.round(value)), unit: L.touchesPer10 };
       case "passes": return { value: String(Math.round(value)), unit: L.passes };
       case "dribblesWon": return { value: String(Math.round(value)), unit: L.dribbles };
@@ -303,7 +314,7 @@ function FourUp({ me, claimed, stats, L }: { me: PlayerStats; claimed: PlayerSta
   const form = stats.competition?.personalForm ?? null;
   const pbDistance = form ? isPersonalBest("distance", me.distanceKm, form.bests.distanceKm, form.matchesUsed) : false;
   const dribbles = myStanding(claimed, "dribblesWon", me.playerId);
-  const dribbleNote = dribbles?.ranked && dribbles.rank === 1
+  const dribbleNote = isFirst(dribbles)
     ? rankText(L, dribbles)
     : dribbles?.top && me.dribblesWon !== null && dribbles.top.value > me.dribblesWon
       ? L.offTop(Math.round(dribbles.top.value - me.dribblesWon))
@@ -319,11 +330,11 @@ function FourUp({ me, claimed, stats, L }: { me: PlayerStats; claimed: PlayerSta
     tiles.push({ key: "passes", value: <>{me.passesCompleted}<span className="text-xs text-muted-text">/{me.passesTried}</span></>, label: L.passes, note: passPct !== null ? `${passPct}%` : null, lime: false });
   }
   if (me.dribblesWon !== null) {
-    tiles.push({ key: "dribbles", value: <>{me.dribblesWon}</>, label: L.dribbles, note: dribbleNote, lime: Boolean(dribbles?.ranked && dribbles.rank === 1) });
+    tiles.push({ key: "dribbles", value: <>{me.dribblesWon}</>, label: L.dribbles, note: dribbleNote, lime: isFirst(dribbles) });
   }
   if (touchRate !== null) {
     const standing = myStanding(claimed, "touchRate", me.playerId);
-    tiles.push({ key: "touches", value: <>{Math.round(touchRate)}</>, label: L.touchesPer10, note: rankText(L, standing), lime: Boolean(standing?.ranked && standing.rank === 1) });
+    tiles.push({ key: "touches", value: <>{Math.round(touchRate)}</>, label: L.touchesPer10, note: rankText(L, standing), lime: isFirst(standing) });
   }
   if (!tiles.length) return null;
   return (
@@ -427,7 +438,7 @@ function Arrow({ d, pb, L }: { d: Direction | null; pb?: boolean; L: L }) {
 }
 
 function Place({ standing, L, fallback }: { standing: MyStanding | null; L: L; fallback?: string | null }) {
-  if (standing?.ranked && standing.rank === 1 && standing.of >= 2) {
+  if (standing && isFirst(standing)) {
     return <span className="whitespace-nowrap rounded-full bg-floodlight px-2 py-0.5 text-[11px] font-bold text-void">{L.rank(1, standing.shared, standing.of)}</span>;
   }
   const text = fallback ?? rankText(L, standing);
@@ -460,7 +471,7 @@ export function SheetLayout(props: LayoutProps) {
   if (me.distanceKm !== null) rows.push({ key: "km", label: L.rowDistance, you: <>{me.distanceKm.toFixed(1)} <small className="text-xs text-muted-text">{L.km}</small></>, place: <Place standing={myStanding(claimed, "distanceRate", me.playerId)} L={L} />, form: <Arrow d={marks?.distance ?? null} pb={pbDistance} L={L} /> });
   if (me.topSpeedKmh !== null) rows.push({ key: "speed", label: L.rowSpeed, you: <>{Math.round(me.topSpeedKmh)} <small className="text-xs text-muted-text">{L.kmh}</small></>, place: <Place standing={myStanding(claimed, "topSpeed", me.playerId)} L={L} />, form: <Arrow d={marks?.speed ?? null} pb={pbSpeed} L={L} /> });
   if (me.passesCompleted !== null && me.passesTried) rows.push({ key: "passes", label: L.rowPasses, you: <>{me.passesCompleted}<small className="text-xs text-muted-text">/{me.passesTried}</small></>, place: <Place standing={myStanding(claimed, "passes", me.playerId)} L={L} fallback={passPct !== null ? L.completed(passPct) : null} />, form: <Arrow d={null} L={L} /> });
-  if (me.dribblesWon !== null) rows.push({ key: "dribbles", label: L.rowDribbles, you: <>{me.dribblesWon}</>, place: <Place standing={dribbles} L={L} fallback={dribbles?.top && dribbles.top.value > me.dribblesWon && !(dribbles.ranked && dribbles.rank === 1) ? L.offTop(Math.round(dribbles.top.value - me.dribblesWon)) : null} />, form: <Arrow d={null} L={L} /> });
+  if (me.dribblesWon !== null) rows.push({ key: "dribbles", label: L.rowDribbles, you: <>{me.dribblesWon}</>, place: <Place standing={dribbles} L={L} fallback={dribbles?.top && dribbles.top.value > me.dribblesWon && !isFirst(dribbles) ? L.offTop(Math.round(dribbles.top.value - me.dribblesWon)) : null} />, form: <Arrow d={null} L={L} /> });
   if (touchRate !== null) rows.push({ key: "touches", label: L.rowTouches, you: <>{Math.round(touchRate)} <small className="text-xs text-muted-text">/10′</small></>, place: <Place standing={myStanding(claimed, "touchRate", me.playerId)} L={L} />, form: <Arrow d={marks?.touches ?? null} L={L} /> });
 
   return (
@@ -484,7 +495,7 @@ export function SheetLayout(props: LayoutProps) {
             <th scope="col" className="px-3 pb-1.5 pt-2.5 text-start font-semibold">{L.colStat}</th>
             <th scope="col" className="px-2 pb-1.5 pt-2.5 text-end font-semibold">{L.colYou}</th>
             <th scope="col" className="px-2 pb-1.5 pt-2.5 text-start font-semibold">{L.colPitch}</th>
-            <th scope="col" className="px-3 pb-1.5 pt-2.5 text-center font-semibold">{L.colForm(marks?.matches ?? form?.matchesUsed ?? 0)}</th>
+            {marks && <th scope="col" className="px-3 pb-1.5 pt-2.5 text-center font-semibold">{L.colForm(marks.matches)}</th>}
           </tr>
         </thead>
         <tbody>
@@ -493,14 +504,14 @@ export function SheetLayout(props: LayoutProps) {
               <th scope="row" className="px-3 py-2.5 text-start font-medium text-text/85">{row.label}</th>
               <td className="whitespace-nowrap px-2 py-2.5 text-end font-display text-lg font-bold"><span dir="ltr">{row.you}</span></td>
               <td className="px-2 py-2.5">{row.place}</td>
-              <td className="px-3 py-2.5 text-center text-xs">{row.form}</td>
+              {marks && <td className="px-3 py-2.5 text-center text-xs">{row.form}</td>}
             </tr>
           ))}
           {halves && !halves.level && blocks.length > 1 && (
             <tr className="border-t border-line">
               <th scope="row" className="px-3 py-2.5 text-start font-medium text-text/85">{L.rowSecondHalf}</th>
               <td className="px-2 py-2.5 text-end"><Num className={cn("font-display text-lg font-bold", halves.change > 0 ? "text-floodlight" : "text-text")}>{halves.change > 0 ? "+" : "−"}{Math.round(Math.abs(halves.change) * 100)}%</Num></td>
-              <td colSpan={2} className="px-3 py-2.5">
+              <td colSpan={marks ? 2 : 1} className="px-3 py-2.5">
                 <div dir="ltr" className="flex h-6 items-end gap-[3px]" aria-hidden="true">
                   {blocks.map((block, index) => (
                     <span key={block.index} className={cn("flex-1 rounded-[2px]", index >= blocks.length / 2 ? "bg-floodlight" : "bg-[#3A4560]")} style={{ height: `${Math.max(8, ((block.metresPerMinute ?? 0) / topRate) * 100)}%` }} />
