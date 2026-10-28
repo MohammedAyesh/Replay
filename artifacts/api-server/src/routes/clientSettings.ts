@@ -24,6 +24,7 @@ const CLIENT_VISIBLE = [
   "clip.maxDurationSeconds",
   "legal.companyName",
   "support.email",
+  "report.layout",
 ] as const;
 
 router.get("/client-settings", async (req, res): Promise<void> => {

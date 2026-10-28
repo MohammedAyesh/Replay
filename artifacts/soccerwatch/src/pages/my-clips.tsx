@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import {
   useListUserClips,
   useDeleteUserClip,
@@ -51,6 +51,7 @@ import {
 import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send, Clapperboard, Film } from "lucide-react";
 import { EndScreenSheet } from "@/components/end-screen/EndScreenSheet";
 import { ReelsTab } from "@/components/reels/ReelsTab";
+import { reelMatchFromSearch } from "@/lib/match-reel";
 import { useReelCopy } from "@/i18n/reel-strings";
 import { endScreenApi } from "@/lib/end-screen";
 
@@ -978,8 +979,14 @@ export default function MyClips() {
   const reelCopy = useReelCopy();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  // Open where the player's clips are: the ones he cut himself.
-  const [tab, setTab] = useState<Tab>("created");
+  // Open where the player's clips are: the ones he cut himself, unless the
+  // link asks for a tab (a match report's "Make a reel" opens Reels).
+  const search = useSearch();
+  const reelMatch = reelMatchFromSearch(search);
+  const [tab, setTab] = useState<Tab>(() => {
+    const asked = new URLSearchParams(search).get("tab");
+    return reelMatch || asked === "reels" ? "reels" : asked === "moments" || asked === "saved" ? asked : "created";
+  });
   const [activeClip, setActiveClip] = useState<UserClip | null>(null);
   const [localClips, setLocalClips] = useState<LocalClipRecord[]>([]);
   const [localLoading, setLocalLoading] = useState(true);
@@ -1136,7 +1143,7 @@ export default function MyClips() {
               exit={{ opacity: 0, x: 10 }}
               transition={{ duration: 0.2 }}
             >
-              <ReelsTab clips={userClips} clipsLoading={userClipsLoading} />
+              <ReelsTab clips={userClips} clipsLoading={userClipsLoading} matchCode={reelMatch} />
             </motion.div>
           ) : (
             <motion.div
