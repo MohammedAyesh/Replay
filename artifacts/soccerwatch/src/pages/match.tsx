@@ -269,6 +269,7 @@ export default function MatchPage() {
           names={names}
           replay={replay.data}
           onShare={onShare}
+          inviteText={inviteText}
           slots={{
             rsvp: showRsvp ? <RsvpCard room={room} copy={copy} onRsvp={onRsvp} busy={join.isPending} signedIn={Boolean(user) && !isGuest} /> : null,
             booking: room.booking ? <BookingPaymentCard room={room} copy={copy} /> : null,

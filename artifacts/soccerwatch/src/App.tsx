@@ -38,6 +38,7 @@ import Owner from "@/pages/owner";
 import OwnerVar from "@/pages/owner-var";
 import OwnerShare from "@/pages/owner-share";
 import MatchPage from "@/pages/match";
+import MatchReportDevPreview from "@/pages/match-report-dev-preview";
 import Matches from "@/pages/matches";
 import FriendsPage from "@/pages/friends";
 import FriendLinkPage from "@/pages/friend-link";
@@ -522,7 +523,8 @@ function AppRouter() {
   const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me";
   // "Is this you?" is a full-screen swipe deck: no app bars around it
   const isDeckRoute = /^\/find\/\d+\/check\/?$/.test(location.split(/[?#]/)[0]);
-  const isStandaloneRoute = isPublicStandaloneRoute || isFamilyMeRoute || isDeckRoute;
+  const isReportPreviewRoute = import.meta.env.DEV && location.split(/[?#]/)[0] === "/__dev/match-report";
+  const isStandaloneRoute = isPublicStandaloneRoute || isFamilyMeRoute || isDeckRoute || isReportPreviewRoute;
   const [retryingIdentity, setRetryingIdentity] = useState(false);
   const [signOutPending, setSignOutPending] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
@@ -600,6 +602,7 @@ function AppRouter() {
         <Route path="/owner" component={Owner} />
         <Route path="/owner/var/:requestId" component={OwnerVar} />
         <Route path="/w/:token" component={OwnerShare} />
+        {import.meta.env.DEV && <Route path="/__dev/match-report" component={MatchReportDevPreview} />}
         <Route path="/m/:code" component={MatchPage} />
         <Route path="/friends" component={FriendsPage} />
         <Route path="/f/:code" component={FriendLinkPage} />

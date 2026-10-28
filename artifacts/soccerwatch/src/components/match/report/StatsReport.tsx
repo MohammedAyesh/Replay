@@ -811,12 +811,20 @@ export function TwoSidesSection({ room, r, copy, whole, players }: {
 
 /* ------------------------------------------------------------------ disclosure */
 
-export function Disclosure({ title, children, defaultOpen = false, testId, icon, tone = "turf" }: { title: string; children: React.ReactNode; defaultOpen?: boolean; testId?: string; icon?: React.ReactNode; tone?: "lime" | "turf" | "violet" }) {
-  const [open, setOpen] = useState(defaultOpen);
+export function Disclosure({ title, children, defaultOpen = false, open: controlledOpen, onOpenChange, testId, icon, tone = "turf" }: {
+  title: string; children: React.ReactNode; defaultOpen?: boolean; open?: boolean; onOpenChange?: (open: boolean) => void;
+  testId?: string; icon?: React.ReactNode; tone?: "lime" | "turf" | "violet";
+}) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen);
+  const open = controlledOpen ?? uncontrolledOpen;
+  const changeOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setUncontrolledOpen(next);
+    onOpenChange?.(next);
+  };
   const iconTone = tone === "lime" ? "bg-floodlight/15 text-floodlight" : tone === "violet" ? "bg-violet/20 text-violet-text" : "bg-turf/15 text-turf";
   return (
     <div className="border-b border-[#1B2236]" data-testid={testId}>
-      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} className="flex min-h-[54px] w-full items-center gap-2.5 py-2 text-start">
+      <button type="button" onClick={() => changeOpen(!open)} aria-expanded={open} className="flex min-h-[54px] w-full items-center gap-2.5 py-2 text-start">
         {icon && <span className={cn("flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px]", iconTone)}>{icon}</span>}
         <span className="flex-1 text-sm font-bold">{title}</span>
         <ChevronDown className={cn("h-4 w-4 text-muted-text transition-transform", open && "rotate-180")} />

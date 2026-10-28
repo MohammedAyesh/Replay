@@ -12,3 +12,45 @@ uri = "file://function-compute/deploy.tar.gz"
 type = "unspecified"
 title = "SoccerWatch Function Compute – deploy.tar.gz"
 logical_id = "c13ffddf-feb8-405a-95e4-a95724f34fd0"
+
+[[outputs]]
+id = "1Z2UDaQQz9QiShpAfB8nP"
+uri = "file://.local/screenshots/match-processing-ar.jpg"
+type = "image"
+title = "Match processing · Arabic"
+description = "390px wide full-page capture of the match processing waiting report in Arabic RTL."
+logical_id = "c5ec8354-2441-4006-afff-b63c0c411926"
+content_hash = "sha256:b38d28c282e9622369f3abee5e90beacc083d312895f6b70e9466f31acec7be0"
+size = 36184
+mtime_ms = 1793216684329
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:02542170-793e-431b-bc1d-96ad706e2191/c5ec8354-2441-4006-afff-b63c0c411926/0a76b187-804f-4d98-a7ee-df323dec2d62"
+storage_version_token = "1793216716036757"
+content_type = "image/jpeg"
+
+[[outputs]]
+id = "ImRkKCgVpZPOP_QV-lOhp"
+uri = "file://.local/screenshots/match-processing-en.jpg"
+type = "image"
+title = "Match processing · English"
+description = "390px wide full-page capture of the match processing waiting report in English LTR."
+logical_id = "0f2986a1-d130-4b8c-80d7-6c7ab2e6c8ff"
+content_hash = "sha256:6c7f3b76e2d9eb892601848e339e59eb23aeb1b3411c045c0d01d1276cfea1bb"
+size = 42104
+mtime_ms = 1793216687489
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:02542170-793e-431b-bc1d-96ad706e2191/0f2986a1-d130-4b8c-80d7-6c7ab2e6c8ff/803308d6-f9a3-4d7c-a1bf-7bfa4f190788"
+storage_version_token = "1793216716823462"
+content_type = "image/jpeg"
+
+[[outputs]]
+id = "Cuc3LK2o1g4jSzzLa5Eu3"
+uri = "file://.local/screenshots/match-ready-ar.jpg"
+type = "image"
+title = "Ready match report · Arabic"
+description = "390px wide full-page capture of the existing ready report in Arabic RTL."
+logical_id = "81cc1233-e681-400f-ab89-5f3c2422eecb"
+content_hash = "sha256:adee2dda59e4872eb0e652e9e678aa0450650db6b08d6b1da4c926b5966ee00d"
+size = 34569
+mtime_ms = 1793216690533
+storage_uri = "gcs://replit-rams-assets-riker/rams/assets/repl:02542170-793e-431b-bc1d-96ad706e2191/81cc1233-e681-400f-ab89-5f3c2422eecb/55a2193e-8db4-44d5-9709-547c4284d3dc"
+storage_version_token = "1793216717469953"
+content_type = "image/jpeg"

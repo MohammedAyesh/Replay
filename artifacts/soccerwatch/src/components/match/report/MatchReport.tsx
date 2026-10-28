@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
-import { Link, useLocation, useSearch } from "wouter";
-import { ArrowLeft, Crown, Flag, Footprints, Loader2, Play, RefreshCw, Share2, Shield, Sparkles, Users, Video, UserPlus, Scissors, Zap, Route, Clock3, Trophy } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link, useSearch } from "wouter";
+import { Crown, Flag, Loader2, Play, RefreshCw, Share2, Shield, Sparkles, Users, Video, UserPlus, Scissors, Clock3, Trophy } from "lucide-react";
 import { FriendButton } from "@/components/friends/FriendButton";
 import { PlayerAvatar, StandingsTable, formatDate, formatDay, splitDuration } from "@/components/match/bits";
 import { useMatchStatsData, type PlayerStats, type Stats } from "@/components/match/MatchStats";
@@ -15,20 +15,22 @@ import { friendStatusFor, useFriends } from "@/lib/friends-api";
 import {
   useMakeCaptain,
   useMatchClips,
-  useSetScore,
-  useVote,
   whatsappLink,
   type MatchReplay,
   type MatchRoom,
   type TeamSide,
 } from "@/lib/match-api";
-import { cameraGaps, clock, minuteMark, metricValue, formatMetric, standings, rankedCount, levelWith, isPersonalBest } from "@/lib/match-report";
+import { cameraGaps, clock, minuteMark, standings, levelWith } from "@/lib/match-report";
 import { cn } from "@/lib/utils";
 import { findPath } from "@/lib/find-nav";
 import { GameBar, Num, Section, visibleColour } from "./ReportParts";
 import { GoalReviewBox } from "@/components/match/GoalReview";
 import { CompactLayout, GoalsToCheck, MatchReelRow, SheetLayout } from "./CompactReport";
 import { SofaLayout } from "./SofaReport";
+import { ReportHeader } from "./ReportHeader";
+import { ReportScoreRows } from "./ReportScoreRows";
+import { VoteSheet } from "./ReportVoteSheet";
+import { WaitingReport, waitingNotifyStorageKey } from "./WaitingReport";
 import { useClientSettings } from "@/lib/client-settings";
 import { resolveReportLayout } from "@/lib/report-layout";
 import { useReportLayoutCopy } from "@/i18n/report-layout-strings";
@@ -69,7 +71,7 @@ export type MatchReportSlots = {
  * everyone, then the people. No tabs, no podium. Every comparison respects the
  * measuring margin (see lib/match-report.ts).
  */
-export function MatchReport({ room, copy, now, colors, names, replay, onShare, slots }: {
+export function MatchReport({ room, copy, now, colors, names, replay, onShare, inviteText, slots }: {
   room: MatchRoom;
   copy: Copy;
   now: number;
@@ -77,11 +79,31 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
   names: Record<TeamSide, string>;
   replay: MatchReplay | undefined;
   onShare: () => void;
+  inviteText: string;
   slots: MatchReportSlots;
 }) {
   const r = useReportCopy();
   const { user } = useAuth();
+  const { toast } = useToast();
   const [methods, setMethods] = useState(false);
+  const readyBefore = useRef({ code: room.code, ready: room.footage.ready });
+  useEffect(() => {
+    if (readyBefore.current.code !== room.code) {
+      readyBefore.current = { code: room.code, ready: room.footage.ready };
+      return;
+    }
+    const becameReady = !readyBefore.current.ready && room.footage.ready;
+    readyBefore.current.ready = room.footage.ready;
+    if (!becameReady) return;
+    try {
+      if (window.localStorage.getItem(waitingNotifyStorageKey(room.code)) !== "1") return;
+    } catch { return; }
+    toast({ title: r.waitingReadyToast });
+    if ("Notification" in window && Notification.permission === "granted") {
+      const notification = new Notification(room.title || `${names.A} vs ${names.B}`, { body: r.waitingReadyBody });
+      notification.onclick = () => { window.focus(); notification.close(); };
+    }
+  }, [names.A, names.B, r.waitingReadyBody, r.waitingReadyToast, room.code, room.footage.ready, room.title, toast]);
   const durationSeconds = Math.max(60, (room.endMs - room.startMs) / 1000);
   // Team numbers are open to anyone who can see the match; the server decides whose player rows come back.
   const statsOn = room.stats.enabled && room.stats.unlocked;
@@ -146,6 +168,10 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
           : <>{shortLayout === "compact" ? <CompactLayout {...layoutProps} /> : <SheetLayout {...layoutProps} />}{rest}</>}
       </div>
     );
+  }
+  if (!shortLayout && !room.footage.ready && !["expired", "failed", "cancelled"].includes(room.phase) && !statsOn && !stats?.available) {
+    return <WaitingReport room={room} copy={copy} now={now} colors={colors} names={names} replay={replay} onShare={onShare} inviteText={inviteText}
+      slots={slots} />;
   }
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
@@ -221,26 +247,6 @@ function FullReelRow({ room, r }: { room: MatchRoom; r: R }) {
 
 /* ------------------------------------------------------------------ header */
 
-function ReportHeader({ copy, r, onShare }: { copy: Copy; r: R; onShare: () => void }) {
-  const [, setLocation] = useLocation();
-  return (
-    <div className="flex items-center justify-between gap-2 pt-3">
-      <button
-        type="button"
-        onClick={() => (window.history.length > 1 ? window.history.back() : setLocation("/home"))}
-        aria-label={copy.back}
-        className="flex h-11 w-11 items-center justify-center rounded-full border border-line"
-      >
-        <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
-      </button>
-      <span className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-turf rtl:tracking-normal rtl:text-xs">{r.eyebrow}</span>
-      <button type="button" onClick={onShare} aria-label={copy.share} className="flex h-11 w-11 items-center justify-center rounded-full border border-line">
-        <Share2 className="h-4 w-4" />
-      </button>
-    </div>
-  );
-}
-
 /* ------------------------------------------------------------------ title */
 
 function TitleBlock({ room, copy, r, now, colors, names, replay, meId, me, players, stats, durationSeconds, onShare, findRecordingId, canFind }: {
@@ -249,97 +255,13 @@ function TitleBlock({ room, copy, r, now, colors, names, replay, meId, me, playe
   stats: Stats | null; durationSeconds: number; onShare: () => void;
   findRecordingId: number | null; canFind: boolean;
 }) {
-  const setScore = useSetScore(room.code);
-  const score = room.score;
-  const suggested = replay?.suggested ?? null;
-  const three = room.teamCount === 3;
-  const viewer = me ? room.players.find((player) => player.id === me.playerId) : null;
-  const winner = Boolean(me && room.vote.closed && room.vote.winners.includes(me.playerId));
-  const goals = me?.report?.goalTimes ?? replay?.goals.filter((goal) => goal.scorer?.playerId === meId).map((goal) => goal.atSeconds) ?? [];
-  const scoreOutcome = me?.team && score && me.team !== "C"
-    ? score.a === score.b ? r.draw
-      : (me.team === "A" ? score.a > score.b : score.b > score.a) ? r.weWon : r.weLost
-    : null;
-  const metrics = me && stats ? [
-    { metric: "distanceRate" as const, label: r.perTenOnCamera, icon: <Route className="h-4 w-4" /> },
-    { metric: "topSpeed" as const, label: r.kmhTop, icon: <Zap className="h-4 w-4" /> },
-    { metric: "touchRate" as const, label: r.touchesPerTen, icon: <Footprints className="h-4 w-4" /> },
-  ].map((cell) => {
-    const value = metricValue(me, cell.metric);
-    const standing = standings(players.filter((player) => player.claimed), cell.metric).find((entry) => entry.player.playerId === me.playerId);
-    const personalBest = cell.metric === "distanceRate"
-      ? isPersonalBest("distance", me.distanceKm, stats.competition?.personalForm?.bests.distanceKm ?? null, stats.competition?.personalForm?.matchesUsed ?? 0)
-      : cell.metric === "topSpeed"
-        ? isPersonalBest("topSpeed", me.topSpeedKmh, stats.competition?.personalForm?.bests.topSpeedKmh ?? null, stats.competition?.personalForm?.matchesUsed ?? 0)
-        : false;
-    const rank = standing?.ranked
-      ? standing.shared ? r.rankShared(r.ordinal(standing.rank), rankedCount(players.filter((player) => player.claimed), cell.metric))
-        : r.rankOf(r.ordinal(standing.rank), rankedCount(players.filter((player) => player.claimed), cell.metric))
-      : r.notRankedShort(Math.round(me.minutes ?? 0));
-    return { ...cell, value: value === null ? "–" : formatMetric(cell.metric, value), note: personalBest ? r.personalBest : rank, personalBest };
-  }) : [];
-
   return (
     <section data-testid="report-top-card" className="relative mt-4 overflow-hidden rounded-3xl border border-line bg-gradient-to-br from-[#1D3B2E] via-[#13283A] to-[#1B1F3D] p-4">
       <p className="text-[13px] text-muted-text">
         {formatDay(room.startMs, copy.locale, now, copy)} · {room.title ? `${room.title} · ` : ""}{room.field.name} · {r.minutesLong(Math.round(durationSeconds / 60))}
         <bdi className="ms-2 font-mono text-[11px] tracking-[0.2em] text-muted-text/70">#{room.code}</bdi>
       </p>
-      {me ? (
-        <>
-        <div className="mt-3 flex items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="relative">
-              {winner && <Crown className="absolute -top-3 left-1/2 z-10 h-5 w-5 -translate-x-1/2 text-floodlight" />}
-              <PlayerAvatar name={me.name} initials={viewer?.initials} avatarUrl={viewer?.avatarUrl} size={58} ring="#D4FF4F" />
-            </span>
-            <div className="min-w-0">
-              <h1 className="font-display text-2xl font-extrabold">{r.matchForYou}</h1>
-              {winner && <p className="text-sm font-bold text-floodlight">{r.motmWinner}</p>}
-              {goals.map((at) => <p key={at} className="text-xs text-muted-text">{r.scoredAt(String(minuteMark(at)))}</p>)}
-            </div>
-          </div>
-          {score && <div className="shrink-0 text-end" dir="ltr">
-            <Num className="text-[30px] font-bold leading-none text-text">{score.a}–{score.b}</Num>
-            {scoreOutcome && <p className={cn("text-xs font-extrabold", scoreOutcome === r.weWon ? "text-turf" : "text-muted-text")}>{scoreOutcome}</p>}
-          </div>}
-        </div>
-        {three && room.standings && <div className="mt-3"><StandingsTable rows={room.standings} colors={colors} names={names} leader={room.leader} labels={copy} compact /></div>}
-        </>
-      ) : (
-        three && room.standings
-          ? <div className="mt-3"><StandingsTable rows={room.standings} colors={colors} names={names} leader={room.leader} labels={copy} compact /></div>
-          : <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2" dir="ltr">
-            <span className="flex min-w-0 items-center gap-2"><i className="h-3 w-3 shrink-0 rounded-full border border-white/30" style={{ background: visibleColour(colors.A) }} /><span className="truncate font-display text-base font-bold">{names.A}</span></span>
-            <Num className={cn("text-[40px] font-bold leading-none", !score && "text-[#3A4560]")}>{score ? `${score.a}–${score.b}` : "–"}</Num>
-            <span className="flex min-w-0 items-center justify-end gap-2"><span className="truncate font-display text-base font-bold text-muted-text">{names.B}</span><i className="h-3 w-3 shrink-0 rounded-full border border-white/30" style={{ background: visibleColour(colors.B) }} /></span>
-          </div>
-      )}
-      {!score && !three && (
-        <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs text-muted-text">
-          <span>{r.awaitingScore}</span>
-          {suggested && <span>· {r.replayCounted(suggested.a, suggested.b)}</span>}
-          {suggested && room.canManage && (
-            <button
-              type="button"
-              disabled={setScore.isPending}
-              onClick={() => void setScore.mutateAsync({ scoreA: suggested.a, scoreB: suggested.b })}
-              className="min-h-11 rounded-full border border-turf/60 px-3 text-xs font-semibold text-turf disabled:opacity-60"
-            >
-              {r.useReplayScore}
-            </button>
-          )}
-          {!suggested && room.canManage && <span className="text-turf">{r.enterScore}</span>}
-        </div>
-      )}
-      {me && metrics.length > 0 && <div className="mt-4 grid grid-cols-3 gap-2">
-        {metrics.map((metric) => <div key={metric.metric} className="min-w-0 rounded-xl bg-void/45 p-2.5">
-          <div className="flex items-center justify-between text-muted-text">{metric.icon}<span className="truncate text-[9px]">{metric.metric === "distanceRate" ? "km" : metric.metric === "topSpeed" ? "km/h" : ""}</span></div>
-          <Num className={cn("mt-1 block text-2xl font-bold leading-none", metric.personalBest ? "text-floodlight" : "text-text")}>{metric.value}</Num>
-          <span className="mt-1 block truncate text-[10px] text-muted-text">{metric.label}</span>
-          <span className={cn("mt-1 block truncate text-[9px]", metric.personalBest ? "font-bold text-floodlight" : "text-muted-text")}>{metric.note}</span>
-        </div>)}
-      </div>}
+      <ReportScoreRows room={room} copy={copy} r={r} colors={colors} names={names} replay={replay} meId={meId} me={me} players={players} stats={stats} />
       {room.phase === "expired" || !room.footage.ready || (!me && canFind) ? <div className="mt-4 rounded-2xl bg-void/45 p-3.5">
         {room.phase === "expired" ? <p className="text-sm text-muted-text">{r.expired}</p>
           : !room.footage.ready ? <>
@@ -539,8 +461,6 @@ function ClipsBlock({ room, r }: { room: MatchRoom; r: R }) {
 /* ------------------------------------------------------------------ vote */
 
 function VoteBlock({ room, copy, r, now, meId }: { room: MatchRoom; copy: Copy; r: R; now: number; meId: number | null }) {
-  const vote = useVote(room.code);
-  const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const candidates = room.players.filter((player) => player.rsvp === "in");
   const tally = new Map(room.vote.tallies.map((entry) => [entry.playerId, entry.count]));
@@ -593,47 +513,14 @@ function VoteBlock({ room, copy, r, now, meId }: { room: MatchRoom; copy: Copy; 
           ))}
         </ul>
       )}
-      <Sheet open={open} onOpenChange={setOpen}>
-        <SheetContent side="bottom" dir={r.locale === "ar" ? "rtl" : "ltr"} closeLabel={r.close} className="flex max-h-[88dvh] flex-col overflow-y-auto rounded-t-3xl border-line bg-void px-5 pb-8 pt-5 text-text">
-          <SheetHeader className="pe-8 text-start">
-            <SheetTitle className="font-display text-2xl font-bold">{r.motm}</SheetTitle>
-            <SheetDescription className="text-xs text-muted-text">{r.pickOne}</SheetDescription>
-          </SheetHeader>
-          <div className="mt-4 grid grid-cols-3 gap-3">
-            {candidates.map((player) => {
-              const chosen = room.vote.myVote === player.id;
-              const count = tally.get(player.id);
-              return (
-                <button
-                  key={player.id}
-                  type="button"
-                  disabled={!canVote || player.isMe || vote.isPending}
-                  onClick={() => void vote.mutateAsync(player.id)
-                    .then(() => setOpen(false))
-                    .catch((error) => toast({ title: error instanceof Error ? error.message : copy.error, variant: "destructive" }))}
-                  className={cn(
-                    "flex flex-col items-center gap-2 rounded-xl border p-3 disabled:cursor-default",
-                    chosen ? "border-floodlight bg-floodlight/10" : "border-line",
-                    player.isMe && "opacity-40",
-                  )}
-                  data-testid={`button-vote-${player.id}`}
-                >
-                  <PlayerAvatar name={player.name} initials={player.initials} avatarUrl={player.avatarUrl} size={52} ring={chosen ? "#D4FF4F" : undefined} />
-                  <span className="w-full truncate text-center text-xs font-semibold">{player.name}</span>
-                  {count != null && <Num className="text-[11px] text-muted-text">{r.votes(count)}</Num>}
-                </button>
-              );
-            })}
-          </div>
-        </SheetContent>
-      </Sheet>
+      <VoteSheet room={room} copy={copy} r={r} open={open} onOpenChange={setOpen} />
     </Section>
   );
 }
 
 /* ------------------------------------------------------------------ squad */
 
-function SquadBlock({ room, copy, r, colors, claimedIds, findRecordingId }: {
+export function SquadBlock({ room, copy, r, colors, claimedIds, findRecordingId }: {
   room: MatchRoom; copy: Copy; r: R; colors: Record<TeamSide, string>;
   claimedIds: Set<number> | null; findRecordingId: number | null;
 }) {
