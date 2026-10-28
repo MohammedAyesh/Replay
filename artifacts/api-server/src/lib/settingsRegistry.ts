@@ -316,6 +316,22 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: "boolean",
     defaultValue: true,
   },
+  {
+    key: "report.layout",
+    group: "Match stats",
+    label: "Match report layout",
+    description:
+      "How a player who has found himself sees his numbers after the whistle. full: the long " +
+      "report with every section. compact: video first — the match strip with his moments " +
+      "pinned on it, one headline, four numbers and the pitch board on the first screen. " +
+      "sheet: one row per stat with his rank on the pitch and how it compares with his " +
+      "last games. Everything else (splits, head-to-head, team numbers) folds away under " +
+      "'More stats'. Anyone who hasn't found himself still gets the full report. Add a " +
+      "rule for just your own account to try a layout before switching everyone.",
+    type: "enum",
+    options: ["full", "compact", "sheet"],
+    defaultValue: "full",
+  },
   // ── Downloads ──────────────────────────────────────────────────────────
   {
     key: "downloads.limit",

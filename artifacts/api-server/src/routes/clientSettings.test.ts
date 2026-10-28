@@ -28,4 +28,9 @@ describe("GET /api/client-settings", () => {
       "support.email": "",
     });
   });
+
+  it("ships the long match report until an admin picks another layout", async () => {
+    const response = await request(app).get("/api/client-settings").expect(200);
+    expect(response.body.settings["report.layout"]).toBe("full");
+  });
 });

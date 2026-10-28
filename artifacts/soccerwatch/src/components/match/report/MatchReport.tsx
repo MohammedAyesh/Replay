@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { ArrowLeft, Crown, Flag, Footprints, Loader2, Play, RefreshCw, Share2, Shield, Sparkles, Users, Video, UserPlus, Scissors, Zap, Route, Clock3, Trophy } from "lucide-react";
 import { FriendButton } from "@/components/friends/FriendButton";
 import { PlayerAvatar, StandingsTable, formatDate, formatDay, splitDuration } from "@/components/match/bits";
@@ -27,6 +27,10 @@ import { cn } from "@/lib/utils";
 import { findPath } from "@/lib/find-nav";
 import { GameBar, Num, Section, visibleColour } from "./ReportParts";
 import { GoalReviewBox } from "@/components/match/GoalReview";
+import { CompactLayout, MatchReelRow, SheetLayout } from "./CompactReport";
+import { useClientSettings } from "@/lib/client-settings";
+import { resolveReportLayout } from "@/lib/report-layout";
+import { useReportLayoutCopy } from "@/i18n/report-layout-strings";
 import {
   Disclosure,
   EveryoneSection,
@@ -89,6 +93,50 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
   const claimedIds = new Set((players ?? []).filter((player) => player.claimed).map((player) => player.playerId));
   // Anyone can find themselves; a claim also puts them in the squad.
   const canFind = Boolean(findRecordingId) && !me && !(room.me && claimedIds.has(room.me.id));
+  // Which layout: the admin setting (Match stats → Match report layout), or
+  // ?view= on the link. The short layouts are only for someone who has found
+  // himself; everyone else, and anything still loading, gets the full report.
+  const search = useSearch();
+  const settingsQuery = useClientSettings(room.field.id);
+  const layout = resolveReportLayout(settingsQuery.data?.settings?.["report.layout"], new URLSearchParams(search).get("view"));
+  const layoutWaiting = statsOn && (settingsQuery.isLoading || (layout !== "full" && !stats && !statsQuery.isError));
+  const shortLayout = layout !== "full" && me && stats?.available ? layout : null;
+  if (layoutWaiting) {
+    return (
+      <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
+        <ReportHeader copy={copy} r={r} onShare={onShare} />
+        <div className="mt-4 h-[104px] animate-pulse rounded-2xl bg-surface" />
+        <div className="mt-3 h-16 animate-pulse rounded-2xl bg-surface" />
+        <div className="mt-3 grid grid-cols-4 gap-1.5">{[0, 1, 2, 3].map((i) => <div key={i} className="h-16 animate-pulse rounded-xl bg-surface" />)}</div>
+      </div>
+    );
+  }
+  if (shortLayout && me && stats) {
+    const layoutProps = { room, copy, r, now, colors, names, replay, stats, me, players: players ?? [], durationSeconds, onShare };
+    return (
+      <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
+        {shortLayout === "compact" ? <CompactLayout {...layoutProps} /> : <SheetLayout {...layoutProps} />}
+        <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
+        <FlaggedMoments room={room} copy={copy} r={r} />
+        {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}
+        {slots.booking && <div className="pt-4">{slots.booking}</div>}
+        {slots.rsvp && <div className="pt-4">{slots.rsvp}</div>}
+        <ClipsBlock room={room} r={r} />
+        <VoteBlock room={room} copy={copy} r={r} now={now} meId={room.me?.id ?? null} />
+        <SquadBlock room={room} copy={copy} r={r} colors={colors} claimedIds={claimedIds} findRecordingId={findRecordingId} />
+        <div className="flex flex-col">
+          {slots.teams && <Disclosure title={r.teamsAndSwitches} icon={<Users />} tone="turf" testId="report-teams">{slots.teams}</Disclosure>}
+          {slots.invite && <Disclosure title={r.inviteSomeone} icon={<UserPlus />} tone="turf" testId="report-invite">{slots.invite}</Disclosure>}
+          {slots.captainTools && <Disclosure title={r.captainTools} icon={<Shield />} tone="lime" testId="report-captain-tools">{slots.captainTools}</Disclosure>}
+        </div>
+        <footer className="flex flex-col gap-2 pt-6">
+          <p className="text-[11px] leading-5 text-muted-text">{r.precision}</p>
+          <button type="button" onClick={() => setMethods(true)} className="flex min-h-11 items-center gap-2 self-start text-xs font-semibold text-turf"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-turf/15"><Clock3 className="h-4 w-4" /></span>{r.howWeMeasure}</button>
+        </footer>
+        <MethodsSheet open={methods} onClose={() => setMethods(false)} r={r} />
+      </div>
+    );
+  }
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
       <ReportHeader copy={copy} r={r} onShare={onShare} />
@@ -124,6 +172,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
                 {players && <EveryoneSection players={players} meId={me ? meId : null} r={r} />}
                 {me && <NightSection me={me} r={r} durationSeconds={durationSeconds} room={room} />}
                 {me && <MomentsSection me={me} room={room} r={r} />}
+                {me && <FullReelRow room={room} r={r} />}
                 {players && <RivalSection players={players} meId={me ? meId : null} room={room} r={r} />}
                 {players && <StoodOutSection players={players} meId={me ? meId : null} room={room} r={r} />}
                 <TwoSidesSection room={room} r={r} copy={copy} whole={stats.team} players={players} />
@@ -152,6 +201,12 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, s
       <MethodsSheet open={methods} onClose={() => setMethods(false)} r={r} />
     </div>
   );
+}
+
+/** The reel shortcut in the full report, under the player's moments. */
+function FullReelRow({ room, r }: { room: MatchRoom; r: R }) {
+  const L = useReportLayoutCopy();
+  return <div className="pb-2"><MatchReelRow room={room} L={L} r={r} /></div>;
 }
 
 /* ------------------------------------------------------------------ header */

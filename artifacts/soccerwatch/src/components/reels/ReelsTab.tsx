@@ -34,6 +34,10 @@ import { useMatchCopy } from "@/i18n/match-strings";
 import { formatClipTitle } from "@/lib/clip-title";
 import { fetchDownloadQuota, formatQuotaLabel, isQuotaExhausted } from "@/lib/downloadQuota";
 import { EndScreenSheet } from "@/components/end-screen/EndScreenSheet";
+import { Link } from "wouter";
+import { useReportLayoutCopy } from "@/i18n/report-layout-strings";
+import { useMyMatchClipIds } from "@/lib/match-reel";
+import { matchReelPicks } from "@/lib/report-layout";
 import {
   clipShape,
   reelApi,
@@ -50,13 +54,34 @@ export const REELS_QUERY_KEY = ["user-reels"] as const;
  * one from his clips. Reels render on the server from the clips' recordings;
  * a pending reel polls itself until it settles.
  */
-export function ReelsTab({ clips, clipsLoading }: { clips: UserClip[] | undefined; clipsLoading: boolean }) {
+export function ReelsTab({ clips, clipsLoading, matchCode = null }: { clips: UserClip[] | undefined; clipsLoading: boolean; matchCode?: string | null }) {
   const copy = useReelCopy();
+  const L = useReportLayoutCopy();
   const [building, setBuilding] = useState(false);
   const reels = useQuery({ queryKey: REELS_QUERY_KEY, queryFn: reelApi.list });
   const clipsById = useMemo(() => new Map((clips ?? []).map((c) => [c.id, c])), [clips]);
   const usable = (clips ?? []).filter((c) => !c.isHidden);
   const canBuild = usable.length >= REEL_MIN_CLIPS;
+
+  // Opened from a match report ("Make a reel of this match"): start the
+  // builder once, with that match's clips already picked in match order.
+  const matchClips = useMyMatchClipIds(matchCode, Boolean(matchCode));
+  const matchPicks = useMemo(
+    () => (matchCode && clips ? matchReelPicks(usable, matchClips.ids, REEL_MAX_CLIPS) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [matchCode, clips, matchClips.ids],
+  );
+  const [autoOpened, setAutoOpened] = useState<string | null>(null);
+  const [initialPicks, setInitialPicks] = useState<number[]>([]);
+  useEffect(() => {
+    if (!matchCode || autoOpened === matchCode || clipsLoading || matchClips.loading || !clips) return;
+    setAutoOpened(matchCode);
+    if (matchPicks.length >= REEL_MIN_CLIPS) {
+      setInitialPicks(matchPicks);
+      setBuilding(true);
+    }
+  }, [matchCode, autoOpened, clipsLoading, matchClips.loading, clips, matchPicks]);
+  const matchShort = Boolean(matchCode) && autoOpened === matchCode && matchPicks.length < REEL_MIN_CLIPS;
 
   return (
     <div className="flex flex-col gap-4" data-testid="reels-tab">
@@ -82,6 +107,15 @@ export function ReelsTab({ clips, clipsLoading }: { clips: UserClip[] | undefine
         {!clipsLoading && !canBuild && <p className="mt-2 text-center text-xs text-muted-text">{copy.needClips}</p>}
       </div>
 
+      {matchShort && matchCode && (
+        <div className="flex items-center gap-3 rounded-2xl border border-dashed border-line p-3" data-testid="reel-match-short">
+          <p className="min-w-0 flex-1 text-xs leading-5 text-muted-text">
+            {matchPicks.length > 0 ? `${L.reelClips(matchPicks.length)} · ` : ""}{L.reelNeedClips}
+          </p>
+          <Link href={`/m/${matchCode}`} className="flex min-h-11 shrink-0 items-center text-xs font-bold text-turf">{L.cutClips} ›</Link>
+        </div>
+      )}
+
       {reels.isLoading && (
         <div className="flex flex-col gap-3">
           {[1, 2].map((i) => <div key={i} className="h-28 animate-pulse rounded-2xl border border-line bg-surface" />)}
@@ -101,8 +135,10 @@ export function ReelsTab({ clips, clipsLoading }: { clips: UserClip[] | undefine
       {building && (
         <ReelBuilder
           open={building}
-          onOpenChange={setBuilding}
+          onOpenChange={(next) => { setBuilding(next); if (!next) setInitialPicks([]); }}
           clips={usable}
+          initialPicked={initialPicks}
+          focusIds={initialPicks.length ? matchClips.ids : undefined}
         />
       )}
     </div>
@@ -141,18 +177,28 @@ function Thumb({ clip, className }: { clip: UserClip | undefined; className?: st
 function ReelBuilder({
   open,
   onOpenChange,
-  clips,
+  clips: allClips,
+  initialPicked,
+  focusIds,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   clips: UserClip[];
+  /** clips to start with, in reel order (a reel of one match) */
+  initialPicked?: number[];
+  /** clips to list first: the ones from that match */
+  focusIds?: Set<number>;
 }) {
+  const clips = useMemo(
+    () => (focusIds?.size ? [...allClips.filter((c) => focusIds.has(c.id)), ...allClips.filter((c) => !focusIds.has(c.id))] : allClips),
+    [allClips, focusIds],
+  );
   const copy = useReelCopy();
   const label = useClipLabel();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [step, setStep] = useState<"pick" | "details">("pick");
-  const [picked, setPicked] = useState<number[]>([]);
+  const [picked, setPicked] = useState<number[]>(() => initialPicked ?? []);
   const [title, setTitle] = useState(copy.defaultTitle);
   const [endScreen, setEndScreen] = useState<EndScreenChoice | null>(null);
   const [endScreenOpen, setEndScreenOpen] = useState(false);
