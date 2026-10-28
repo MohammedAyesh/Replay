@@ -80,16 +80,30 @@ describe("ratingBand", () => {
 });
 
 describe("radarFor", () => {
-  it("scales each axis from 20 (weakest on the pitch) to 100 (best)", () => {
+  it("scales each axis from 20 (bottom of the pitch) to 100 (top), level players together", () => {
     const radar = radarFor(snlejh[0], snlejh)!;
-    // per ten minutes on camera, player 31 ran further (0.90 v 0.88 km)
-    expect(radarFor(snlejh[1], snlejh)!.player.running).toBe(100);
-    expect(radar.player.running).toBeGreaterThan(90);
+    // 0.88 v 0.90 km per 10 min is inside the 5% margin: the two share the top
+    expect(radar.player.running).toBe(radarFor(snlejh[1], snlejh)!.player.running);
+    expect(radar.player.running).toBeGreaterThan(80);
     expect(radar.player.onBall).toBe(20);
     for (const value of Object.values(radar.average)) {
       expect(value).toBeGreaterThanOrEqual(20);
       expect(value).toBeLessThanOrEqual(100);
     }
+  });
+
+  it("puts players within the margin at the same point", () => {
+    const close = [player(1, { topSpeedKmh: 30 }), player(2, { topSpeedKmh: 30.5 }), player(3, { topSpeedKmh: 20 })];
+    expect(radarFor(close[0], close)!.player.speed).toBe(radarFor(close[1], close)!.player.speed);
+  });
+
+  it("needs three ranked players, like the rating", () => {
+    expect(radarFor(snlejh[0], snlejh.slice(0, 2))).toBeNull();
+  });
+
+  it("draws a missing axis at the average, never at the centre", () => {
+    const points = radarPoints({ running: 100, speed: 100, passing: null, dribbling: 100, onBall: 100 }, 150, 135, 100, { running: 50, speed: 50, passing: 50, dribbling: 50, onBall: 50 });
+    expect(points[2]).not.toEqual([150, 135]);
   });
 
   it("is null for a player who isn't ranked", () => {

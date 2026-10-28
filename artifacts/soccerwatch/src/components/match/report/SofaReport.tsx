@@ -6,7 +6,7 @@ import { PlayerAvatar } from "@/components/match/bits";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { ReportStrings } from "@/i18n/report-strings";
 import { useReportLayoutCopy, type LayoutStrings } from "@/i18n/report-layout-strings";
-import { whatsappLink, type MatchReplay, type MatchRoom, type TeamSide } from "@/lib/match-api";
+import { useSetScore, whatsappLink, type MatchReplay, type MatchRoom, type TeamSide } from "@/lib/match-api";
 import { clock, compareHalves, formatMetric, isPersonalBest, metricValue, standOut, type ReportMetric } from "@/lib/match-report";
 import { findPath } from "@/lib/find-nav";
 import { RADAR_AXES, radarFor, radarPoints, rateMatch, ratingBand, type RatablePlayer } from "@/lib/replay-rating";
@@ -66,6 +66,30 @@ function inkOn(hex: string): string {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.45 ? "#0B0F1A" : "#F2F5FA";
 }
 
+type Part = { n: string; unit?: string };
+
+/** "7.9 km · 30 km/h · 31/65" that reads right in both directions: numbers stay LTR, units follow the page. */
+function StatLine({ parts, className }: { parts: Part[]; className?: string }) {
+  return (
+    <span className={className}>
+      {parts.map((part, index) => (
+        <span key={index} className="whitespace-nowrap">
+          {index > 0 && " · "}
+          <Num>{part.n}</Num>{part.unit ? ` ${part.unit}` : ""}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function statParts(player: PlayerStats, L: L): Part[] {
+  return [
+    player.distanceKm !== null ? { n: player.distanceKm.toFixed(1), unit: L.km } : null,
+    player.topSpeedKmh !== null ? { n: String(Math.round(player.topSpeedKmh)), unit: L.kmh } : null,
+    player.passesCompleted !== null && player.passesTried ? { n: `${player.passesCompleted}/${player.passesTried}` } : null,
+  ].filter((part): part is Part => part !== null);
+}
+
 export function RatingChip({ rating, size = "md" }: { rating: number | null; size?: "md" | "lg" }) {
   const cls = size === "lg" ? "h-11 min-w-[58px] rounded-[10px] text-[28px]" : "h-[26px] min-w-10 rounded-[7px] text-[17px]";
   if (rating === null) return <span className={cn("flex items-center justify-center border border-dashed border-[#3A4560] font-display font-bold text-muted-text", cls)}>–</span>;
@@ -74,11 +98,23 @@ export function RatingChip({ rating, size = "md" }: { rating: number | null; siz
 
 /* ------------------------------------------------------------------ header */
 
-function SofaHeader({ room, copy, S, colors, names, onShare, tab, setTab }: {
+function SofaHeader({ room, copy, S, colors, names, replay, onShare, tab, setTab }: {
   room: MatchRoom; copy: Copy; S: S; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
-  onShare: () => void; tab: Tab; setTab: (tab: Tab) => void;
+  replay: MatchReplay | undefined; onShare: () => void; tab: Tab; setTab: (tab: Tab) => void;
 }) {
   const [, setLocation] = useLocation();
+  const setScore = useSetScore(room.code);
+  const suggested = replay?.suggested ?? null;
+  // The score editor lives in the captain tools at the bottom of Overview: open it there.
+  const openScoreEditor = () => {
+    setTab("overview");
+    window.setTimeout(() => {
+      const tools = document.querySelector<HTMLElement>('[data-testid="report-captain-tools"]');
+      const toggle = tools?.querySelector<HTMLButtonElement>("button[aria-expanded]");
+      if (toggle && toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+      tools?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  };
   const three = room.teamCount === 3;
   const meSide = room.me?.team ?? null;
   const team = (side: TeamSide) => (
@@ -117,9 +153,15 @@ function SofaHeader({ room, copy, S, colors, names, onShare, tab, setTab }: {
         </div>
       )}
       {!room.score && !three && (
-        <p className="mb-2 flex min-h-10 items-center justify-center gap-2 rounded-[10px] bg-surface text-[13px] text-text/80">
-          {S.scoreNotIn}{room.canManage && <span className="font-bold text-turf">· {S.addScore}</span>}
-        </p>
+        <div className="mb-2 flex min-h-10 flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-[10px] bg-surface px-3 py-1.5 text-[13px] text-text/80">
+          <span>{suggested ? S.replayCounted(suggested.a, suggested.b) : S.scoreNotIn}</span>
+          {room.canManage && suggested && (
+            <button type="button" disabled={setScore.isPending} onClick={() => void setScore.mutateAsync({ scoreA: suggested.a, scoreB: suggested.b })} className="min-h-9 font-bold text-turf disabled:opacity-60">· {S.useIt}</button>
+          )}
+          {room.canManage && !suggested && (
+            <button type="button" onClick={openScoreEditor} className="min-h-9 font-bold text-turf">· {S.addScore}</button>
+          )}
+        </div>
       )}
       <div role="tablist" aria-label={S.tabOverview} className="-mx-4 grid grid-cols-3 border-b border-line px-4">
         {([["overview", S.tabOverview], ["players", S.tabPlayers], ["player", S.tabYou]] as Array<[Tab, string]>).map(([id, label]) => (
@@ -191,12 +233,12 @@ function Overview({ room, copy, r, S, L, colors, names, stats, me, players, rati
     // The viewer leads the names when he shares the top.
     const winners = [...out.winners].sort((a, b) => Number(b.playerId === me.playerId) - Number(a.playerId === me.playerId));
     const who = winners.length > 1 ? S.andMore(nameOf(winners[0]), winners.length - 1) : nameOf(winners[0]);
-    const unit = metric === "distanceRate" ? ` ${L.km} /10′` : metric === "topSpeed" ? ` ${L.kmh}` : metric === "touchRate" ? " /10′" : "";
+    const unit = metric === "distanceRate" ? L.kmPer10 : metric === "topSpeed" ? L.kmh : metric === "touchRate" ? L.per10 : "";
     const lead = winners[0];
     const info = room.players.find((player) => player.id === lead.playerId);
     // Shown with the first-named player's own value, so "You +2 · 30" is your number, not the leader's.
     const value = metricValue(lead, metric) ?? out.value;
-    return { metric, label, who, value: `${formatMetric(metric, value)}${unit}`, info, mine: out.winners.some((w) => w.playerId === me.playerId) };
+    return { metric, label, who, value: { n: formatMetric(metric, value), unit: unit || undefined } as Part, info, mine: out.winners.some((w) => w.playerId === me.playerId) };
   }).filter((row): row is NonNullable<typeof row> => row !== null);
 
   return (
@@ -206,9 +248,7 @@ function Overview({ room, copy, r, S, L, colors, names, stats, me, players, rati
         <span className="min-w-0 flex-1">
           <span className="block text-[11px] font-bold tracking-wide text-muted-text rtl:tracking-normal">{S.yourMatch}</span>
           <span className="block truncate text-[15px] font-bold"><bdi>{me.name}</bdi></span>
-          <span className="block truncate text-xs text-muted-text" dir="ltr">
-            {[me.distanceKm !== null ? `${me.distanceKm.toFixed(1)} ${L.km}` : null, me.topSpeedKmh !== null ? `${Math.round(me.topSpeedKmh)} ${L.kmh}` : null, me.passesCompleted !== null && me.passesTried ? `${me.passesCompleted}/${me.passesTried}` : null].filter(Boolean).join(" · ")}
-          </span>
+          <StatLine parts={statParts(me, L)} className="block truncate text-xs text-muted-text" />
         </span>
         <RatingChip rating={ratings.get(me.playerId) ?? null} />
       </button>
@@ -241,7 +281,7 @@ function Overview({ room, copy, r, S, L, colors, names, stats, me, players, rati
               <li key={row.metric} className="flex min-h-12 items-center gap-2.5 border-t border-line py-1.5">
                 <PlayerAvatar name={row.info?.name ?? row.who} initials={row.info?.initials} avatarUrl={row.info?.avatarUrl} size={30} ring={row.mine ? "#D4FF4F" : undefined} />
                 <span className="min-w-0 flex-1 text-sm">{row.label}</span>
-                <span className={cn("shrink-0 text-sm font-bold", row.mine && "text-floodlight")}><bdi>{row.who}</bdi> · <span dir="ltr" className="whitespace-nowrap">{row.value}</span></span>
+                <span className={cn("shrink-0 text-sm font-bold", row.mine && "text-floodlight")}><bdi>{row.who}</bdi> · <StatLine parts={[row.value]} /></span>
               </li>
             ))}
           </ul>
@@ -259,7 +299,7 @@ type Sort = "rating" | "distance" | "speed" | "passes" | "dribbles";
 function sortValue(player: PlayerStats, sort: Sort, ratings: Map<number, number>): number | null {
   switch (sort) {
     case "rating": return ratings.get(player.playerId) ?? null;
-    case "distance": return player.distanceKm;
+    case "distance": return metricValue(player, "distanceRate");
     case "speed": return player.topSpeedKmh;
     case "passes": return player.passesCompleted;
     case "dribbles": return player.dribblesWon;
@@ -287,11 +327,7 @@ function PlayersTab({ room, r, S, L, colors, names, me, players, ratings, findRe
   sides.sort((a, b) => (a === me.team ? -1 : b === me.team ? 1 : a.localeCompare(b)));
   const ordered = (list: PlayerStats[]) => [...list].sort((a, b) => (sortValue(b, sort, ratings) ?? -1) - (sortValue(a, sort, ratings) ?? -1));
   const findUrl = findRecordingId !== null ? `${window.location.origin}${findPath(findRecordingId, room.code)}` : null;
-  const line = (player: PlayerStats) => [
-    player.distanceKm !== null ? `${player.distanceKm.toFixed(1)} ${L.km}` : null,
-    player.topSpeedKmh !== null ? `${Math.round(player.topSpeedKmh)} ${L.kmh}` : null,
-    player.passesCompleted !== null && player.passesTried ? `${player.passesCompleted}/${player.passesTried}` : null,
-  ].filter(Boolean).join(" · ");
+
   const sorts: Array<[Sort, string]> = [["rating", S.sortRating], ["distance", S.sortDistance], ["speed", S.sortSpeed], ["passes", S.sortPasses], ["dribbles", S.sortDribbles]];
   return (
     <div className="flex flex-col gap-3 pt-3" data-testid="sofa-players">
@@ -323,7 +359,7 @@ function PlayersTab({ room, r, S, L, colors, names, me, players, ratings, findRe
                           <bdi className="truncate">{player.name}</bdi>
                           {isMe && <span className="shrink-0 rounded bg-floodlight px-1 text-[10px] font-bold text-void">{S.youTag}</span>}
                         </span>
-                        <span className="block truncate text-xs text-muted-text" dir="ltr">{line(player)}</span>
+                        <StatLine parts={statParts(player, L)} className="block truncate text-xs text-muted-text" />
                       </span>
                       {sort === "rating"
                         ? <RatingChip rating={ratings.get(player.playerId) ?? null} />
@@ -370,29 +406,29 @@ function RadarCard({ player, players, S }: { player: PlayerStats; players: Playe
   const cy = 135;
   const R = 100;
   const ring = (pct: number) => radarPoints({ running: pct, speed: pct, passing: pct, dribbling: pct, onBall: pct }, cx, cy, R).map((p) => p.join(",")).join(" ");
-  const mine = radarPoints(radar.player, cx, cy, R);
+  const mine = radarPoints(radar.player, cx, cy, R, radar.average);
   const avg = radarPoints(radar.average, cx, cy, R).map((p) => p.join(",")).join(" ");
   const outer = radarPoints({ running: 100, speed: 100, passing: 100, dribbling: 100, onBall: 100 }, cx, cy, R);
   const labelAt = radarPoints({ running: 118, speed: 122, passing: 118, dribbling: 118, onBall: 122 }, cx, cy, R);
   const anchors = ["middle", "start", "middle", "middle", "end"] as const;
-  const aria = RADAR_AXES.map((axis) => `${S.axis[axis]} ${radar.player[axis] ?? "–"}`).join(", ");
+  const aria = RADAR_AXES.map((axis) => `${S.axis[axis]} ${radar.player[axis] ?? S.notMeasured}`).join(", ");
   return (
     <section className="rounded-[14px] bg-surface px-3.5 py-3">
       <div className="flex items-baseline justify-between">
         <h2 className="text-[15px] font-bold">{S.yourStyle}</h2>
         <span className="text-xs text-muted-text">{S.vsPitch}</span>
       </div>
-      <svg viewBox="-80 0 460 262" className="h-[230px] w-full" role="img" aria-label={aria}>
+      <svg viewBox="-80 0 460 262" direction="ltr" className="h-[230px] w-full" role="img" aria-label={aria}>
         {[100, 66, 33].map((pct) => <polygon key={pct} points={ring(pct)} fill="none" stroke="#26304A" strokeWidth="1" />)}
         {outer.map(([x, y], index) => <line key={index} x1={cx} y1={cy} x2={x} y2={y} stroke="#26304A" />)}
         <polygon points={avg} fill="rgba(154,163,184,0.08)" stroke="#9AA3B8" strokeWidth="1.5" strokeDasharray="4 4" />
         <polygon points={mine.map((p) => p.join(",")).join(" ")} fill="rgba(212,255,79,0.22)" stroke="#D4FF4F" strokeWidth="2.5" />
-        {mine.map(([x, y], index) => <circle key={index} cx={x} cy={y} r="4" fill="#D4FF4F" />)}
+        {mine.map(([x, y], index) => radar.player[RADAR_AXES[index]] === null ? null : <circle key={index} cx={x} cy={y} r="4" fill="#D4FF4F" />)}
         {RADAR_AXES.map((axis, index) => {
           const [x, y] = labelAt[index];
           return (
             <text key={axis} x={x} y={y + (index === 0 ? -4 : index >= 2 && index <= 3 ? 14 : 4)} textAnchor={anchors[index]} fill="#F2F5FA" fontSize="13" fontWeight="700" fontFamily="Inter, Cairo, sans-serif">
-              {S.axis[axis]} <tspan fill="#9AA3B8" fontWeight="500">{radar.player[axis] ?? "–"}</tspan>
+              {S.axis[axis]} <tspan fill="#9AA3B8" fontWeight="500">{radar.player[axis] ?? S.notMeasured}</tspan>
             </text>
           );
         })}
@@ -409,6 +445,8 @@ function HeatCard({ player, S }: { player: PlayerStats; S: S }) {
   const heat = player.report?.heatmap;
   if (!heat || !heat.weights.length) return null;
   const max = Math.max(...heat.weights, 1e-9);
+  // A camera-space grid isn't the pitch: no halfway line or boxes over it.
+  const pitch = heat.coordinateSpace === "pitch";
   return (
     <section className="flex flex-col gap-2.5 rounded-[14px] bg-surface px-3.5 py-3">
       <h2 className="text-[15px] font-bold">{S.heatMap}</h2>
@@ -420,10 +458,12 @@ function HeatCard({ player, S }: { player: PlayerStats; S: S }) {
             return <span key={index} style={{ background: `rgba(${colour},${Math.min(0.95, share * 1.1)})` }} />;
           })}
         </div>
-        <span className="absolute inset-y-0 left-1/2 w-0.5 bg-[#2A3A33]" />
-        <span className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#2A3A33]" />
-        <span className="absolute left-0 top-[30%] h-[40%] w-10 border-2 border-l-0 border-[#2A3A33]" />
-        <span className="absolute right-0 top-[30%] h-[40%] w-10 border-2 border-r-0 border-[#2A3A33]" />
+        {pitch && <>
+          <span className="absolute inset-y-0 left-1/2 w-0.5 bg-[#2A3A33]" />
+          <span className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-[#2A3A33]" />
+          <span className="absolute left-0 top-[30%] h-[40%] w-10 border-2 border-l-0 border-[#2A3A33]" />
+          <span className="absolute right-0 top-[30%] h-[40%] w-10 border-2 border-r-0 border-[#2A3A33]" />
+        </>}
       </div>
     </section>
   );
@@ -519,7 +559,7 @@ function PlayerPage({ room, S, r, me, player, players, ratings, stats, durationS
 
 /* ------------------------------------------------------------------ the layout */
 
-export function SofaLayout({ room, copy, r, colors, names, stats, me, players, durationSeconds, onShare, overviewExtras }: SofaProps) {
+export function SofaLayout({ room, copy, r, colors, names, replay, stats, me, players, durationSeconds, onShare, overviewExtras }: SofaProps) {
   const L = useReportLayoutCopy();
   const S = L.sofa;
   const [tab, setTab] = useState<Tab>("overview");
@@ -529,17 +569,14 @@ export function SofaLayout({ room, copy, r, colors, names, stats, me, players, d
     for (const [id, entry] of rateMatch(players as RatablePlayer[])) out.set(id, entry.rating);
     return out;
   }, [players]);
-  const teamNames = useMemo(() => {
-    const out = { ...names };
-    for (const side of ["A", "B", "C"] as TeamSide[]) if (!room.teams[side]?.name) out[side] = S.teamFallback(side);
-    return out;
-  }, [names, room.teams, S]);
+  // The page's own team names, so the header, the rows and the goal list agree.
+  const teamNames = names;
   const shown = selected !== null ? players.find((player) => player.playerId === selected && player.claimed) ?? me : me;
   const open = (id: number) => { setSelected(id === me.playerId ? null : id); setTab("player"); };
   const findRecordingId = stats.recordings[0] ?? null;
   return (
     <div className="flex flex-col" data-testid="report-layout-sofa">
-      <SofaHeader room={room} copy={copy} S={S} colors={colors} names={teamNames} onShare={onShare} tab={tab} setTab={(next) => { setTab(next); if (next === "player") setSelected(null); }} />
+      <SofaHeader room={room} copy={copy} S={S} colors={colors} names={teamNames} replay={replay} onShare={onShare} tab={tab === "player" && selected !== null ? "players" : tab} setTab={(next) => { setTab(next); setSelected(null); }} />
       {tab === "overview" && <Overview room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={teamNames} stats={stats} me={me} players={players} ratings={ratings} onOpenMe={() => open(me.playerId)} extras={overviewExtras} />}
       {tab === "players" && <PlayersTab room={room} r={r} S={S} L={L} colors={colors} names={teamNames} me={me} players={players} ratings={ratings} findRecordingId={findRecordingId} onOpen={open} />}
       {tab === "player" && <PlayerPage room={room} S={S} r={r} me={me} player={shown} players={players} ratings={ratings} stats={stats} durationSeconds={durationSeconds} onBack={selected !== null ? () => setTab("players") : null} />}

@@ -104,6 +104,14 @@ export function ratingBand(rating: number): RatingBand {
 export type RadarAxis = "running" | "speed" | "passing" | "dribbling" | "onBall";
 export const RADAR_AXES: RadarAxis[] = ["running", "speed", "passing", "dribbling", "onBall"];
 
+const RADAR_LEVEL: Record<RadarAxis, (a: number, b: number) => boolean> = {
+  running: (a, b) => isLevel("distanceRate", a, b),
+  speed: (a, b) => isLevel("topSpeed", a, b),
+  passing: (a, b) => Math.abs(a - b) <= 0.03,
+  dribbling: (a, b) => isLevel("dribblesWon", a, b),
+  onBall: (a, b) => isLevel("touchRate", a, b),
+};
+
 const RADAR_VALUE: Record<RadarAxis, (player: RatablePlayer) => number | null> = {
   running: (p) => metricValue(p, "distanceRate"),
   speed: (p) => metricValue(p, "topSpeed"),
@@ -115,22 +123,20 @@ const RADAR_VALUE: Record<RadarAxis, (player: RatablePlayer) => number | null> =
 export type Radar = { player: Record<RadarAxis, number | null>; average: Record<RadarAxis, number | null> };
 
 /**
- * One player's shape against the pitch, each axis 20–100: the weakest on the
- * pitch sits at 20 (so the shape never collapses to a point), the best at 100.
+ * One player's shape against the pitch, each axis 20–100 by where he stands
+ * among the ranked players: bottom 20, top 100, and players inside each other's
+ * measuring margin at the same point (so 0.5 km/h never looks like a gulf).
  * The average is the same scale applied to every ranked player, then averaged.
+ * Needs the same three ranked players as the rating.
  */
 export function radarFor(player: RatablePlayer, players: RatablePlayer[]): Radar | null {
   const ranked = players.filter((p) => isRanked(p, "topSpeed") || isRanked(p, "distanceRate"));
-  if (ranked.length < 2 || !ranked.some((p) => p.playerId === player.playerId)) return null;
+  if (ranked.length < RATING_MIN_PLAYERS || !ranked.some((p) => p.playerId === player.playerId)) return null;
   const mine = {} as Radar["player"];
   const average = {} as Radar["average"];
   for (const axis of RADAR_AXES) {
     const values = ranked.map(RADAR_VALUE[axis]).filter((value): value is number => value !== null);
-    const scale = (value: number) => {
-      const lo = Math.min(...values);
-      const hi = Math.max(...values);
-      return hi - lo < 1e-9 ? 60 : Math.round(20 + (80 * (value - lo)) / (hi - lo));
-    };
+    const scale = (value: number) => Math.round(20 + 80 * standingShare(value, values, RADAR_LEVEL[axis]));
     const own = RADAR_VALUE[axis](player);
     mine[axis] = own === null || values.length < 2 ? null : scale(own);
     average[axis] = values.length < 2 ? null : Math.round(values.map(scale).reduce((sum, value) => sum + value, 0) / values.length);
@@ -138,11 +144,15 @@ export function radarFor(player: RatablePlayer, players: RatablePlayer[]): Radar
   return { player: mine, average };
 }
 
-/** The radar's corner points for an SVG, given a centre and radius; a missing axis draws at 0. */
-export function radarPoints(values: Record<RadarAxis, number | null>, cx: number, cy: number, radius: number): Array<[number, number]> {
+/**
+ * The radar's corner points for an SVG, given a centre and radius. A missing
+ * axis takes `fallback` (the pitch average) so it never reads as "worst on the
+ * pitch"; the label says it wasn't measured.
+ */
+export function radarPoints(values: Record<RadarAxis, number | null>, cx: number, cy: number, radius: number, fallback?: Record<RadarAxis, number | null>): Array<[number, number]> {
   return RADAR_AXES.map((axis, index) => {
     const angle = -Math.PI / 2 + (index * 2 * Math.PI) / RADAR_AXES.length;
-    const r = (radius * (values[axis] ?? 0)) / 100;
+    const r = (radius * (values[axis] ?? fallback?.[axis] ?? 60)) / 100;
     return [Math.round((cx + r * Math.cos(angle)) * 10) / 10, Math.round((cy + r * Math.sin(angle)) * 10) / 10];
   });
 }
