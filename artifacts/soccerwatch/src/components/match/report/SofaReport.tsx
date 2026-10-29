@@ -1,14 +1,16 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
-import { ArrowLeft, ChevronLeft, Play, Share2 } from "lucide-react";
+import { ArrowLeft, Check, ChevronLeft, Crosshair, Flag, Footprints, Goal, HelpCircle, Play, Share2, X, Zap } from "lucide-react";
 import type { PlayerStats, Stats } from "@/components/match/MatchStats";
 import { PlayerAvatar } from "@/components/match/bits";
+import { reviewOf, useGoalVoting } from "@/components/match/GoalReview";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { ReportStrings } from "@/i18n/report-strings";
 import { useReportLayoutCopy, type LayoutStrings } from "@/i18n/report-layout-strings";
 import { useSetScore, whatsappLink, type MatchReplay, type MatchRoom, type TeamSide } from "@/lib/match-api";
 import { clock, compareHalves, formatMetric, isPersonalBest, metricValue, standOut, type ReportMetric } from "@/lib/match-report";
 import { findPath } from "@/lib/find-nav";
+import { buildTimeline, filterTimeline, timelineFilters, type TimelineEvent, type TimelineFilter } from "@/lib/match-timeline";
 import { RADAR_AXES, radarFor, radarPoints, rateMatch, ratingBand, type RatablePlayer } from "@/lib/replay-rating";
 import { cn } from "@/lib/utils";
 import { MatchReelRow } from "./CompactReport";
@@ -37,7 +39,7 @@ export type SofaProps = {
   overviewExtras?: ReactNode;
 };
 
-type Tab = "overview" | "players" | "player";
+type Tab = "overview" | "moments" | "players" | "player";
 
 const BAND_CLASS = {
   great: "bg-turf text-void",
@@ -163,8 +165,8 @@ function SofaHeader({ room, copy, S, colors, names, replay, onShare, tab, setTab
           )}
         </div>
       )}
-      <div role="tablist" aria-label={S.tabOverview} className="-mx-4 grid grid-cols-3 border-b border-line px-4">
-        {([["overview", S.tabOverview], ["players", S.tabPlayers], ["player", S.tabYou]] as Array<[Tab, string]>).map(([id, label]) => (
+      <div role="tablist" aria-label={S.tabOverview} className="-mx-4 grid grid-cols-4 border-b border-line px-4">
+        {([["overview", S.tabOverview], ["moments", S.tabMoments], ["players", S.tabPlayers], ["player", S.tabYou]] as Array<[Tab, string]>).map(([id, label]) => (
           <button
             key={id}
             type="button"
@@ -557,6 +559,203 @@ function PlayerPage({ room, S, r, me, player, players, ratings, stats, durationS
   );
 }
 
+/* ------------------------------------------------------------------ moments */
+
+function TimelineDivider({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative flex justify-center py-2">
+      <span className="bg-void px-2.5 text-[11px] font-bold tracking-wide text-muted-text rtl:tracking-normal">{children}</span>
+    </div>
+  );
+}
+
+function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, vote, pending }: {
+  event: TimelineEvent; room: MatchRoom; copy: Copy; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
+  canVote: boolean; vote: ReturnType<typeof useGoalVoting>["vote"]; pending: boolean;
+}) {
+  const href = watchHref(room, event.at);
+  const teamName = event.team ? names[event.team] : null;
+  let icon: ReactNode;
+  let title: ReactNode;
+  let sub: ReactNode = null;
+  switch (event.kind) {
+    case "goal":
+      icon = <Goal className="h-4 w-4" />;
+      title = event.ownGoal ? S.ownGoal : event.mine ? r.you : event.scorer ? firstName(event.scorer.name) : teamName ?? L.goal;
+      sub = event.score ? <Num>{`${event.score.a} – ${event.score.b}`}</Num> : event.ownGoal && teamName ? <bdi>{teamName}</bdi> : L.goal;
+      break;
+    case "likely":
+      icon = <HelpCircle className="h-4 w-4" />;
+      title = S.goalQ;
+      sub = event.ownGoal ? S.ownGoal : event.scorer && !event.mine ? <bdi>{firstName(event.scorer.name)}</bdi> : S.replayUnsure;
+      break;
+    case "chance":
+      icon = <Crosshair className="h-4 w-4" />;
+      title = S.chance;
+      sub = teamName ? <bdi>{teamName}</bdi> : null;
+      break;
+    case "sprint":
+      icon = <Zap className="h-4 w-4" />;
+      title = S.yourFastest;
+      sub = event.speedKmh !== null ? <><Num>{event.speedKmh.toFixed(1)}</Num> {L.kmh}</> : null;
+      break;
+    case "dribble":
+      icon = <Footprints className="h-4 w-4" />;
+      title = S.dribbleWon;
+      sub = r.you;
+      break;
+    case "shot":
+      icon = <Crosshair className="h-4 w-4" />;
+      title = S.shot;
+      sub = r.you;
+      break;
+    case "flag":
+      icon = <Flag className="h-4 w-4" />;
+      title = event.flag ? copy.flagKinds[event.flag.kind] ?? event.flag.kind : S.flagged;
+      sub = event.flag?.byName ? <bdi>{S.byName(event.flag.byName)}</bdi> : null;
+      break;
+  }
+  const row = event.row;
+  const votable = event.kind === "likely" && canVote && row !== null && row.key !== undefined;
+  const dashed = event.kind === "likely" || event.kind === "chance";
+  // The edge that faces the line carries the team colour.
+  const edge = event.side === "start" ? "border-e-[3px]" : event.side === "end" ? "border-s-[3px]" : "";
+  const cls = cn(
+    "flex min-h-[52px] flex-col justify-center gap-1.5 rounded-xl px-2.5 py-2 text-start",
+    event.mine ? "border border-floodlight/50 bg-floodlight/[0.08]" : dashed ? "border border-dashed border-[#5B6680]" : cn("bg-surface", edge),
+  );
+  const style = !event.mine && !dashed && event.team ? { borderColor: visibleColour(colors[event.team], event.team === "A" ? "#F2F4F8" : "#FF6B1A") } : undefined;
+  const body = (
+    <span className="flex items-center gap-2">
+      <span className={cn("shrink-0", event.mine ? "text-floodlight" : dashed ? "text-muted-text" : "text-text")}>{icon}</span>
+      <span className="min-w-0 flex-1 text-xs leading-snug">
+        <b className="block break-words text-[13px]">{typeof title === "string" ? <bdi>{title}</bdi> : title}</b>
+        {sub && <span className="block break-words text-muted-text">{sub}</span>}
+      </span>
+      {href && <Play className="h-3.5 w-3.5 shrink-0 fill-current text-turf" aria-hidden="true" />}
+    </span>
+  );
+  if (votable && row) {
+    return (
+      <div className={cls} style={style} data-testid={`moment-${event.kind}`}>
+        {href ? <Link href={href} className="block">{body}</Link> : body}
+        <span className="flex gap-1.5">
+          <button type="button" disabled={pending} onClick={() => vote(row, "goal")} className={cn("inline-flex min-h-8 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-1.5 text-[11px] font-bold disabled:opacity-50", row.myVote === "goal" ? "bg-turf text-void" : "border border-turf/50 text-turf")}>
+            <Check className="h-3.5 w-3.5 shrink-0" />{copy.gvYes}
+          </button>
+          <button type="button" disabled={pending} onClick={() => vote(row, "not_goal")} className={cn("inline-flex min-h-8 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-1.5 text-[11px] font-bold disabled:opacity-50", row.myVote === "not_goal" ? "bg-muted-text text-void" : "border border-line text-muted-text")}>
+            <X className="h-3.5 w-3.5 shrink-0" />{copy.gvNo}
+          </button>
+        </span>
+      </div>
+    );
+  }
+  return href
+    ? <Link href={href} className={cls} style={style} data-testid={`moment-${event.kind}`}>{body}</Link>
+    : <div className={cls} style={style} data-testid={`moment-${event.kind}`}>{body}</div>;
+}
+
+function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSeconds }: {
+  room: MatchRoom; copy: Copy; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
+  replay: MatchReplay | undefined; me: PlayerStats; durationSeconds: number;
+}) {
+  const [filter, setFilter] = useState<TimelineFilter>("all");
+  const { vote, pending, error } = useGoalVoting(room.code);
+  const timeline = useMemo(() => buildTimeline({
+    review: reviewOf(replay),
+    teamCount: room.teamCount,
+    gameCount: room.games.length,
+    roomScore: room.score,
+    me: room.me ? { playerId: me.playerId, team: me.team, topSpeedKmh: me.topSpeedKmh, report: me.report ?? null } : null,
+    marks: room.marks,
+  }), [replay, room.teamCount, room.games.length, room.score, room.me, room.marks, me]);
+  const filters = timelineFilters(timeline.events, room.me !== null);
+  const active = filters.some((f) => f.id === filter) ? filter : "all";
+  const shown = filterTimeline(timeline.events, active);
+  const two = timeline.columns === 2;
+  const canVote = Boolean(replay?.canVoteGoals);
+  const label: Record<TimelineFilter, string> = { all: S.filterAll, goals: S.filterGoals, chances: S.filterChances, mine: S.filterMine };
+  const totalMin = Math.max(1, Math.round(durationSeconds / 60));
+
+  if (!timeline.events.length) {
+    return (
+      <div className="flex flex-col gap-3 pt-3" data-testid="sofa-moments">
+        <p className="rounded-[14px] bg-surface px-3.5 py-4 text-sm text-muted-text">{S.noMoments}</p>
+        {room.me && <MatchReelRow room={room} L={L} r={r} />}
+      </div>
+    );
+  }
+
+  const bubble = (event: TimelineEvent) => (
+    <span className={cn(
+      "z-[1] flex h-6 min-w-9 items-center justify-center justify-self-center rounded-full px-1.5 text-[11px] font-bold",
+      event.mine ? "bg-floodlight text-void" : event.kind === "likely" || event.kind === "chance" ? "border border-dashed border-[#5B6680] bg-void text-muted-text" : "border border-line bg-surface",
+    )}><Num>{`${event.minute}′`}</Num></span>
+  );
+  const card = (event: TimelineEvent) => <MomentCard event={event} room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={names} canVote={canVote} vote={vote} pending={pending} />;
+
+  return (
+    <div className="flex flex-col gap-3 pt-3" data-testid="sofa-moments">
+      {filters.length > 1 && (
+        <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4" role="tablist" aria-label={S.tabMoments}>
+          {filters.map((f) => (
+            <button key={f.id} type="button" role="tab" aria-selected={active === f.id} onClick={() => setFilter(f.id)} className={cn("min-h-9 shrink-0 rounded-full px-3 text-xs font-bold", active === f.id ? (f.id === "mine" ? "bg-floodlight text-void" : "bg-text text-void") : f.id === "mine" ? "border border-floodlight/50 text-floodlight" : "border border-line text-muted-text")} data-testid={`moments-filter-${f.id}`}>
+              {label[f.id]}{f.id !== "all" && <> <Num>{f.count}</Num></>}
+            </button>
+          ))}
+        </div>
+      )}
+      {two && (
+        <div className="flex items-center justify-between text-[11px] font-semibold text-muted-text">
+          <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full" style={{ background: visibleColour(colors.A, "#F2F4F8") }} /><bdi>{names.A}</bdi></span>
+          <span className="flex items-center gap-1.5"><bdi>{names.B}</bdi><i className="h-2 w-2 rounded-full" style={{ background: visibleColour(colors.B, "#FF6B1A") }} /></span>
+        </div>
+      )}
+      <div className="relative" data-testid="moments-timeline">
+        <span aria-hidden="true" className={cn("absolute bottom-0 top-0 w-0.5 bg-line", two ? "start-[calc(50%-1px)]" : "start-[21px]")} />
+        <TimelineDivider>{S.kickOff(kickOff(room.startMs))}</TimelineDivider>
+        {shown.length === 0 && <p className="relative bg-void py-3 text-center text-xs text-muted-text">{S.nothingHere}</p>}
+        <ol className="flex flex-col gap-2">
+          {shown.map((event) => (
+            <li key={event.id} className={cn("relative grid items-center gap-1.5", two ? "grid-cols-[minmax(0,1fr)_44px_minmax(0,1fr)]" : "grid-cols-[44px_minmax(0,1fr)]")}>
+              {two ? (
+                event.side === "centre" ? (
+                  <div className="col-span-3 flex flex-col items-center gap-1">
+                    {bubble(event)}
+                    <span className="min-w-0 max-w-[75%]">{card(event)}</span>
+                  </div>
+                ) : event.side === "start" ? (
+                  <>
+                    <span className="min-w-0">{card(event)}</span>
+                    {bubble(event)}
+                    <span />
+                  </>
+                ) : (
+                  <>
+                    <span />
+                    {bubble(event)}
+                    <span className="min-w-0">{card(event)}</span>
+                  </>
+                )
+              ) : (
+                <>
+                  {bubble(event)}
+                  <span className="min-w-0">{card(event)}</span>
+                </>
+              )}
+            </li>
+          ))}
+        </ol>
+        <TimelineDivider>
+          {S.fullTime}{timeline.finalScore ? <> · <Num>{`${timeline.finalScore.a} – ${timeline.finalScore.b}`}</Num></> : <> · <Num>{`${totalMin}′`}</Num></>}
+        </TimelineDivider>
+      </div>
+      {error && <p className="text-xs font-semibold text-live">{copy.gvVoteError}</p>}
+      {room.me && <MatchReelRow room={room} L={L} r={r} />}
+    </div>
+  );
+}
+
 /* ------------------------------------------------------------------ the layout */
 
 export function SofaLayout({ room, copy, r, colors, names, replay, stats, me, players, durationSeconds, onShare, overviewExtras }: SofaProps) {
@@ -578,6 +777,7 @@ export function SofaLayout({ room, copy, r, colors, names, replay, stats, me, pl
     <div className="flex flex-col" data-testid="report-layout-sofa">
       <SofaHeader room={room} copy={copy} S={S} colors={colors} names={teamNames} replay={replay} onShare={onShare} tab={tab === "player" && selected !== null ? "players" : tab} setTab={(next) => { setTab(next); setSelected(null); }} />
       {tab === "overview" && <Overview room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={teamNames} stats={stats} me={me} players={players} ratings={ratings} onOpenMe={() => open(me.playerId)} extras={overviewExtras} />}
+      {tab === "moments" && <MomentsTab room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={teamNames} replay={replay} me={me} durationSeconds={durationSeconds} />}
       {tab === "players" && <PlayersTab room={room} r={r} S={S} L={L} colors={colors} names={teamNames} me={me} players={players} ratings={ratings} findRecordingId={findRecordingId} onOpen={open} />}
       {tab === "player" && <PlayerPage room={room} S={S} r={r} me={me} player={shown} players={players} ratings={ratings} stats={stats} durationSeconds={durationSeconds} onBack={selected !== null ? () => setTab("players") : null} />}
     </div>
