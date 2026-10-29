@@ -38,6 +38,7 @@ import ownerRouter from "./owner";
 import {
   ammanLocalInstant,
   ensureRoomForRequest,
+  hideCompletedFindRecordingIds,
   matchPhase,
   normalizePhone,
   voteOpen,
@@ -147,6 +148,19 @@ describe("match room helpers", () => {
     expect(Number.isNaN(ammanLocalInstant("nonsense"))).toBe(true);
   });
 
+  it("hides a find link only for a recording the player completed", () => {
+    const items = [
+      { code: "DONE", findRecordingId: 41 },
+      { code: "NOT-STARTED", findRecordingId: null },
+      { code: "IN-PROGRESS", findRecordingId: 42 },
+    ];
+    expect(hideCompletedFindRecordingIds(items, new Set([41]))).toEqual([
+      { code: "DONE", findRecordingId: null },
+      { code: "NOT-STARTED", findRecordingId: null },
+      { code: "IN-PROGRESS", findRecordingId: 42 },
+    ]);
+  });
+
   it("normalizes Jordanian phone spellings to one form", () => {
     expect(normalizePhone("079 123 4567")).toBe("+962791234567");
     expect(normalizePhone("00962791234567")).toBe("+962791234567");
@@ -191,7 +205,7 @@ describe("a match from invite to vote", () => {
     // What Replay saw: nothing yet, and open to anyone with the link.
     const replay = await request(app).get(`/api/m/${room.code}/replay`);
     expect(replay.status).toBe(200);
-    expect(replay.body).toEqual({ recordings: [], goals: [], review: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals: false });
+    expect(replay.body).toEqual({ recordings: [], findRecordingId: null, goals: [], review: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals: false });
 
     // The owner sees the captain link.
     const owner = await request(app).get(`/api/m/${room.code}`).set(as("owner"));

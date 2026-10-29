@@ -21,6 +21,15 @@ export const VOTE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const FOOTAGE_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
 // Prices live in Admin -> Settings; see lib/commerce.ts.
 
+export function hideCompletedFindRecordingIds<T extends { findRecordingId?: number | null }>(
+  items: T[],
+  completedRecordingIds: ReadonlySet<number>,
+): T[] {
+  return items.map((item) => item.findRecordingId != null && completedRecordingIds.has(item.findRecordingId)
+    ? { ...item, findRecordingId: null }
+    : item);
+}
+
 export type TeamSide = "A" | "B" | "C";
 
 export function teamSides(teamCount: number): TeamSide[] {

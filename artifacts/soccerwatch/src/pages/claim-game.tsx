@@ -41,6 +41,7 @@ import { useAuth } from "@/lib/auth";
 import { checkDeckKey, useCheckDeck } from "@/lib/check-deck";
 import { useCheckCopy } from "@/i18n/check-strings";
 import { useFriends, useSendPlayerIdentificationRequest } from "@/lib/friends-api";
+import { matchKey, myMatchesKey } from "@/lib/match-api";
 import { useGameCopy, type GameStrings } from "@/i18n/game-strings";
 import { GameMedia, type MediaHandle, type MediaView, type TapHit } from "@/components/game-claim/GameMedia";
 import { Btn, Chip, ChunkTimeline, Crop, Eyebrow, GameTimeline, Lede, ProgressRail, Row, Section, Stat, Title } from "@/components/game-claim/bits";
@@ -483,6 +484,12 @@ export function GameClaim({
           return false;
         }
         setSaveError(false);
+        if (body.done) {
+          void queryClient.invalidateQueries({ queryKey: myMatchesKey });
+          if (reportMatchCode) {
+            void queryClient.invalidateQueries({ queryKey: [...matchKey(reportMatchCode), "replay"] });
+          }
+        }
         if (body.name && pendingClaimName.current === body.name) {
           pendingClaimName.current = null;
           void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
@@ -508,7 +515,7 @@ export function GameClaim({
       setSaveError(true);
       return false;
     }
-  }, [fingerprint, loadChunk, recordingId, queryClient]);
+  }, [fingerprint, loadChunk, recordingId, queryClient, reportMatchCode]);
 
   const save = useCallback((options: { immediate?: boolean; keepalive?: boolean } = {}) => {
     if (saveTimer.current !== null) {

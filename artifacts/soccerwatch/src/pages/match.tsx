@@ -338,7 +338,7 @@ export default function MatchPage() {
 
       <div className="flex flex-col gap-4 px-4 pb-16 pt-4">
         {activeTab === "overview" && (
-          <Overview room={room} copy={copy} colors={colors} names={names} now={now} inviteText={inviteText} onShare={onShare} findRecordingId={replay.data?.recordings[0] ?? null} />
+          <Overview room={room} copy={copy} colors={colors} names={names} now={now} inviteText={inviteText} onShare={onShare} findRecordingId={replay.data?.findRecordingId ?? null} />
         )}
         {activeTab === "overview" && !preview && (room.isOwner || room.canManage) && (
           <div className="flex flex-wrap gap-2">

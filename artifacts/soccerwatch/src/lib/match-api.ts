@@ -390,6 +390,8 @@ export function useMatchClips(code: string, enabled = true) {
 /** What Replay saw of the match (GET /m/:code/replay): claimable recordings and the goals it spotted. */
 export type MatchReplay = {
   recordings: number[];
+  /** The first recording the current player still needs to find themselves in. */
+  findRecordingId: number | null;
   /** the goals: confirmed ones only, so anything listing or counting goals reads this */
   goals: Array<{
     atSeconds: number;

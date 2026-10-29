@@ -1002,6 +1002,8 @@ export function oneChanceEach(goals: ReplayGoal[]): ReplayGoal[] {
 
 export async function matchReplay(ctx: RoomContext, viewerUserId: number | null = null): Promise<{
   recordings: number[];
+  /** The first recording this viewer still needs to find themselves in. */
+  findRecordingId: number | null;
   /**
    * The goals: confirmed ones only. Every screen that lists or counts goals
    * reads this, so an unconfirmed chance must never be in it (2026-10-25: with
@@ -1085,8 +1087,20 @@ export async function matchReplay(ctx: RoomContext, viewerUserId: number | null 
   const suggested = ctx.room.teamCount < 3 && counted.length && sided.length === counted.length
     ? { a: sided.filter((g) => g.side === "A").length, b: sided.filter((g) => g.side === "B").length }
     : null;
+  const recordings = [...new Set(plays.map((p) => p.link.recordingId))];
+  const completedFinds = viewerUserId !== null && recordings.length
+    ? await db.select({ recordingId: claimMatchProgressTable.recordingId })
+      .from(claimMatchProgressTable)
+      .where(and(
+        eq(claimMatchProgressTable.userId, viewerUserId),
+        eq(claimMatchProgressTable.completed, true),
+        inArray(claimMatchProgressTable.recordingId, recordings),
+      ))
+    : [];
+  const completedRecordingIds = new Set(completedFinds.map(({ recordingId }) => recordingId));
   return {
-    recordings: [...new Set(plays.map((p) => p.link.recordingId))],
+    recordings,
+    findRecordingId: recordings.find((recordingId) => !completedRecordingIds.has(recordingId)) ?? null,
     goals: counted,
     review,
     shots: ctx.room.teamCount < 3 ? shots : null,

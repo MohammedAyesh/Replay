@@ -9,6 +9,7 @@ import {
   fieldOwnersTable,
   fieldsTable,
   footageRequestsTable,
+  claimMatchProgressTable,
   matchGamesTable,
   matchPlayersTable,
   matchRoomsTable,
@@ -49,6 +50,7 @@ import {
   roomsForUser,
   rosterFor,
   voteOpen,
+  hideCompletedFindRecordingIds,
   VAR_CLOSE_AFTER_MS,
   VAR_OPEN_BEFORE_MS,
   type RoomContext,
@@ -658,7 +660,7 @@ router.get("/m/:code/replay", async (req, res): Promise<void> => {
     res.json({ ...(await matchReplay(ctx, viewer && !viewer.isGuest ? viewer.id : null)), canVoteGoals });
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "match replay failed");
-    res.json({ recordings: [], goals: [], review: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals });
+    res.json({ recordings: [], findRecordingId: null, goals: [], review: [], shots: null, suggested: null, flow: { phases: null, inPlay: null }, canVoteGoals });
   }
 });
 
@@ -763,7 +765,7 @@ router.get("/me/matches", async (req, res): Promise<void> => {
     logger.warn({ userId: user.id, err: error }, "Could not work out the free match");
     return null;
   });
-  const items = await Promise.all(rooms.map(async (ctx) => {
+  const itemsWithFindRecordings = await Promise.all(rooms.map(async (ctx) => {
     const roster = await rosterFor(ctx.room.id);
     const me = roster.find((p) => p.userId === user.id) ?? null;
     const inviter = me?.rsvp === "invited" && me.invitedByPlayerId
@@ -805,6 +807,22 @@ router.get("/me/matches", async (req, res): Promise<void> => {
         : null,
     };
   }));
+  const findRecordingIds = [...new Set(itemsWithFindRecordings
+    .map((item) => item.findRecordingId)
+    .filter((id): id is number => id !== null))];
+  const completedFindRows = findRecordingIds.length
+    ? await db.select({ recordingId: claimMatchProgressTable.recordingId })
+      .from(claimMatchProgressTable)
+      .where(and(
+        eq(claimMatchProgressTable.userId, user.id),
+        eq(claimMatchProgressTable.completed, true),
+        inArray(claimMatchProgressTable.recordingId, findRecordingIds),
+      ))
+    : [];
+  const items = hideCompletedFindRecordingIds(
+    itemsWithFindRecordings,
+    new Set(completedFindRows.map(({ recordingId }) => recordingId)),
+  );
 
   // Invites by phone or email: placeholders someone added for this person.
   const phone = normalizePhone(user.phone);

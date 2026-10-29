@@ -45,7 +45,7 @@ export default function MatchReportDevPreview() {
       {!import.meta.env.DEV ? <p>Not found</p> : (
         <MatchReport
           room={fixture(ready)} copy={copy} now={Date.now()} colors={{ A: "#2FD8C4", B: "#7B5CFF", C: "#2FD8C4" }}
-          names={{ A: copy.teamA, B: copy.teamB, C: copy.teamC }} replay={{ recordings: [], goals: [], shots: null, suggested: null }}
+          names={{ A: copy.teamA, B: copy.teamB, C: copy.teamC }} replay={{ recordings: [], findRecordingId: null, goals: [], shots: null, suggested: null }}
           onShare={() => {}} inviteText="Replay match: https://example.test/m/W5DEMO"
           slots={{ rsvp: null, booking: null, lockedStats: null, teams: null, invite: null, captainTools: null }}
         />
