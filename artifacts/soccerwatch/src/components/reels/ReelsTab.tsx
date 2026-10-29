@@ -191,12 +191,14 @@ function Thumb({ clip, className }: { clip: UserClip | undefined; className?: st
 
 /* ------------------------------------------------------------------ */
 
-function ReelBuilder({
+export function ReelBuilder({
   open,
   onOpenChange,
   clips: allClips,
   initialPicked,
   focusIds,
+  initialStep = "pick",
+  onCreated,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -205,6 +207,10 @@ function ReelBuilder({
   initialPicked?: number[];
   /** clips to list first: the ones from that match */
   focusIds?: Set<number>;
+  /** "details" when the clips were already picked (the moments deck) */
+  initialStep?: "pick" | "details";
+  /** after the reel has been asked for */
+  onCreated?: (reel: UserReel) => void;
 }) {
   const clips = useMemo(
     () => (focusIds?.size ? [...allClips.filter((c) => focusIds.has(c.id)), ...allClips.filter((c) => !focusIds.has(c.id))] : allClips),
@@ -214,7 +220,8 @@ function ReelBuilder({
   const label = useClipLabel();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [step, setStep] = useState<"pick" | "details">("pick");
+  const [step, setStep] = useState<"pick" | "details">(() =>
+    (initialStep === "details" && (initialPicked?.length ?? 0) >= REEL_MIN_CLIPS ? "details" : "pick"));
   const [picked, setPicked] = useState<number[]>(() => initialPicked ?? []);
   const [title, setTitle] = useState(copy.defaultTitle);
   const [endScreen, setEndScreen] = useState<EndScreenChoice | null>(null);
@@ -245,6 +252,7 @@ function ReelBuilder({
       queryClient.setQueryData<UserReel[]>(REELS_QUERY_KEY, (old) => [reel, ...(old ?? [])]);
       toast({ title: copy.making, description: copy.makingDesc });
       onOpenChange(false);
+      onCreated?.(reel);
     } catch (err) {
       setError((err as Error).message || copy.createFailed);
     } finally {

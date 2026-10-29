@@ -1332,6 +1332,40 @@ export function cleanupTempFile(filePath: string): void {
  *   The subsequent CRF23/veryfast main encode reads from a fully local file,
  *   eliminating the live-network stalls that caused freeze/stutter in exports.
  */
+/**
+ * Put an already-cut clip (a saved export: 1920x1080, or 608x1080 for 9:16)
+ * back on a source-sized canvas, centred where a still crop of that shape
+ * takes its frame, so renderClip — which reads every source as SRC_W x SRC_H
+ * — crops out exactly that clip. Returns the canvas file and the crop to use.
+ */
+export async function placeOnSourceCanvas(
+  input: string,
+  is9to16: boolean,
+): Promise<{ path: string; cropPath: { t: number; x: number; y: number; w: number; h: number }[] }> {
+  const { w: OUT_W } = getOutputDims(is9to16);
+  const x = Math.round((SRC_W - OUT_W) / 2);
+  const out = path.join(os.tmpdir(), `soccerwatch-canvas-${randomUUID()}.mp4`);
+  try {
+    await run("ffmpeg", [
+      "-nostdin", "-y", "-v", "error", "-i", input,
+      "-vf", `scale=${OUT_W}:${SRC_H}:force_original_aspect_ratio=decrease,pad=${OUT_W}:${SRC_H}:(ow-iw)/2:(oh-ih)/2,pad=${SRC_W}:${SRC_H}:${x}:0,setsar=1`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", "-c:a", "copy", out,
+    ]);
+  } catch (err) {
+    cleanupTempFile(out);
+    throw err;
+  }
+  return { path: out, cropPath: [{ t: 0, x: x / SRC_W, y: 0, w: OUT_W / SRC_W, h: 1 }] };
+}
+
+/** Length of a local media file, seconds (ffprobe format=duration). */
+export async function probeFileDuration(filePath: string): Promise<number> {
+  const out = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filePath]);
+  const seconds = parseFloat(out.trim());
+  if (!isFinite(seconds) || seconds <= 0) throw new Error(`Could not read the length of ${filePath}`);
+  return seconds;
+}
+
 export async function bufferRemoteClip(options: {
   remoteUrl: string;
   referer: string;

@@ -288,6 +288,39 @@ export function isSoftDeletedClip(clip: { hiddenReason?: string | null }): boole
   return clip.hiddenReason === "deleted";
 }
 
+/** "Pass found · 18 m · 26:36" -> "pass found": the kind of moment, without its numbers. */
+export function momentTitleKind(title: string): string {
+  return title.split(" · ")[0].trim().toLowerCase();
+}
+
+/** How far apart, in seconds of the recording, two clips of one moment can start. */
+export const SAME_MOMENT_SECONDS = 2;
+
+/**
+ * The clip already made for this moment, if any: same kind of moment, and a
+ * window starting and ending within SAME_MOMENT_SECONDS of this one. Hidden and
+ * deleted clips count, so a moment the player removed is never made again.
+ * The closest one wins when several qualify.
+ */
+export function findSameMomentClip<T extends { title: string; startTime: string; endTime: string }>(
+  candidates: readonly T[],
+  wanted: { title: string; startTime: number; endTime: number },
+  recordingDuration: number,
+): T | undefined {
+  if (!(recordingDuration > 0)) return undefined;
+  const kind = momentTitleKind(wanted.title);
+  let best: T | undefined;
+  let bestGap = Infinity;
+  for (const candidate of candidates) {
+    if (momentTitleKind(candidate.title) !== kind) continue;
+    const startGap = Math.abs(parseFloat(candidate.startTime) - wanted.startTime) * recordingDuration;
+    const endGap = Math.abs(parseFloat(candidate.endTime) - wanted.endTime) * recordingDuration;
+    if (!(startGap <= SAME_MOMENT_SECONDS && endGap <= SAME_MOMENT_SECONDS)) continue;
+    if (startGap < bestGap) { best = candidate; bestGap = startGap; }
+  }
+  return best;
+}
+
 /**
  * Claim-moment materialization may auto-start a local export for a new or
  * orphaned clip, but must not take work already assigned to another renderer.
@@ -393,18 +426,23 @@ export async function ensureClaimMomentUserClip(options: {
   const endTime = Math.max(startTime, Math.min(1, endSeconds / recordingDuration));
   const title = moment.title;
 
+  // One clip per moment, ever. Titles carry metres that change when the
+  // pitch model or the rules change ("Pass found · 22 m" became "· 16 m"), so
+  // matching on the exact title made a second clip of the same moment and
+  // brought back clips the player had hidden or deleted (Ehab, rec 394,
+  // 2026-10-29). Match on the kind of moment and where it sits instead.
   const candidates = await db
     .select()
     .from(userClipsTable)
     .where(and(
       eq(userClipsTable.userId, userId),
       eq(userClipsTable.videoId, videoId),
-      eq(userClipsTable.title, title),
     ));
-  let clip = candidates.find((candidate) =>
-    Math.abs(parseFloat(candidate.startTime) - startTime) < 0.0001 &&
-    Math.abs(parseFloat(candidate.endTime) - endTime) < 0.0001,
-  );
+  let clip = findSameMomentClip(candidates, { title, startTime, endTime }, recordingDuration);
+  // A moment the player deleted stays deleted: no new clip, no export.
+  if (clip && isSoftDeletedClip(clip)) {
+    return { userClipId: clip.id, exportStatus: publicExportStatus(clip.exportStatus) };
+  }
 
   if (!clip) {
     const cropPath = followCrop(options.follow, videoStartSeconds, startSeconds, endSeconds, options.sourceAspect ?? 3840 / 1080);

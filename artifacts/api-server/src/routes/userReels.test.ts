@@ -247,6 +247,63 @@ describe("changing and deleting a reel", () => {
   }, 200_000);
 });
 
+describe("a reel after the match video is gone", () => {
+  it("is made from the clips' saved copies, and says so plainly when a clip has none", async () => {
+    const bunny = await import("../lib/bunny");
+    const info = vi.mocked(bunny.getBunnyVideoInfo);
+    // Two saved copies, already cut and framed (9:16), 2 s and 3 s, at a size
+    // the renderer does not expect (1080x1920): red over blue, so a wrong crop shows.
+    const saved = async (seconds: number, color: string) => {
+      const [row] = await db.insert(userClipsTable).values({
+        userId: ownerId, videoId: "00000000-0000-0000-0000-0000000000bb", title: `saved ${color}`,
+        startTime: "0.1", endTime: "0.2", aspectRatio: "9:16", exportStatus: "done",
+      }).returning({ id: userClipsTable.id });
+      const remote = `clips/${row.id}.mp4`;
+      const file = path.join(work, `saved-${row.id}.mp4`);
+      execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error",
+        "-f", "lavfi", "-i", `color=c=red:s=1080x960:d=${seconds}:r=30`, "-f", "lavfi", "-i", `color=c=blue:s=1080x960:d=${seconds}:r=30`,
+        "-f", "lavfi", "-i", `sine=f=440:r=44100:d=${seconds}`, "-filter_complex", "[0:v][1:v]vstack=inputs=2[v]", "-map", "[v]", "-map", "2:a",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-t", String(seconds), file]);
+      stored.set(remote, file);
+      await db.update(userClipsTable).set({ exportedUrl: `https://storage.bunnycdn.com/galaxyfield/${remote}` }).where(eq(userClipsTable.id, row.id));
+      return row.id;
+    };
+    const a = await saved(2, "red");
+    const b = await saved(3, "green");
+    info.mockImplementation(async (videoId: string) => {
+      if (videoId.endsWith("bb")) throw new bunny.BunnyVideoNotFoundError(videoId);
+      return { duration: 10, hasMP4Fallback: false, availableResolutions: "1080p" } as Awaited<ReturnType<typeof bunny.getBunnyVideoInfo>>;
+    });
+    try {
+      const res = await request(app).post("/api/user-reels").send({ title: "Kept", clipIds: [a, b], endScreen: { card: "signOff" } });
+      expect(res.status).toBe(201);
+      const reel = await waitForReel(res.body.id);
+      expect(reel.exportError).toBeNull();
+      expect(reel.exportStatus).toBe("done");
+      expect(reel.durationSec).toBe(5);
+      // 2 s + 3 s from the saved copies, then the 3 s card after the last one.
+      const out = stored.get(reel.exportPath!)!;
+      expect(Math.abs(probeDuration(out) - 8)).toBeLessThan(0.4);
+      // The whole saved frame, scaled into the reel's 608x1080: red on top, blue below.
+      const pixel = (y: number) => [...execFileSync("ffmpeg", ["-v", "error", "-ss", "1", "-i", out, "-frames:v", "1",
+        "-vf", `crop=2:2:304:${y}`, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])];
+      const [top, bottom] = [pixel(100), pixel(1000)];
+      expect(top[0]).toBeGreaterThan(180); expect(top[2]).toBeLessThan(80);
+      expect(bottom[2]).toBeGreaterThan(180); expect(bottom[0]).toBeLessThan(80);
+
+      // A clip whose match is gone and that was never saved cannot be in a reel.
+      await db.update(userClipsTable).set({ exportStatus: null, exportedUrl: null }).where(eq(userClipsTable.id, b));
+      const again = await request(app).post("/api/user-reels").send({ clipIds: [a, b] });
+      const failed = await waitForReel(again.body.id);
+      expect(failed.exportStatus).toBe("expired");
+      const shown = await request(app).get(`/api/user-reels/${failed.id}`);
+      expect(shown.body.errorCode).toBe("source_gone");
+    } finally {
+      info.mockImplementation(async () => ({ duration: 10, hasMP4Fallback: false, availableResolutions: "1080p" }) as Awaited<ReturnType<typeof bunny.getBunnyVideoInfo>>);
+    }
+  }, 200_000);
+});
+
 describe("downloading a reel", () => {
   it("counts every clip in it against the allowance, and refuses rather than half-count", async () => {
     const created = await request(app).post("/api/user-reels").send({ clipIds: [portraitA, portraitB] });

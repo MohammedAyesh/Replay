@@ -26,6 +26,8 @@ import { getLocalUserId } from "../lib/clerkUserBridge";
 import { getBufferedWindow } from "../lib/ffmpegExport";
 import {
   canAutoQueueClaimMomentExport,
+  findSameMomentClip,
+  momentTitleKind,
   normalizeExportWindow,
   selectExportSource,
   ExportSourceUnavailableError,
@@ -184,6 +186,44 @@ describe("claim-moment export auto-queue ownership", () => {
     // eligible for the existing recovery path.
     expect(canAutoQueueClaimMomentExport("pending", false)).toBe(true);
     expect(canAutoQueueClaimMomentExport(null, true)).toBe(false);
+  });
+});
+
+describe("one clip per moment", () => {
+  // Ehab, rec 394 (7200.7 s): clips made on 22 Oct before the metres changed.
+  const D = 7200.7;
+  const at = (start: number) => ({ startTime: String(start / D), endTime: String((start + 16) / D) });
+  const old = [
+    { id: 1076, title: "Pass found · 22 m · 14:48", ...at(880.5) },
+    { id: 1080, title: "Pass found · 28 m · 26:36", ...at(1589.7) },
+    { id: 1079, title: "Your dribble · 6 m past 1 player · 48:36", ...at(2908.5) },
+  ];
+
+  it("reads the kind of moment without its numbers", () => {
+    expect(momentTitleKind("Pass found · 18 m · 26:36")).toBe("pass found");
+    expect(momentTitleKind("Your shot on target · 25:41")).toBe("your shot on target");
+  });
+
+  it("finds the clip already made for a moment whose title changed", () => {
+    const wanted = { title: "Pass found · 16 m · 14:48", startTime: 880.8 / D, endTime: 896.8 / D };
+    expect(findSameMomentClip(old, wanted, D)?.id).toBe(1076);
+    const hidden = { title: "Pass found · 18 m · 26:36", startTime: 1589.2 / D, endTime: 1605.2 / D };
+    expect(findSameMomentClip(old, hidden, D)?.id).toBe(1080);
+  });
+
+  it("keeps different moments and different kinds apart", () => {
+    // a pass 3 s later is another pass
+    expect(findSameMomentClip(old, { title: "Pass found · 16 m · 14:51", startTime: 883.6 / D, endTime: 899.6 / D }, D)).toBeUndefined();
+    // a shot at the same second as a pass is its own moment
+    expect(findSameMomentClip(old, { title: "Your shot on target · 14:48", startTime: 880.5 / D, endTime: 896.5 / D }, D)).toBeUndefined();
+    // the player's own cuts never match a moment
+    expect(findSameMomentClip([{ id: 1, title: "E-Long pass 17_2026-10-12_22:00", ...at(880.5) }], { title: "Pass found · 16 m · 14:48", startTime: 880.8 / D, endTime: 896.8 / D }, D)).toBeUndefined();
+    expect(findSameMomentClip(old, { title: "Pass found · 16 m · 14:48", startTime: 880.8 / D, endTime: 896.8 / D }, 0)).toBeUndefined();
+  });
+
+  it("picks the closest when two qualify", () => {
+    const two = [{ id: 1, title: "Pass found · 20 m · 14:48", ...at(881.9) }, { id: 2, title: "Pass found · 20 m · 14:48", ...at(880.6) }];
+    expect(findSameMomentClip(two, { title: "Pass found · 16 m · 14:48", startTime: 880.5 / D, endTime: 896.5 / D }, D)?.id).toBe(2);
   });
 });
 

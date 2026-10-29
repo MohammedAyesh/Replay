@@ -13,7 +13,10 @@
  * public page of its own).
  */
 import { Router, type IRouter } from "express";
-import { randomBytes } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
+import { createWriteStream } from "fs";
+import os from "os";
+import path from "path";
 import { pipeline } from "stream/promises";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db, userClipsTable, userReelsTable, type UserReelRow } from "@workspace/db";
@@ -30,7 +33,7 @@ import {
   uploadFileToBunnyStoragePath,
   deleteBunnyStoragePath,
 } from "../lib/bunny";
-import { bufferRemoteClip, cleanupTempFile, concatSegments, renderClip } from "../lib/ffmpegExport";
+import { bufferRemoteClip, cleanupTempFile, concatSegments, placeOnSourceCanvas, probeFileDuration, renderClip } from "../lib/ffmpegExport";
 import { selectExportSource } from "../lib/exportSource";
 import { renderQueue } from "../lib/renderQueue";
 import { fetchBrandingAsset } from "../lib/brandingFetch";
@@ -130,6 +133,30 @@ function brandingClip(clip: ClipRow, endScreen?: unknown) {
 class ReelSourceGone extends Error {}
 
 /**
+ * The clip's own finished export, if it has one. Exports are kept forever in
+ * Storage (clips/), so a reel can still be made from a clip whose match video
+ * the 14-day cleanup has deleted.
+ */
+export function savedExportOf(clip: { exportStatus: string | null; exportedUrl: string | null }): string | null {
+  return clip.exportStatus === "done" && clip.exportedUrl ? clip.exportedUrl : null;
+}
+
+/** Download a clip's saved export to a temporary file, with its length. */
+async function downloadSavedExport(clip: ClipRow, exportedUrl: string): Promise<{ path: string; seconds: number }> {
+  const res = await fetchExportObject(exportedUrl);
+  if (res.status === 404) throw new ReelSourceGone(`The saved copy of "${clip.title}" is missing`);
+  if (!res.ok || !res.body) throw new Error(`Could not read the saved copy of "${clip.title}" (HTTP ${res.status})`);
+  const local = path.join(os.tmpdir(), `reel-saved-${randomUUID()}.mp4`);
+  try {
+    await pipeline(readableFromUpstream(res.body as ReadableStream<Uint8Array>), createWriteStream(local));
+    return { path: local, seconds: await probeFileDuration(local) };
+  } catch (err) {
+    cleanupTempFile(local);
+    throw err;
+  }
+}
+
+/**
  * Render the reel and return the local file. Every clip is required: a reel
  * missing a clip is not the reel he made, so any clip that cannot be rendered
  * fails it (with a message saying which).
@@ -149,10 +176,45 @@ async function renderReel(reel: UserReelRow, clips: ClipRow[]): Promise<{ path: 
         info = await getBunnyVideoInfo(clip.videoId);
       } catch (err) {
         // Only a recording Bunny says is gone is gone; anything else can be retried.
-        if (err instanceof BunnyVideoNotFoundError) {
-          throw new ReelSourceGone(`The recording behind "${clip.title}" is no longer available`, { cause: err });
+        if (!(err instanceof BunnyVideoNotFoundError)) throw err;
+        // The match video is gone (14-day cleanup): make this piece from the
+        // clip's saved copy instead, which is already cut and framed. No second
+        // overlay on it (the copy may carry one); the end screen still goes on
+        // the last piece.
+        const saved = savedExportOf(clip);
+        if (!saved) throw new ReelSourceGone(`The recording behind "${clip.title}" is no longer available`, { cause: err });
+        const copy = await downloadSavedExport(clip, saved);
+        temps.push(copy.path);
+        const canvas = await placeOnSourceCanvas(copy.path, portrait);
+        temps.push(canvas.path);
+        seconds += copy.seconds;
+        if (seconds > REEL_MAX_SECONDS) throw new Error(`A reel can be ${REEL_MAX_SECONDS} seconds at most`);
+        const fieldId = await fieldIdForClip(clip.id);
+        const drawn = last
+          ? await planClipBranding(brandingClip(clip, reel.endScreen), fieldId, portrait, { academyId: clip.academyId, fieldId, userId: clip.userId }, { noEndScreen: false })
+          : null;
+        if (drawn) temps.push(...drawn.temps);
+        const options = {
+          videoUrl: canvas.path,
+          totalDuration: copy.seconds,
+          startTime: 0,
+          endTime: 1,
+          cropPath: canvas.cropPath,
+          aspectRatio: reel.aspectRatio,
+          title: clip.title,
+          normalizeAudio: true,
+        };
+        let part: string;
+        try {
+          part = await renderClip({ ...options, endScreen: drawn?.endScreen ?? undefined });
+        } catch (renderErr) {
+          logger.error({ err: renderErr, reelId: reel.id, clipId: clip.id }, "Reel piece from a saved copy failed with its end screen — rendering it plain");
+          part = await renderClip(options);
         }
-        throw err;
+        parts.push(part);
+        for (const done of [copy.path, canvas.path]) { cleanupTempFile(done); temps.splice(temps.indexOf(done), 1); }
+        logger.info({ reelId: reel.id, clipId: clip.id }, "Reel piece made from the clip's saved copy (match video gone)");
+        continue;
       }
       const window = normalizeExportWindow(parseFloat(clip.startTime), parseFloat(clip.endTime), info.duration);
       if (window.clipDuration <= 0) throw new Error(`"${clip.title}" has no footage`);

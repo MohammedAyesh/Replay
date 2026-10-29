@@ -48,9 +48,13 @@ import {
   checkInitialExportStatus,
   resolveInitialExportStatus,
 } from "@/lib/exportStatusCheck";
-import { Bookmark, CalendarDays, ChevronRight, Clock3, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send, Clapperboard, Film } from "lucide-react";
+import { AlertTriangle, Bookmark, CalendarDays, ChevronRight, Clock3, CloudCheck, Loader2, Video, Scissors, Sparkles, Trash2, X, Play, Download, Target, Trophy, Zap, Send, Clapperboard, Film } from "lucide-react";
 import { EndScreenSheet } from "@/components/end-screen/EndScreenSheet";
-import { ReelsTab } from "@/components/reels/ReelsTab";
+import { ReelsTab, ReelBuilder } from "@/components/reels/ReelsTab";
+import { MomentPicker } from "@/components/moments/MomentPicker";
+import { buildMomentDeck, momentSave, momentTitle, saveSummary, visibleMoments } from "@/lib/moment-deck";
+import { useMomentsCopy } from "@/i18n/moments-strings";
+import { REEL_MIN_CLIPS } from "@/lib/end-screen";
 import { reelMatchFromSearch } from "@/lib/match-reel";
 import { useReelCopy } from "@/i18n/reel-strings";
 import { endScreenApi } from "@/lib/end-screen";
@@ -985,7 +989,8 @@ export default function MyClips() {
   const reelMatch = reelMatchFromSearch(search);
   const [tab, setTab] = useState<Tab>(() => {
     const asked = new URLSearchParams(search).get("tab");
-    return reelMatch || asked === "reels" ? "reels" : asked === "moments" || asked === "saved" ? asked : "created";
+    // Moments first: the clips Replay made for him, each kept for good.
+    return reelMatch || asked === "reels" ? "reels" : asked === "created" || asked === "saved" ? asked : "moments";
   });
   const [activeClip, setActiveClip] = useState<UserClip | null>(null);
   const [localClips, setLocalClips] = useState<LocalClipRecord[]>([]);
@@ -1055,7 +1060,8 @@ export default function MyClips() {
   // Clips Replay cut from his match moments live only under Moments.
   const createdClips = (userClips ?? []).filter((clip) => !clip.isMatchMoment);
   const createdCount = createdClips.length;
-  const matchMomentCount = matchMomentGroups?.reduce((total, group) => total + group.clips.length, 0) ?? 0;
+  // Count what the tab shows: a moment whose clip he deleted is not listed.
+  const matchMomentCount = saveSummary(matchMomentGroups, userClipsById, !userClipsLoading && !!userClips).total;
 
   return (
       <div className="my-clips-page flex flex-1 min-h-0 flex-col overflow-hidden bg-background">
@@ -1070,10 +1076,10 @@ export default function MyClips() {
         {/* Tabs — four fit a 360 px phone: icon + short label, count only when there is room */}
         <div className="-mx-1 flex rounded-full border border-border bg-card p-1" role="tablist">
           {([
-            { key: "saved", label: t.myClips.tabSaved, icon: Bookmark, count: savedCount },
-            { key: "created", label: t.myClips.tabCreated, icon: Scissors, count: createdCount },
             { key: "moments", label: t.myClips.tabMoments, icon: Sparkles, count: matchMomentCount },
+            { key: "created", label: t.myClips.tabCreated, icon: Scissors, count: createdCount },
             { key: "reels", label: reelCopy.tabReels, icon: Film, count: 0 },
+            { key: "saved", label: t.myClips.tabSaved, icon: Bookmark, count: savedCount },
           ] as const).map(({ key, label, icon: Icon, count }) => (
             <button
               key={key}
@@ -1156,9 +1162,12 @@ export default function MyClips() {
               <MatchMomentsTab
                 groups={matchMomentGroups}
                 isLoading={matchMomentsLoading}
+                userClips={userClips}
+                userClipsLoaded={!userClipsLoading && !!userClips}
                 userClipsById={userClipsById}
                 onPlayClip={setActiveClip}
                 onOpenMatch={(recordingId) => setLocation(`/find/${recordingId}`)}
+                onReelMade={() => setTab("reels")}
               />
             </motion.div>
           )}
@@ -1180,21 +1189,39 @@ export default function MyClips() {
   );
 }
 
-function MatchMomentsTab({
+export function MatchMomentsTab({
   groups,
   isLoading,
+  userClips,
+  userClipsLoaded,
   userClipsById,
   onPlayClip,
   onOpenMatch,
+  onReelMade,
 }: {
   groups: ClaimMatchClipGroup[] | undefined;
   isLoading: boolean;
+  userClips: UserClip[] | undefined;
+  userClipsLoaded: boolean;
   userClipsById: Map<number, UserClip>;
   onPlayClip: (clip: UserClip) => void;
   onOpenMatch: (recordingId: number) => void;
+  onReelMade: () => void;
 }) {
   const { t } = useTranslation();
-  const total = groups?.reduce((count, group) => count + group.clips.length, 0) ?? 0;
+  const copy = useMomentsCopy();
+  // The swipe deck: every moment, or one match's. Then the reel builder with what he kept.
+  const [picking, setPicking] = useState<{ recordingId: number | null } | null>(null);
+  const [building, setBuilding] = useState<number[] | null>(null);
+  const summary = useMemo(() => saveSummary(groups, userClipsById, userClipsLoaded), [groups, userClipsById, userClipsLoaded]);
+  const deckAll = useMemo(() => buildMomentDeck(groups, userClipsById), [groups, userClipsById]);
+  const deck = useMemo(
+    () => (picking ? buildMomentDeck(groups, userClipsById, picking.recordingId) : []),
+    // The deck is fixed while it is open: a refetch never reshuffles cards under a thumb.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [picking],
+  );
+  const usableClips = useMemo(() => (userClips ?? []).filter((c) => !c.isHidden), [userClips]);
 
   if (isLoading) {
     return (
@@ -1211,7 +1238,7 @@ function MatchMomentsTab({
     );
   }
 
-  if (!groups || total === 0) {
+  if (!groups || summary.total === 0) {
     return (
       <motion.div
         initial={{ opacity: 0, y: 24 }}
@@ -1236,56 +1263,128 @@ function MatchMomentsTab({
     );
   }
 
+  const canPick = deckAll.length >= REEL_MIN_CLIPS;
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h2 className="font-display text-lg font-bold text-foreground">{t.myClips.momentsTitle}</h2>
-          <p className="mt-1 text-xs text-muted-foreground">{t.myClips.momentsSubtitle}</p>
-        </div>
-        <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-bold text-primary">{total}</span>
-      </div>
-      {groups.map((group) => (
-        <section key={group.recordingId} className="flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={() => onOpenMatch(group.recordingId)}
-            className="flex items-center justify-between gap-3 px-1 text-start"
-          >
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-bold text-foreground">{group.recordingLabel}</span>
-              <span className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
-                <CalendarDays className="h-3 w-3" /> {group.date}
-              </span>
-            </span>
-            <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-primary">{t.myClips.openMatch} <ChevronRight className="h-3.5 w-3.5" /></span>
-          </button>
-          <div className="flex flex-col gap-2">
-            {group.clips.map((clip) => (
-              <button
-                type="button"
-                key={`${group.recordingId}-${clip.id}`}
-                onClick={() => {
-                  const userClip = clip.userClipId ? userClipsById.get(clip.userClipId) : undefined;
-                  if (userClip) onPlayClip(userClip);
-                  else onOpenMatch(group.recordingId);
-                }}
-                className="group flex items-center gap-3 rounded-[18px] border border-border bg-card p-3 text-start transition-colors hover:border-primary/50"
-              >
-                <MomentIcon kind={clip.kind} />
-                <span className="min-w-0 flex-1">
-                  <span className="block line-clamp-2 text-sm font-bold leading-tight text-foreground">{clip.title}</span>
-                  <span className="mt-1 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
-                    <span className="uppercase tracking-[0.12em]">{clip.kind.replace(/[-_]/g, " ")}</span>
-                    <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" /> {formatTime(clip.momentSeconds)}</span>
-                  </span>
-                </span>
-                <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-              </button>
-            ))}
+    <div className="flex flex-col gap-5" data-testid="moments-tab">
+      <div className="rounded-2xl border border-line bg-surface p-4">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-turf/10 text-turf">
+            <Sparkles className="h-5 w-5" aria-hidden />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-display text-lg font-bold text-text">{copy.title}</h2>
+            <p className="mt-0.5 text-sm leading-5 text-muted-text">{copy.subtitle}</p>
           </div>
-        </section>
-      ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold" data-testid="moments-saved-summary">
+          <span className="rounded-full bg-muted px-2.5 py-1 text-muted-text">{copy.count(summary.total)}</span>
+          {summary.saving === 0 && summary.lost === 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-turf/10 px-2.5 py-1 text-turf"><CloudCheck className="h-3.5 w-3.5" aria-hidden />{copy.allSaved}</span>
+          ) : summary.saving > 0 ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-muted-text"><Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />{copy.savingSome(summary.saving)}</span>
+          ) : null}
+          {summary.lost > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-muted-text" title={copy.lostHint}><AlertTriangle className="h-3.5 w-3.5" aria-hidden />{copy.lostSome(summary.lost)}</span>
+          )}
+        </div>
+        <Button
+          className="mt-4 w-full bg-primary text-primary-foreground hover:bg-primary/90"
+          disabled={!canPick}
+          onClick={() => setPicking({ recordingId: null })}
+          data-testid="button-pick-moments"
+        >
+          <Film className="h-4 w-4" aria-hidden />
+          {copy.pick}
+        </Button>
+        <p className="mt-2 text-center text-xs text-muted-text">{canPick ? copy.pickHint : copy.needTwo}</p>
+      </div>
+
+      {groups.map((group) => {
+        const moments = visibleMoments(group, userClipsById, userClipsLoaded);
+        if (!moments.length) return null;
+        const matchDeck = deckAll.filter((c) => c.recordingId === group.recordingId).length;
+        return (
+          <section key={group.recordingId} className="flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2 px-1">
+              <button type="button" onClick={() => onOpenMatch(group.recordingId)} className="min-w-0 flex-1 text-start">
+                <span className="block truncate text-sm font-bold text-foreground">{group.recordingLabel}</span>
+                <span className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground">
+                  <CalendarDays className="h-3 w-3" /> {group.date}
+                  <span aria-hidden>·</span> {copy.count(moments.length)}
+                </span>
+              </button>
+              {matchDeck >= REEL_MIN_CLIPS && (
+                <button
+                  type="button"
+                  onClick={() => setPicking({ recordingId: group.recordingId })}
+                  className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-full border border-turf/50 px-3 text-xs font-bold text-turf"
+                  data-testid={`button-pick-match-${group.recordingId}`}
+                >
+                  <Film className="h-3.5 w-3.5" aria-hidden />{copy.pickMatch}
+                </button>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
+              {moments.map((clip) => {
+                const userClip = clip.userClipId ? userClipsById.get(clip.userClipId) : undefined;
+                const save = momentSave(userClip);
+                return (
+                  <button
+                    type="button"
+                    key={`${group.recordingId}-${clip.id}`}
+                    onClick={() => {
+                      if (userClip) onPlayClip(userClip);
+                      else onOpenMatch(group.recordingId);
+                    }}
+                    className="group flex items-center gap-3 rounded-[18px] border border-border bg-card p-3 text-start transition-colors hover:border-primary/50"
+                  >
+                    <MomentIcon kind={clip.kind} />
+                    <span className="min-w-0 flex-1">
+                      <span dir="auto" className="block line-clamp-2 text-sm font-bold leading-tight text-foreground">{momentTitle(clip, copy.locale)}</span>
+                      <span className="mt-1 flex items-center gap-2 text-[10px] font-medium text-muted-foreground">
+                        <span className="uppercase tracking-[0.12em] rtl:tracking-normal">{copy.kinds[clip.kind] ?? copy.kindFallback}</span>
+                        <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" /> {formatTime(clip.momentSeconds)}</span>
+                      </span>
+                    </span>
+                    {save === "saved" ? (
+                      <span className="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-turf" title={copy.saved}>
+                        <CloudCheck className="h-4 w-4" aria-hidden /><span className="sr-only min-[400px]:not-sr-only">{copy.saved}</span>
+                      </span>
+                    ) : save === "saving" ? (
+                      <span className="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-muted-foreground" title={copy.saving}>
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden /><span className="sr-only">{copy.saving}</span>
+                      </span>
+                    ) : (
+                      <span className="flex shrink-0 items-center gap-1 text-[11px] font-semibold text-muted-foreground" title={copy.lostHint}>
+                        <AlertTriangle className="h-4 w-4" aria-hidden /><span className="sr-only">{copy.lost}</span>
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+
+      {picking && (
+        <MomentPicker
+          deck={deck}
+          onClose={() => setPicking(null)}
+          onDone={(ids) => { setPicking(null); setBuilding(ids); }}
+        />
+      )}
+      {building && (
+        <ReelBuilder
+          open
+          onOpenChange={(next) => { if (!next) setBuilding(null); }}
+          clips={usableClips}
+          initialPicked={building}
+          focusIds={new Set(building)}
+          initialStep="details"
+          onCreated={onReelMade}
+        />
+      )}
     </div>
   );
 }
