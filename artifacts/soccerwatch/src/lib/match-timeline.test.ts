@@ -7,7 +7,7 @@ function row(at: number, values: Partial<TimelineGoalRow> = {}): TimelineGoalRow
 }
 
 function input(values: Partial<TimelineInput> = {}): TimelineInput {
-  return { review: [], teamCount: 2, gameCount: 1, roomScore: null, me: null, marks: [], ...values };
+  return { review: [], teamCount: 2, gameCount: 1, roomScore: null, durationSeconds: 3600, me: null, marks: [], ...values };
 }
 
 const me = (values: Partial<NonNullable<TimelineInput["me"]>> = {}): TimelineInput["me"] => ({
@@ -19,11 +19,17 @@ const me = (values: Partial<NonNullable<TimelineInput["me"]>> = {}): TimelineInp
 });
 
 describe("buildTimeline", () => {
-  it("sorts goals by time and keeps a running score", () => {
-    const { events, finalScore } = buildTimeline(input({ review: [row(600, { side: "B" }), row(120), row(1500, { side: "B" })] }));
+  it("sorts goals by time and keeps a running score when the captain's score agrees", () => {
+    const { events, finalScore } = buildTimeline(input({ review: [row(600, { side: "B" }), row(120), row(1500, { side: "B" })], roomScore: { a: 1, b: 2 } }));
     expect(events.map((e) => e.at)).toEqual([120, 600, 1500]);
     expect(events.map((e) => e.score)).toEqual([{ a: 1, b: 0 }, { a: 1, b: 1 }, { a: 1, b: 2 }]);
     expect(finalScore).toEqual({ a: 1, b: 2 });
+  });
+
+  it("shows no score from confirmed goals alone: they are only a suggestion", () => {
+    const { events, finalScore } = buildTimeline(input({ review: [row(120), row(600, { side: "B" })] }));
+    expect(finalScore).toBeNull();
+    expect(events.every((e) => e.score === null)).toBe(true);
   });
 
   it("puts the first team's events at the start and the second team's at the end", () => {
@@ -52,10 +58,11 @@ describe("buildTimeline", () => {
   });
 
   it("shows no running score for three teams, several games, or a goal with no side", () => {
-    expect(buildTimeline(input({ review: [row(60)], teamCount: 3 })).finalScore).toBeNull();
+    const one = { a: 1, b: 0 };
+    expect(buildTimeline(input({ review: [row(60)], teamCount: 3, roomScore: one })).finalScore).toBeNull();
     expect(buildTimeline(input({ review: [row(60)], teamCount: 3 })).columns).toBe(1);
-    expect(buildTimeline(input({ review: [row(60)], gameCount: 2 })).finalScore).toBeNull();
-    expect(buildTimeline(input({ review: [row(60), row(90, { side: null })] })).events.every((e) => e.score === null)).toBe(true);
+    expect(buildTimeline(input({ review: [row(60)], gameCount: 2, roomScore: one })).finalScore).toBeNull();
+    expect(buildTimeline(input({ review: [row(60), row(90, { side: null })], roomScore: one })).events.every((e) => e.score === null)).toBe(true);
   });
 
   it("leaves out rejected chances and splits open ones into likely goals and plain chances", () => {
@@ -77,6 +84,14 @@ describe("buildTimeline", () => {
     expect(events.map((e) => e.mine)).toEqual([true, true, false]);
   });
 
+  it("never takes the other team's goal from his report's goal times", () => {
+    const { events } = buildTimeline(input({
+      me: me({ report: { goalTimes: [305], topSpeedAt: null, dribbleWonTimes: [], shotTimes: [] } }),
+      review: [row(300, { side: "A" })],
+    }));
+    expect(events[0].mine).toBe(false);
+  });
+
   it("never credits an own goal to anyone", () => {
     const { events } = buildTimeline(input({ me: me({ report: { goalTimes: [60], topSpeedAt: null, dribbleWonTimes: [], shotTimes: [] } }), review: [row(60, { ownGoal: true, scorer: { playerId: 33, name: "x" } })] }));
     expect(events[0].mine).toBe(false);
@@ -96,6 +111,31 @@ describe("buildTimeline", () => {
     expect(events).toHaveLength(1);
     expect(events[0].kind).toBe("chance");
     expect(events[0].mine).toBe(true);
+  });
+
+  it("never turns a nearby shot into his goal, or into the other team's chance", () => {
+    const shotAt = (t: number) => me({ report: { goalTimes: [], topSpeedAt: null, dribbleWonTimes: [], shotTimes: [t] } });
+    const rebound = buildTimeline(input({ me: shotAt(600), review: [row(603, { side: "B" })] }));
+    expect(rebound.events).toHaveLength(1);
+    expect(rebound.events[0]).toMatchObject({ kind: "goal", mine: false });
+    const theirs = buildTimeline(input({ me: shotAt(122), review: [row(120, { status: "open", source: "shot", side: "A" })] }));
+    expect(theirs.events[0].mine).toBe(false);
+  });
+
+  it("counts his moments once when the footage was analysed twice", () => {
+    const { events } = buildTimeline(input({ me: me({ report: { goalTimes: [], topSpeedAt: null, dribbleWonTimes: [400, 400, 401.2, 900], shotTimes: [800, 800.5] } }) }));
+    expect(events.map((e) => [e.kind, e.at])).toEqual([["dribble", 400], ["shot", 800], ["dribble", 900]]);
+    expect(new Set(events.map((e) => e.id)).size).toBe(events.length);
+  });
+
+  it("keeps flags from before kick-off and after the end outside the match", () => {
+    const marks: MatchMark[] = [
+      { id: 1, kind: "foul", note: null, atUtc: "", offsetSeconds: -90, byName: null, mine: true },
+      { id: 2, kind: "foul", note: null, atUtc: "", offsetSeconds: 700, byName: null, mine: true },
+      { id: 3, kind: "foul", note: null, atUtc: "", offsetSeconds: 3700, byName: null, mine: true },
+    ];
+    const { events } = buildTimeline(input({ marks }));
+    expect(events.map((e) => [e.at, e.phase])).toEqual([[-90, "before"], [700, "during"], [3700, "after"]]);
   });
 
   it("leaves out a goal in his report that no confirmed goal or chance matches", () => {
@@ -134,14 +174,14 @@ describe("filterTimeline and timelineFilters", () => {
     expect(filterTimeline(events, "all").map((e) => e.kind)).toEqual(["goal", "likely", "sprint"]);
   });
 
-  it("Goals shows goals and likely goals; Chances shows every open chance; Mine shows his", () => {
-    expect(filterTimeline(events, "goals").map((e) => e.kind)).toEqual(["goal", "likely"]);
+  it("Goals shows confirmed goals; Chances shows every open chance; Mine shows his", () => {
+    expect(filterTimeline(events, "goals").map((e) => e.kind)).toEqual(["goal"]);
     expect(filterTimeline(events, "chances").map((e) => e.kind)).toEqual(["likely", "chance", "chance"]);
     expect(filterTimeline(events, "mine").map((e) => e.kind)).toEqual(["sprint"]);
   });
 
   it("offers only the chips that have something, Mine only for a viewer in the match", () => {
-    expect(timelineFilters(events, true).map((f) => [f.id, f.count])).toEqual([["all", 3], ["goals", 2], ["chances", 3], ["mine", 1]]);
+    expect(timelineFilters(events, true).map((f) => [f.id, f.count])).toEqual([["all", 3], ["goals", 1], ["chances", 3], ["mine", 1]]);
     expect(timelineFilters(events, false).map((f) => f.id)).toEqual(["all", "goals", "chances"]);
     expect(timelineFilters(buildTimeline(input()).events, true)).toEqual([{ id: "all", count: 0 }]);
   });
