@@ -143,10 +143,10 @@ export function HomeHub() {
 
       {myClips.length > 0 && (
         <section>
-          <SectionHead title={copy.recentClips} href="/my-clips" more={copy.allClips} />
+          <SectionHead title={copy.recentClips} href="/my-clips?tab=created" more={copy.allClips} />
           <div className="grid grid-cols-2 gap-3 px-1">
             {myClips.map((clip) => (
-              <Link key={clip.id} href="/my-clips" className="relative h-[220px] min-w-0 overflow-hidden rounded-2xl border border-line bg-surface">
+              <Link key={clip.id} href="/my-clips?tab=created" className="relative h-[220px] min-w-0 overflow-hidden rounded-2xl border border-line bg-surface">
                 <div className="relative h-[168px] bg-raised">
                   <ClipThumb src={clip.thumbnailUrl ?? null} />
                   <span className="absolute inset-0 z-10 flex items-center justify-center">

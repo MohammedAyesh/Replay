@@ -213,7 +213,7 @@ export default function OwnerShare() {
     toast({
       title: copy.saved,
       description: (
-        <Link href="/my-clips" className="font-semibold underline underline-offset-2">
+        <Link href="/my-clips?tab=created" className="font-semibold underline underline-offset-2">
           {copy.myClips}
         </Link>
       ),

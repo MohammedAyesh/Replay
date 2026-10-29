@@ -18,8 +18,8 @@ import { createWriteStream } from "fs";
 import os from "os";
 import path from "path";
 import { pipeline } from "stream/promises";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { db, userClipsTable, userReelsTable, type UserReelRow } from "@workspace/db";
+import { and, desc, eq, inArray, isNull, like } from "drizzle-orm";
+import { db, recordingsTable, userClipsTable, userReelsTable, type UserReelRow } from "@workspace/db";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { toQuotaResponse } from "../lib/downloadQuota";
 import { logger } from "../lib/logger";
@@ -33,7 +33,7 @@ import {
   uploadFileToBunnyStoragePath,
   deleteBunnyStoragePath,
 } from "../lib/bunny";
-import { bufferRemoteClip, cleanupTempFile, concatSegments, placeOnSourceCanvas, probeFileDuration, renderClip } from "../lib/ffmpegExport";
+import { bufferRemoteClip, cleanupTempFile, concatSegments, findClipInExport, placeOnSourceCanvas, renderClip } from "../lib/ffmpegExport";
 import { selectExportSource } from "../lib/exportSource";
 import { renderQueue } from "../lib/renderQueue";
 import { fetchBrandingAsset } from "../lib/brandingFetch";
@@ -48,9 +48,11 @@ import {
   isLiveVideoId,
   isSoftDeletedClip,
   normalizeExportWindow,
+  parseRecordingDuration,
   readableFromUpstream,
   reserveReelDownload,
   resolveBrandingForClip,
+  resolveIntroVideoUrl,
 } from "./userClips";
 
 const router: IRouter = Router();
@@ -141,19 +143,42 @@ export function savedExportOf(clip: { exportStatus: string | null; exportedUrl: 
   return clip.exportStatus === "done" && clip.exportedUrl ? clip.exportedUrl : null;
 }
 
-/** Download a clip's saved export to a temporary file, with its length. */
-async function downloadSavedExport(clip: ClipRow, exportedUrl: string): Promise<{ path: string; seconds: number }> {
-  const res = await fetchExportObject(exportedUrl);
+/** Download a clip's saved export to a temporary file. Gives up after 5 minutes. */
+async function downloadSavedExport(clip: ClipRow, exportedUrl: string): Promise<string> {
+  const res = await fetchExportObject(exportedUrl, { signal: AbortSignal.timeout(5 * 60_000) });
   if (res.status === 404) throw new ReelSourceGone(`The saved copy of "${clip.title}" is missing`);
   if (!res.ok || !res.body) throw new Error(`Could not read the saved copy of "${clip.title}" (HTTP ${res.status})`);
   const local = path.join(os.tmpdir(), `reel-saved-${randomUUID()}.mp4`);
   try {
     await pipeline(readableFromUpstream(res.body as ReadableStream<Uint8Array>), createWriteStream(local));
-    return { path: local, seconds: await probeFileDuration(local) };
+    return local;
   } catch (err) {
     cleanupTempFile(local);
     throw err;
   }
+}
+
+/** How long the clip's window on its match is, from the recording's listed length; null if unknown. */
+async function clipWindowSeconds(clip: ClipRow): Promise<number | null> {
+  const id = clip.videoId.replace(/[%_\\]/g, "");
+  if (!id) return null;
+  const [recording] = await db.select({ duration: recordingsTable.duration })
+    .from(recordingsTable).where(like(recordingsTable.videoUrl, `%${id}%`)).limit(1);
+  const total = parseRecordingDuration(recording?.duration);
+  if (!(total > 0)) return null;
+  const window = normalizeExportWindow(parseFloat(clip.startTime), parseFloat(clip.endTime), total);
+  return window.clipDuration > 0 ? window.clipDuration : null;
+}
+
+/** The venue's intro as it is now, as a local file, to recognise it at the start of a saved copy. */
+async function currentIntroFile(clip: ClipRow, temps: string[]): Promise<string | null> {
+  const url = await resolveIntroVideoUrl(clip.academyId).catch(() => null);
+  if (!url) return null;
+  let referer: string | undefined;
+  try { referer = /^https?:/i.test(url) ? `https://${new URL(url).host}/` : undefined; } catch { referer = undefined; }
+  const local = await fetchBrandingAsset(url, "intro", { referer });
+  if (local && local !== url) temps.push(local);
+  return local;
 }
 
 /**
@@ -178,16 +203,26 @@ async function renderReel(reel: UserReelRow, clips: ClipRow[]): Promise<{ path: 
         // Only a recording Bunny says is gone is gone; anything else can be retried.
         if (!(err instanceof BunnyVideoNotFoundError)) throw err;
         // The match video is gone (14-day cleanup): make this piece from the
-        // clip's saved copy instead, which is already cut and framed. No second
-        // overlay on it (the copy may carry one); the end screen still goes on
-        // the last piece.
+        // clip's saved copy instead, which is already cut and framed. Only the
+        // clip is used: the copy's own intro and end screen are left out, so
+        // a reel of saved copies plays like any other reel. No second overlay
+        // on it (the copy may carry one); the end screen still goes on the
+        // last piece.
         const saved = savedExportOf(clip);
         if (!saved) throw new ReelSourceGone(`The recording behind "${clip.title}" is no longer available`, { cause: err });
-        const copy = await downloadSavedExport(clip, saved);
-        temps.push(copy.path);
-        const canvas = await placeOnSourceCanvas(copy.path, portrait);
+        const copyPath = await downloadSavedExport(clip, saved);
+        temps.push(copyPath);
+        const introPath = await currentIntroFile(clip, temps);
+        const body = await findClipInExport(copyPath, {
+          introPath,
+          is9to16: clip.aspectRatio === "9:16",
+          clipSeconds: await clipWindowSeconds(clip),
+        });
+        if (introPath && temps.includes(introPath)) { cleanupTempFile(introPath); temps.splice(temps.indexOf(introPath), 1); }
+        if (!(body.seconds > 0)) throw new Error(`The saved copy of "${clip.title}" has no footage`);
+        const canvas = await placeOnSourceCanvas(copyPath, portrait, body);
         temps.push(canvas.path);
-        seconds += copy.seconds;
+        seconds += body.seconds;
         if (seconds > REEL_MAX_SECONDS) throw new Error(`A reel can be ${REEL_MAX_SECONDS} seconds at most`);
         const fieldId = await fieldIdForClip(clip.id);
         const drawn = last
@@ -196,7 +231,7 @@ async function renderReel(reel: UserReelRow, clips: ClipRow[]): Promise<{ path: 
         if (drawn) temps.push(...drawn.temps);
         const options = {
           videoUrl: canvas.path,
-          totalDuration: copy.seconds,
+          totalDuration: body.seconds,
           startTime: 0,
           endTime: 1,
           cropPath: canvas.cropPath,
@@ -212,8 +247,8 @@ async function renderReel(reel: UserReelRow, clips: ClipRow[]): Promise<{ path: 
           part = await renderClip(options);
         }
         parts.push(part);
-        for (const done of [copy.path, canvas.path]) { cleanupTempFile(done); temps.splice(temps.indexOf(done), 1); }
-        logger.info({ reelId: reel.id, clipId: clip.id }, "Reel piece made from the clip's saved copy (match video gone)");
+        for (const done of [copyPath, canvas.path]) { cleanupTempFile(done); temps.splice(temps.indexOf(done), 1); }
+        logger.info({ reelId: reel.id, clipId: clip.id, clipStart: body.start, clipSeconds: body.seconds }, "Reel piece made from the clip's saved copy (match video gone)");
         continue;
       }
       const window = normalizeExportWindow(parseFloat(clip.startTime), parseFloat(clip.endTime), info.duration);

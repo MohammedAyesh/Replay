@@ -1302,6 +1302,108 @@ export function cleanupTempFile(filePath: string): void {
 }
 
 /**
+ * Put an already-cut clip (a saved export: 1920x1080, or 608x1080 for 9:16)
+ * back on a source-sized canvas, centred where a still crop of that shape
+ * takes its frame, so renderClip — which reads every source as SRC_W x SRC_H
+ * — crops out exactly that clip. Returns the canvas file and the crop to use.
+ */
+export async function placeOnSourceCanvas(
+  input: string,
+  is9to16: boolean,
+  /** only this part of the input (see findClipInExport); the whole file when left out */
+  window?: { start: number; seconds: number },
+): Promise<{ path: string; cropPath: { t: number; x: number; y: number; w: number; h: number }[] }> {
+  const { w: OUT_W } = getOutputDims(is9to16);
+  const x = Math.round((SRC_W - OUT_W) / 2);
+  const out = path.join(os.tmpdir(), `soccerwatch-canvas-${randomUUID()}.mp4`);
+  const cut = window ? ["-ss", window.start.toFixed(3), "-t", window.seconds.toFixed(3)] : [];
+  try {
+    await run("ffmpeg", [
+      "-nostdin", "-y", "-v", "error", ...cut, "-i", input,
+      "-vf", `scale=${OUT_W}:${SRC_H}:force_original_aspect_ratio=decrease,pad=${OUT_W}:${SRC_H}:(ow-iw)/2:(oh-ih)/2,pad=${SRC_W}:${SRC_H}:${x}:0,setsar=1`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", out,
+    ]);
+  } catch (err) {
+    cleanupTempFile(out);
+    throw err;
+  }
+  return { path: out, cropPath: [{ t: 0, x: x / SRC_W, y: 0, w: OUT_W / SRC_W, h: 1 }] };
+}
+
+/** Length of a local media file, seconds (ffprobe format=duration). */
+export async function probeFileDuration(filePath: string): Promise<number> {
+  const out = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filePath]);
+  const seconds = parseFloat(out.trim());
+  if (!isFinite(seconds) || seconds <= 0) throw new Error(`Could not read the length of ${filePath}`);
+  return seconds;
+}
+
+/** A 32x18 grey thumbnail of one frame, to tell whether two videos show the same thing. */
+async function frameThumb(file: string, atSec: number, fit?: { w: number; h: number }): Promise<Buffer> {
+  const out = path.join(os.tmpdir(), `soccerwatch-thumb-${randomUUID()}.gray`);
+  const fitFirst = fit
+    ? `scale=${fit.w}:${fit.h}:force_original_aspect_ratio=decrease,pad=${fit.w}:${fit.h}:(ow-iw)/2:(oh-ih)/2:black,`
+    : "";
+  try {
+    await run("ffmpeg", [
+      "-nostdin", "-y", "-v", "error", "-ss", atSec.toFixed(3), "-i", file,
+      "-frames:v", "1", "-vf", `${fitFirst}scale=32:18,format=gray`, "-f", "rawvideo", out,
+    ]);
+    return await fs.promises.readFile(out);
+  } finally {
+    cleanupTempFile(out);
+  }
+}
+
+/** Average difference of two grey thumbnails, 0–255; Infinity if they cannot be compared. */
+export function thumbDifference(a: Buffer, b: Buffer): number {
+  if (!a.length || a.length !== b.length) return Infinity;
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += Math.abs(a[i] - b[i]);
+  return sum / a.length;
+}
+
+/** Two thumbnails of the same picture, encoded twice, differ by a few levels; different pictures by tens. */
+const SAME_PICTURE_MAX_DIFFERENCE = 18;
+
+/**
+ * Where the clip itself sits inside a saved export. An export can start with
+ * the venue's intro and end with an end screen or end card; a reel made from
+ * saved copies wants only the clip, or every piece would carry its own intro
+ * and sign-off.
+ *
+ * The intro is recognised by its pictures: the venue's intro as it is now,
+ * compared at two points. An intro changed since the export is not
+ * recognised and stays in, which is untidy but loses nothing. The clip's
+ * length is its window on the match (`clipSeconds`); without one, everything
+ * after the intro is kept.
+ */
+export async function findClipInExport(
+  exportPath: string,
+  opts: { introPath: string | null; is9to16: boolean; clipSeconds: number | null },
+): Promise<{ start: number; seconds: number }> {
+  const total = await probeFileDuration(exportPath);
+  let start = 0;
+  if (opts.introPath) {
+    try {
+      const introSeconds = Math.min(await probeFileDuration(opts.introPath), MAX_INTRO_SECONDS);
+      if (introSeconds < total - 1) {
+        const dims = getOutputDims(opts.is9to16);
+        const same = async (at: number) =>
+          thumbDifference(await frameThumb(opts.introPath!, at, dims), await frameThumb(exportPath, at)) <= SAME_PICTURE_MAX_DIFFERENCE;
+        if (await same(Math.min(0.3, introSeconds / 4)) && await same(introSeconds * 0.6)) start = introSeconds;
+      }
+    } catch (err) {
+      logger.warn({ err, exportPath }, "Could not compare the saved copy with the intro — keeping its start");
+    }
+  }
+  const left = Math.max(0, total - start);
+  const seconds = opts.clipSeconds && opts.clipSeconds > 0 ? Math.min(opts.clipSeconds, left) : left;
+  return { start, seconds };
+}
+
+
+/**
  * Download and trim the needed clip window from a remote video to a local temp
  * file so FFmpeg can encode from disk rather than over a live network connection.
  *
@@ -1332,40 +1434,6 @@ export function cleanupTempFile(filePath: string): void {
  *   The subsequent CRF23/veryfast main encode reads from a fully local file,
  *   eliminating the live-network stalls that caused freeze/stutter in exports.
  */
-/**
- * Put an already-cut clip (a saved export: 1920x1080, or 608x1080 for 9:16)
- * back on a source-sized canvas, centred where a still crop of that shape
- * takes its frame, so renderClip — which reads every source as SRC_W x SRC_H
- * — crops out exactly that clip. Returns the canvas file and the crop to use.
- */
-export async function placeOnSourceCanvas(
-  input: string,
-  is9to16: boolean,
-): Promise<{ path: string; cropPath: { t: number; x: number; y: number; w: number; h: number }[] }> {
-  const { w: OUT_W } = getOutputDims(is9to16);
-  const x = Math.round((SRC_W - OUT_W) / 2);
-  const out = path.join(os.tmpdir(), `soccerwatch-canvas-${randomUUID()}.mp4`);
-  try {
-    await run("ffmpeg", [
-      "-nostdin", "-y", "-v", "error", "-i", input,
-      "-vf", `scale=${OUT_W}:${SRC_H}:force_original_aspect_ratio=decrease,pad=${OUT_W}:${SRC_H}:(ow-iw)/2:(oh-ih)/2,pad=${SRC_W}:${SRC_H}:${x}:0,setsar=1`,
-      "-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-pix_fmt", "yuv420p", "-c:a", "copy", out,
-    ]);
-  } catch (err) {
-    cleanupTempFile(out);
-    throw err;
-  }
-  return { path: out, cropPath: [{ t: 0, x: x / SRC_W, y: 0, w: OUT_W / SRC_W, h: 1 }] };
-}
-
-/** Length of a local media file, seconds (ffprobe format=duration). */
-export async function probeFileDuration(filePath: string): Promise<number> {
-  const out = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", filePath]);
-  const seconds = parseFloat(out.trim());
-  if (!isFinite(seconds) || seconds <= 0) throw new Error(`Could not read the length of ${filePath}`);
-  return seconds;
-}
-
 export async function bufferRemoteClip(options: {
   remoteUrl: string;
   referer: string;

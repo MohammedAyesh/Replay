@@ -304,7 +304,7 @@ function ProfileScreen({ profile, myBlocks }: { profile: PublicProfile; myBlocks
                 </span>
               </button>;
             })}
-          </div> : <EmptyPortfolio text={isOwnProfile ? t.profile.noClipsOwn : t.profile.noClipsOther} button={isOwnProfile ? t.profile.goToClips : undefined} onClick={() => setLocation("/my-clips")} />}
+          </div> : <EmptyPortfolio text={isOwnProfile ? t.profile.noClipsOwn : t.profile.noClipsOther} button={isOwnProfile ? t.profile.goToClips : undefined} onClick={() => setLocation("/my-clips?tab=created")} />}
         </section>
         <section className="mt-6" aria-labelledby="profile-career">
           <div className="mb-2 flex items-center justify-between"><h2 id="profile-career" className="font-display text-xl font-extrabold">{t.profile.career}</h2></div>

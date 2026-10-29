@@ -10,7 +10,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { eq, inArray } from "drizzle-orm";
-import { db, usersTable, userClipsTable, userReelsTable, settingsDefaultsTable, brandingProfilesTable } from "@workspace/db";
+import { db, usersTable, userClipsTable, userReelsTable, settingsDefaultsTable, brandingProfilesTable, fieldsTable, recordingsTable, clipSettingsTable } from "@workspace/db";
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "reels-test-"));
 const SOURCE = path.join(work, "recording.mp4");
@@ -248,28 +248,42 @@ describe("changing and deleting a reel", () => {
 });
 
 describe("a reel after the match video is gone", () => {
-  it("is made from the clips' saved copies, and says so plainly when a clip has none", async () => {
+  it("is made from the clips in their saved copies, without each copy's intro and end card", async () => {
     const bunny = await import("../lib/bunny");
     const info = vi.mocked(bunny.getBunnyVideoInfo);
-    // Two saved copies, already cut and framed (9:16), 2 s and 3 s, at a size
-    // the renderer does not expect (1080x1920): red over blue, so a wrong crop shows.
-    const saved = async (seconds: number, color: string) => {
+    const VIDEO = "00000000-0000-0000-0000-0000000000bb";
+    // The venue's intro (a test pattern), and the match's listed length: 20 s.
+    const intro = path.join(work, "intro.mp4");
+    execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1080x1920:d=1.5:r=30",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", intro]);
+    const [field] = await db.insert(fieldsTable).values({ name: `${TAG} pitch` }).returning({ id: fieldsTable.id });
+    const [recording] = await db.insert(recordingsTable).values({
+      fieldId: field.id, court: "1", date: "2026-10-12", timeSlot: "20:00", duration: "20",
+      videoUrl: `https://vz-test.b-cdn.net/${VIDEO}/playlist.m3u8`,
+    }).returning({ id: recordingsTable.id });
+    const [settings] = await db.insert(clipSettingsTable).values({ introVideoUrl: intro }).returning({ id: clipSettingsTable.id });
+    // Saved copies (9:16, 1080x1920, a size the renderer does not expect) as
+    // the export makes them: the intro, the clip (red over blue, so a wrong
+    // crop shows), then a 2 s green end card.
+    const saved = async (start: number, end: number, color: string) => {
+      const seconds = Math.round((end - start) * 20);
       const [row] = await db.insert(userClipsTable).values({
-        userId: ownerId, videoId: "00000000-0000-0000-0000-0000000000bb", title: `saved ${color}`,
-        startTime: "0.1", endTime: "0.2", aspectRatio: "9:16", exportStatus: "done",
+        userId: ownerId, videoId: VIDEO, title: `saved ${color}`,
+        startTime: String(start), endTime: String(end), aspectRatio: "9:16", exportStatus: "done",
       }).returning({ id: userClipsTable.id });
       const remote = `clips/${row.id}.mp4`;
       const file = path.join(work, `saved-${row.id}.mp4`);
       execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error",
-        "-f", "lavfi", "-i", `color=c=red:s=1080x960:d=${seconds}:r=30`, "-f", "lavfi", "-i", `color=c=blue:s=1080x960:d=${seconds}:r=30`,
-        "-f", "lavfi", "-i", `sine=f=440:r=44100:d=${seconds}`, "-filter_complex", "[0:v][1:v]vstack=inputs=2[v]", "-map", "[v]", "-map", "2:a",
-        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-t", String(seconds), file]);
+        "-i", intro, "-f", "lavfi", "-i", `color=c=red:s=1080x960:d=${seconds}:r=30`, "-f", "lavfi", "-i", `color=c=blue:s=1080x960:d=${seconds}:r=30`,
+        "-f", "lavfi", "-i", "color=c=green:s=1080x1920:d=2:r=30", "-f", "lavfi", "-i", `sine=f=440:r=44100:d=${1.5 + seconds + 2}`,
+        "-filter_complex", "[1:v][2:v]vstack=inputs=2[clip];[0:v]fps=30,setsar=1[i];[clip]setsar=1[c];[3:v]setsar=1[g];[i][c][g]concat=n=3:v=1:a=0[v]",
+        "-map", "[v]", "-map", "4:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", file]);
       stored.set(remote, file);
       await db.update(userClipsTable).set({ exportedUrl: `https://storage.bunnycdn.com/galaxyfield/${remote}` }).where(eq(userClipsTable.id, row.id));
       return row.id;
     };
-    const a = await saved(2, "red");
-    const b = await saved(3, "green");
+    const a = await saved(0.1, 0.2, "red");
+    const b = await saved(0.3, 0.45, "green");
     info.mockImplementation(async (videoId: string) => {
       if (videoId.endsWith("bb")) throw new bunny.BunnyVideoNotFoundError(videoId);
       return { duration: 10, hasMP4Fallback: false, availableResolutions: "1080p" } as Awaited<ReturnType<typeof bunny.getBunnyVideoInfo>>;
@@ -281,15 +295,19 @@ describe("a reel after the match video is gone", () => {
       expect(reel.exportError).toBeNull();
       expect(reel.exportStatus).toBe("done");
       expect(reel.durationSec).toBe(5);
-      // 2 s + 3 s from the saved copies, then the 3 s card after the last one.
+      // 2 s + 3 s of clip, no intros or end cards from the copies, then the reel's 3 s card.
       const out = stored.get(reel.exportPath!)!;
       expect(Math.abs(probeDuration(out) - 8)).toBeLessThan(0.4);
-      // The whole saved frame, scaled into the reel's 608x1080: red on top, blue below.
-      const pixel = (y: number) => [...execFileSync("ffmpeg", ["-v", "error", "-ss", "1", "-i", out, "-frames:v", "1",
+      // Red on top and blue below, scaled into the reel's 608x1080, at the
+      // start of each piece and just before the second ends: never the
+      // pattern or the green card.
+      const pixel = (t: number, y: number) => [...execFileSync("ffmpeg", ["-v", "error", "-ss", String(t), "-i", out, "-frames:v", "1",
         "-vf", `crop=2:2:304:${y}`, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"])];
-      const [top, bottom] = [pixel(100), pixel(1000)];
-      expect(top[0]).toBeGreaterThan(180); expect(top[2]).toBeLessThan(80);
-      expect(bottom[2]).toBeGreaterThan(180); expect(bottom[0]).toBeLessThan(80);
+      for (const t of [0.1, 1, 2.2, 4.7]) {
+        const [top, bottom] = [pixel(t, 100), pixel(t, 1000)];
+        expect(top[0], `red at ${t}s`).toBeGreaterThan(180); expect(top[1]).toBeLessThan(80); expect(top[2]).toBeLessThan(80);
+        expect(bottom[2], `blue at ${t}s`).toBeGreaterThan(180); expect(bottom[0]).toBeLessThan(80); expect(bottom[1]).toBeLessThan(80);
+      }
 
       // A clip whose match is gone and that was never saved cannot be in a reel.
       await db.update(userClipsTable).set({ exportStatus: null, exportedUrl: null }).where(eq(userClipsTable.id, b));
@@ -300,8 +318,25 @@ describe("a reel after the match video is gone", () => {
       expect(shown.body.errorCode).toBe("source_gone");
     } finally {
       info.mockImplementation(async () => ({ duration: 10, hasMP4Fallback: false, availableResolutions: "1080p" }) as Awaited<ReturnType<typeof bunny.getBunnyVideoInfo>>);
+      await db.delete(clipSettingsTable).where(eq(clipSettingsTable.id, settings.id));
+      await db.delete(userClipsTable).where(inArray(userClipsTable.id, [a, b]));
+      await db.delete(recordingsTable).where(eq(recordingsTable.id, recording.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, field.id));
     }
   }, 200_000);
+
+  it("finds the clip inside a saved copy only when the intro really is there", async () => {
+    const { findClipInExport } = await vi.importActual<typeof import("../lib/ffmpegExport")>("../lib/ffmpegExport");
+    const intro = path.join(work, "intro.mp4");
+    const plain = path.join(work, "plain.mp4");
+    execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=1080x1920:d=6:r=30",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", plain]);
+    // No intro in the copy: nothing is cut from its start.
+    expect(await findClipInExport(plain, { introPath: intro, is9to16: true, clipSeconds: 4 })).toEqual({ start: 0, seconds: 4 });
+    // No known length: everything after the intro.
+    const r = await findClipInExport(plain, { introPath: null, is9to16: true, clipSeconds: null });
+    expect(r.start).toBe(0); expect(Math.abs(r.seconds - 6)).toBeLessThan(0.1);
+  }, 60_000);
 });
 
 describe("downloading a reel", () => {

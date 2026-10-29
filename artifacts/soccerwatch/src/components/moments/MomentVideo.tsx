@@ -51,11 +51,12 @@ export const MomentVideo = memo(function MomentVideo({ clip, active, load, onSta
     video.addEventListener("error", onError);
 
     let hls: Hls | null = null;
+    let seek: (() => void) | null = null;
     if (source.kind === "file") {
       video.src = source.url;
     } else {
       let seeked = false;
-      const seek = () => {
+      seek = () => {
         const dur = video.duration || 0;
         if (seeked || !(dur > 0 && isFinite(dur))) return;
         seeked = true;
@@ -78,6 +79,10 @@ export const MomentVideo = memo(function MomentVideo({ clip, active, load, onSta
     return () => {
       video.removeEventListener("loadeddata", onReady);
       video.removeEventListener("error", onError);
+      if (seek) {
+        video.removeEventListener("loadedmetadata", seek);
+        video.removeEventListener("durationchange", seek);
+      }
       if (hls) hls.destroy();
       video.removeAttribute("src");
       video.load();

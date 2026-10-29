@@ -360,7 +360,7 @@ export function extractBunnyVideoId(videoUrl: string): string | null {
   }
 }
 
-function parseRecordingDuration(value: string | null | undefined): number {
+export function parseRecordingDuration(value: string | null | undefined): number {
   const raw = value?.trim() ?? "";
   if (!raw) return 0;
   const clock = raw.match(/^(?:(\d+):)?(\d{1,2}):(\d{2})$/);
@@ -479,7 +479,7 @@ export async function ensureClaimMomentUserClip(options: {
  * academy it belongs to. The global clip_settings intro is the fallback for
  * clips with no academy, or whose academy has not uploaded one.
  */
-async function resolveIntroVideoUrl(academyId: number | null): Promise<string | null> {
+export async function resolveIntroVideoUrl(academyId: number | null): Promise<string | null> {
   if (academyId) {
     const [academy] = await db
       .select({ introVideoUrl: academiesTable.introVideoUrl })

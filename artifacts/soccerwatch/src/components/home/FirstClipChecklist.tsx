@@ -41,7 +41,7 @@ export function FirstClipChecklist({ matches, clips, now }: { matches: MyMatches
       href: matchHref,
     },
     { key: "cut", label: copy.cut, done: cut, href: matchHref },
-    { key: "share", label: copy.share, done: cut && shared, href: "/my-clips" },
+    { key: "share", label: copy.share, done: cut && shared, href: "/my-clips?tab=created" },
   ];
   const done = steps.filter((step) => step.done).length;
   // A starter checklist: players who have already cut a few clips are past it, whatever this phone remembers.

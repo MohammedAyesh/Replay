@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, CloudCheck, Loader2, RotateCcw, Send, Target, Trophy, X, Zap, Sparkles, Film } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMomentsCopy, type MomentStrings } from "@/i18n/moments-strings";
@@ -39,15 +40,36 @@ export function MomentPicker({ deck, onClose, onDone }: {
   const full = kept.length >= REEL_MAX_CLIPS;
   const done = i >= deck.length || full;
 
-  // Nothing behind the deck scrolls while it is open.
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+
+  // While the deck is open nothing behind it scrolls, takes focus or answers a
+  // key; focus starts on Close and goes back where it was afterwards.
   useEffect(() => {
-    const prev = document.body.style.overflow;
+    const prevOverflow = document.body.style.overflow;
+    const prevFocus = document.activeElement as HTMLElement | null;
+    const root = document.getElementById("root");
+    const wasInert = root?.hasAttribute("inert") ?? false;
     document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
+    root?.setAttribute("inert", "");
+    dialogRef.current?.querySelector<HTMLElement>("[data-testid=button-picker-close]")?.focus();
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      if (root && !wasInert) root.removeAttribute("inert");
+      prevFocus?.focus?.();
+    };
   }, []);
+
+  // A moment that is not saved yet and whose match video will not play
+  // cannot be made into a reel, so it can only be skipped.
+  const unusable = (card: DeckMoment | undefined) => !!card && card.save !== "saved" && videoState[card.clipId] === "failed";
 
   const decide = useCallback((keep: boolean) => {
     if (flying.current || i >= deck.length || full) return;
+    if (keep && unusable(deck[i])) {
+      const el = cardRef.current;
+      if (el) { el.style.transition = "transform .2s ease-out"; el.style.transform = ""; }
+      return;
+    }
     flying.current = true;
     const el = cardRef.current;
     if (el) {
@@ -61,7 +83,8 @@ export function MomentPicker({ deck, onClose, onDone }: {
       setI((n) => n + 1);
       flying.current = false;
     }, FLY_MS);
-  }, [deck, i, full]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deck, i, full, videoState]);
 
   const undo = useCallback(() => {
     if (flying.current || choices.length === 0) return;
@@ -72,6 +95,15 @@ export function MomentPicker({ deck, onClose, onDone }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") { e.preventDefault(); onClose(); }
+      else if (e.key === "Tab") {
+        // Keep Tab inside the deck.
+        const items = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled])") ?? [])];
+        if (!items.length) return;
+        const at = items.indexOf(document.activeElement as HTMLElement);
+        const next = e.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : (at === items.length - 1 ? 0 : at + 1);
+        e.preventDefault();
+        items[next].focus();
+      }
       else if (done) return;
       else if (e.key === "ArrowRight") { e.preventDefault(); decide(true); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); decide(false); }
@@ -81,8 +113,9 @@ export function MomentPicker({ deck, onClose, onDone }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [decide, undo, onClose, done]);
 
-  return (
+  return createPortal(
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={copy.eyebrow}
@@ -108,16 +141,18 @@ export function MomentPicker({ deck, onClose, onDone }: {
                   copy={copy}
                   cardRef={k === 0 ? cardRef : undefined}
                   videoState={videoState[card.clipId] ?? "loading"}
+                  canKeep={!unusable(card)}
                   onVideoState={(s) => setVideoState((v) => (v[card.clipId] === s ? v : { ...v, [card.clipId]: s }))}
                   onDecide={decide}
                 />
               )).reverse()}
             </div>
-            <Controls copy={copy} canUndo={choices.length > 0} onDecide={decide} onUndo={undo} />
+            <Controls copy={copy} canUndo={choices.length > 0} canKeep={!unusable(deck[i])} onDecide={decide} onUndo={undo} />
           </>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -132,7 +167,7 @@ function Header({ copy, onClose, at, of, kept }: { copy: MomentStrings; onClose:
         <span className="truncate font-display text-[11px] font-bold uppercase tracking-[0.3em] text-turf rtl:text-xs rtl:tracking-normal">{copy.eyebrow}</span>
         <div className="flex items-center gap-2" role="progressbar" aria-valuemin={0} aria-valuemax={of} aria-valuenow={at}>
           <div className="h-1 flex-1 overflow-hidden rounded-full bg-line">
-            <div className="h-full rounded-full bg-turf transition-[width] duration-200 rtl:ms-auto" style={{ width: of ? `${(at / of) * 100}%` : "0%" }} />
+            <div className="h-full rounded-full bg-turf transition-[width] duration-200" style={{ width: of ? `${(at / of) * 100}%` : "0%" }} />
           </div>
           <span dir="ltr" className="shrink-0 font-mono text-[11px] tabular-nums text-muted-text">{Math.min(at + 1, of)}/{of}</span>
         </div>
@@ -144,9 +179,9 @@ function Header({ copy, onClose, at, of, kept }: { copy: MomentStrings; onClose:
   );
 }
 
-function Card({ card, depth, copy, cardRef, videoState, onVideoState, onDecide }: {
+function Card({ card, depth, copy, cardRef, videoState, canKeep, onVideoState, onDecide }: {
   card: DeckMoment; depth: number; copy: MomentStrings & { locale: "en" | "ar" }; cardRef?: React.MutableRefObject<HTMLDivElement | null>;
-  videoState: MomentVideoState; onVideoState: (s: MomentVideoState) => void; onDecide: (keep: boolean) => void;
+  videoState: MomentVideoState; canKeep: boolean; onVideoState: (s: MomentVideoState) => void; onDecide: (keep: boolean) => void;
 }) {
   const local = useRef<HTMLDivElement | null>(null);
   const keepRef = useRef<HTMLDivElement | null>(null);
@@ -161,7 +196,7 @@ function Card({ card, depth, copy, cardRef, videoState, onVideoState, onDecide }
     const el = local.current;
     if (!el) return;
     el.style.transform = `translate(${dx}px, ${Math.min(0, dy) / 3}px) rotate(${dx / 20}deg)`;
-    if (keepRef.current) keepRef.current.style.opacity = String(Math.max(0, Math.min(1, dx / SWIPE)));
+    if (keepRef.current) keepRef.current.style.opacity = canKeep ? String(Math.max(0, Math.min(1, dx / SWIPE))) : "0";
     if (skipRef.current) skipRef.current.style.opacity = String(Math.max(0, Math.min(1, -dx / SWIPE)));
   };
   const onDown = (e: React.PointerEvent) => {
@@ -174,11 +209,17 @@ function Card({ card, depth, copy, cardRef, videoState, onVideoState, onDecide }
     if (!drag.current || drag.current.id !== e.pointerId) return;
     paint(e.clientX - drag.current.x, e.clientY - drag.current.y);
   };
+  // A cancelled touch (a system gesture, a call) decides nothing.
+  const onCancel = (e: React.PointerEvent) => {
+    if (!drag.current || drag.current.id !== e.pointerId) return;
+    drag.current = null;
+    if (local.current) { local.current.style.transition = "transform .2s ease-out"; paint(0, 0); }
+  };
   const onUp = (e: React.PointerEvent) => {
     if (!drag.current || drag.current.id !== e.pointerId) return;
     const dx = e.clientX - drag.current.x;
     drag.current = null;
-    if (dx > SWIPE) onDecide(true);
+    if (dx > SWIPE && canKeep) onDecide(true);
     else if (dx < -SWIPE) onDecide(false);
     else if (local.current) { local.current.style.transition = "transform .2s ease-out"; paint(0, 0); }
   };
@@ -191,7 +232,7 @@ function Card({ card, depth, copy, cardRef, videoState, onVideoState, onDecide }
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
-      onPointerCancel={onUp}
+      onPointerCancel={onCancel}
       className={cn("pointer-events-auto flex max-h-full w-full select-none flex-col overflow-hidden rounded-3xl border border-line bg-surface shadow-[0_20px_48px_rgba(0,0,0,.45)]",
         active ? "cursor-grab touch-none" : "")}
       style={active ? undefined : { transform: "translateY(14px) scale(.95)", transition: "transform .24s" }}
@@ -205,7 +246,9 @@ function Card({ card, depth, copy, cardRef, videoState, onVideoState, onDecide }
           </div>
         )}
         {videoState === "failed" && (
-          <div className="pointer-events-none absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-xl bg-black/65 p-3 text-center text-xs text-white">{copy.videoFailed}</div>
+          <div className="pointer-events-none absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-xl bg-black/65 p-3 text-center text-xs text-white">
+            {card.save === "saved" ? copy.videoFailed : copy.cantUse}
+          </div>
         )}
         <div ref={keepRef} className="pointer-events-none absolute start-4 top-4 -rotate-12 rounded-xl border-[3px] border-floodlight bg-void/55 px-3 py-1 font-display text-2xl font-bold uppercase tracking-wider text-floodlight" style={{ opacity: 0 }}>{copy.keep}</div>
         <div ref={skipRef} className="pointer-events-none absolute end-4 top-4 rotate-12 rounded-xl border-[3px] border-text bg-void/55 px-3 py-1 font-display text-2xl font-bold uppercase tracking-wider text-text" style={{ opacity: 0 }}>{copy.skip}</div>
@@ -232,7 +275,7 @@ function Card({ card, depth, copy, cardRef, videoState, onVideoState, onDecide }
   );
 }
 
-function Controls({ copy, canUndo, onDecide, onUndo }: { copy: MomentStrings; canUndo: boolean; onDecide: (keep: boolean) => void; onUndo: () => void }) {
+function Controls({ copy, canUndo, canKeep, onDecide, onUndo }: { copy: MomentStrings; canUndo: boolean; canKeep: boolean; onDecide: (keep: boolean) => void; onUndo: () => void }) {
   return (
     <div className="flex flex-col gap-1.5" dir="ltr">
       <div className="flex items-center justify-center gap-5">
@@ -244,8 +287,8 @@ function Controls({ copy, canUndo, onDecide, onUndo }: { copy: MomentStrings; ca
           className="flex h-12 w-12 items-center justify-center rounded-full border border-line bg-surface/60 text-muted-text active:scale-95 disabled:opacity-35">
           <RotateCcw className="h-5 w-5" />
         </button>
-        <button type="button" aria-label={copy.keep} onClick={() => onDecide(true)} data-testid="button-picker-keep"
-          className="flex h-16 w-16 items-center justify-center rounded-full bg-floodlight text-void active:scale-95">
+        <button type="button" aria-label={copy.keep} onClick={() => onDecide(true)} disabled={!canKeep} data-testid="button-picker-keep"
+          className="flex h-16 w-16 items-center justify-center rounded-full bg-floodlight text-void active:scale-95 disabled:opacity-35">
           <Check className="h-7 w-7" strokeWidth={2.8} />
         </button>
       </div>

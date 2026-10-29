@@ -436,7 +436,7 @@ function ClipsBlock({ room, r }: { room: MatchRoom; r: R }) {
       ) : (
         <div className="no-scrollbar -mx-4 flex gap-2.5 overflow-x-auto px-4 pb-1">
           {list.map((clip) => (
-            <Link key={clip.id} href={clip.mine ? "/my-clips" : `/players/${clip.by.userId}`} className="relative flex w-40 shrink-0 flex-col gap-1.5">
+            <Link key={clip.id} href={clip.mine ? "/my-clips?tab=created" : `/players/${clip.by.userId}`} className="relative flex w-40 shrink-0 flex-col gap-1.5">
               <div className="relative flex aspect-video items-center justify-center rounded-lg border border-line bg-surface">
                 <Play className="h-5 w-5 text-muted-text" />
                 <Num className="absolute bottom-1.5 end-1.5 rounded bg-void/80 px-1.5 text-[11px]">{Math.round(clip.duration)}s</Num>

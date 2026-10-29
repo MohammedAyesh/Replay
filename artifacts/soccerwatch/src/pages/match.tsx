@@ -1864,7 +1864,7 @@ function ClipsTab({ room, copy }: { room: MatchRoom; copy: MatchStrings & { loca
       ) : (
         <div className="grid grid-cols-2 gap-3">
           {(clips.data ?? []).map((clip) => (
-            <Link key={clip.id} href={clip.mine ? "/my-clips" : `/players/${clip.by.userId}`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface">
+            <Link key={clip.id} href={clip.mine ? "/my-clips?tab=created" : `/players/${clip.by.userId}`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface">
               <div className="relative aspect-video bg-raised">
                 <div className="absolute inset-0 flex items-center justify-center"><Play className="h-6 w-6 text-muted-text" /></div>
                 <span className="absolute bottom-1.5 end-1.5 rounded bg-void/80 px-1.5 font-mono text-[11px]">{Math.round(clip.duration)}s</span>

@@ -983,8 +983,8 @@ export default function MyClips() {
   const reelCopy = useReelCopy();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  // Open where the player's clips are: the ones he cut himself, unless the
-  // link asks for a tab (a match report's "Make a reel" opens Reels).
+  // Open on Moments, unless the link asks for a tab: a match report's
+  // "Make a reel" opens Reels, and links to his own cuts ask for Created.
   const search = useSearch();
   const reelMatch = reelMatchFromSearch(search);
   const [tab, setTab] = useState<Tab>(() => {
@@ -1290,7 +1290,7 @@ export function MatchMomentsTab({
         <Button
           className="mt-4 w-full bg-primary text-primary-foreground hover:bg-primary/90"
           disabled={!canPick}
-          onClick={() => setPicking({ recordingId: null })}
+          onClick={() => setPicking((open) => open ?? { recordingId: null })}
           data-testid="button-pick-moments"
         >
           <Film className="h-4 w-4" aria-hidden />
@@ -1316,7 +1316,7 @@ export function MatchMomentsTab({
               {matchDeck >= REEL_MIN_CLIPS && (
                 <button
                   type="button"
-                  onClick={() => setPicking({ recordingId: group.recordingId })}
+                  onClick={() => setPicking((open) => open ?? { recordingId: group.recordingId })}
                   className="inline-flex min-h-9 shrink-0 items-center gap-1 rounded-full border border-turf/50 px-3 text-xs font-bold text-turf"
                   data-testid={`button-pick-match-${group.recordingId}`}
                 >
@@ -1381,7 +1381,8 @@ export function MatchMomentsTab({
           clips={usableClips}
           initialPicked={building}
           focusIds={new Set(building)}
-          initialStep="details"
+          // Moments are all one shape unless he re-cut one; mixed shapes need the pick step to fix.
+          initialStep={new Set(building.map((id) => usableClips.find((c) => c.id === id)?.aspectRatio ?? "16:9")).size > 1 ? "pick" : "details"}
           onCreated={onReelMade}
         />
       )}
