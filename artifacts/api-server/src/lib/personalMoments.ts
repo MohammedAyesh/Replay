@@ -41,7 +41,7 @@ export type PersonalMoment = ChainEarnedClip & { follow?: FollowPoint[] };
 export const PERSONAL = {
   maxShots: 5,
   maxDribbles: 6,
-  maxPasses: 4,
+  maxPasses: 8,
   /** a dribble moment is a won take-on over a short run, metres */
   dribbleMaxMetres: 12,
   /** a pass has to travel this far to be worth a clip, metres */
