@@ -1,10 +1,10 @@
 import * as React from "react";
 import { Link } from "wouter";
-import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useGetAcademyConsoleMemberships, useGetAcademyFamilyMe, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, getGetAcademyConsoleMembershipsQueryKey, getGetAcademyFamilyMeQueryKey, type PlayerProfileInputPosition as ProfileInputPosition, type PlayerProfileInputGender as ProfileInputGender } from "@workspace/api-client-react";
+import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdateProfile, useDeleteAccount, getGetAccountStatsQueryKey, getGetMeQueryKey, getGetAccountClaimedMatchesQueryKey, type PlayerProfileInputPosition as ProfileInputPosition, type PlayerProfileInputGender as ProfileInputGender } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, ChevronDown, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles, GraduationCap, Bookmark, Heart, MapPin, Target } from "lucide-react";
+import { ChevronRight, ChevronLeft, ChevronDown, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles, Bookmark, Heart, MapPin, Target } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -59,20 +59,6 @@ export default function Account() {
   const displayUser = user ?? authUser;
   const { data: stats } = useGetAccountStats({ query: { enabled: !isGuest, queryKey: getGetAccountStatsQueryKey() } });
   const { data: claimedMatches } = useGetAccountClaimedMatches({ query: { enabled: !isGuest, queryKey: getGetAccountClaimedMatchesQueryKey() } });
-  const { data: academyMemberships } = useGetAcademyConsoleMemberships({
-    query: {
-      enabled: !isGuest && Boolean(authUser),
-      queryKey: getGetAcademyConsoleMembershipsQueryKey(),
-    },
-  });
-  const myAcademyFamilyQuery = useGetAcademyFamilyMe(undefined, {
-    query: {
-      enabled: !isGuest && Boolean(authUser),
-      queryKey: getGetAcademyFamilyMeQueryKey(),
-      retry: false,
-    },
-  });
-
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
   const [isEditOpen, setIsEditOpen] = React.useState(false);
   const [isDeleteAccountOpen, setIsDeleteAccountOpen] = React.useState(false);
@@ -289,10 +275,8 @@ export default function Account() {
                 {supportHref && <a href={supportHref} className={accountRowClass}><span className={`${iconBox} bg-raised text-muted-text`}><Mail className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{legal.contactSupport}</span>{renderChevron()}</a>}
               </AccountGroup>
 
-              {!isGuest && ((displayUser?.ownedFieldIds?.length ?? 0) > 0 || (academyMemberships?.length ?? 0) > 0 || Boolean(myAcademyFamilyQuery.data) || isAdmin) && <AccountGroup title={t.account.controlPanels}>
+              {!isGuest && ((displayUser?.ownedFieldIds?.length ?? 0) > 0 || isAdmin) && <AccountGroup title={t.account.controlPanels}>
                 {(displayUser?.ownedFieldIds?.length ?? 0) > 0 && <Link href="/owner" data-testid="link-owner-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><Video className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.ownerConsole}</span>{renderChevron()}</Link>}
-                {(academyMemberships?.length ?? 0) > 0 && <Link href="/academy" data-testid="link-academy-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><GraduationCap className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.academyConsole}</span>{renderChevron()}</Link>}
-                {myAcademyFamilyQuery.data && <Link href="/academy/me" data-testid="link-my-academy-family" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><GraduationCap className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{(myAcademyFamilyQuery.data.players.length ?? 0) > 1 ? t.account.myAcademyChildren(myAcademyFamilyQuery.data.players.length) : t.account.myAcademy}</span>{renderChevron()}</Link>}
                 {isAdmin && <Link href="/admin" data-testid="link-admin-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><Shield className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.adminPanel}</span>{renderChevron()}</Link>}
               </AccountGroup>}
 

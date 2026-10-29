@@ -1,6 +1,6 @@
 import React from "react";
 import { Link, useLocation } from "wouter";
-import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays, GraduationCap } from "lucide-react";
+import { Globe, Home, Bookmark, User as UserIcon, MapPin, CalendarDays, GraduationCap, LayoutDashboard } from "lucide-react";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "@/i18n";
@@ -10,7 +10,7 @@ import { OrientationLock } from "@/components/orientation-lock";
 import { useAuth } from "@/lib/auth";
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { useMyMatches } from "@/lib/match-api";
-import { useGetAcademyFamilyMe, getGetAcademyFamilyMeQueryKey } from "@workspace/api-client-react";
+import { useGetAcademyConsoleMemberships, getGetAcademyConsoleMembershipsQueryKey, useGetAcademyFamilyMe, getGetAcademyFamilyMeQueryKey } from "@workspace/api-client-react";
 import { recordInAppLocation } from "@/lib/find-nav";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -20,6 +20,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const matchCopy = useMatchCopy();
   const myMatches = useMyMatches(Boolean(user) && !isGuest);
   const academyFamily = useGetAcademyFamilyMe(undefined, { query: { queryKey: getGetAcademyFamilyMeQueryKey(), enabled: Boolean(user) && !isGuest, retry: false } });
+  const academyMemberships = useGetAcademyConsoleMemberships({
+    query: {
+      enabled: !isGuest && Boolean(user),
+      queryKey: getGetAcademyConsoleMembershipsQueryKey(),
+    },
+  });
+  const hasAcademyLinks = Boolean(academyFamily.data) || (academyMemberships.data?.length ?? 0) > 0;
   const inviteCount = myMatches.data?.invites.length ?? 0;
 
 
@@ -51,25 +58,44 @@ export function Layout({ children }: { children: React.ReactNode }) {
         isGuidedDemo ? "max-w-none app-shell--wide" : isAcademyConsole ? "max-w-none" : isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
         (isLogin || isAuthPage || isWholeGameClaim || isGuidedDemo || isAcademyConsole) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
         !hideTabBar && "app-shell--player-nav",
+        hasAcademyLinks && !hideTabBar && "app-shell--academy-links",
       )}
     >
       {!hideHeader && (
-        <header className="replay-header sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md">
-          <div className="flex items-center justify-between gap-3">
-            <div className="replay-lockup flex min-w-0 items-center gap-2">
+        <header className={`replay-header sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md ${hasAcademyLinks ? "replay-header--with-academy" : ""}`}>
+          <div className={`replay-header-content flex items-center justify-between ${hasAcademyLinks ? "gap-1" : "gap-3"}`}>
+            <div className={`replay-lockup flex min-w-0 items-center ${hasAcademyLinks ? "replay-lockup--with-academy gap-1" : "gap-2"}`}>
               <LogoMark size={34} />
               <span className="replay-wordmark" aria-label="Replay">
                 <span className="replay-wordmark-ar" lang="ar">ريبلاي</span>
                 <span className="replay-wordmark-en">REPLAY</span>
               </span>
+              {hasAcademyLinks && (
+                <div className="replay-academy-links inline-flex shrink-0 items-center gap-0.5 rounded-full border border-line bg-void p-0.5" role="group" aria-label="الأكاديمية/Academy">
+                  {academyFamily.data && (
+                    <Link href="/academy/me" data-testid="link-my-academy-family" aria-label={t.account.myAcademy} className="replay-academy-link inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-xs font-bold text-foreground">
+                      <GraduationCap className="h-[15px] w-[15px] shrink-0 text-turf" aria-hidden="true" />
+                      <span className="replay-academy-label">{locale === "ar" ? "أكاديميتي" : t.account.myAcademy}</span>
+                    </Link>
+                  )}
+                  {academyFamily.data && (academyMemberships.data?.length ?? 0) > 0 && <span className="replay-academy-divider h-[18px] w-px shrink-0 bg-line" aria-hidden="true" />}
+                  {(academyMemberships.data?.length ?? 0) > 0 && (
+                    <Link href="/academy" data-testid="link-academy-console" aria-label={t.account.academyConsole} className="replay-academy-link inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-xs font-bold text-foreground">
+                      <LayoutDashboard className="h-[15px] w-[15px] shrink-0 text-[#B9A8FF]" aria-hidden="true" />
+                      <span className="replay-academy-label replay-academy-console-short">{locale === "ar" ? t.account.academyConsole : t.account.academyConsoleShort}</span>
+                      <span className="replay-academy-label replay-academy-console-full">{t.account.academyConsole}</span>
+                    </Link>
+                  )}
+                </div>
+              )}
             </div>
             <button
               type="button"
               onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
               aria-label="Change language"
-              className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raised px-3.5 py-2 text-sm font-semibold text-foreground"
+              className={`replay-language-toggle flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raised py-2 text-sm font-semibold text-foreground ${hasAcademyLinks ? "px-2.5 text-[13px]" : "px-3.5"}`}
             >
-              <Globe className="h-4 w-4" aria-hidden="true" />
+              <Globe className={`shrink-0 ${hasAcademyLinks ? "h-3.5 w-3.5" : "h-4 w-4"}`} aria-hidden="true" />
               <span>{locale.toUpperCase()}</span>
             </button>
           </div>
@@ -121,14 +147,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
             label={t.nav.myClips}
             isActive={location === "/my-clips"}
           />
-          {academyFamily.data && (
-            <NavItem
-              href="/academy/me"
-              icon={<GraduationCap className="h-[22px] w-[22px]" />}
-              label={t.account.myAcademy}
-              isActive={location === "/academy/me"}
-            />
-          )}
           <NavItem
             href="/account"
             icon={<UserIcon className="h-[22px] w-[22px]" />}

@@ -1532,8 +1532,49 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     padding: 4px 8px 20px;
   }
 
+  .app-shell--player-nav > header.replay-header .replay-lockup--with-academy {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
   .app-shell--player-nav > header.replay-header .replay-lockup > .replay-wordmark {
     display: none;
+  }
+
+  .app-shell--player-nav > header.replay-header .replay-lockup--with-academy::after {
+    order: 1;
+  }
+
+  .app-shell--player-nav > header.replay-header .replay-academy-links {
+    order: 2;
+    width: 100%;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+
+  .app-shell--player-nav > header.replay-header .replay-academy-divider {
+    display: none;
+  }
+
+  .app-shell--player-nav > header.replay-header .replay-academy-link {
+    width: 100%;
+    min-height: 44px;
+    justify-content: flex-start;
+    border-radius: 12px;
+    padding: 0 12px;
+  }
+
+  .app-shell--player-nav > header.replay-header .replay-academy-console-short {
+    display: none;
+  }
+
+  .app-shell--player-nav > header.replay-header .replay-academy-console-full {
+    display: inline;
   }
 
   .app-shell--player-nav > header.replay-header .replay-lockup::after {
@@ -1573,6 +1614,10 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     box-shadow: none;
   }
 
+  .app-shell--player-nav.app-shell--academy-links > nav {
+    inset-block-start: 220px;
+  }
+
   .app-shell--player-nav > nav a {
     width: 100%;
     min-width: 0;
@@ -1608,6 +1653,29 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     .account-page
   ) {
     background-color: transparent;
+  }
+}
+
+.replay-academy-console-full {
+  display: none;
+}
+
+@media (max-width: 430px) {
+  .replay-header--with-academy {
+    padding-inline: 10px;
+  }
+}
+
+@media (max-width: 380px) {
+  .replay-header--with-academy {
+    margin-inline: 8px;
+    padding-inline: 4px;
+  }
+}
+
+@media (max-width: 359px) {
+  .replay-academy-label {
+    display: none;
   }
 }
 
