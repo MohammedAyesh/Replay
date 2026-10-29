@@ -63,25 +63,25 @@ export function Layout({ children }: { children: React.ReactNode }) {
     >
       {!hideHeader && (
         <header className={`replay-header sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md ${hasAcademyLinks ? "replay-header--with-academy" : ""}`}>
-          <div className={`replay-header-content flex items-center justify-between ${hasAcademyLinks ? "gap-1" : "gap-3"}`}>
-            <div className={`replay-lockup flex min-w-0 items-center ${hasAcademyLinks ? "replay-lockup--with-academy gap-1" : "gap-2"}`}>
+          <div className={`replay-header-content flex items-center justify-between ${hasAcademyLinks ? "gap-2" : "gap-3"}`}>
+            <div className={`replay-lockup flex min-w-0 items-center ${hasAcademyLinks ? "replay-lockup--with-academy gap-2.5" : "gap-2"}`}>
               <LogoMark size={34} />
               <span className="replay-wordmark" aria-label="Replay">
                 <span className="replay-wordmark-ar" lang="ar">ريبلاي</span>
                 <span className="replay-wordmark-en">REPLAY</span>
               </span>
               {hasAcademyLinks && (
-                <div className="replay-academy-links inline-flex shrink-0 items-center gap-0.5 rounded-full border border-line bg-void p-0.5" role="group" aria-label="الأكاديمية/Academy">
+                <div className="replay-academy-links inline-flex h-11 shrink-0 items-center gap-0.5 rounded-full border border-line bg-raised p-0.5" role="group" aria-label="الأكاديمية/Academy">
                   {academyFamily.data && (
-                    <Link href="/academy/me" data-testid="link-my-academy-family" aria-label={t.account.myAcademy} className="replay-academy-link inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-xs font-bold text-foreground">
-                      <GraduationCap className="h-[15px] w-[15px] shrink-0 text-turf" aria-hidden="true" />
+                    <Link href="/academy/me" data-testid="link-my-academy-family" aria-label={t.account.myAcademy} className="replay-academy-link inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold leading-none text-foreground transition-colors hover:bg-surface focus-visible:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-turf focus-visible:ring-offset-2 focus-visible:ring-offset-raised">
+                      <GraduationCap className="h-4 w-4 shrink-0 text-turf" strokeWidth={2} aria-hidden="true" />
                       <span className="replay-academy-label">{locale === "ar" ? "أكاديميتي" : t.account.myAcademy}</span>
                     </Link>
                   )}
-                  {academyFamily.data && (academyMemberships.data?.length ?? 0) > 0 && <span className="replay-academy-divider h-[18px] w-px shrink-0 bg-line" aria-hidden="true" />}
+                  {academyFamily.data && (academyMemberships.data?.length ?? 0) > 0 && <span className="replay-academy-divider h-4 w-px shrink-0 bg-line" aria-hidden="true" />}
                   {(academyMemberships.data?.length ?? 0) > 0 && (
-                    <Link href="/academy" data-testid="link-academy-console" aria-label={t.account.academyConsole} className="replay-academy-link inline-flex min-h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-xs font-bold text-foreground">
-                      <LayoutDashboard className="h-[15px] w-[15px] shrink-0 text-[#B9A8FF]" aria-hidden="true" />
+                    <Link href="/academy" data-testid="link-academy-console" aria-label={t.account.academyConsole} className="replay-academy-link inline-flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2.5 text-[13px] font-semibold leading-none text-foreground transition-colors hover:bg-surface focus-visible:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-turf focus-visible:ring-offset-2 focus-visible:ring-offset-raised">
+                      <LayoutDashboard className="h-4 w-4 shrink-0 text-[#B9A8FF]" strokeWidth={2} aria-hidden="true" />
                       <span className="replay-academy-label replay-academy-console-short">{locale === "ar" ? t.account.academyConsole : t.account.academyConsoleShort}</span>
                       <span className="replay-academy-label replay-academy-console-full">{t.account.academyConsole}</span>
                     </Link>
@@ -93,9 +93,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => setLocale(locale === "ar" ? "en" : "ar")}
               aria-label="Change language"
-              className={`replay-language-toggle flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raised py-2 text-sm font-semibold text-foreground ${hasAcademyLinks ? "px-2.5 text-[13px]" : "px-3.5"}`}
+              className={hasAcademyLinks
+                ? "replay-language-toggle flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line bg-raised text-[13px] font-semibold text-foreground"
+                : "replay-language-toggle flex min-h-11 shrink-0 items-center gap-1.5 rounded-full border border-line bg-raised px-3.5 py-2 text-sm font-semibold text-foreground"}
             >
-              <Globe className={`shrink-0 ${hasAcademyLinks ? "h-3.5 w-3.5" : "h-4 w-4"}`} aria-hidden="true" />
+              {!hasAcademyLinks && <Globe className="h-4 w-4 shrink-0" aria-hidden="true" />}
               <span>{locale.toUpperCase()}</span>
             </button>
           </div>
