@@ -70,6 +70,8 @@ export function HomeHub() {
   // The most impressive things Replay can tell this player right now, best first, chosen by the server.
   const tiles = data?.statTiles ?? (data?.statTile ? [data.statTile] : []);
   const statTile = tiles.length ? <StatCarousel tiles={tiles} /> : null;
+  const bookingCardRail = "no-scrollbar -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 md:mx-0 md:snap-none md:overflow-visible md:px-0";
+  const bookingCardWidth = "w-[min(84vw,360px)] min-w-[280px] shrink-0 snap-start md:w-auto md:min-w-0 md:flex-1";
 
   return (
     <div className="mb-8 flex flex-col gap-6">
@@ -96,50 +98,47 @@ export function HomeHub() {
           {bookRow}
         </>
       ) : (
-        <section
-          className={cn(
-            "flex flex-col gap-[22px] rounded-2xl border bg-surface px-[22px] py-6",
-            data?.freeMatch?.attempt || data?.freeMatch?.reward ? "border-floodlight/40" : "border-line",
-          )}
-          style={data?.freeMatch?.attempt || data?.freeMatch?.reward
-            ? { background: "radial-gradient(120% 90% at 100% 0%, rgba(212,255,79,.12), transparent 60%), #141B2C" }
-            : undefined}
-          data-testid="home-no-match"
-        >
-          <style>{`@keyframes floodOn{0%{opacity:.3}8%{opacity:1}13%{opacity:.45}22%{opacity:1}100%{opacity:1}}.flood-on{animation:floodOn 1.1s ease-out .3s both}@media(prefers-reduced-motion:reduce){.flood-on{animation:none}}`}</style>
-          <p className="font-display text-[26px] font-extrabold leading-tight">{copy.homeNoMatch}</p>
-          <ol className="m-0 flex list-none flex-col p-0">
-            {[CalendarPlus, Target, Smartphone].map((Icon, index) => (
-              <Step key={index} index={index} label={copy.homeSteps[index]}>
-                <Icon className="h-[22px] w-[22px]" aria-hidden />
-              </Step>
-            ))}
-          </ol>
-          {canBook && !data?.freeMatch?.reward && (
-            <Link href="/book" className="flood-on flex min-h-[58px] items-center justify-center rounded-full bg-floodlight px-5 text-center font-display text-[17px] font-extrabold text-void shadow-[0_0_0_6px_rgba(212,255,79,0.08)]" data-testid="link-home-book">
-              {bookLabel}
-            </Link>
-          )}
+        <div className={bookingCardRail} data-testid="home-booking-rewards">
+          <section
+            className={cn(
+              "flex flex-col gap-[22px] rounded-2xl border bg-surface px-[22px] py-6",
+              bookingCardWidth,
+              data?.freeMatch?.attempt || data?.freeMatch?.reward ? "border-floodlight/40" : "border-line",
+            )}
+            style={data?.freeMatch?.attempt || data?.freeMatch?.reward
+              ? { background: "radial-gradient(120% 90% at 100% 0%, rgba(212,255,79,.12), transparent 60%), #141B2C" }
+              : undefined}
+            data-testid="home-no-match"
+          >
+            <style>{`@keyframes floodOn{0%{opacity:.3}8%{opacity:1}13%{opacity:.45}22%{opacity:1}100%{opacity:1}}.flood-on{animation:floodOn 1.1s ease-out .3s both}@media(prefers-reduced-motion:reduce){.flood-on{animation:none}}`}</style>
+            <p className="font-display text-[26px] font-extrabold leading-tight">{copy.homeNoMatch}</p>
+            <ol className="m-0 flex list-none flex-col p-0">
+              {[CalendarPlus, Target, Smartphone].map((Icon, index) => (
+                <Step key={index} index={index} label={copy.homeSteps[index]}>
+                  <Icon className="h-[22px] w-[22px]" aria-hidden />
+                </Step>
+              ))}
+            </ol>
+            {canBook && !data?.freeMatch?.reward && (
+              <Link href="/book" className="flood-on flex min-h-[58px] items-center justify-center rounded-full bg-floodlight px-5 text-center font-display text-[17px] font-extrabold text-void shadow-[0_0_0_6px_rgba(212,255,79,0.08)]" data-testid="link-home-book">
+                {bookLabel}
+              </Link>
+            )}
+          </section>
           {data?.freeMatch && (
             <>
-              <div className="border-t border-line pt-4">
-                <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} embedded />
-              </div>
-              <div className="border-t border-line pt-4">
-                <LoyaltyCard status={data.freeMatch} canBook={canBook} embedded />
-              </div>
+              <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} className={bookingCardWidth} hideStartAction />
+              <LoyaltyCard status={data.freeMatch} canBook={canBook} className={bookingCardWidth} hideStartAction />
             </>
           )}
-        </section>
+        </div>
       )}
       {!matches.isLoading && !hero && statTile}
       {hero && data?.freeMatch && (
-        <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface px-5 py-5" data-testid="home-booking-rewards">
-          <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} embedded />
-          <div className="border-t border-line pt-4">
-            <LoyaltyCard status={data.freeMatch} canBook={canBook} embedded />
-          </div>
-        </section>
+        <div className={bookingCardRail} data-testid="home-booking-rewards">
+          <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} className={bookingCardWidth} />
+          <LoyaltyCard status={data.freeMatch} canBook={canBook} className={bookingCardWidth} />
+        </div>
       )}
 
       {invites.length > 0 && (

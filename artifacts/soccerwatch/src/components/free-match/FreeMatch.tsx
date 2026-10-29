@@ -72,15 +72,12 @@ function Chip({ children, tone = "lime" }: { children: ReactNode; tone?: "lime" 
   );
 }
 
-function CardShell({ children, glow = false, embedded = false, testId }: { children: ReactNode; glow?: boolean; embedded?: boolean; testId?: string }) {
+function CardShell({ children, glow = false, testId, className }: { children: ReactNode; glow?: boolean; testId?: string; className?: string }) {
   return (
     <section
       data-testid={testId}
-      className={cn(
-        embedded ? "relative overflow-hidden" : "relative overflow-hidden rounded-2xl border px-5 py-5",
-        !embedded && (glow ? "border-floodlight/40" : "border-line bg-surface"),
-      )}
-      style={!embedded && glow ? { background: "radial-gradient(120% 90% at 100% 0%, rgba(212,255,79,.16), transparent 60%), #141B2C" } : undefined}
+      className={cn("relative overflow-hidden rounded-2xl border px-5 py-5", glow ? "border-floodlight/40" : "border-line bg-surface", className)}
+      style={glow ? { background: "radial-gradient(120% 90% at 100% 0%, rgba(212,255,79,.16), transparent 60%), #141B2C" } : undefined}
     >
       {children}
     </section>
@@ -135,7 +132,7 @@ export function FreeMatchRulesSheet({ open, onOpenChange, status, canBook }: {
 // ---------------------------------------------------------------- Home
 
 /** Home's free-match card: the intro, the progress, or the free match ready to book. */
-export function FreeMatchHomeCard({ status, canBook, embedded = false }: { status: FreeMatchStatus; canBook: boolean; embedded?: boolean }) {
+export function FreeMatchHomeCard({ status, canBook, className, hideStartAction = false }: { status: FreeMatchStatus; canBook: boolean; className?: string; hideStartAction?: boolean }) {
   const explainer = useExplainerCopy();
   const free = explainer.free;
   const shortDate = useShortDate();
@@ -148,7 +145,7 @@ export function FreeMatchHomeCard({ status, canBook, embedded = false }: { statu
   // A free match is waiting to be used.
   if (status.reward) {
     return (
-      <CardShell glow={!embedded} embedded={embedded} testId="free-match-home-reward">
+      <CardShell glow testId="free-match-home-reward" className={className}>
         <Chip><Gift className="h-3 w-3" />{free.free}</Chip>
         <p className="mt-3 font-display text-[24px] font-extrabold leading-tight">{free.applied}</p>
         <p className="mt-1 text-sm text-muted-text">{free.appliedSub(status.reward.freeHours, shortDate(status.reward.expiresAt))}</p>
@@ -179,7 +176,7 @@ export function FreeMatchHomeCard({ status, canBook, embedded = false }: { statu
 
   let action: ReactNode = null;
   if (!attempt) {
-    action = canBook && !embedded ? <Link href="/book" className={primaryButton} data-testid="link-free-match-start">{free.book}</Link> : null;
+    action = canBook && !hideStartAction ? <Link href="/book" className={primaryButton} data-testid="link-free-match-start">{free.book}</Link> : null;
   } else if (next?.key === "find" && attempt.findRecordingId) {
     action = <Link href={`/find/${attempt.findRecordingId}`} className={primaryButton} data-testid="link-free-match-find">{free.findMe}</Link>;
   } else if (next?.key === "friends") {
@@ -193,7 +190,7 @@ export function FreeMatchHomeCard({ status, canBook, embedded = false }: { statu
   }
 
   return (
-    <CardShell glow={Boolean(attempt) && !embedded} embedded={embedded} testId="free-match-home">
+    <CardShell glow={Boolean(attempt)} testId="free-match-home" className={className}>
       <div className="flex items-center justify-between gap-3">
         <Chip>{free.chip} · {free.of(done, steps.length)}</Chip>
         {!attempt && <button type="button" onClick={hideIntro} className="-me-2 min-h-9 rounded-full px-3 text-xs font-semibold text-muted-text">{explainer.firstClip.hide}</button>}
@@ -339,13 +336,13 @@ function FreeMatchUnlocked({ reward, status }: { reward: FreeMatchReward; status
 // ---------------------------------------------------------------- every N games, one free
 
 /** Home's punch card: one ball per paid game played in the current block. */
-export function LoyaltyCard({ status, canBook, embedded = false }: { status: FreeMatchStatus; canBook: boolean; embedded?: boolean }) {
+export function LoyaltyCard({ status, canBook, className, hideStartAction = false }: { status: FreeMatchStatus; canBook: boolean; className?: string; hideStartAction?: boolean }) {
   const free = useExplainerCopy().free;
   const { loyalty } = status;
   if (!loyalty?.enabled) return null;
   const left = loyalty.every - loyalty.count;
   return (
-    <section className={cn(embedded ? "" : "rounded-2xl border border-line bg-surface px-5 py-4")} data-testid="loyalty-card">
+    <section className={cn("rounded-2xl border border-line bg-surface px-5 py-4", className)} data-testid="loyalty-card">
       <div className="flex items-center justify-between gap-3">
         <p className="font-display text-[18px] font-extrabold leading-tight">{free.loyaltyTitle(loyalty.every)}</p>
         <Chip tone="turf">{free.loyaltyCount(loyalty.count, loyalty.every)}</Chip>
@@ -368,7 +365,7 @@ export function LoyaltyCard({ status, canBook, embedded = false }: { status: Fre
       </ol>
       <p className="mt-3 text-sm text-muted-text">{loyalty.total === 0 ? free.loyaltyStart(loyalty.every) : free.loyaltyLeft(left)}</p>
       <p className="mt-1 text-[11.5px] text-muted-text/80">{free.loyaltyRule}</p>
-      {canBook && !embedded && loyalty.total === 0 && (
+      {canBook && !hideStartAction && loyalty.total === 0 && (
         <Link href="/book" className="mt-3 inline-flex min-h-10 items-center text-sm font-bold text-turf" data-testid="link-loyalty-book">
           {free.book}<ChevronRight className="h-4 w-4 rtl:rotate-180" />
         </Link>
