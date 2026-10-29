@@ -569,9 +569,11 @@ function TimelineDivider({ children }: { children: ReactNode }) {
   );
 }
 
-function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, vote, pending }: {
+type Verdict = "goal" | "not_goal";
+
+function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, onVote, pending, columns }: {
   event: TimelineEvent; room: MatchRoom; copy: Copy; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
-  canVote: boolean; vote: ReturnType<typeof useGoalVoting>["vote"]; pending: boolean;
+  canVote: boolean; onVote: (row: NonNullable<TimelineEvent["row"]>, verdict: Verdict) => void; pending: boolean; columns: 1 | 2;
 }) {
   const href = watchHref(room, event.at);
   const teamName = event.team ? names[event.team] : null;
@@ -581,13 +583,20 @@ function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, vote, 
   switch (event.kind) {
     case "goal":
       icon = <Goal className="h-4 w-4" />;
-      title = event.ownGoal ? S.ownGoal : event.mine ? r.you : event.scorer ? firstName(event.scorer.name) : teamName ?? L.goal;
-      sub = event.score ? <Num>{`${event.score.a} – ${event.score.b}`}</Num> : event.ownGoal && teamName ? <bdi>{teamName}</bdi> : L.goal;
+      // "You" only when the tracker named him; an own goal names the team it counted for.
+      title = event.ownGoal
+        ? S.ownGoal
+        : event.scorer ? (event.mine ? r.you : firstName(event.scorer.name)) : teamName ?? L.goal;
+      {
+        const score = event.score ? <Num>{`${event.score.a} – ${event.score.b}`}</Num> : null;
+        const forTeam = event.ownGoal && teamName ? <bdi>{S.forTeam(teamName)}</bdi> : null;
+        sub = score && forTeam ? <>{score} · {forTeam}</> : score ?? forTeam ?? (title === L.goal ? null : L.goal);
+      }
       break;
     case "likely":
       icon = <HelpCircle className="h-4 w-4" />;
       title = S.goalQ;
-      sub = event.ownGoal ? S.ownGoal : event.scorer && !event.mine ? <bdi>{firstName(event.scorer.name)}</bdi> : S.replayUnsure;
+      sub = event.ownGoal ? S.possibleOwnGoal : event.scorer && !event.mine ? <bdi>{firstName(event.scorer.name)}</bdi> : S.replayUnsure;
       break;
     case "chance":
       icon = <Crosshair className="h-4 w-4" />;
@@ -618,41 +627,45 @@ function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, vote, 
   const row = event.row;
   const votable = event.kind === "likely" && canVote && row !== null && row.key !== undefined;
   const dashed = event.kind === "likely" || event.kind === "chance";
-  // The edge that faces the line carries the team colour.
-  const edge = event.side === "start" ? "border-e-[3px]" : event.side === "end" ? "border-s-[3px]" : "";
+  // The edge that faces the line carries the team colour. Two columns are laid
+  // out left-to-right in both languages (team A on the left, as in the header);
+  // one column has the line at the start.
+  const edge = columns === 1 ? "border-s-[3px]" : event.side === "start" ? "border-r-[3px]" : event.side === "end" ? "border-l-[3px]" : "";
   const cls = cn(
     "flex min-h-[52px] flex-col justify-center gap-1.5 rounded-xl px-2.5 py-2 text-start",
-    event.mine ? "border border-floodlight/50 bg-floodlight/[0.08]" : dashed ? "border border-dashed border-[#5B6680]" : cn("bg-surface", edge),
+    event.mine ? "border border-floodlight/50 bg-[#1A2118]" : dashed ? "border border-dashed border-[#5B6680] bg-void" : cn("bg-surface", edge),
   );
   const style = !event.mine && !dashed && event.team ? { borderColor: visibleColour(colors[event.team], event.team === "A" ? "#F2F4F8" : "#FF6B1A") } : undefined;
   const body = (
     <span className="flex items-center gap-2">
       <span className={cn("shrink-0", event.mine ? "text-floodlight" : dashed ? "text-muted-text" : "text-text")}>{icon}</span>
       <span className="min-w-0 flex-1 text-xs leading-snug">
-        <b className="block break-words text-[13px]">{typeof title === "string" ? <bdi>{title}</bdi> : title}</b>
+        <b className="block truncate text-[13px]">{typeof title === "string" ? <bdi>{title}</bdi> : title}</b>
         {sub && <span className="block break-words text-muted-text">{sub}</span>}
       </span>
       {href && <Play className="h-3.5 w-3.5 shrink-0 fill-current text-turf" aria-hidden="true" />}
+      {href && <span className="sr-only">{event.phase === "during" ? S.watchAt(event.minute) : `${S.watch}, ${event.phase === "before" ? S.before : S.after}`}</span>}
     </span>
   );
+  const dir = copy.locale === "ar" ? "rtl" : "ltr";
   if (votable && row) {
     return (
-      <div className={cls} style={style} data-testid={`moment-${event.kind}`}>
+      <div className={cls} style={style} dir={dir} data-testid={`moment-${event.kind}`}>
         {href ? <Link href={href} className="block">{body}</Link> : body}
-        <span className="flex gap-1.5">
-          <button type="button" disabled={pending} onClick={() => vote(row, "goal")} className={cn("inline-flex min-h-8 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-1.5 text-[11px] font-bold disabled:opacity-50", row.myVote === "goal" ? "bg-turf text-void" : "border border-turf/50 text-turf")}>
-            <Check className="h-3.5 w-3.5 shrink-0" />{copy.gvYes}
+        <span className={cn("flex gap-1.5", columns === 2 && "flex-col")}>
+          <button type="button" disabled={pending} onClick={() => onVote(row, "goal")} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-full border border-turf/50 px-2 text-xs font-bold text-turf disabled:opacity-50">
+            <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{copy.gvYes}
           </button>
-          <button type="button" disabled={pending} onClick={() => vote(row, "not_goal")} className={cn("inline-flex min-h-8 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full px-1.5 text-[11px] font-bold disabled:opacity-50", row.myVote === "not_goal" ? "bg-muted-text text-void" : "border border-line text-muted-text")}>
-            <X className="h-3.5 w-3.5 shrink-0" />{copy.gvNo}
+          <button type="button" disabled={pending} onClick={() => onVote(row, "not_goal")} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-full border border-line px-2 text-xs font-bold text-muted-text disabled:opacity-50">
+            <X className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{copy.gvNo}
           </button>
         </span>
       </div>
     );
   }
   return href
-    ? <Link href={href} className={cls} style={style} data-testid={`moment-${event.kind}`}>{body}</Link>
-    : <div className={cls} style={style} data-testid={`moment-${event.kind}`}>{body}</div>;
+    ? <Link href={href} className={cls} style={style} dir={dir} data-testid={`moment-${event.kind}`}>{body}</Link>
+    : <div className={cls} style={style} dir={dir} data-testid={`moment-${event.kind}`}>{body}</div>;
 }
 
 function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSeconds }: {
@@ -661,25 +674,40 @@ function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSe
 }) {
   const [filter, setFilter] = useState<TimelineFilter>("all");
   const { vote, pending, error } = useGoalVoting(room.code);
+  // One tap confirms or rejects a chance for everyone, so the last vote can be undone.
+  const [lastVote, setLastVote] = useState<{ row: NonNullable<TimelineEvent["row"]>; verdict: Verdict } | null>(null);
+  const onVote = (row: NonNullable<TimelineEvent["row"]>, verdict: Verdict) => { vote(row, verdict); setLastVote({ row, verdict }); };
+  const undo = () => { if (lastVote) vote(lastVote.row, null); setLastVote(null); };
   const timeline = useMemo(() => buildTimeline({
     review: reviewOf(replay),
     teamCount: room.teamCount,
     gameCount: room.games.length,
     roomScore: room.score,
+    durationSeconds,
     me: room.me ? { playerId: me.playerId, team: me.team, topSpeedKmh: me.topSpeedKmh, report: me.report ?? null } : null,
     marks: room.marks,
-  }), [replay, room.teamCount, room.games.length, room.score, room.me, room.marks, me]);
+  }), [replay, room.teamCount, room.games.length, room.score, room.me, room.marks, me, durationSeconds]);
   const filters = timelineFilters(timeline.events, room.me !== null);
-  const active = filters.some((f) => f.id === filter) ? filter : "all";
+  const chosen = filters.some((f) => f.id === filter) ? filter : "all";
+  // "All" can be empty when there are only plain chances: open the first chip with something.
+  const active = chosen === "all" && filters[0]?.count === 0 ? filters.find((f) => f.count > 0)?.id ?? "all" : chosen;
   const shown = filterTimeline(timeline.events, active);
   const two = timeline.columns === 2;
   const canVote = Boolean(replay?.canVoteGoals);
   const label: Record<TimelineFilter, string> = { all: S.filterAll, goals: S.filterGoals, chances: S.filterChances, mine: S.filterMine };
   const totalMin = Math.max(1, Math.round(durationSeconds / 60));
 
+  const undoBar = lastVote && (
+    <div className="flex items-center justify-between gap-3 rounded-[14px] bg-surface px-3.5 py-1" role="status">
+      <span className="text-sm">{lastVote.verdict === "goal" ? S.votedGoal : S.votedNoGoal}</span>
+      <button type="button" disabled={pending} onClick={undo} className="min-h-11 px-2 text-sm font-bold text-turf disabled:opacity-50">{S.undo}</button>
+    </div>
+  );
+
   if (!timeline.events.length) {
     return (
       <div className="flex flex-col gap-3 pt-3" data-testid="sofa-moments">
+        {undoBar}
         <p className="rounded-[14px] bg-surface px-3.5 py-4 text-sm text-muted-text">{S.noMoments}</p>
         {room.me && <MatchReelRow room={room} L={L} r={r} />}
       </div>
@@ -690,65 +718,70 @@ function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSe
     <span className={cn(
       "z-[1] flex h-6 min-w-9 items-center justify-center justify-self-center rounded-full px-1.5 text-[11px] font-bold",
       event.mine ? "bg-floodlight text-void" : event.kind === "likely" || event.kind === "chance" ? "border border-dashed border-[#5B6680] bg-void text-muted-text" : "border border-line bg-surface",
-    )}><Num>{`${event.minute}′`}</Num></span>
+    )}>{event.phase === "before" ? S.before : event.phase === "after" ? S.after : <Num>{`${event.minute}′`}</Num>}</span>
   );
-  const card = (event: TimelineEvent) => <MomentCard event={event} room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={names} canVote={canVote} vote={vote} pending={pending} />;
+  const card = (event: TimelineEvent) => <MomentCard event={event} room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={names} canVote={canVote} onVote={onVote} pending={pending} columns={timeline.columns} />;
+  const item = (event: TimelineEvent) => (
+    <li key={event.id} className={cn("relative grid items-center gap-1.5", two ? "grid-cols-[minmax(0,1fr)_44px_minmax(0,1fr)]" : "grid-cols-[44px_minmax(0,1fr)]")}>
+      {two ? (
+        event.side === "centre" ? (
+          <div className="col-span-3 flex flex-col items-center gap-1">
+            {bubble(event)}
+            <span className="min-w-0 max-w-[75%]">{card(event)}</span>
+          </div>
+        ) : event.side === "start" ? (
+          <>
+            <span className="min-w-0">{card(event)}</span>
+            {bubble(event)}
+            <span />
+          </>
+        ) : (
+          <>
+            <span />
+            {bubble(event)}
+            <span className="min-w-0">{card(event)}</span>
+          </>
+        )
+      ) : (
+        <>
+          {bubble(event)}
+          <span className="min-w-0">{card(event)}</span>
+        </>
+      )}
+    </li>
+  );
+  const before = shown.filter((event) => event.phase === "before");
+  const during = shown.filter((event) => event.phase === "during");
+  const after = shown.filter((event) => event.phase === "after");
 
   return (
     <div className="flex flex-col gap-3 pt-3" data-testid="sofa-moments">
       {filters.length > 1 && (
         <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4" role="tablist" aria-label={S.tabMoments}>
           {filters.map((f) => (
-            <button key={f.id} type="button" role="tab" aria-selected={active === f.id} onClick={() => setFilter(f.id)} className={cn("min-h-9 shrink-0 rounded-full px-3 text-xs font-bold", active === f.id ? (f.id === "mine" ? "bg-floodlight text-void" : "bg-text text-void") : f.id === "mine" ? "border border-floodlight/50 text-floodlight" : "border border-line text-muted-text")} data-testid={`moments-filter-${f.id}`}>
+            <button key={f.id} type="button" role="tab" aria-selected={active === f.id} onClick={() => setFilter(f.id)} className={cn("min-h-11 shrink-0 rounded-full px-3.5 text-xs font-bold", active === f.id ? (f.id === "mine" ? "bg-floodlight text-void" : "bg-text text-void") : f.id === "mine" ? "border border-floodlight/50 text-floodlight" : "border border-line text-muted-text")} data-testid={`moments-filter-${f.id}`}>
               {label[f.id]}{f.id !== "all" && <> <Num>{f.count}</Num></>}
             </button>
           ))}
         </div>
       )}
+      {undoBar}
       {two && (
-        <div className="flex items-center justify-between text-[11px] font-semibold text-muted-text">
+        <div dir="ltr" className="flex items-center justify-between text-[11px] font-semibold text-muted-text">
           <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full" style={{ background: visibleColour(colors.A, "#F2F4F8") }} /><bdi>{names.A}</bdi></span>
           <span className="flex items-center gap-1.5"><bdi>{names.B}</bdi><i className="h-2 w-2 rounded-full" style={{ background: visibleColour(colors.B, "#FF6B1A") }} /></span>
         </div>
       )}
-      <div className="relative" data-testid="moments-timeline">
-        <span aria-hidden="true" className={cn("absolute bottom-0 top-0 w-0.5 bg-line", two ? "start-[calc(50%-1px)]" : "start-[21px]")} />
+      <div className="relative" dir={two ? "ltr" : undefined} data-testid="moments-timeline">
+        <span aria-hidden="true" className={cn("absolute bottom-0 top-0 w-0.5 bg-line", two ? "left-[calc(50%-1px)]" : "start-[21px]")} />
+        {before.length > 0 && <ol className="flex flex-col gap-2 pb-1">{before.map(item)}</ol>}
         <TimelineDivider>{S.kickOff(kickOff(room.startMs))}</TimelineDivider>
         {shown.length === 0 && <p className="relative bg-void py-3 text-center text-xs text-muted-text">{S.nothingHere}</p>}
-        <ol className="flex flex-col gap-2">
-          {shown.map((event) => (
-            <li key={event.id} className={cn("relative grid items-center gap-1.5", two ? "grid-cols-[minmax(0,1fr)_44px_minmax(0,1fr)]" : "grid-cols-[44px_minmax(0,1fr)]")}>
-              {two ? (
-                event.side === "centre" ? (
-                  <div className="col-span-3 flex flex-col items-center gap-1">
-                    {bubble(event)}
-                    <span className="min-w-0 max-w-[75%]">{card(event)}</span>
-                  </div>
-                ) : event.side === "start" ? (
-                  <>
-                    <span className="min-w-0">{card(event)}</span>
-                    {bubble(event)}
-                    <span />
-                  </>
-                ) : (
-                  <>
-                    <span />
-                    {bubble(event)}
-                    <span className="min-w-0">{card(event)}</span>
-                  </>
-                )
-              ) : (
-                <>
-                  {bubble(event)}
-                  <span className="min-w-0">{card(event)}</span>
-                </>
-              )}
-            </li>
-          ))}
-        </ol>
+        <ol className="flex flex-col gap-2">{during.map(item)}</ol>
         <TimelineDivider>
           {S.fullTime}{timeline.finalScore ? <> · <Num>{`${timeline.finalScore.a} – ${timeline.finalScore.b}`}</Num></> : <> · <Num>{`${totalMin}′`}</Num></>}
         </TimelineDivider>
+        {after.length > 0 && <ol className="flex flex-col gap-2 pt-1">{after.map(item)}</ol>}
       </div>
       {error && <p className="text-xs font-semibold text-live">{copy.gvVoteError}</p>}
       {room.me && <MatchReelRow room={room} L={L} r={r} />}

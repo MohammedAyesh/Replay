@@ -12,10 +12,18 @@
  * goal or open chance matches is left out too: only a confirmed goal counts.
  *
  * Times are seconds into the booking, the base the watch links and the goal
- * list use. The running score is shown only when it can be trusted: two teams,
- * one game, every confirmed goal has a side, and it adds up to the score the
- * captain entered (when he entered one). With no confirmed goal and no score
- * entered there is no full-time score at all: that is unknown, not 0–0.
+ * list use. Anything before kick-off or after the booked end (a flag dropped
+ * early, a chance in the over-run) keeps its real time and is marked "before"
+ * or "after" instead of being squeezed into the match.
+ *
+ * The running score is shown only when it can be trusted: two teams, one game,
+ * every confirmed goal has a side, AND the captain has entered a score that the
+ * confirmed goals add up to. Confirmed goals alone are only a suggestion (the
+ * detector misses goals), so without an entered score there is no score at all.
+ *
+ * "Mine" never invents a scorer: a goal is his when the tracker named him, or
+ * when his own report has a goal at that time for his team. A shot of his only
+ * marks an open chance of his team, never a confirmed goal.
  */
 
 import type { MatchMark, MatchReplay, TeamSide } from "@/lib/match-api";
@@ -40,6 +48,8 @@ export type TimelineEvent = {
   /** the scorer (goals), when known */
   scorer: { playerId: number; name: string } | null;
   ownGoal: boolean;
+  /** where it falls against the booked match */
+  phase: "before" | "during" | "after";
   /** the score after this goal, when the running score is shown */
   score: { a: number; b: number } | null;
   /** the review row, for answering a "Goal?" in place */
@@ -74,6 +84,8 @@ export type TimelineInput = {
   teamCount: 2 | 3;
   gameCount: number;
   roomScore: { a: number; b: number } | null;
+  /** the booked length; null = unknown, nothing is "after" */
+  durationSeconds: number | null;
   me: TimelineMe;
   marks: MatchMark[];
 };
@@ -82,6 +94,8 @@ export type TimelineInput = {
 const SAME_GOAL_SECONDS = 20;
 /** A shot this close to a chance is that chance, not a second event. */
 const SAME_SHOT_SECONDS = 5;
+/** His own moments this close together are one moment (footage analysed twice). */
+const SAME_MOMENT_SECONDS = 2;
 
 const KIND_ORDER: Record<TimelineKind, number> = { goal: 0, likely: 1, chance: 2, shot: 3, sprint: 4, dribble: 5, flag: 6 };
 
@@ -89,6 +103,16 @@ const statusOf = (row: TimelineGoalRow) => row.status ?? "confirmed";
 
 function asSide(team: string | null | undefined): TeamSide | null {
   return team === "A" || team === "B" || team === "C" ? team : null;
+}
+
+/** Times sorted, with near-duplicates (within SAME_MOMENT_SECONDS) dropped. */
+function distinctTimes(times: number[]): number[] {
+  const out: number[] = [];
+  for (const t of [...times].filter(Number.isFinite).sort((a, b) => a - b)) {
+    if (out.length && t - out[out.length - 1] < SAME_MOMENT_SECONDS) continue;
+    out.push(t);
+  }
+  return out;
 }
 
 export function buildTimeline(input: TimelineInput): Timeline {
@@ -102,6 +126,9 @@ export function buildTimeline(input: TimelineInput): Timeline {
   const myGoalTimes = me?.report?.goalTimes ?? [];
   const events: TimelineEvent[] = [];
   const blank = { scorer: null, ownGoal: false, score: null, row: null, speedKmh: null, flag: null } as const;
+  const end = input.durationSeconds !== null && input.durationSeconds > 0 ? input.durationSeconds : null;
+  const phaseOf = (at: number): TimelineEvent["phase"] => (at < 0 ? "before" : end !== null && at > end ? "after" : "during");
+  const timeOf = (at: number) => ({ at, minute: minuteMark(Math.max(0, at)), phase: phaseOf(at) });
 
   // Goals and chances.
   const rows = input.review
@@ -110,18 +137,17 @@ export function buildTimeline(input: TimelineInput): Timeline {
   for (const row of rows) {
     const status = statusOf(row);
     const kind: TimelineKind = status === "confirmed" ? "goal" : row.source === "goal" ? "likely" : "chance";
-    const at = Math.max(0, row.atSeconds);
+    const at = row.atSeconds;
     const mine = me !== null && !row.ownGoal && (
       row.scorer
         ? row.scorer.playerId === me.playerId
-        : myGoalTimes.some((t) => Math.abs(t - at) < SAME_GOAL_SECONDS)
+        : myTeam !== null && row.side === myTeam && myGoalTimes.some((t) => Math.abs(t - at) < SAME_GOAL_SECONDS)
     );
     events.push({
       ...blank,
       id: `${kind}-${row.recordingId}-${row.key ?? row.t}-${at}`,
       kind,
-      at,
-      minute: minuteMark(at),
+      ...timeOf(at),
       team: row.side,
       side: sideOf(row.side),
       mine,
@@ -135,52 +161,52 @@ export function buildTimeline(input: TimelineInput): Timeline {
   const report = me?.report ?? null;
   if (me && report) {
     const mineCommon = { ...blank, team: myTeam, side: sideOf(myTeam), mine: true };
-    if (report.topSpeedAt !== null && me.topSpeedKmh !== null) {
-      const at = Math.max(0, report.topSpeedAt);
-      events.push({ ...mineCommon, id: `sprint-${at}`, kind: "sprint", at, minute: minuteMark(at), speedKmh: me.topSpeedKmh });
+    if (report.topSpeedAt !== null && Number.isFinite(report.topSpeedAt) && me.topSpeedKmh !== null) {
+      const at = report.topSpeedAt;
+      events.push({ ...mineCommon, id: `sprint-${at}`, kind: "sprint", ...timeOf(at), speedKmh: me.topSpeedKmh });
     }
-    for (const t of report.dribbleWonTimes) {
-      const at = Math.max(0, t);
-      events.push({ ...mineCommon, id: `dribble-${at}`, kind: "dribble", at, minute: minuteMark(at) });
-    }
-    for (const t of report.shotTimes ?? []) {
-      const at = Math.max(0, t);
-      // A shot that is already a goal or a chance on the timeline marks that row as his.
+    distinctTimes(report.dribbleWonTimes).forEach((at, i) => {
+      events.push({ ...mineCommon, id: `dribble-${i}-${at}`, kind: "dribble", ...timeOf(at) });
+    });
+    distinctTimes(report.shotTimes ?? []).forEach((at, i) => {
+      // A shot at the same moment as a goal or chance is not a second event.
       const same = events.find((event) => (event.kind === "goal" || event.kind === "likely" || event.kind === "chance") && Math.abs(event.at - at) < SAME_SHOT_SECONDS);
       if (same) {
-        if (!same.ownGoal && (!same.scorer || same.scorer.playerId === me.playerId)) same.mine = true;
-        continue;
+        // It marks an open chance of his own team as his; never a confirmed goal
+        // (a rebound by someone else is not his goal) and never the other team's.
+        if (same.kind !== "goal" && !same.ownGoal && !same.scorer && myTeam !== null && same.team === myTeam) same.mine = true;
+        return;
       }
-      if (myGoalTimes.some((g) => Math.abs(g - at) < SAME_SHOT_SECONDS)) continue;
-      events.push({ ...mineCommon, id: `shot-${at}`, kind: "shot", at, minute: minuteMark(at) });
-    }
+      if (myGoalTimes.some((g) => Math.abs(g - at) < SAME_SHOT_SECONDS)) return;
+      events.push({ ...mineCommon, id: `shot-${i}-${at}`, kind: "shot", ...timeOf(at) });
+    });
   }
 
   // Flags dropped during the match.
   for (const mark of input.marks) {
     if (mark.offsetSeconds === null || !Number.isFinite(mark.offsetSeconds)) continue;
-    const at = Math.max(0, mark.offsetSeconds);
-    events.push({ ...blank, id: `flag-${mark.id}`, kind: "flag", at, minute: minuteMark(at), team: null, side: sideOf(null), mine: mark.mine, flag: { kind: mark.kind, byName: mark.byName } });
+    events.push({ ...blank, id: `flag-${mark.id}`, kind: "flag", ...timeOf(mark.offsetSeconds), team: null, side: sideOf(null), mine: mark.mine, flag: { kind: mark.kind, byName: mark.byName } });
   }
 
   events.sort((a, b) => a.at - b.at || KIND_ORDER[a.kind] - KIND_ORDER[b.kind]);
 
-  // The running score, only when it can be trusted.
+  // The running score, only when the captain's score backs it up.
   let finalScore: { a: number; b: number } | null = null;
   const goals = events.filter((event) => event.kind === "goal");
-  const trustworthy = input.teamCount === 2 && input.gameCount <= 1 && goals.every((goal) => goal.team === "A" || goal.team === "B");
-  if (trustworthy) {
+  const trustworthy = input.roomScore !== null && input.teamCount === 2 && input.gameCount <= 1 && goals.every((goal) => goal.team === "A" || goal.team === "B");
+  if (trustworthy && input.roomScore) {
     let a = 0;
     let b = 0;
+    const running: Array<{ a: number; b: number }> = [];
     for (const goal of goals) {
       if (goal.team === "A") a += 1;
       else b += 1;
-      goal.score = { a, b };
+      running.push({ a, b });
     }
-    const matchesRoom = !input.roomScore || (input.roomScore.a === a && input.roomScore.b === b);
-    if (!matchesRoom) for (const goal of goals) goal.score = null;
-    // No confirmed goal and no score entered is "we don't know", not 0–0.
-    else if (input.roomScore || goals.length > 0) finalScore = { a, b };
+    if (input.roomScore.a === a && input.roomScore.b === b) {
+      goals.forEach((goal, i) => { goal.score = running[i]; });
+      finalScore = { a, b };
+    }
   }
 
   return { events, columns, finalScore };
@@ -189,7 +215,7 @@ export function buildTimeline(input: TimelineInput): Timeline {
 /** Which events a filter shows. "All" leaves out plain chances unless they are his: there can be dozens. */
 export function filterTimeline(events: TimelineEvent[], filter: TimelineFilter): TimelineEvent[] {
   switch (filter) {
-    case "goals": return events.filter((event) => event.kind === "goal" || event.kind === "likely");
+    case "goals": return events.filter((event) => event.kind === "goal");
     case "chances": return events.filter((event) => event.kind === "likely" || event.kind === "chance");
     case "mine": return events.filter((event) => event.mine);
     default: return events.filter((event) => event.kind !== "chance" || event.mine);
