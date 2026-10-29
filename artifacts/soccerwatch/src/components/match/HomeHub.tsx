@@ -96,7 +96,16 @@ export function HomeHub() {
           {bookRow}
         </>
       ) : (
-        <section className="flex flex-col gap-[22px] rounded-2xl border border-line bg-surface px-[22px] py-6" data-testid="home-no-match">
+        <section
+          className={cn(
+            "flex flex-col gap-[22px] rounded-2xl border bg-surface px-[22px] py-6",
+            data?.freeMatch?.attempt || data?.freeMatch?.reward ? "border-floodlight/40" : "border-line",
+          )}
+          style={data?.freeMatch?.attempt || data?.freeMatch?.reward
+            ? { background: "radial-gradient(120% 90% at 100% 0%, rgba(212,255,79,.12), transparent 60%), #141B2C" }
+            : undefined}
+          data-testid="home-no-match"
+        >
           <style>{`@keyframes floodOn{0%{opacity:.3}8%{opacity:1}13%{opacity:.45}22%{opacity:1}100%{opacity:1}}.flood-on{animation:floodOn 1.1s ease-out .3s both}@media(prefers-reduced-motion:reduce){.flood-on{animation:none}}`}</style>
           <p className="font-display text-[26px] font-extrabold leading-tight">{copy.homeNoMatch}</p>
           <ol className="m-0 flex list-none flex-col p-0">
@@ -106,16 +115,32 @@ export function HomeHub() {
               </Step>
             ))}
           </ol>
-          {canBook && (
+          {canBook && !data?.freeMatch?.reward && (
             <Link href="/book" className="flood-on flex min-h-[58px] items-center justify-center rounded-full bg-floodlight px-5 text-center font-display text-[17px] font-extrabold text-void shadow-[0_0_0_6px_rgba(212,255,79,0.08)]" data-testid="link-home-book">
               {bookLabel}
             </Link>
           )}
+          {data?.freeMatch && (
+            <>
+              <div className="border-t border-line pt-4">
+                <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} embedded />
+              </div>
+              <div className="border-t border-line pt-4">
+                <LoyaltyCard status={data.freeMatch} canBook={canBook} embedded />
+              </div>
+            </>
+          )}
         </section>
       )}
       {!matches.isLoading && !hero && statTile}
-      {data?.freeMatch && <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} />}
-      {data?.freeMatch && <LoyaltyCard status={data.freeMatch} canBook={canBook} />}
+      {hero && data?.freeMatch && (
+        <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface px-5 py-5" data-testid="home-booking-rewards">
+          <FreeMatchHomeCard status={data.freeMatch} canBook={canBook} embedded />
+          <div className="border-t border-line pt-4">
+            <LoyaltyCard status={data.freeMatch} canBook={canBook} embedded />
+          </div>
+        </section>
+      )}
 
       {invites.length > 0 && (
         <Section title={copy.invites}>

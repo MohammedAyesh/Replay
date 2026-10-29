@@ -1170,14 +1170,6 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
     padding-inline: clamp(24px, 4vw, 64px) !important;
   }
 
-  .home-page-scroll > .home-news-grid {
-    display: grid;
-    width: min(100%, 1260px);
-    margin-inline: auto;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 20px;
-  }
-
   .home-page-scroll > :first-child {
     width: min(100%, 1260px);
     margin-inline: auto;
@@ -1321,10 +1313,6 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 }
 
 @media (min-width: 1100px) {
-  .home-page-scroll > .home-news-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .fields-card-grid,
   .academies-page-scroll {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
