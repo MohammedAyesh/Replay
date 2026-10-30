@@ -29,6 +29,7 @@ import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAna
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
 import {
   attachReward, availableReward, canEarn, claimReward, loyaltyStatus, releaseReward, releaseRewardForMatch, unpaidLapseCutoffLocal,
+  UNPAID_BOOKING_LAPSE_MS,
 } from "../lib/freeMatch";
 
 const router: IRouter = Router();
@@ -156,6 +157,20 @@ function ammanLocalEpoch(value: string): number {
 function ammanLocalInstant(value: string): number {
   const epoch = ammanLocalEpoch(value);
   return Number.isFinite(epoch) ? epoch - AMMAN_UTC_OFFSET_MS : Number.NaN;
+}
+
+function isHistoricalBooking(row: Pick<FootageRequest, "startLocal" | "createdAt">): boolean {
+  const start = ammanLocalInstant(row.startLocal);
+  return Number.isFinite(start) && start < row.createdAt.getTime();
+}
+
+function unpaidBookingHasLapsed(
+  row: Pick<FootageRequest, "startLocal" | "endLocal" | "createdAt">,
+  now: number,
+): boolean {
+  return isHistoricalBooking(row)
+    ? row.createdAt.getTime() <= now - UNPAID_BOOKING_LAPSE_MS
+    : row.endLocal <= unpaidLapseCutoffLocal(now);
 }
 
 function publicBaseUrl(req: Request): string {
