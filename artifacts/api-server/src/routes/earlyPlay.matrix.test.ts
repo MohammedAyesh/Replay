@@ -288,3 +288,155 @@ describe("early-play status: vps1 outcomes", () => {
     state.job = job({ status: "cancelled", phase: "failed" });
     expect((await status()).body).toMatchObject({ state: "unavailable", reasonCode: "request_cancelled" });
   });
+  it("admin setting off → disabled, with no vps1 or Bunny calls", async () => {
+    state.setting = false;
+    expect((await status()).body).toMatchObject({ state: "unavailable", reasonCode: "disabled" });
+    expect(controlFetch).not.toHaveBeenCalled();
+    expect(bunnyCalls()).toBe(0);
+  });
+  it("the settings lookup crashing is reported, not a 500", async () => {
+    state.setting = async () => { throw new Error("db down"); };
+    const r = await status();
+    expect(r.status).toBe(200);
+    expect(r.body.state).toBe("unavailable");
+  });
+});
+
+describe("early-play access", () => {
+  it("a player booking is 404 for a signed-in non-member", async () => {
+    state.viewer = { id: 99, isAdmin: false, isGuest: false };
+    expect((await status()).status).toBe(404);
+    expect((await video("bytes=0-1")).status).toBe(404);
+  });
+  it("a player booking is 404 for a signed-out visitor", async () => {
+    state.viewer = null;
+    expect((await status()).status).toBe(404);
+  });
+  it("a roster member who said no is not let in", async () => {
+    state.viewer = { id: 5, isAdmin: false, isGuest: false };
+    state.roster = [{ userId: 5, rsvp: "out" }];
+    expect((await status()).status).toBe(404);
+  });
+  it("the captain is let in", async () => {
+    state.roster = [];
+    expect((await status()).status).toBe(200);
+  });
+  it("the field owner is let in", async () => {
+    state.viewer = { id: 50, isAdmin: false, isGuest: false };
+    state.ownerRows = [{ id: 3 }];
+    expect((await status()).status).toBe(200);
+  });
+  it("an admin is let in", async () => {
+    state.viewer = { id: 51, isAdmin: true, isGuest: false };
+    expect((await status()).status).toBe(200);
+  });
+  it("an academy match is 404 for a non-member, even an admin player", async () => {
+    state.ctx = ctx({ academyId: 4 });
+    state.viewer = { id: 1, isAdmin: false, isGuest: false };
+    state.academyRows = [];
+    expect((await status()).status).toBe(404);
+  });
+  it("an academy match is OK for an academy member", async () => {
+    state.ctx = ctx({ academyId: 4 });
+    state.academyRows = [{ id: 9 }];
+    expect((await status()).status).toBe(200);
+  });
+  it("an academy guest account is refused", async () => {
+    state.ctx = ctx({ academyId: 4 });
+    state.viewer = { id: 1, isAdmin: false, isGuest: true };
+    state.academyRows = [{ id: 9 }];
+    expect((await status()).status).toBe(404);
+  });
+  it.each(["cancelled", "failed", "refunded"])("a %s request is 404 for everyone", async (s) => {
+    state.ctx = ctx({ status: s });
+    state.viewer = { id: 51, isAdmin: true, isGuest: false };
+    expect((await status()).status).toBe(404);
+  });
+  it("an unknown match code is 404", async () => {
+    state.ctx = null;
+    expect((await request(app).get("/api/matches/NOPE/early-play")).status).toBe(404);
+  });
+  it("a getLocalUserRecord crash is treated as signed out, not a 500", async () => {
+    const { getLocalUserRecord } = await import("../lib/clerkUserBridge");
+    vi.mocked(getLocalUserRecord).mockRejectedValueOnce(new Error("clerk down"));
+    expect((await status()).status).toBe(404);
+  });
+});
+
+describe("early-play directUrl host gate", () => {
+  it("is present only for Host replayjo.com", async () => {
+    const r = await status().set("Host", "replayjo.com");
+    expect(r.body.directUrl).toBe(ORIGINAL);
+  });
+  it.each(["www.replayjo.com", "x.kirk.replit.dev", "replayjo.replit.app", "replayjo.com.evil.io"])("is absent for %s", async (host) => {
+    const r = await status().set("Host", host);
+    expect(r.body.state).toBe("early");
+    expect(r.body.directUrl).toBeUndefined();
+  });
+  it("uses x-forwarded-host only when trust proxy is on", async () => {
+    const r1 = await status().set("Host", "internal.local").set("X-Forwarded-Host", "replayjo.com");
+    expect(r1.body.directUrl).toBeUndefined();
+    app.set("trust proxy", true);
+    const r2 = await status().set("Host", "internal.local").set("X-Forwarded-Host", "replayjo.com, proxy");
+    expect(r2.body.directUrl).toBe(ORIGINAL);
+  });
+  it("is never sent for non-early states", async () => {
+    state.job = job({ status: "running", phase: "upload", uploaded: false, videoId: GUID });
+    const r = await status().set("Host", "replayjo.com");
+    expect(r.body.directUrl).toBeUndefined();
+  });
+});
+
+describe("early-play cache", () => {
+  it("two calls within 30 s make one vps1 call and one Bunny call", async () => {
+    await status();
+    await status();
+    expect(controlFetch).toHaveBeenCalledTimes(1);
+    expect(bunnyCalls()).toBe(1);
+  });
+  it("concurrent calls share one in-flight lookup", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    state.job = async () => { await gate; return { ok: true, status: 200, body: { status: "running", phase: "encode", uploaded: true, videoId: GUID } }; };
+    const a = status();
+    const b = status();
+    const c = status();
+    await new Promise((r) => setTimeout(r, 20));
+    release();
+    const [ra, rb, rc] = await Promise.all([a, b, c]);
+    expect([ra.body.state, rb.body.state, rc.body.state]).toEqual(["early", "early", "early"]);
+    expect(controlFetch).toHaveBeenCalledTimes(1);
+  });
+  it("after 30 s it looks again", async () => {
+    const now = Date.now();
+    const spy = vi.spyOn(Date, "now").mockReturnValue(now);
+    await status();
+    spy.mockReturnValue(now + 31_000);
+    await status();
+    expect(controlFetch).toHaveBeenCalledTimes(2);
+    spy.mockRestore();
+  });
+});
+
+describe("early-play video proxy", () => {
+  beforeEach(() => {
+    state.original = Buffer.alloc(40 * 1024 * 1024);
+    for (let i = 0; i < state.original.length; i += 4096) state.original.writeUInt32BE(i, i);
+  });
+
+  it("bytes=0-1 → 206 with exactly 2 bytes, video/mp4", async () => {
+    const r = await video("bytes=0-1");
+    expect(r.status).toBe(206);
+    expect(r.headers["content-type"]).toBe("video/mp4");
+    expect(r.headers["content-range"]).toBe(`bytes 0-1/${state.original.length}`);
+    expect((r.body as Buffer).length).toBe(2);
+  });
+  it("bytes=0- is capped at PROGRESSIVE_MP4_RESPONSE_MAX_BYTES with an honest Content-Range", async () => {
+    const r = await video("bytes=0-");
+    expect(r.status).toBe(206);
+    const len = (r.body as Buffer).length;
+    expect(len).toBe(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
+    expect(r.headers["content-length"]).toBe(String(len));
+    expect(r.headers["content-range"]).toBe(`bytes 0-${len - 1}/${state.original.length}`);
+    expect((r.body as Buffer).equals(state.original.subarray(0, len))).toBe(true);
+  });
