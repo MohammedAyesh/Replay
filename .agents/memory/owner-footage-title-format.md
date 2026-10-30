@@ -7,8 +7,8 @@ Generated owner-request footage is titled:
 
 `cam{N}_owner-{requestId}_{YYYY-MM-DD}_{HH:MM}`
 
-The date and time are the Amman-local booking start, not the end time. A booking that crosses midnight keeps the start date. The title marker is operational metadata and does not decide whether the video is public.
+The date and time are the Amman-local booking start, not the end time. A booking that crosses midnight keeps the start date. On first import only, this marker makes an owner-requested recording visible by default. The persisted recording visibility flag remains authoritative afterward.
 
-**Why:** Owner-request videos are now public when they satisfy the same field visibility, recording visibility, and schedule rules as other recordings.
+**Why:** Field owners explicitly request these games, so requiring a separate admin visibility toggle delayed access. Re-syncing must not override later admin choices to hide or show a recording.
 
-**How to apply:** Keep generated titles useful for camera/request identification, but do not use the `owner` marker as an access-control check.
+**How to apply:** Recognize the generated owner marker only while creating a new imported recording and set its initial `isVisible` value. Never infer ongoing access from the title or overwrite visibility on an existing row during sync; field-level hiding remains authoritative.

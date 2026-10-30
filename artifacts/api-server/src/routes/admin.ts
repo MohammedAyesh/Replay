@@ -44,6 +44,7 @@ import {
   getBunnyPlaybackUrl,
 } from "../lib/bunny";
 import { extractBunnyVideoId } from "../lib/publicFootage";
+import { isOwnerRequestedRecordingTitle } from "../lib/recordingVisibility";
 import { fetchExportObject, probeExportObject } from "../lib/backupExport";
 import { ADMIN_PREVIEW_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
@@ -1804,6 +1805,7 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
       timeSlot,
       duration: `${mins}:${String(secs).padStart(2, "0")}`,
       videoUrl: `https://${BUNNY_CDN_HOSTNAME}/${guid}/playlist.m3u8`,
+      isVisibleByDefault: isOwnerRequestedRecordingTitle(title),
     };
   }
 
@@ -1888,7 +1890,10 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
             timeSlot: remote.timeSlot,
             duration: remote.duration,
             videoUrl: remote.videoUrl,
-            isVisible: false,
+            // Owner-requested games were explicitly ordered by the field
+            // owner, so make new imports visible without a second admin step.
+            // Existing rows retain their explicit visibility choice below.
+            isVisible: remote.isVisibleByDefault,
           })
           .returning({ id: recordingsTable.id });
         if (inserted) recordingIds.push(inserted.id);

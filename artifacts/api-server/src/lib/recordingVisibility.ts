@@ -17,6 +17,14 @@ export type RecordingVisibilitySchedule = {
   endTime: string;
 };
 
+/**
+ * Owner-request uploads use a machine-readable title so new imports can be
+ * made visible without changing visibility choices on existing recordings.
+ */
+export function isOwnerRequestedRecordingTitle(title: string): boolean {
+  return /^cam\d+_owner-\d+_/i.test(title);
+}
+
 export async function isRecordingVisible(recording: RecordingVisibilityFields): Promise<boolean> {
   const [field] = await db
     .select({ isHidden: fieldsTable.isHidden })

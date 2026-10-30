@@ -7,7 +7,7 @@
 - [HLS.js seek-on-load duration](hls-seek-duration.md) — video.duration is 0/NaN at Hls MANIFEST_PARSED; seek to startTime*duration must wait for loadedmetadata/durationchange or clips play from 0 / freeze.
 - [Clip export architecture](clip-export-arch.md) — background FFmpeg render → Bunny Storage upload; dedup via inFlight Set + exportStatus DB column; download proxied through /api/user-clips/:id/download to avoid CORS.
 - [Camera upload filename format](camera-filename-format.md) — `cam{N}_{title}_{NN}_{YYYYMMDDhhmmss}.mp4`; trailing 14 digits = capture timestamp; title may contain spaces.
-- [Owner footage title format](owner-footage-title-format.md) — generated owner markers support operations but do not determine public access.
+- [Owner footage title format](owner-footage-title-format.md) — owner title markers set the default for new imports; persisted visibility remains authoritative.
 - [Live clip synthetic videoId](live-clip-videoId.md) — academy live clips store `live:<cameraId>` not a Bunny GUID; server must guard URL generation and export for these.
 - [Live capture worker contract](live-capture-worker-contract.md) — POST returns `job`; poll known jobs without a 60-minute timeout, and require `available:true` for ball-follow.
 - [Bunny HLS and MP4 routing](bunny-cdn-referer.md) — Proxy HLS first; large progressive MP4 needs bounded upstream ranges streamed with correct client range headers.

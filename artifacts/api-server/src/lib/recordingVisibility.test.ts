@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchesRecordingSchedule } from "./recordingVisibility";
+import { isOwnerRequestedRecordingTitle, matchesRecordingSchedule } from "./recordingVisibility";
 
 describe("recording visibility schedules", () => {
   const schedules = [
@@ -40,5 +40,17 @@ describe("recording visibility schedules", () => {
     expect(matchesRecordingSchedule("2026-09-18", "00:59", overnight)).toBe(true);
     expect(matchesRecordingSchedule("2026-09-18", "01:00", overnight)).toBe(false);
     expect(matchesRecordingSchedule("2026-09-17", "00:30", overnight)).toBe(false);
+  });
+});
+
+describe("owner-request recording imports", () => {
+  it("recognizes owner-request video titles", () => {
+    expect(isOwnerRequestedRecordingTitle("cam1_owner-42_2026-09-22_23:00")).toBe(true);
+    expect(isOwnerRequestedRecordingTitle("CAM2_owner-9_2026-09-22_23:00.mp4")).toBe(true);
+  });
+
+  it("does not treat ordinary camera recordings as owner requests", () => {
+    expect(isOwnerRequestedRecordingTitle("cam1_2026-09-22_23:00")).toBe(false);
+    expect(isOwnerRequestedRecordingTitle("cam1_ownerfoo_2026-09-22_23:00")).toBe(false);
   });
 });
