@@ -9,7 +9,7 @@
  * Security: only Bunny CDN hostnames (*.b-cdn.net and video.bunnycdn.com)
  * are forwarded — arbitrary URL proxying is rejected with 400.
  */
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response as ExpressResponse } from "express";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
@@ -72,7 +72,7 @@ type ParsedContentRange = { start: number; end: number; total: number };
 
 function isProgressiveMp4Fallback(raw: string): boolean {
   try {
-    return new URL(raw).pathname.toLowerCase().endsWith("/play_720p.mp4");
+    return /\/(?:play_720p\.mp4|original)$/i.test(new URL(raw).pathname);
   } catch {
     return false;
   }
@@ -141,6 +141,79 @@ async function fetchProgressiveMp4Range(
     byteCount = Math.max(MIN_PROGRESSIVE_MP4_RANGE_BYTES, Math.floor(byteCount / 2));
   }
   throw new Error("Requested MP4 range starts beyond the resource length");
+}
+
+/** Shared bounded MP4 window proxy used by archived renditions and early play. */
+export async function proxyProgressiveMp4(
+  req: Request,
+  res: ExpressResponse,
+  raw: string,
+  hostname: string,
+): Promise<void> {
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  const rawRange = req.header("range");
+  const match = rawRange?.trim().match(/^bytes=(\d+)-(\d*)$/i) ?? null;
+  if (rawRange && !match) {
+    res.set("Accept-Ranges", "bytes").status(416).send("Invalid byte range");
+    return;
+  }
+  const start = match ? Number(match[1]) : 0;
+  const requestedEnd = match?.[2] ? Number(match[2]) : null;
+  if (!Number.isSafeInteger(start) || start < 0
+    || (requestedEnd !== null && (!Number.isSafeInteger(requestedEnd) || requestedEnd < start))) {
+    res.set("Accept-Ranges", "bytes").status(416).send("Invalid byte range");
+    return;
+  }
+  const rangePolicy: ProgressiveMp4RangePolicy = { maxBytes: PROGRESSIVE_MP4_RANGE_BYTES };
+  try {
+    const upstream = await fetchProgressiveMp4Range(
+      raw, hostname, start, requestedEnd === null ? null : requestedEnd + 1, abort.signal, rangePolicy,
+    );
+    if (!upstream.ok || !upstream.body) {
+      const contentRange = upstream.headers.get("content-range");
+      try { await upstream.body?.cancel(); } catch { /* upstream already closed */ }
+      res.set("Accept-Ranges", "bytes");
+      if (contentRange) res.set("Content-Range", contentRange);
+      res.status(upstream.status || 502).send(upstream.status === 404 ? "Original video not found" : "Original video unavailable");
+      return;
+    }
+    const firstRange = parseContentRange(upstream.headers.get("content-range"));
+    if (upstream.status !== 206 || !firstRange || firstRange.start !== start) {
+      try { await upstream.body.cancel(); } catch { /* invalid upstream range */ }
+      res.set("Accept-Ranges", "bytes").status(502).send("Upstream returned an invalid MP4 range");
+      return;
+    }
+    const stopAt = rawRange
+      ? Math.min(
+        firstRange.total,
+        requestedEnd === null ? firstRange.total : requestedEnd + 1,
+        start + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES,
+      )
+      : firstRange.total;
+    const lastByte = stopAt - 1;
+    res.set("Content-Type", "video/mp4");
+    res.set("Cache-Control", "private, no-store");
+    res.set("Accept-Ranges", "bytes");
+    if (rawRange) {
+      res.set("Content-Length", String(stopAt - start));
+      res.set("Content-Range", `bytes ${start}-${lastByte}/${firstRange.total}`);
+      res.status(206);
+    } else {
+      const fullLength = firstRange.total - start;
+      if (fullLength <= CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES) res.set("Content-Length", String(fullLength));
+      else res.removeHeader("Content-Length");
+      res.removeHeader("Content-Range");
+      res.status(200);
+    }
+    await pipeline(
+      streamProgressiveMp4(upstream, firstRange, raw, hostname, abort.signal, rangePolicy, stopAt),
+      res,
+    );
+  } catch (error) {
+    if (!abort.signal.aborted) req.log?.warn({ err: error }, "Progressive MP4 proxy failed");
+    if (!res.headersSent) res.set("Accept-Ranges", "bytes").status(502).send("Original video unavailable");
+  }
 }
 
 function streamProgressiveMp4(

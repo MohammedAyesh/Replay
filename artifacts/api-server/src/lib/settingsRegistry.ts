@@ -141,6 +141,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     defaultValue: true,
   },
   {
+    key: "playback.earlyPlayEnabled",
+    group: "Playback",
+    label: "Early play while encoding",
+    description: "Let authorized viewers play the original camera file while Bunny is still encoding it. Turn off to disable early playback immediately.",
+    type: "boolean",
+    defaultValue: true,
+  },
+  {
     key: "booking.payAtFieldEnabled",
     group: "Bookings",
     label: "Players can pay at the field",
