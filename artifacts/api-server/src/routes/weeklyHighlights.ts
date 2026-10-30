@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { and, asc, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
 import {
   db, usersTable, fieldsTable, userClipsTable, footageRequestsTable,
   matchRoomsTable, matchPlayersTable, weeklyHighlightsTable,
@@ -18,6 +18,8 @@ const addDays = (day: string, n: number) => {
   return d.toISOString().slice(0, 10);
 };
 const isSaturday = (day: string) => new Date(`${day}T12:00:00Z`).getUTCDay() === 6;
+const uniqueClips = <T extends { id: number }>(clips: T[]) =>
+  [...new Map(clips.map((clip) => [clip.id, clip])).values()];
 
 async function signedUser(req: Request, res: Response) {
   const id = await getLocalUserId(req);
@@ -127,6 +129,23 @@ router.get("/admin/weekly-highlights/candidates", async (req, res): Promise<void
   }).from(userClipsTable).innerJoin(footageRequestsTable, eq(footageRequestsTable.id, userClipsTable.footageRequestId))
     .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
     .where(and(gte(footageRequestsTable.startLocal, weekStart), lte(footageRequestsTable.startLocal, `${weekEnd}T23:59:59`), eq(userClipsTable.isHidden, false), eq(userClipsTable.exportStatus, "done")));
+  // Clips saved directly from a recording page don't have a footageRequestId.
+  // Match their source video to that week's recording so they can be selected
+  // for the player and field highlights too.
+  const recordingClipRows = await db.select({
+    id: userClipsTable.id, userId: userClipsTable.userId, title: userClipsTable.title,
+    startTime: userClipsTable.startTime, endTime: userClipsTable.endTime, exportedUrl: userClipsTable.exportedUrl,
+    fieldId: recordingsTable.fieldId, fieldName: fieldsTable.name, requestId: sql<number>`0`,
+  }).from(userClipsTable)
+    .innerJoin(recordingsTable, sql`${recordingsTable.videoUrl} LIKE '%' || ${userClipsTable.videoId} || '%'`)
+    .innerJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
+    .where(and(
+      isNull(userClipsTable.footageRequestId),
+      gte(recordingsTable.date, weekStart),
+      lte(recordingsTable.date, weekEnd),
+      eq(userClipsTable.isHidden, false),
+      eq(userClipsTable.exportStatus, "done"),
+    ));
   const progressRows = await db.select({
     userId: claimMatchProgressTable.userId, earnedClips: claimMatchProgressTable.earnedClips,
     fieldId: recordingsTable.fieldId, fieldName: fieldsTable.name,
@@ -140,10 +159,12 @@ router.get("/admin/weekly-highlights/candidates", async (req, res): Promise<void
     const progress = progressRows.find((row) => row.userId === clip.userId && row.earnedClips.some((earned) => earned.userClipId === clip.id));
     return progress && clip.exportedUrl ? [{ id: clip.id, userId: clip.userId, title: clip.title, startTime: clip.startTime, endTime: clip.endTime, exportedUrl: clip.exportedUrl, fieldId: progress.fieldId, fieldName: progress.fieldName, requestId: 0 }] : [];
   });
+  const playerClipRows = uniqueClips([...clipRows, ...recordingClipRows, ...momentRows]);
   const players = playerIds.map((userId) => {
     const p = participants.find((x) => x.userId === userId)!;
-    return { userId, name: p.userName, clips: [...clipRows, ...momentRows].filter((c) => c.userId === userId && c.exportedUrl).map((c) => ({ ...c, durationSec: Math.max(0, Math.round(Number(c.endTime) - Number(c.startTime))) })) };
+    return { userId, name: p.userName, clips: playerClipRows.filter((c) => c.userId === userId && c.exportedUrl).map((c) => ({ ...c, durationSec: Math.max(0, Math.round(Number(c.endTime) - Number(c.startTime))) })) };
   });
+  const fieldCandidateRows = uniqueClips([...fieldClipRows, ...recordingClipRows, ...momentRows]).filter((clip) => clip.exportedUrl);
   const savedRows = await db.select().from(weeklyHighlightsTable).where(eq(weeklyHighlightsTable.weekStart, weekStart));
   const saved = await Promise.all(savedRows.map(async (row) => ({
     userId: row.userId, fieldId: row.fieldId,
@@ -152,7 +173,7 @@ router.get("/admin/weekly-highlights/candidates", async (req, res): Promise<void
   })));
   res.json({
     weekStart, weekEnd, players,
-    fields: [...new Map([...fieldClipRows, ...momentRows].filter((c) => c.exportedUrl).map((c) => [c.fieldId, { id: c.fieldId, name: c.fieldName, clips: [...fieldClipRows, ...momentRows].filter((x) => x.fieldId === c.fieldId && x.exportedUrl).map((x) => ({ ...x, durationSec: Math.max(0, Math.round(Number(x.endTime) - Number(x.startTime))) })) }])).values()],
+    fields: [...new Map(fieldCandidateRows.map((c) => [c.fieldId, { id: c.fieldId, name: c.fieldName, clips: fieldCandidateRows.filter((x) => x.fieldId === c.fieldId).map((x) => ({ ...x, durationSec: Math.max(0, Math.round(Number(x.endTime) - Number(x.startTime))) })) }])).values()],
     saved,
   });
 });
