@@ -397,6 +397,9 @@ export function GameClaim({
   /** Picking someone another player already picked: asked inline before it counts. */
   const [pendingShare, setPendingShare] = useState<{ slot: string; names: string; proceed: () => void } | null>(null);
   const [saveError, setSaveError] = useState(false);
+  // The last block's save builds the player's clips, stats and squad places on
+  // the server and takes seconds; without this the finished screen sat blank.
+  const [finishing, setFinishing] = useState(false);
   const [staleNoticeDismissed, setStaleNoticeDismissed] = useState(false);
   const [labelError, setLabelError] = useState(false);
   const t0 = useRef<number | null>(null);
@@ -1194,8 +1197,15 @@ export function GameClaim({
   const advance = async () => {
     pendingNextGuess.current = null;
     const where = afterChunk(ctx);
-    if (where === "done") await save({ immediate: true });
-    else save();
+    if (where === "done") {
+      setFinishing(true);
+      window.scrollTo({ top: 0 });
+      try {
+        await save({ immediate: true });
+      } finally {
+        setFinishing(false);
+      }
+    } else save();
     setVer((v) => v + 1);
     window.scrollTo({ top: 0 });
     if (where === "next" && S.k !== null) {
@@ -1281,7 +1291,15 @@ export function GameClaim({
   const needsChunk = ["kit", "shirt", "gallery", "review", "joins", "gaps", "next"].includes(S.step);
   let body: React.ReactNode = null;
 
-  if (needsChunk && (S.k === null || !currentChunk)) {
+  if (finishing) {
+    body = (
+      <div className="flex flex-col items-center gap-3 py-16 text-center" role="status" aria-live="polite">
+        <span className="h-8 w-8 animate-spin rounded-full border-2 border-line border-t-[#D4FF4F]" aria-hidden="true" />
+        <p className="text-base font-semibold text-text">{copy.common.finishing}</p>
+        <p className="max-w-xs text-sm text-muted-text">{copy.common.finishingLede}</p>
+      </div>
+    );
+  } else if (needsChunk && (S.k === null || !currentChunk)) {
     if (S.k !== null) void ensure(S.k).then(() => setVer((v) => v + 1));
     body = <p className="py-10 text-center text-sm text-muted-text">{S.step === "next" ? copy.common.loadingChunk : copy.common.loading}</p>;
   } else if (S.step === "intro") {

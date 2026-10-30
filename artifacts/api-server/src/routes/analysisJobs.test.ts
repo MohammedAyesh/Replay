@@ -828,6 +828,24 @@ describe("the bundle the worker sends back", () => {
     expect(bundle.manifest.videoStartSeconds).toBe(1080);
   });
 
+  it("does not store the stream's own start time as a kick-off", async () => {
+    // The GPU worker began sending each HLS rendition's start_time (~1.48 s)
+    // on 26 Oct. The browser's player already counts from the first frame, so
+    // that number moved every box 1.48 s off the players (recording 403).
+    const id = await claimAJob();
+    await request(app).put(`/api/worker/analysis/${id}/bundle`)
+      .set("x-worker-key", KEY)
+      .field("workerId", "w1")
+      .field("recordingId", String(recA))
+      .field("videoStartSeconds", "1.479")
+      .attach("bundle", bundleZip(0), "idbundle.zip")
+      .expect(200);
+
+    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recA));
+    expect(bundle.manifest.videoStartSeconds).toBe(0);
+  });
+
   it("refuses a recording that is not part of the job", async () => {
     const id = await claimAJob();
     const res = await request(app).put(`/api/worker/analysis/${id}/bundle`)

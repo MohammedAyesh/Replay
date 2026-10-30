@@ -841,12 +841,23 @@ async function downloadAnalysisBundleFromStorage(storagePath: string): Promise<B
 
 type ParsedWorkerBundle = NonNullable<ReturnType<typeof parseZipBundleDetailed>["upload"]>;
 
+/**
+ * Below this, a worker's videoStartSeconds is the HLS stream's own start_time,
+ * not a kick-off. Bunny renditions start at ~1.48 s; the browser's player (and
+ * FFmpeg, which subtracts start_time) already count from the first frame, so
+ * storing it put every box 1.48 s off the players (recordings 401, 403-405).
+ * A real kick-off is the time the operator typed, minutes into the video.
+ */
+const STREAM_START_TIME_MAX_SECONDS = 2;
+
 function parseWorkerBundle(buffer: Buffer, videoStartSeconds: unknown) {
   const parsed = parseZipBundleDetailed(buffer);
   if (!parsed.upload) return parsed;
   const overrideStart = Number(videoStartSeconds);
   if (Number.isFinite(overrideStart)) {
-    parsed.upload.manifest.videoStartSeconds = Math.max(0, overrideStart);
+    parsed.upload.manifest.videoStartSeconds = overrideStart < STREAM_START_TIME_MAX_SECONDS
+      ? 0
+      : overrideStart;
   }
   return parsed;
 }

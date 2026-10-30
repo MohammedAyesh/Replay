@@ -27,6 +27,8 @@ const en = {
   common: {
     loading: "Loading the game…",
     loadingChunk: "Loading the next 10 minutes…",
+    finishing: "Saving your match…",
+    finishingLede: "Putting together your stats and clips. This takes a few seconds.",
     time: "Time",
     taps: "Taps",
     back: "Back",
@@ -332,6 +334,8 @@ const ar: GameStrings = {
   common: {
     loading: "عم نحمّل الماتش…",
     loadingChunk: "عم نحمّل الـ10 دقايق الجاية…",
+    finishing: "عم نحفظ ماتشك…",
+    finishingLede: "عم نجهّز أرقامك وكليباتك. بتاخد كم ثانية.",
     time: "الوقت",
     taps: "ضغطات",
     back: "رجوع",
