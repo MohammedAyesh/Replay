@@ -527,15 +527,21 @@ interface LiveJobRef {
   jobId: string;
   initialJob: PlaybackJob;
   /** Saved so the retry button can re-submit the identical request. */
-  savedRequest?: { date: string; startHour: number; endHour: number; title: string; camera: Camera; source: "playback" | "sd" };
+  savedRequest?: { date: string; startHour: number; endHour: number; title: string; camera: Camera; source: "playback" | "sd" | "ftp" };
 }
 
+/** Off-schedule FTP store on vps1 (ops/gapstore): footage the camera pushes in
+ *  the hours its SD recording schedule leaves out, kept on a rolling 100 GB basis. */
 interface FtpAvailability {
   cam: string;
-  clips: Array<{ start: string; end: string; seconds: number; bytes: number }>;
-  earliest?: string; // "YYYY-MM-DD HH:MM:SS" Amman local
-  latest?: string;
+  clips: Array<{ start: string; end: string; seconds: number; bytes: number | null }>;
+  earliest?: string | null; // "YYYY-MM-DD HH:MM:SS" Amman local
+  latest?: string | null;
   note?: string;
+  date?: string;
+  hours?: Array<{ hour: number; seconds: number; segments: number; bytes: number }>;
+  usedBytes?: number;
+  capBytes?: number;
 }
 
 // ─── API helpers ──────────────────────────────────────────────────────────────
@@ -4497,6 +4503,7 @@ function LiveJobCard({
                 <span className="text-[9px] px-1.5 py-0.5 rounded-full border border-zinc-700 text-zinc-500 font-medium">
                   {job.engine === "playback" ? "Playback engine"
                     : job.engine === "download" ? "Direct download"
+                    : job.engine === "ftp" ? "Server FTP store"
                     : job.engine}
                 </span>
               )}
@@ -4684,15 +4691,15 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
 
   // ─── effects ───────────────────────────────────────────────────────────────
 
-  // FTP availability (re-fetches when camera changes)
+  // Off-schedule FTP store availability (re-fetches when camera or date changes)
   useEffect(() => {
     setFtpAvail(null);
     setFtpLoading(true);
-    contaboFetch(`/admin/contabo/ftp/${camera}/available`)
+    contaboFetch(`/admin/contabo/ftp/${camera}/available${date ? `?date=${date}` : ""}`)
       .then((data) => setFtpAvail(data as FtpAvailability))
       .catch(() => setFtpAvail(null))
       .finally(() => setFtpLoading(false));
-  }, [camera, contaboFetch]);
+  }, [camera, date, contaboFetch]);
 
   // SD availability (re-fetches when camera or date changes)
   useEffect(() => {
@@ -4763,9 +4770,16 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     ftpTimeLabel  = `${fmtTime(ftpAvail.earliest)} – ${fmtTime(ftpAvail.latest)} ${isToday ? "today" : ed}`;
   }
 
+  // Per-hour store coverage when the server reports it for this date; otherwise
+  // fall back to the earliest-latest span.
+  const ftpHourSet = ftpAvail?.hours && ftpAvail.date === date
+    ? new Set(ftpAvail.hours.map((h) => h.hour))
+    : null;
   const isFtpHour = (h: number) =>
-    date === ftpDate && ftpHourStart !== null && ftpHourEnd !== null
-    && h >= ftpHourStart && h <= ftpHourEnd;
+    ftpHourSet
+      ? ftpHourSet.has(h)
+      : date === ftpDate && ftpHourStart !== null && ftpHourEnd !== null
+        && h >= ftpHourStart && h <= ftpHourEnd;
 
   const sdHourInfoMap  = new Map(availability?.hours.map((h) => [h.hour, h]) ?? []);
   const sdAvailableSet = new Set(availability?.hours.map((h) => h.hour) ?? []);
@@ -4775,6 +4789,12 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
   const isFtpPath: boolean =
     startHour !== null && endHour !== null &&
     Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour! + i).every(isFtpHour);
+  // A range that mixes store hours with SD-card hours can only be pulled from one
+  // of them; the other part would come back missing.
+  const isMixedPath: boolean =
+    startHour !== null && endHour !== null && !isFtpPath &&
+    Array.from({ length: endHour - startHour + 1 }, (_, i) => startHour! + i).some(isFtpHour);
+  const submitSource: "playback" | "sd" | "ftp" = isFtpPath ? "ftp" : pullMethod;
 
   const selectionLabel = startHour !== null && endHour !== null
     ? `${String(startHour).padStart(2, "0")}:00 – ${String(endHour + 1).padStart(2, "0")}:00`
@@ -4803,7 +4823,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
   };
 
   // Direct-download is painfully slow past ~15 min of footage (~3 hrs pull)
-  const showSdWarning = pullMethod === "sd" && windowHours * 60 > 15;
+  const showSdWarning = !isFtpPath && pullMethod === "sd" && windowHours * 60 > 15;
 
   // ─── interaction handlers ──────────────────────────────────────────────────
 
@@ -4827,10 +4847,10 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
     const end   = `${date} ${String(endHour + 1).padStart(2, "0")}:00:00`;
     setSubmitting(true); setSubmitError(null);
     try {
-      const qs = `source=${pullMethod}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title.trim())}`;
+      const qs = `source=${submitSource}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title.trim())}`;
       const data = await contaboFetch(`/admin/contabo/hq/${camera}?${qs}`, { method: "POST" });
       const newJob = data as PlaybackJob;
-      const savedRequest = { date, startHour, endHour, title: title.trim(), camera, source: pullMethod };
+      const savedRequest = { date, startHour, endHour, title: title.trim(), camera, source: submitSource };
       setLiveJobRefs((prev) => {
         if (prev.some((r) => r.jobId === newJob.jobId)) return prev;
         return [{ cam: camera, jobId: newJob.jobId, initialJob: newJob, savedRequest }, ...prev];
@@ -4881,8 +4901,12 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
           <div className="flex items-center gap-2 text-xs text-green-300 bg-green-900/20 border border-green-700/40 rounded-xl px-3 py-2.5">
             <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
             <div>
-              <span className="font-semibold">⚡ Instant: {ftpTimeLabel}</span>
-              <span className="text-green-500/80 ml-2">— assembles in under a minute</span>
+              <span className="font-semibold">⚡ On the server (off-schedule FTP, with audio): {ftpTimeLabel}</span>
+              {typeof ftpAvail?.usedBytes === "number" && typeof ftpAvail?.capBytes === "number" && (
+                <span className="text-green-500/80 ml-2">
+                  — {formatBytes(ftpAvail.usedBytes)} of {formatBytes(ftpAvail.capBytes)} rolling store
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -4959,7 +4983,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                     onClick={() => handleHourClick(h)}
                     title={
                       hasFtp
-                        ? `${String(h).padStart(2, "0")}:00 — instant (on server)`
+                        ? `${String(h).padStart(2, "0")}:00 — on the server (off-schedule FTP, with audio)`
                         : sdInfo
                           ? `${String(h).padStart(2, "0")}:00 — playback engine, ${formatBytes(sdInfo.bytes)}`
                           : `${String(h).padStart(2, "0")}:00 — no footage`
@@ -5010,8 +5034,22 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
           </div>
         )}
 
+        {/* ── Store path: no pull method to pick ──────────────────────────── */}
+        {date && isFtpPath && (
+          <div className="flex items-center gap-2 text-xs text-green-300 bg-green-900/20 border border-green-700/40 rounded-xl px-3 py-2.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
+            Pulled from the server&apos;s off-schedule FTP store, with audio. No camera download needed.
+          </div>
+        )}
+        {date && isMixedPath && (
+          <div className="flex items-center gap-2 text-xs text-amber-300 bg-amber-900/20 border border-amber-700/40 rounded-xl px-3 py-2.5">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            This range mixes ⚡ server hours with SD-card hours. Only the SD-card part will be pulled: request the ⚡ hours separately.
+          </div>
+        )}
+
         {/* ── Pull method picker ───────────────────────────────────────────── */}
-        {date && (
+        {date && !isFtpPath && (
           <div>
             <label className="text-xs text-zinc-400 mb-1.5 block font-medium">Pull Method</label>
             <div className="space-y-2">
@@ -5103,7 +5141,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
         {startHour !== null && (
           <>
             {/* Slow-path confirm step for sd method */}
-            {pullMethod === "sd" && !confirmed ? (
+            {submitSource === "sd" && !confirmed ? (
               <button
                 type="button"
                 onClick={() => setConfirmed(true)}
@@ -5118,13 +5156,15 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                 onClick={() => void handleSubmit()}
                 className={cn(
                   "w-full flex items-center justify-center gap-2 font-bold py-3 rounded-xl text-sm disabled:opacity-50 hover:opacity-90 transition-opacity",
-                  pullMethod === "sd" ? "bg-amber-600 text-white"
+                  submitSource === "ftp" ? "bg-green-600 text-white"
+                  : submitSource === "sd" ? "bg-amber-600 text-white"
                   : "bg-blue-600 text-white",
                 )}
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
                 {submitting ? "Requesting…"
-                  : pullMethod === "sd" ? "Pull footage (direct download)"
+                  : submitSource === "ftp" ? "Pull footage (from the server, with audio)"
+                  : submitSource === "sd" ? "Pull footage (direct download)"
                   : "Pull footage (playback engine)"}
               </button>
             )}

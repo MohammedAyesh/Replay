@@ -4,6 +4,7 @@ import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { liveAnalysisEnabled } from "./liveAnalysis";
 import { logger } from "./logger";
 import { controlFetch } from "../routes/contabo";
+import { chooseFootageSource, gapPullPath, remoteJobPath, withGapStore } from "./gapStore";
 
 export type FootageRequest = typeof footageRequestsTable.$inferSelect;
 export type Availability = Record<string, unknown>;
@@ -82,6 +83,13 @@ async function getAvailability(camera: string, date: string): Promise<Availabili
   const key = `${camera}:${date}`;
   const cached = availabilityCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.body;
+  // SD card hours plus the off-schedule FTP store's hours (lib/gapStore.ts)
+  const body = await withGapStore(camera, date, () => getSdAvailability(camera, date));
+  availabilityCache.set(key, { body, expiresAt: Date.now() + AVAILABILITY_CACHE_MS });
+  return body;
+}
+
+async function getSdAvailability(camera: string, date: string): Promise<Availability> {
   let result;
   try {
     result = await controlFetch(
@@ -95,9 +103,7 @@ async function getAvailability(camera: string, date: string): Promise<Availabili
   if (!result.ok || !result.body || typeof result.body !== "object") {
     throw new CameraUnavailableError("Camera unreachable — try again in a few minutes");
   }
-  const body = result.body as Availability;
-  availabilityCache.set(key, { body, expiresAt: Date.now() + AVAILABILITY_CACHE_MS });
-  return body;
+  return result.body as Availability;
 }
 
 export async function validateAvailability(
@@ -172,8 +178,14 @@ export async function startCameraJob(row: FootageRequest, cameraId: string): Pro
     const remoteStart = `${row.startLocal}:00`;
     const remoteEnd = `${row.endLocal}:00`;
     const live = row.academyId === null && future && await liveAnalysisEnabled(row.fieldId);
+    // A past window the SD card doesn't record comes from the off-schedule FTP store.
+    const source = future
+      ? "sd"
+      : await chooseFootageSource(cameraId, remoteStart, remoteEnd, (date) => getAvailability(cameraId, date));
     const result = await controlFetch(
-      `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}`,
+      source === "ftp"
+        ? gapPullPath(cameraId, remoteStart, remoteEnd, title)
+        : `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}`,
       { method: "POST" },
       90_000,
     );
@@ -268,7 +280,7 @@ export async function cancelFootageRequest(
     let result;
     try {
       result = await controlFetch(
-        `/record-hq/${encodeURIComponent(row.cameraId)}/${encodeURIComponent(row.vpsJobId)}`,
+        remoteJobPath(row.cameraId, row.vpsJobId),
         { method: "DELETE" },
         30_000,
       );

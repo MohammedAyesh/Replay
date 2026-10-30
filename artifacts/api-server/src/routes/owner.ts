@@ -21,6 +21,7 @@ import { z } from "zod/v4";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { computeAmountFils, computeBillableHours } from "../lib/footageBilling";
 import { controlFetch, controlResponse } from "./contabo";
+import { chooseFootageSource, gapPullPath, remoteJobPath, withGapStore } from "../lib/gapStore";
 import { logger } from "../lib/logger";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
@@ -516,7 +517,13 @@ async function getAvailability(camera: string, date: string): Promise<Availabili
   const key = `${camera}:${date}`;
   const cached = availabilityCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.body;
+  // SD card hours plus the off-schedule FTP store's hours (lib/gapStore.ts)
+  const body = await withGapStore(camera, date, () => getSdAvailability(camera, date));
+  availabilityCache.set(key, { body, expiresAt: Date.now() + AVAILABILITY_CACHE_MS });
+  return body;
+}
 
+async function getSdAvailability(camera: string, date: string): Promise<Availability> {
   let result;
   try {
     result = await controlFetch(
@@ -531,9 +538,7 @@ async function getAvailability(camera: string, date: string): Promise<Availabili
     throw new CameraUnavailableError("Camera unreachable — try again in a few minutes");
   }
 
-  const body = result.body as Availability;
-  availabilityCache.set(key, { body, expiresAt: Date.now() + AVAILABILITY_CACHE_MS });
-  return body;
+  return result.body as Availability;
 }
 
 async function validateAvailability(camera: string, startMs: number, endMs: number, nowMs = Date.now()): Promise<void> {
@@ -669,7 +674,7 @@ export async function refreshOwnerRequest(
   let result;
   try {
     result = await controlFetch(
-      `/record-hq/${encodeURIComponent(camera)}/${encodeURIComponent(row.vpsJobId)}`,
+      remoteJobPath(camera, row.vpsJobId),
       {},
       90_000,
     );
@@ -1184,8 +1189,14 @@ export async function startCameraJob(row: FootageRequest, cameraId: string): Pro
     // "Analyse bookings during the match": tells the VPS to watch this booking
     // for its kick-off and analyse it as it is played (lib/liveAnalysis.ts).
     const live = future && await liveAnalysisEnabled(row.fieldId);
+    // A past window the SD card doesn't record comes from the off-schedule FTP store.
+    const source = future
+      ? "sd"
+      : await chooseFootageSource(cameraId, remoteStart, remoteEnd, (date) => getAvailability(cameraId, date));
     const result = await controlFetch(
-      `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}`,
+      source === "ftp"
+        ? gapPullPath(cameraId, remoteStart, remoteEnd, title)
+        : `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}`,
       { method: "POST" },
       90_000,
     );
@@ -1708,7 +1719,7 @@ router.post("/owner/requests/:id/cancel", async (req, res): Promise<void> => {
     let result;
     try {
       result = await controlFetch(
-        `/record-hq/${encodeURIComponent(found.request.cameraId)}/${encodeURIComponent(found.request.vpsJobId)}`,
+        remoteJobPath(found.request.cameraId, found.request.vpsJobId),
         { method: "DELETE" },
         30_000,
       );
@@ -2160,7 +2171,7 @@ async function stopAndCancelBooking(row: FootageRequest, message: string): Promi
   if (row.vpsJobId) {
     try {
       const result = await controlFetch(
-        `/record-hq/${encodeURIComponent(row.cameraId)}/${encodeURIComponent(row.vpsJobId)}`,
+        remoteJobPath(row.cameraId, row.vpsJobId),
         { method: "DELETE" },
         30_000,
       );

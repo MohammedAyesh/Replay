@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { gapPullPath, remoteJobPath } from "../lib/gapStore";
 import { logger } from "../lib/logger";
 import { parseLiveCamera } from "../lib/liveCameras";
 
@@ -577,15 +578,14 @@ router.get("/admin/contabo/recordings", requireContaboAuth as import("express").
 });
 
 // ─── FTP instant-footage route ────────────────────────────────────────────────
-// FTP push has been disabled on both cameras as of 2026-08-24. This endpoint
-// remains for already-pushed clips and will report progressively less footage
-// until FTP is enabled again.
-
 /**
- * GET /admin/contabo/ftp/:cam/available
- * Proxy: GET {CONTROL_URL}/ftp/{cam}/available
- * Returns what is instantly servable from footage already pushed to the VPS.
- * Response: { cam, clips: [{ start, end, seconds, bytes }], earliest, latest, note }
+ * GET /admin/contabo/ftp/:cam/available[?date=YYYY-MM-DD]
+ * Proxy: GET {CONTROL_URL}/gapstore/{cam}/available
+ * The off-schedule FTP store on vps1 (ops/gapstore): the camera pushes its
+ * footage over FTP in the hours its SD recording schedule leaves out, and vps1
+ * keeps it on a rolling 100 GB basis.
+ * Response: { cam, clips: [{ start, end, seconds }], earliest, latest, note,
+ *   usedBytes, capBytes, and with ?date: hours: [{ hour, seconds, segments, bytes }] }
  * start/end are "YYYY-MM-DD HH:MM:SS" Amman local time (UTC+3).
  */
 router.get("/admin/contabo/ftp/:cam/available", requireContaboAuth as import("express").RequestHandler, async (req, res): Promise<void> => {
@@ -595,8 +595,14 @@ router.get("/admin/contabo/ftp/:cam/available", requireContaboAuth as import("ex
   const cam = req.params.cam as string;
   if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
 
+  const date = req.query.date as string | undefined;
+  if (date !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    res.status(400).json({ error: "date query param must be YYYY-MM-DD" });
+    return;
+  }
+
   try {
-    const result = await controlFetch(`/ftp/${cam}/available`);
+    const result = await controlFetch(`/gapstore/${cam}/available${date ? `?date=${date}` : ""}`);
     res.status(result.ok ? 200 : result.status).json(result.body);
   } catch (err) {
     logger.error({ err }, "Failed to reach control server (ftp available)");
@@ -636,11 +642,12 @@ router.get("/admin/contabo/sd/:cam/available", requireContaboAuth as import("exp
 });
 
 /**
- * POST /admin/contabo/hq/:cam?source=sd|playback&start=...&end=...&title=...
+ * POST /admin/contabo/hq/:cam?source=sd|playback|ftp&start=...&end=...&title=...
  * Proxy: POST {CONTROL_URL}/record-hq/{cam}?source=...&start=...&end=...&title=...
  * source defaults to "playback" and pulls from the camera's SD card through
  * the playback engine. source="sd" pulls from the same card through a
- * different, slower command. The former ftp engine no longer exists.
+ * different, slower command. source="ftp" assembles the window (with audio)
+ * from the off-schedule FTP store on vps1: POST {CONTROL_URL}/gapstore/{cam}/pull.
  * start/end are "YYYY-MM-DD HH:MM:SS" Amman local time.
  * Returns { status, cam, jobId, poll }
  */
@@ -652,8 +659,8 @@ router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").Re
   if (!["camera1", "camera2"].includes(cam)) { res.status(400).json({ error: "Invalid camera" }); return; }
 
   const source = (req.query.source as string | undefined) ?? "playback";
-  if (!["sd", "playback"].includes(source)) {
-    res.status(400).json({ error: "source must be 'sd' or 'playback'" });
+  if (!["sd", "playback", "ftp"].includes(source)) {
+    res.status(400).json({ error: "source must be 'sd', 'playback' or 'ftp'" });
     return;
   }
 
@@ -668,7 +675,9 @@ router.post("/admin/contabo/hq/:cam", requireContaboAuth as import("express").Re
 
   try {
     const qs = `source=${source}&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&title=${encodeURIComponent(title)}`;
-    const result = await controlFetch(`/record-hq/${cam}?${qs}`, { method: "POST" });
+    const result = source === "ftp"
+      ? await controlFetch(gapPullPath(cam, start, end, title), { method: "POST" }, 30_000)
+      : await controlFetch(`/record-hq/${cam}?${qs}`, { method: "POST" });
     logger.info({ cam, source, start, end, title, ok: result.ok }, "Footage request queued");
     res.status(result.ok ? 200 : result.status).json(result.body);
   } catch (err) {
@@ -696,7 +705,7 @@ router.get("/admin/contabo/hq/:cam/:jobId", requireContaboAuth as import("expres
 
   try {
     // 30 s — assembling/uploading stages can take a moment to respond.
-    const result = await controlFetch(`/record-hq/${cam}/${jobId}`, {}, 30_000);
+    const result = await controlFetch(remoteJobPath(cam, jobId), {}, 30_000);
     res.status(result.ok ? 200 : result.status).json(result.body);
   } catch (err) {
     logger.error({ err, cam, jobId }, "Failed to reach control server (hq status)");
@@ -714,7 +723,21 @@ router.get("/admin/contabo/hq", requireContaboAuth as import("express").RequestH
   if (missing.length > 0) { res.status(503).json({ error: "Control server not configured", missing }); return; }
 
   try {
-    const result = await controlFetch("/record-hq");
+    const [result, gap] = await Promise.all([
+      controlFetch("/record-hq"),
+      controlFetch("/gapstore/pulls").catch(() => null),
+    ]);
+    const gapJobs = gap?.ok && Array.isArray((gap.body as { jobs?: unknown })?.jobs)
+      ? (gap.body as { jobs: Array<Record<string, unknown>> }).jobs
+      : [];
+    if (result.ok && gapJobs.length > 0 && result.body && typeof result.body === "object"
+      && Array.isArray((result.body as { jobs?: unknown }).jobs)) {
+      const jobs = [...(result.body as { jobs: Array<Record<string, unknown>> }).jobs, ...gapJobs];
+      const when = (j: Record<string, unknown>) => String(j.createdAt ?? j.created_at ?? j.submittedAt ?? "");
+      jobs.sort((a, b) => when(b).localeCompare(when(a)));
+      res.status(200).json({ ...(result.body as object), jobs });
+      return;
+    }
     res.status(result.ok ? 200 : result.status).json(result.body);
   } catch (err) {
     logger.error({ err }, "Failed to reach control server (hq list)");

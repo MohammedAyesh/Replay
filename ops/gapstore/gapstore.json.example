@@ -1,0 +1,9 @@
+{
+  "capBytes": 100000000000,
+  "minFreeBytes": 20000000000,
+  "cameras": {
+    "cam1": { "ip": "192.168.66.101", "enabled": true },
+    "cam2": { "ip": "192.168.66.102", "enabled": false },
+    "cam3": { "ip": "192.168.66.103", "enabled": false }
+  }
+}

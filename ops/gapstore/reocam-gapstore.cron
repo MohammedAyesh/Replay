@@ -1,0 +1,8 @@
+# Off-schedule FTP gap store (ops/gapstore). Installed to /etc/cron.d/reocam-gapstore.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# take finished FTP clips into the store and enforce the 100 GB rolling cap
+* * * * * root flock -n /run/lock/gapstore-ingest.lock /usr/bin/python3 /opt/reocam/gapstore/gapstore.py ingest >> /var/log/reocam-gapstore.log 2>&1
+# FTP: on in the hours the SD schedule leaves out, off in recorded hours, widened to all hours while
+# live / auto-pan / VAR hold the camera (camera contacted only when that changes, or every 10 min)
+* * * * * root flock -n /run/lock/gapstore-sched.lock /usr/bin/python3 /opt/reocam/gapstore/gapstore.py sync-schedule >> /var/log/reocam-gapstore.log 2>&1
