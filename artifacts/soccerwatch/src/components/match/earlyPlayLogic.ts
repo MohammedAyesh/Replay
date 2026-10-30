@@ -140,3 +140,40 @@ const reasonCopy: Record<Exclude<EarlyPlayReason, "disabled">, [string, string]>
 
 export function reasonMessage(code: EarlyPlayReason | undefined, locale: Locale): string {
   const copy = code && code !== "disabled" ? reasonCopy[code] : undefined;
+  return copy ? pick(locale, copy[0], copy[1]) : pick(locale, "The early version couldn't be played.", "ما قدرنا نشغّل النسخة المبكرة.");
+}
+
+const mediaCopy: Record<number, [string, string]> = {
+  1: ["Playback was stopped.", "التشغيل وقف."],
+  2: ["A network problem interrupted the video.", "مشكلة بالنت وقّفت الفيديو."],
+  3: ["The video couldn't be decoded on this device.", "الجهاز ما قدر يفك ترميز الفيديو."],
+  4: ["The video source isn't available.", "مصدر الفيديو مش متاح."],
+};
+
+export function mediaMessage(mediaCode: number, locale: Locale): string {
+  const copy = mediaCopy[mediaCode] ?? mediaCopy[2];
+  return pick(locale, copy[0], copy[1]);
+}
+
+export function probeMessage(outcome: ProbeOutcome, locale: Locale): string {
+  switch (outcome.kind) {
+    case "unsupported": return pick(locale, "Your phone can't play the early version. The match will be ready in a few minutes.", "موبايلك ما بقدر يشغّل النسخة المبكرة. الماتش بكون جاهز بعد كم دقيقة.");
+    case "ready": return pick(locale, "The full match is ready now.", "الماتش كامل صار جاهز هلّق.");
+    case "gone": return pick(locale, "The early version is no longer available.", "النسخة المبكرة ما عادت متاحة.");
+    case "not_allowed": return pick(locale, "You don't have access to this video.", "ما عندك صلاحية تشوف هاد الفيديو.");
+    case "reason": return reasonMessage(outcome.reasonCode, locale);
+    case "network": return pick(locale, "We couldn't reach the video. Check your connection and retry.", "ما قدرنا نوصل للفيديو. تأكد من النت وجرّب مرة ثانية.");
+  }
+}
+
+export const stallMessage = (locale: Locale) => pick(locale, "The video stopped loading.", "الفيديو وقف تحميل.");
+export const offlineMessage = (locale: Locale) => pick(locale, "You're offline. Reconnect, then tap Retry.", "إنت مش متصل. ارجع على النت واكبس جرّب مرة ثانية.");
+export const pollFailedMessage = (locale: Locale) => pick(locale, "Couldn't check for the early version. Retrying…", "ما قدرنا نتأكد من النسخة المبكرة. عم نجرّب كمان مرة…");
+
+/** Restore a saved playback position (seconds); bad or missing values give 0. */
+export function savedPosition(raw: string | null | undefined, durationSec?: number | null): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (durationSec && n >= durationSec - 1) return 0;
+  return n;
+}
