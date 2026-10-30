@@ -318,6 +318,7 @@ export default function Academies({ embedded = false }: { embedded?: boolean }) 
               await createUserClip.mutateAsync({
                 data: {
                   videoId: extractBunnyGuid(recordingFor.rec.videoUrl ?? ""),
+                  recordingId: recordingFor.rec.id,
                   title: draft.title,
                   startTime: draft.startTime,
                   endTime: draft.endTime,

@@ -50,6 +50,8 @@ let userAId: number;
 let userBId: number;
 let fieldId: number;
 let recordingId: number;
+let mismatchRecordingId: number | null = null;
+let duplicateRecordingId: number | null = null;
 let ownerRequestIds: number[] = [];
 const OWNER_SHARE_TOKEN = "1234567890abcdef1234567890abcdef";
 const REVOKED_SHARE_TOKEN = "abcdef0123456789abcdef0123456789";
@@ -161,6 +163,12 @@ afterAll(async () => {
     .delete(usersTable)
     .where(inArray(usersTable.id, [userAId, userBId]));
   await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
+  if (mismatchRecordingId != null) {
+    await db.delete(recordingsTable).where(eq(recordingsTable.id, mismatchRecordingId));
+  }
+  if (duplicateRecordingId != null) {
+    await db.delete(recordingsTable).where(eq(recordingsTable.id, duplicateRecordingId));
+  }
   await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
 });
@@ -266,6 +274,68 @@ describe("POST /api/user-clips", () => {
     expect(res.body.videoId).toBe(SAMPLE_CLIP_BODY.videoId);
     expect(res.body.title).toBe(SAMPLE_CLIP_BODY.title);
     expect(typeof res.body.id).toBe("number");
+    const [row] = await db.select({ sourceRecordingId: userClipsTable.sourceRecordingId })
+      .from(userClipsTable).where(eq(userClipsTable.id, res.body.id));
+    expect(row.sourceRecordingId).toBe(recordingId);
+  });
+
+  it("stores the supplied recording when the source video matches exactly", async () => {
+    mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+
+    const res = await request(app)
+      .post("/api/user-clips")
+      .send({ ...SAMPLE_CLIP_BODY, recordingId });
+
+    expect(res.status).toBe(201);
+    const [row] = await db.select({ sourceRecordingId: userClipsTable.sourceRecordingId })
+      .from(userClipsTable).where(eq(userClipsTable.id, res.body.id));
+    expect(row.sourceRecordingId).toBe(recordingId);
+  });
+
+  it("leaves the source unset when an inferred video matches multiple recordings", async () => {
+    const [duplicate] = await db.insert(recordingsTable).values({
+      fieldId,
+      court: "2",
+      date: "2026-09-22",
+      timeSlot: "12:00",
+      duration: "00:30:00",
+      videoUrl: "https://cdn.test/test-video-abc123/playlist.m3u8",
+      isVisible: true,
+    }).returning({ id: recordingsTable.id });
+    duplicateRecordingId = duplicate.id;
+    mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+
+    const res = await request(app).post("/api/user-clips").send(SAMPLE_CLIP_BODY);
+
+    expect(res.status).toBe(201);
+    const [row] = await db.select({ sourceRecordingId: userClipsTable.sourceRecordingId })
+      .from(userClipsTable).where(eq(userClipsTable.id, res.body.id));
+    expect(row.sourceRecordingId).toBeNull();
+    await db.delete(recordingsTable).where(eq(recordingsTable.id, duplicate.id));
+    duplicateRecordingId = null;
+  });
+
+  it("rejects a recording ID that points to another video", async () => {
+    const [otherRecording] = await db.insert(recordingsTable).values({
+      fieldId,
+      court: "2",
+      date: "2026-09-21",
+      timeSlot: "13:00",
+      duration: "00:30:00",
+      videoUrl: "https://cdn.test/another-video-abc123/playlist.m3u8",
+      isVisible: true,
+    }).returning({ id: recordingsTable.id });
+    mismatchRecordingId = otherRecording.id;
+    mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+
+    const res = await request(app)
+      .post("/api/user-clips")
+      .send({ ...SAMPLE_CLIP_BODY, recordingId: otherRecording.id });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("recordingId does not match videoId");
+    await db.delete(recordingsTable).where(eq(recordingsTable.id, otherRecording.id));
+    mismatchRecordingId = null;
   });
 
   it("round-trips startTime and endTime as numeric fractions", async () => {

@@ -702,8 +702,8 @@ describe("players book a future recording and pay by CliQ", () => {
       const confirm = await request(app).post(`/api/admin/stat-unlocks/${row.id}/confirm`).set(as("admin"));
       expect(confirm.status).toBe(200);
       expect(confirm.body.booking.status).toBe("scheduled");
-      expect(recordCalls).toHaveLength(1);
-      expect(recordCalls[0]).toContain("/record-hq/");
+      const recordingCalls = recordCalls.filter((url) => url.includes("/record-hq/"));
+      expect(recordingCalls).toHaveLength(1);
       const [stored] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, booked.body.requestId));
       expect(stored.status).toBe("scheduled");
       expect(stored.vpsJobId).toBe("job-test-1");

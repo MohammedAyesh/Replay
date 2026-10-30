@@ -30,6 +30,7 @@ let fieldId: number;
 let requestId: number;
 let recordingId: number;
 let clipId: number;
+let unlinkedClipId: number;
 
 describe("weekly highlight candidates", () => {
   beforeAll(async () => {
@@ -70,13 +71,21 @@ describe("weekly highlight candidates", () => {
     const [clip] = await db.insert(userClipsTable).values({
       userId: playerId, videoId, title: "Manually saved shot",
       startTime: "120", endTime: "128", exportStatus: "done",
+      sourceRecordingId: recordingId,
       exportedUrl: `https://storage.test/${TAG}.mp4`,
     }).returning({ id: userClipsTable.id });
     clipId = clip.id;
+    const [unlinkedClip] = await db.insert(userClipsTable).values({
+      userId: playerId, videoId, title: "Unlinked legacy shot",
+      startTime: "140", endTime: "148", exportStatus: "done",
+      exportedUrl: `https://storage.test/${TAG}-unlinked.mp4`,
+    }).returning({ id: userClipsTable.id });
+    unlinkedClipId = unlinkedClip.id;
   });
 
   afterAll(async () => {
-    if (clipId) await db.delete(userClipsTable).where(eq(userClipsTable.id, clipId));
+    if (clipId || unlinkedClipId) await db.delete(userClipsTable).where(eq(userClipsTable.id, clipId || unlinkedClipId));
+    if (unlinkedClipId) await db.delete(userClipsTable).where(eq(userClipsTable.id, unlinkedClipId));
     if (recordingId) await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
     if (requestId) await db.delete(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
     if (fieldId) await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
@@ -93,7 +102,9 @@ describe("weekly highlight candidates", () => {
     expect(response.status).toBe(200);
     const player = response.body.players.find((candidate: { userId: number }) => candidate.userId === playerId);
     expect(player.clips.map((clip: { id: number }) => clip.id)).toContain(clipId);
+    expect(player.clips.map((clip: { id: number }) => clip.id)).not.toContain(unlinkedClipId);
     const field = response.body.fields.find((candidate: { id: number }) => candidate.id === fieldId);
     expect(field.clips.map((clip: { id: number }) => clip.id)).toContain(clipId);
+    expect(field.clips.map((clip: { id: number }) => clip.id)).not.toContain(unlinkedClipId);
   });
 });

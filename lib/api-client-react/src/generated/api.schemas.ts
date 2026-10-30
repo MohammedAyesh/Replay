@@ -1187,6 +1187,8 @@ export const CreateUserClipInputAspectRatio = {
 
 export interface CreateUserClipInput {
   videoId?: string;
+  /** Exact source recording when the clip is saved from a recording page. */
+  recordingId?: number;
   title: string;
   startTime: number;
   endTime: number;

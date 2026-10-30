@@ -1,8 +1,9 @@
-import { pgTable, serial, integer, text, numeric, timestamp, jsonb, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, numeric, timestamp, jsonb, boolean, index } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { fieldsTable } from "./fields";
 import { academiesTable } from "./academies";
 import { footageRequestsTable } from "./footageRequests";
+import { recordingsTable } from "./recordings";
 
 export type CropKeyframe = {
   t: number;
@@ -31,6 +32,8 @@ export const userClipsTable = pgTable("user_clips", {
   academyId: integer("academy_id").references(() => academiesTable.id, { onDelete: "set null" }),
   /** Owner footage request that supplied this clip's source, if any. */
   footageRequestId: integer("footage_request_id").references(() => footageRequestsTable.id, { onDelete: "set null" }),
+  /** Recording that supplied this clip's source when it is a recorded game. */
+  sourceRecordingId: integer("source_recording_id").references(() => recordingsTable.id, { onDelete: "set null" }),
   /** Match room code for clips captured from public live match playback. */
   matchCode: text("match_code"),
   /** Control-service job ID and lifecycle state for live DVR captures. */
@@ -82,6 +85,8 @@ export const userClipsTable = pgTable("user_clips", {
    * restart or a vps1 hand-off cannot lose the player's change.
    */
   endScreenPending: boolean("end_screen_pending").notNull().default(false),
-});
+}, (table) => [
+  index("user_clips_source_recording_idx").on(table.sourceRecordingId),
+]);
 
 export type UserClipRow = typeof userClipsTable.$inferSelect;

@@ -1350,7 +1350,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
-  const { title, startTime, endTime, cropPath, visibility, aspectRatio, academyId } = body.data;
+  const { title, startTime, endTime, cropPath, visibility, aspectRatio, academyId, recordingId } = body.data;
   const ownerShare = body.data.ownerShareToken
     ? await resolveOwnerShare(body.data.ownerShareToken)
     : null;
@@ -1372,6 +1372,32 @@ router.post("/user-clips", async (req, res): Promise<void> => {
     return;
   }
 
+  // Prefer the exact recording supplied by the page. Older callers may only
+  // know the video ID, in which case link only an unambiguous exact GUID match.
+  let sourceRecordingId: number | null = null;
+  if (!ownerShare && !videoId.startsWith("live:")) {
+    if (recordingId != null) {
+      const [recording] = await db.select({
+        id: recordingsTable.id,
+        videoUrl: recordingsTable.videoUrl,
+      }).from(recordingsTable).where(eq(recordingsTable.id, recordingId)).limit(1);
+      if (!recording || extractBunnyVideoId(recording.videoUrl)?.toLowerCase() !== videoId.toLowerCase()) {
+        res.status(400).json({ error: "recordingId does not match videoId" });
+        return;
+      }
+      sourceRecordingId = recording.id;
+    } else {
+      const possibleRecordings = await db.select({
+        id: recordingsTable.id,
+        videoUrl: recordingsTable.videoUrl,
+      }).from(recordingsTable).where(like(recordingsTable.videoUrl, `%${videoId}%`));
+      const exactMatches = possibleRecordings.filter(
+        (recording) => extractBunnyVideoId(recording.videoUrl)?.toLowerCase() === videoId.toLowerCase(),
+      );
+      if (exactMatches.length === 1) sourceRecordingId = exactMatches[0].id;
+    }
+  }
+
   // Validate rather than trust blindly: a nonexistent id would just silently
   // resolve to no intro later, but storing it anyway would be confusing to
   // debug. Cheap to check up front since we already touch this table below.
@@ -1384,12 +1410,12 @@ router.post("/user-clips", async (req, res): Promise<void> => {
   // Auto-detect academy from the recording this video belongs to, so the
   // academy's intro video is prepended on export even when the client doesn't
   // know the academy context (e.g. clips created via field-detail player).
-  if (!ownerShare && validAcademyId === null && videoId && !videoId.startsWith("live:")) {
+  if (!ownerShare && validAcademyId === null && sourceRecordingId != null) {
     const [recAcademy] = await db
       .select({ academyId: academyRecordingsTable.academyId })
       .from(recordingsTable)
       .innerJoin(academyRecordingsTable, eq(academyRecordingsTable.recordingId, recordingsTable.id))
-      .where(like(recordingsTable.videoUrl, `%${videoId}%`))
+      .where(eq(recordingsTable.id, sourceRecordingId))
       .limit(1);
     if (recAcademy) validAcademyId = recAcademy.academyId;
   }
@@ -1407,6 +1433,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       aspectRatio: aspectRatio ?? "16:9",
       academyId: validAcademyId,
       footageRequestId,
+      sourceRecordingId,
     })
     .returning();
 

@@ -6798,6 +6798,9 @@ components:
       properties:
         videoId:
           type: string
+        recordingId:
+          type: integer
+          description: Exact source recording when the clip is saved from a recording page.
         title:
           type: string
         startTime:

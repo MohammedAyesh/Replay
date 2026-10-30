@@ -50,17 +50,19 @@ async function getPayload(id: number) {
     minute: highlightClipsTable.minute, youX: highlightClipsTable.youX, youY: highlightClipsTable.youY,
     title: userClipsTable.title, startTime: userClipsTable.startTime, endTime: userClipsTable.endTime,
     matchCode: matchRoomsTable.code, clipMatchCode: userClipsTable.matchCode, matchDate: footageRequestsTable.startLocal,
+    recordingDate: recordingsTable.date,
     availableUntil: footageRequestsTable.shareExpiresAt,
   }).from(highlightClipsTable).innerJoin(userClipsTable, eq(userClipsTable.id, highlightClipsTable.clipId))
     .leftJoin(footageRequestsTable, eq(footageRequestsTable.id, userClipsTable.footageRequestId))
     .leftJoin(matchRoomsTable, eq(matchRoomsTable.footageRequestId, footageRequestsTable.id))
+    .leftJoin(recordingsTable, eq(recordingsTable.id, userClipsTable.sourceRecordingId))
     .where(eq(highlightClipsTable.highlightId, id)).orderBy(asc(highlightClipsTable.position));
   return {
     ...highlight, kind: highlight.userId == null ? "field" : "personal", weekEnd: addDays(highlight.weekStart, 6),
     clips: clips.map((clip) => ({
       ...clip, matchCode: clip.matchCode ?? clip.clipMatchCode, videoUrl: `/api/user-clips/${clip.clipId}/playback`,
       previewUrl: `/api/user-clips/${clip.clipId}/playback`,
-      matchDate: clip.matchDate?.slice(0, 10) ?? null,
+      matchDate: clip.matchDate?.slice(0, 10) ?? clip.recordingDate ?? null,
       availableUntil: clip.availableUntil?.toISOString() ?? null,
     })),
   };
@@ -129,15 +131,14 @@ router.get("/admin/weekly-highlights/candidates", async (req, res): Promise<void
   }).from(userClipsTable).innerJoin(footageRequestsTable, eq(footageRequestsTable.id, userClipsTable.footageRequestId))
     .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
     .where(and(gte(footageRequestsTable.startLocal, weekStart), lte(footageRequestsTable.startLocal, `${weekEnd}T23:59:59`), eq(userClipsTable.isHidden, false), eq(userClipsTable.exportStatus, "done")));
-  // Clips saved directly from a recording page don't have a footageRequestId.
-  // Match their source video to that week's recording so they can be selected
-  // for the player and field highlights too.
+  // Clips saved directly from a recording page are grouped through their
+  // explicit source recording, not a substring match against its video URL.
   const recordingClipRows = await db.select({
     id: userClipsTable.id, userId: userClipsTable.userId, title: userClipsTable.title,
     startTime: userClipsTable.startTime, endTime: userClipsTable.endTime, exportedUrl: userClipsTable.exportedUrl,
     fieldId: recordingsTable.fieldId, fieldName: fieldsTable.name, requestId: sql<number>`0`,
   }).from(userClipsTable)
-    .innerJoin(recordingsTable, sql`${recordingsTable.videoUrl} LIKE '%' || ${userClipsTable.videoId} || '%'`)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, userClipsTable.sourceRecordingId))
     .innerJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
     .where(and(
       isNull(userClipsTable.footageRequestId),

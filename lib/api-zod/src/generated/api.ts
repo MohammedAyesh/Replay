@@ -4900,6 +4900,7 @@ export const GetMatchLiveClipStatusResponse = zod.object({
  */
 export const CreateUserClipBody = zod.object({
   "videoId": zod.string().optional(),
+  "recordingId": zod.number().optional().describe('Exact source recording when the clip is saved from a recording page.'),
   "title": zod.string(),
   "startTime": zod.number(),
   "endTime": zod.number(),
