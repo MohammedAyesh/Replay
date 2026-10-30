@@ -268,6 +268,7 @@ function RecordSheet({ open, onOpenChange, recent, s, locale }: { open: boolean;
   const todayParts = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Amman", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date()).map((part) => [part.type, part.value]));
   const today = `${todayParts.year}-${todayParts.month}-${todayParts.day}`;
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + i); return d.toISOString().slice(0, 10); }), [today]);
+  const maxBookingDate = (() => { const d = new Date(`${today}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + (fields.data?.maxDaysAhead ?? 14)); return d.toISOString().slice(0, 10); })();
   const prior = recent[0];
   const fieldList = fields.data?.fields ?? [];
   const [fieldId, setFieldId] = useState<number | null>(null);
@@ -305,29 +306,33 @@ function RecordSheet({ open, onOpenChange, recent, s, locale }: { open: boolean;
   }, [open, prior, fieldList, days, maxMinutes]);
   const free = fields.data?.freeMatch;
   const useFree = Boolean(free?.reward);
-  const total = validDuration ? Math.max(0, billableHours - (useFree ? free!.reward!.freeHours : 0)) * price : 0;
+  const useFreeForBooking = useFree && date >= today;
+  const total = validDuration ? Math.max(0, billableHours - (useFreeForBooking ? free!.reward!.freeHours : 0)) * price : 0;
   const times = Array.from({ length: 34 }, (_, i) => 7 * 60 + i * 30);
   const submit = async () => {
     if (!fieldId || start == null || !validDuration) return;
     if (!user || isGuest) return setLocation(`/sign-up?redirect_url=${encodeURIComponent("/home?record=1")}`);
     const endMinute = start + durationMinutes;
     const endDate = endMinute >= 1440 ? (() => { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })() : date;
-    try { setResult(await create.mutateAsync({ fieldId, startLocal: `${date} ${String(Math.floor(start / 60)).padStart(2, "0")}:${String(start % 60).padStart(2, "0")}`, endLocal: `${endDate} ${String(Math.floor((endMinute % 1440) / 60)).padStart(2, "0")}:${String(endMinute % 60).padStart(2, "0")}`, title: null, payWith: "cliq", useFreeMatch: useFree || undefined })); }
-    catch (e) { const msg = e instanceof MatchApiError && /record|taken|already/i.test(e.message) ? s.noTime : copy.error; toast({ title: msg, variant: "destructive" }); }
+    try { setResult(await create.mutateAsync({ fieldId, startLocal: `${date} ${String(Math.floor(start / 60)).padStart(2, "0")}:${String(start % 60).padStart(2, "0")}`, endLocal: `${endDate} ${String(Math.floor((endMinute % 1440) / 60)).padStart(2, "0")}:${String(endMinute % 60).padStart(2, "0")}`, title: null, payWith: "cliq", useFreeMatch: useFreeForBooking || undefined })); }
+    catch (e) { const msg = e instanceof MatchApiError ? e.message : copy.error; toast({ title: msg, variant: "destructive" }); }
   };
   return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side="bottom" dir={locale === "ar" ? "rtl" : "ltr"} className="mx-auto max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-3xl border-line bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
     <SheetHeader className="text-start"><SheetTitle className="font-display text-xl font-extrabold">{result ? s.booked : s.choose}</SheetTitle></SheetHeader>
     {result ? <><div className="mt-4 rounded-2xl border border-line bg-raised p-4">{result.method === "free" ? <p>{s.confirmFree}</p> : result.method === "field" ? <FieldPaymentPanel amountFils={result.amountFils} reference={result.reference} /> : <PaymentPanel amountFils={result.amountFils} cliqAlias={result.cliqAlias} reference={result.reference} />}</div><Link href={`/m/${result.code}`} className="mt-3 flex min-h-11 items-center justify-center rounded-full border border-line text-sm font-bold">{s.openMatch}</Link></> : <>
       <label className="mt-4 block text-xs text-muted-text">{s.field}<select value={fieldId ?? ""} onChange={(e) => setFieldId(Number(e.target.value))} className="mt-1 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-text">{fieldList.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
-      <p className="mt-4 text-xs text-muted-text">{s.date}</p><div className="mt-2 grid grid-cols-7 gap-1">{days.map((d, i) => <button key={d} onClick={() => { setDate(d); setStart(null); }} className={cn("min-h-11 rounded-lg border text-[10px]", date === d ? "border-turf bg-turf text-void" : "border-line bg-surface")}>{i === 0 ? (locale === "ar" ? "اليوم" : "Today") : dayLabel(Date.parse(`${d}T12:00:00Z`), locale)}</button>)}</div>
+       <label className="mt-4 block text-xs text-muted-text">{s.date}<input type="date" value={date} max={maxBookingDate} onChange={(e) => { setDate(e.target.value); setStart(null); }} className="mt-1 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-text" dir="ltr" /></label>
+       <p className="mt-1 text-[11px] text-muted-text">{date < today
+         ? (locale === "ar" ? "سيتم التأكد من توفر التسجيل على الكاميرا. الدفع عبر كليك مطلوب." : "Camera footage is checked before booking. CliQ payment is required.")
+         : (locale === "ar" ? "سيتم التحقق من أوقات الماضي مقابل تسجيلات الكاميرا قبل الحجز." : "Past times are checked against camera footage before booking.")}</p>
        <p className="mt-4 text-xs text-muted-text">{s.hours}</p>
        <div className="mt-2 grid grid-cols-4 gap-2">
          {[60, 90, 120].filter((m) => m <= maxMinutes).map((m) => <button key={m} type="button" onClick={() => setDurationChoice(m)} className={cn("min-h-10 rounded-xl border px-1 text-xs", durationChoice === m ? "border-turf bg-turf/10 text-turf" : "border-line bg-surface")}>{copy.book.minutes(m)}</button>)}
          <button type="button" onClick={() => { if (durationChoice !== "custom") setCustomMinutes(String(Math.min(maxCustomMinutes, 150))); setDurationChoice("custom"); }} className={cn("min-h-10 rounded-xl border px-1 text-xs", durationChoice === "custom" ? "border-turf bg-turf/10 text-turf" : "border-line bg-surface")}>{s.custom}</button>
        </div>
        {durationChoice === "custom" && <label className="mt-3 block text-xs text-muted-text">{s.customMinutes}<input type="number" inputMode="numeric" min={30} max={maxCustomMinutes} step={30} value={customMinutes} onChange={(e) => setCustomMinutes(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-text" dir="ltr" /></label>}
-      <p className="mt-4 text-xs text-muted-text">{s.start}</p><div className="mt-2 grid grid-cols-4 gap-2" dir="ltr">{times.filter((m) => { if (date > today) return true; const nowText = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Amman", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date()); return m >= Number(nowText.slice(0, 2)) * 60 + Number(nowText.slice(3, 5)); }).map((m) => <button key={m} onClick={() => setStart(m)} className={cn("min-h-10 rounded-lg border font-mono text-xs", start === m ? "border-floodlight bg-floodlight text-void" : "border-line bg-surface")}>{String(Math.floor(m / 60)).padStart(2,"0")}:{String(m%60).padStart(2,"0")}</button>)}</div>
-       <div className="mt-4 flex items-center justify-between rounded-2xl border border-line bg-raised p-3"><div className="min-w-0"><span className="block text-xs text-muted-text">{validDuration ? s.rate(copy.book.minutes(durationMinutes), billableHours, formatJod(price)) : s.invalidDuration}</span>{useFree && validDuration && <span className="block text-xs text-muted-text">{s.deduction(formatJod(Math.min(billableHours, free!.reward!.freeHours) * price))}</span>}</div><b dir="ltr" className="font-mono">{formatJod(total)} JOD</b></div>
+       <p className="mt-4 text-xs text-muted-text">{s.start}</p><div className="mt-2 grid grid-cols-4 gap-2" dir="ltr">{times.map((m) => <button key={m} onClick={() => setStart(m)} className={cn("min-h-10 rounded-lg border font-mono text-xs", start === m ? "border-floodlight bg-floodlight text-void" : "border-line bg-surface")}>{String(Math.floor(m / 60)).padStart(2,"0")}:{String(m%60).padStart(2,"0")}</button>)}</div>
+        <div className="mt-4 flex items-center justify-between rounded-2xl border border-line bg-raised p-3"><div className="min-w-0"><span className="block text-xs text-muted-text">{validDuration ? s.rate(copy.book.minutes(durationMinutes), billableHours, formatJod(price)) : s.invalidDuration}</span>{useFreeForBooking && validDuration && <span className="block text-xs text-muted-text">{s.deduction(formatJod(Math.min(billableHours, free!.reward!.freeHours) * price))}</span>}</div><b dir="ltr" className="font-mono">{formatJod(total)} JOD</b></div>
        <button disabled={!validDuration || start == null || create.isPending || fields.isLoading || !fields.data?.enabled || !fieldList.length} onClick={() => void submit()} className="mt-3 min-h-12 w-full rounded-full bg-floodlight font-display font-extrabold text-void disabled:opacity-40">{total === 0 ? s.confirmFree : s.pay(formatJod(total))}</button>
     </>}
   </SheetContent></Sheet>;

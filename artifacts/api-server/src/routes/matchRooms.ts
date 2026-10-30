@@ -1769,6 +1769,10 @@ router.post("/admin/stat-unlocks/:id/:action", async (req, res): Promise<void> =
       .where(eq(matchRoomsTable.id, row.matchId));
     if (room && action === "confirm") {
       booking = row.status === "pending" ? await activatePaidBooking(room.requestId) : { status: room.requestStatus };
+      if (booking.status === "camera_unavailable") {
+        res.status(503).json({ error: "The camera is unavailable. Payment was not confirmed; try again shortly.", booking });
+        return;
+      }
       // The booker cancelled it (or it lapsed) before the transfer was confirmed:
       // nothing records, so the payment is never marked paid. Refund it by hand.
       if (booking.status === "cancelled") {

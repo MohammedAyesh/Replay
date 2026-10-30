@@ -2038,8 +2038,14 @@ router.post("/bookings", async (req, res): Promise<void> => {
     return;
   }
   const nowMs = ammanLocalEpoch(getAmmanNow().local);
-  if (start.epochMs < nowMs - 15 * 60 * 1000) {
+  const pastCutoff = nowMs - 15 * 60 * 1000;
+  const isPastBooking = end.epochMs <= pastCutoff;
+  if (start.epochMs < pastCutoff && !isPastBooking) {
     res.status(400).json({ error: "Pick a time that hasn't started yet" });
+    return;
+  }
+  if (isPastBooking && Math.ceil(end.epochMs / (60 * 60 * 1000)) * 60 * 60 * 1000 > nowMs) {
+    res.status(400).json({ error: "Camera availability for that hour is not ready yet. Try again after the hour ends." });
     return;
   }
   if (start.epochMs > nowMs + commerce.bookingMaxDaysAhead * 24 * 60 * 60 * 1000) {
@@ -2047,7 +2053,25 @@ router.post("/bookings", async (req, res): Promise<void> => {
     return;
   }
   const payWith = body.data.payWith ?? "cliq";
-  const reward = body.data.useFreeMatch ? await availableReward(user.id) : null;
+  if (isPastBooking && payWith !== "cliq") {
+    res.status(400).json({ error: "Past-game footage must be paid by CliQ" });
+    return;
+  }
+  if (isPastBooking) {
+    try {
+      await validateAvailability(field.cameraId, start.epochMs, end.epochMs, nowMs);
+    } catch (error) {
+      if (error instanceof CameraUnavailableError) {
+        res.status(503).json({ error: error.message });
+        return;
+      }
+      res.status(400).json({ error: error instanceof Error ? error.message : "Camera availability validation failed" });
+      return;
+    }
+  }
+  // Past footage always requires a CliQ confirmation, so it cannot be made
+  // free by claiming a reward before the payment gate.
+  const reward = body.data.useFreeMatch && !isPastBooking ? await availableReward(user.id) : null;
   if (body.data.useFreeMatch && !reward) {
     res.status(409).json({ error: "You don't have a free match to use" });
     return;
@@ -2066,6 +2090,10 @@ router.post("/bookings", async (req, res): Promise<void> => {
     ? Math.max(0, Math.ceil(durationSeconds / 3600) - reward.freeHours) * commerce.playerBookingFilsPerHour
     : bookingPriceFils(durationSeconds, commerce.playerBookingFilsPerHour);
   const fullyFree = Boolean(reward) && amountFils === 0;
+  if (isPastBooking && amountFils <= 0) {
+    res.status(400).json({ error: "Past-game footage requires a CliQ payment" });
+    return;
+  }
   const method = fullyFree ? "free" : payWith;
   const fieldCamera = field.cameraId;
   // One booking at a time per field: the slot check, the free-match claim and the
@@ -2320,6 +2348,10 @@ router.post("/bookings/:id/pay-with", async (req, res): Promise<void> => {
     return;
   }
   if (method === "field") {
+    if (isHistoricalBooking(row)) {
+      res.status(400).json({ error: "Past-game footage must be paid by CliQ" });
+      return;
+    }
     const commerce = await loadCommerce({ userId: user.id, fieldId: row.fieldId });
     if (!commerce.payAtField) {
       res.status(400).json({ error: "Paying at the field isn't available right now" });
@@ -2345,9 +2377,25 @@ export async function activatePaidBooking(requestId: number): Promise<{ status: 
   const [row] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
   if (!row) return { status: "missing" };
   if (row.status !== "awaiting_payment") return { status: row.status };
-  if (row.endLocal <= unpaidLapseCutoffLocal()) {
+  const now = Date.now();
+  if (unpaidBookingHasLapsed(row, now)) {
     await cancelUnpaidBooking(requestId, LAPSED_MESSAGE);
     return { status: await bookingStatus(requestId) };
+  }
+  if (isHistoricalBooking(row)) {
+    const start = parseLocalDateTime(row.startLocal);
+    const end = parseLocalDateTime(row.endLocal);
+    if (!start || !end) {
+      await cancelUnpaidBooking(requestId, "The requested camera time is invalid");
+      return { status: await bookingStatus(requestId) };
+    }
+    try {
+      await validateAvailability(row.cameraId, start.epochMs, end.epochMs, ammanLocalEpoch(getAmmanNow().local));
+    } catch (error) {
+      if (error instanceof CameraUnavailableError) return { status: "camera_unavailable" };
+      await cancelUnpaidBooking(requestId, "The requested footage is no longer available on the camera");
+      return { status: await bookingStatus(requestId) };
+    }
   }
   const claimed = await db.update(footageRequestsTable).set({ status: "queued", message: null, updatedAt: new Date() })
     .where(and(eq(footageRequestsTable.id, requestId), eq(footageRequestsTable.status, "awaiting_payment")))
@@ -2402,14 +2450,15 @@ export async function rejectBookingPayment(requestId: number, method: string): P
  * bookings waiting for payment.
  */
 export async function lapseUnpaidBookings(now = Date.now()): Promise<number> {
-  const rows = await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable)
-    .where(and(
-      eq(footageRequestsTable.status, "awaiting_payment"),
-      lte(footageRequestsTable.endLocal, unpaidLapseCutoffLocal(now)),
-    ));
+  const rows = await db.select({
+    id: footageRequestsTable.id,
+    startLocal: footageRequestsTable.startLocal,
+    endLocal: footageRequestsTable.endLocal,
+    createdAt: footageRequestsTable.createdAt,
+  }).from(footageRequestsTable).where(eq(footageRequestsTable.status, "awaiting_payment"));
   let lapsed = 0;
   for (const row of rows) {
-    if (await cancelUnpaidBooking(row.id, LAPSED_MESSAGE)) lapsed += 1;
+    if (unpaidBookingHasLapsed(row, now) && await cancelUnpaidBooking(row.id, LAPSED_MESSAGE)) lapsed += 1;
   }
   return lapsed;
 }

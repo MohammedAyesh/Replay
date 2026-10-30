@@ -17,12 +17,17 @@ import {
 } from "@workspace/db";
 
 // The camera service: records every call, accepts every job unless a test says otherwise.
-const camera = vi.hoisted(() => ({ ok: true, calls: [] as Array<{ path: string; method: string }> }));
+const camera = vi.hoisted(() => ({
+  ok: true,
+  availableHours: Array.from({ length: 24 }, (_, hour) => ({ hour })),
+  calls: [] as Array<{ path: string; method: string }>,
+}));
 vi.mock("./contabo", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./contabo")>()),
   controlFetch: vi.fn(async (path: string, init?: { method?: string }) => {
     camera.calls.push({ path, method: init?.method ?? "GET" });
     if (!camera.ok) return { ok: false, status: 503, body: { error: "camera offline" } };
+    if (path.includes("/available?date=")) return { ok: true, status: 200, body: { hours: camera.availableHours } };
     return { ok: true, status: 200, body: { jobId: `job-${Math.random().toString(36).slice(2, 8)}`, status: "scheduled" } };
   }),
 }));
@@ -75,6 +80,15 @@ function slot(daysAhead: number, hour: number, minutes = 60) {
   };
 }
 
+function pastSlot(hoursAgo = 5, minutes = 60) {
+  const startMs = Math.floor((Date.now() - hoursAgo * HOUR) / (30 * 60 * 1000)) * 30 * 60 * 1000;
+  return {
+    fieldId,
+    startLocal: localString(startMs),
+    endLocal: localString(startMs + minutes * 60 * 1000),
+  };
+}
+
 /** A free match (2 free hours) for `who`, expiring in `expiresInMs`. */
 async function giveReward(who: string, expiresInMs = 30 * DAY) {
   const [row] = await db.insert(freeMatchRewardsTable).values({
@@ -120,6 +134,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   camera.ok = true;
+  camera.availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
   camera.calls.length = 0;
   await resetAll();
 });
@@ -220,7 +235,11 @@ describe("unpaid bookings that are never paid", () => {
     expect(booked.status).toBe(201);
     expect(booked.body).toMatchObject({ status: "awaiting_payment", amountFils: 2000, freeMatch: true });
     const end = Math.floor((Date.now() - endedAgoMs) / (15 * 60 * 1000)) * 15 * 60 * 1000;
-    await db.update(footageRequestsTable).set({ startLocal: localString(end - 3 * HOUR), endLocal: localString(end) })
+    await db.update(footageRequestsTable).set({
+      startLocal: localString(end - 3 * HOUR),
+      endLocal: localString(end),
+      createdAt: new Date(end - 5 * DAY),
+    })
       .where(eq(footageRequestsTable.id, booked.body.requestId));
     return { reward, requestId: booked.body.requestId as number, reference: booked.body.reference as string };
   }
@@ -267,6 +286,37 @@ describe("unpaid bookings that are never paid", () => {
     const { requestId } = await unpaidPartlyFree(UNPAID_BOOKING_LAPSE_MS + HOUR);
     expect(await activatePaidBooking(requestId)).toEqual({ status: "cancelled" });
     expect(cameraPosts()).toHaveLength(0);
+  });
+});
+
+describe("historical CliQ bookings", () => {
+  it("checks camera footage and waits for confirmed CliQ payment before pulling", async () => {
+    const booked = await request(app).post("/api/bookings").set(as("player")).send({
+      ...pastSlot(), payWith: "cliq",
+    });
+    expect(booked.status).toBe(201);
+    expect(booked.body.status).toBe("awaiting_payment");
+    expect(camera.calls.some((call) => call.path.includes("/available?date="))).toBe(true);
+    expect(cameraPosts()).toHaveLength(0);
+
+    const payment = await paymentRow(booked.body.reference);
+    const confirmed = await request(app).post(`/api/admin/stat-unlocks/${payment.id}/confirm`).set(as("admin"));
+    expect(confirmed.status).toBe(200);
+    expect(cameraPosts()).toHaveLength(1);
+  });
+
+  it("rejects an unavailable camera hour before taking payment or the slot", async () => {
+    camera.availableHours = [];
+    const booked = await request(app).post("/api/bookings").set(as("player")).send({
+      ...pastSlot(30), payWith: "cliq",
+    });
+    expect(booked.status).toBe(400);
+    expect(booked.body.error).toMatch(/No footage on the camera/);
+    expect(cameraPosts()).toHaveLength(0);
+    expect(await db.select().from(footageRequestsTable).where(and(
+      eq(footageRequestsTable.fieldId, fieldId),
+      eq(footageRequestsTable.status, "awaiting_payment"),
+    ))).toHaveLength(0);
   });
 });
 
