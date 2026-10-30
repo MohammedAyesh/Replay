@@ -329,7 +329,13 @@ export const PASS = {
  * the wrong side (recording 401: 4 of 9 long passes to teammates read as lost).
  */
 export type TeamPick = { a: Lab; b: Lab; bib?: BibKit | null };
-export type BibKit = { lab: Lab; radius: number };
+/**
+ * `lab` is the bib colour; `radius` the old kit-distance edge (kept for bibs
+ * built by hand). `core` is where the bib sits on the colour plane (a and b
+ * minus neutral), when the footage gave one: then a shirt is in a bib when it is
+ * nearer that than it is to neutral grey, whatever its lightness.
+ */
+export type BibKit = { lab: Lab; radius: number; core?: [number, number] };
 
 export const BIB = {
   /** a bib colour is saturated: chroma (distance from neutral on a and b) at least this */
@@ -345,6 +351,10 @@ export const BIB = {
   /** a track needs this many seconds on camera to place the edge */
   minTrackSeconds: 20,
   fallbackRadius: 15,
+  /** rounds of averaging that settle the bib's place on the colour plane */
+  coreIterations: 10,
+  /** a bib's hue is within this many degrees of the core's (a blue or peach bib is another colour) */
+  maxHueDegrees: 25,
 };
 
 /**
@@ -377,12 +387,64 @@ export function bibKit(sidecars: Array<BallSidecar | null>): BibKit | null {
     if (d[i] > BIB.maxRadius) break;
     if (d[i + 1] - d[i] >= BIB.minGap) { radius = (d[i] + d[i + 1]) / 2; break; }
   }
-  return { lab, radius: Math.round(radius * 10) / 10 };
+  return { lab, radius: Math.round(radius * 10) / 10, core: bibCore(kits, lab) };
+}
+
+/**
+ * The bib's place on the colour plane: start at the bib colour, then average
+ * every shirt nearer it than to neutral grey, a few times over.
+ *
+ * 2026-10-30, 76P7TR (recording 403, pink bibs): the kit-distance sphere round
+ * one averaged bib colour counted white shirts in a dim corner as bibs (they
+ * were within 15 of a pale pink) and missed bibs in shadow (lightness counted
+ * half). Against 115 hand-labelled tracks the sphere was wrong for 22% of the
+ * seconds on camera, this test for 11%, and nearly all of that is one red
+ * shirt the colour of the bibs. On recording 401 (yellow bibs) it fixed 6 of
+ * the 9 tracks the two tests disagree on.
+ */
+export function bibCore(kits: Array<[number, number, number, number]>, lab: Lab): [number, number] {
+  let cx = lab[1] - 128;
+  let cy = lab[2] - 128;
+  for (let i = 0; i < BIB.coreIterations; i++) {
+    let sx = 0, sy = 0, w = 0;
+    for (const [, a, b, secs] of kits) {
+      if (!(secs >= BIB.minTrackSeconds)) continue;
+      const x = a - 128, y = b - 128;
+      if (coreMargin(x, y, cx, cy) > 0) { sx += x * secs; sy += y * secs; w += secs; }
+    }
+    if (!(w > 0)) break;
+    cx = sx / w; cy = sy / w;
+  }
+  return [Math.round(cx * 10) / 10, Math.round(cy * 10) / 10];
+}
+
+/**
+ * A point on the colour plane (a and b less neutral) against a bib core,
+ * positive inside: nearer the core than neutral grey, and within
+ * BIB.maxHueDegrees of the core's hue (as a distance: chroma times the angle
+ * to spare). 15 Oct (recording on job26, magenta bibs): blue bibs and a peach
+ * one sat nearer the magenta core than grey, being saturated, but are not it.
+ */
+function coreMargin(x: number, y: number, cx: number, cy: number): number {
+  const nearer = Math.hypot(x, y) - Math.hypot(x - cx, y - cy);
+  let turn = Math.abs(Math.atan2(y, x) - Math.atan2(cy, cx));
+  if (turn > Math.PI) turn = 2 * Math.PI - turn;
+  const hue = Math.hypot(x, y) * (BIB.maxHueDegrees * Math.PI / 180 - turn);
+  return Math.min(nearer, hue);
+}
+
+/**
+ * How far a shirt sits from the bib line, positive inside: with a core, see
+ * coreMargin; else the old sphere's edge minus its distance from the bib colour.
+ */
+export function bibMargin(kit: Lab, bib: BibKit): number {
+  if (bib.core) return coreMargin(kit[1] - 128, kit[2] - 128, bib.core[0], bib.core[1]);
+  return bib.radius - kitDistance(kit, bib.lab);
 }
 
 /** Whether a shirt is inside the bib line. */
 export function isBibKit(kit: Lab, bib: BibKit): boolean {
-  return kitDistance(kit, bib.lab) <= bib.radius;
+  return bib.core ? bibMargin(kit, bib) > 0 : bibMargin(kit, bib) >= 0;
 }
 
 /**
@@ -420,11 +482,22 @@ export function bibObservedKits(
   return [bib.lab, sum.map((v) => Math.round((v / w) * 10) / 10) as Lab];
 }
 
+/**
+ * In a bib game, the shirt for a side nobody on it has claimed: whichever of
+ * the two observed shirts (bib, everything else) is across the bib line from
+ * the side that was measured. 76P7TR (recording 403): the claimant was in
+ * white, and "the observed shirt farthest from his" was the non-bib mean, a
+ * dark grey, so both sides fell outside the bib line and the match split light
+ * against dark, 77% to 23%.
+ */
+export function kitAcrossBib(measured: Lab, bib: BibKit, observed: [Lab, Lab]): Lab {
+  return isBibKit(measured, bib) ? observed[1] : observed[0];
+}
+
 /** Which side of a pick a shirt is on: 0 = a (the claimant's), 1 = b. */
 export function sideOfPick(kit: Lab, pick: TeamPick): 0 | 1 {
   if (pick.bib) {
-    const isBib = (k: Lab) => kitDistance(k, pick.bib!.lab) <= pick.bib!.radius;
-    return isBib(kit) === isBib(pick.a) ? 0 : 1;
+    return isBibKit(kit, pick.bib) === isBibKit(pick.a, pick.bib) ? 0 : 1;
   }
   return kitDistance(kit, pick.a) <= kitDistance(kit, pick.b) ? 0 : 1;
 }
@@ -442,8 +515,7 @@ export type PlayEvent = {
 export function teamOf(touch: Touch, pick: TeamPick | null): { team: 0 | 1; margin: number } | null {
   if (!pick || !touch.kit) return null;
   if (pick.bib) {
-    const d = kitDistance(touch.kit, pick.bib.lab);
-    return { team: sideOfPick(touch.kit, pick), margin: Math.abs(d - pick.bib.radius) };
+    return { team: sideOfPick(touch.kit, pick), margin: Math.abs(bibMargin(touch.kit, pick.bib)) };
   }
   const da = kitDistance(touch.kit, pick.a);
   const db = kitDistance(touch.kit, pick.b);
@@ -633,8 +705,8 @@ export function seedTeams(own: Lab | null, options: Array<{ lab: Lab; secs: numb
     // bibs against everyone else: the other side's swatch is the bib, or (for a
     // claimant in a bib) the non-bib kit seen longest
     const a = own ?? bib.lab;
-    if (kitDistance(a, bib.lab) > bib.radius) return { a, b: bib.lab, bib };
-    const other = options.filter((c) => kitDistance(c.lab, bib.lab) > bib.radius).sort((p, q) => q.secs - p.secs)[0];
+    if (!isBibKit(a, bib)) return { a, b: bib.lab, bib };
+    const other = options.filter((c) => !isBibKit(c.lab, bib)).sort((p, q) => q.secs - p.secs)[0];
     return { a, b: other?.lab ?? bib.lab, bib };
   }
   if (options.length < 2) return null;

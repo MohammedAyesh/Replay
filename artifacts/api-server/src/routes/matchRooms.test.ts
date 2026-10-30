@@ -646,7 +646,9 @@ describe("players book a future recording and pay by CliQ", () => {
     const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
       if (url.startsWith("https://control.example.test")) {
-        recordCalls.push(url);
+        // The refused past window below asks the camera (and the gap store)
+        // which hours it holds; only calls that start a job count here.
+        if (!url.includes("/available?")) recordCalls.push(url);
         return new Response(JSON.stringify({ jobId: "job-test-1", status: "scheduled" }), { status: 200, headers: { "content-type": "application/json" } });
       }
       return realFetch(input, init);
