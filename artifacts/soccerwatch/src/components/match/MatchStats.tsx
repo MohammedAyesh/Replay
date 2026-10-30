@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { ArrowUpRight, Crown, Medal, RefreshCw, Trophy } from "lucide-react";
@@ -113,6 +114,33 @@ function MirrorRow({ label, a, b, fmt, colors, lowerIsBetter = false }: {
           <i className="block h-full rounded-e-full" style={{ width: `${(100 * b) / max}%`, background: colors[1], opacity: lead === 0 ? 0.55 : 1 }} />
         </div>
       </div>
+    </div>
+  );
+}
+
+function StatsCarousel({ label, testId, children }: {
+  label: string;
+  testId: string;
+  children: ReactNode[];
+}) {
+  return (
+    <div
+      role="region"
+      aria-label={label}
+      className="no-scrollbar -mx-4 flex snap-x snap-mandatory gap-2 overflow-x-auto px-4 pb-1"
+      data-testid={testId}
+    >
+      {children.map((child, index) => (
+        <div
+          key={index}
+          role="group"
+          aria-roledescription="slide"
+          aria-label={`${index + 1} of ${children.length}`}
+          className="w-[min(82vw,340px)] min-w-[min(82vw,340px)] snap-start rounded-xl border border-line bg-raised/50 p-3"
+        >
+          {child}
+        </div>
+      ))}
     </div>
   );
 }
@@ -654,27 +682,44 @@ export function MatchStats({ room, copy, gameId = null }: { room: MatchRoom; cop
       {t && (
         <div className="flex flex-col gap-3.5">
           {threeTeam ? (
-            <div className="overflow-x-auto rounded-xl border border-line" data-testid="stats-three-team-table">
-              <table className="w-full min-w-[390px] text-xs">
-                <thead><tr className="border-b border-line text-muted-text"><th className="p-2 text-start">{copy.metric}</th>{t.sides.slice(0, 3).map((side, index) => <th key={side} className="p-2 text-end"><span className="inline-flex items-center gap-1"><i className="h-2 w-2 rounded-full" style={{ background: String(t.colours[index]) }} />{name(side)}</span></th>)}</tr></thead>
-                <tbody>
-                  {threeRows.map((row) => (
-                    <tr key={row.label} className="border-b border-line last:border-0"><th className="p-2 text-start font-semibold text-muted-text">{row.label}</th>{row.values.slice(0, 3).map((value, index) => <td key={index} className="p-2 text-end font-mono font-bold" dir="ltr">{row.format(value)}</td>)}</tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <StatsCarousel label={copy.h2hTitle} testId="stats-three-team-carousel">
+              {threeRows.map((row) => (
+                <div key={row.label} className="flex min-h-24 flex-col justify-between gap-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-text">{row.label}</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    {t.sides.slice(0, 3).map((side, index) => (
+                      <div key={side} className="min-w-0 text-center">
+                        <span className="flex items-center justify-center gap-1 truncate text-[10px] font-semibold text-muted-text">
+                          <i className="h-2 w-2 shrink-0 rounded-full" style={{ background: String(t.colours[index]) }} />
+                          {name(side)}
+                        </span>
+                        <b className="mt-1 block font-mono text-lg" dir="ltr">{row.format(row.values[index] ?? 0)}</b>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </StatsCarousel>
           ) : (
-          <>
-          {t.goals && (t.goals[0] + t.goals[1] > 0) && <MirrorRow label={copy.h2hGoals} a={t.goals[0]} b={t.goals[1]} fmt={int} colors={[displayColorX, displayColorY]} />}
-          {t.shots && <MirrorRow label={copy.h2hShots} a={t.shots[0]} b={t.shots[1]} fmt={int} colors={[displayColorX, displayColorY]} />}
-          <MirrorRow label={copy.teamPossession} a={t.possessionPercent[0]} b={t.possessionPercent[1]} fmt={(value) => `${Math.round(value)}%`} colors={[displayColorX, displayColorY]} />
-          <MirrorRow label={copy.teamPasses} a={t.passesCompleted[0]} b={t.passesCompleted[1]} fmt={int} colors={[displayColorX, displayColorY]} />
-          <MirrorRow label={copy.teamCompletion} a={pct(t.passesCompleted[0], t.passesTried[0])} b={pct(t.passesCompleted[1], t.passesTried[1])} fmt={(value) => `${value}%`} colors={[displayColorX, displayColorY]} />
-          {t.dribblesWon && <><MirrorRow label={copy.h2hDribbles} a={(t.dribbles ?? t.dribblesWon)[0]} b={(t.dribbles ?? t.dribblesWon)[1]} fmt={int} colors={[displayColorX, displayColorY]} /><MirrorRow label={copy.h2hDribbleRate} a={pct(t.dribblesWon[0], t.dribblesWon[0] + (t.dribblesLost?.[0] ?? 0))} b={pct(t.dribblesWon[1], t.dribblesWon[1] + (t.dribblesLost?.[1] ?? 0))} fmt={(value) => `${value}%`} colors={[displayColorX, displayColorY]} /></>}
-          <MirrorRow label={copy.teamTouches} a={t.touches[0]} b={t.touches[1]} fmt={int} colors={[displayColorX, displayColorY]} />
-          {hasSideKm && <><MirrorRow label={copy.h2hDistance} a={km("A")} b={km("B")} fmt={(value) => `${value.toFixed(1)} km`} colors={colors} /><MirrorRow label={copy.h2hTopSpeed} a={top("A")} b={top("B")} fmt={(value) => (value ? value.toFixed(1) : "—")} colors={colors} /><p className="text-[11px] text-muted-text">{copy.h2hClaimedOnly}</p></>}
-          </>
+            <StatsCarousel label={copy.h2hTitle} testId="stats-team-carousel">
+              {[
+                ...(t.goals && t.goals[0] + t.goals[1] > 0 ? [<MirrorRow key="goals" label={copy.h2hGoals} a={t.goals[0]} b={t.goals[1]} fmt={int} colors={[displayColorX, displayColorY]} />] : []),
+                ...(t.shots ? [<MirrorRow key="shots" label={copy.h2hShots} a={t.shots[0]} b={t.shots[1]} fmt={int} colors={[displayColorX, displayColorY]} />] : []),
+                <MirrorRow key="possession" label={copy.teamPossession} a={t.possessionPercent[0]} b={t.possessionPercent[1]} fmt={(value) => `${Math.round(value)}%`} colors={[displayColorX, displayColorY]} />,
+                <MirrorRow key="passes" label={copy.teamPasses} a={t.passesCompleted[0]} b={t.passesCompleted[1]} fmt={int} colors={[displayColorX, displayColorY]} />,
+                <MirrorRow key="completion" label={copy.teamCompletion} a={pct(t.passesCompleted[0], t.passesTried[0])} b={pct(t.passesCompleted[1], t.passesTried[1])} fmt={(value) => `${value}%`} colors={[displayColorX, displayColorY]} />,
+                ...(t.dribblesWon ? [
+                  <MirrorRow key="dribbles" label={copy.h2hDribbles} a={(t.dribbles ?? t.dribblesWon)[0]} b={(t.dribbles ?? t.dribblesWon)[1]} fmt={int} colors={[displayColorX, displayColorY]} />,
+                  <MirrorRow key="dribble-rate" label={copy.h2hDribbleRate} a={pct(t.dribblesWon[0], t.dribblesWon[0] + (t.dribblesLost?.[0] ?? 0))} b={pct(t.dribblesWon[1], t.dribblesWon[1] + (t.dribblesLost?.[1] ?? 0))} fmt={(value) => `${value}%`} colors={[displayColorX, displayColorY]} />,
+                ] : []),
+                <MirrorRow key="touches" label={copy.teamTouches} a={t.touches[0]} b={t.touches[1]} fmt={int} colors={[displayColorX, displayColorY]} />,
+                ...(hasSideKm ? [
+                  <MirrorRow key="distance" label={copy.h2hDistance} a={km("A")} b={km("B")} fmt={(value) => `${value.toFixed(1)} km`} colors={colors} />,
+                  <MirrorRow key="speed" label={copy.h2hTopSpeed} a={top("A")} b={top("B")} fmt={(value) => (value ? value.toFixed(1) : "—")} colors={colors} />,
+                  <p key="claimed-only" className="text-[11px] text-muted-text">{copy.h2hClaimedOnly}</p>,
+                ] : []),
+              ]}
+            </StatsCarousel>
           )}
         </div>
       )}
@@ -689,7 +734,7 @@ export function MatchStats({ room, copy, gameId = null }: { room: MatchRoom; cop
               </select>
             ))}
           </div>
-          {playerA && playerB && <div className="flex flex-col gap-3">{pvpRows.map(([label, get, format]) => { const a = get(playerA); const b = get(playerB); if (a === null && b === null) return null; return <MirrorRow key={label} label={label} a={a ?? 0} b={b ?? 0} fmt={(value) => (value === 0 && label === copy.pvpTop ? "—" : format(value))} colors={pvpColors} />; })}</div>}
+          {playerA && playerB && <StatsCarousel label={copy.pvpTitle} testId="stats-player-carousel">{pvpRows.flatMap(([label, get, format]) => { const a = get(playerA); const b = get(playerB); if (a === null && b === null) return []; return [<MirrorRow key={label} label={label} a={a ?? 0} b={b ?? 0} fmt={(value) => (value === 0 && label === copy.pvpTop ? "—" : format(value))} colors={pvpColors} />]; })}</StatsCarousel>}
         </div>
       )}
       {stats.players && claimed.length === 0 && <p className="text-sm text-muted-text">{copy.matchStatsNone}</p>}

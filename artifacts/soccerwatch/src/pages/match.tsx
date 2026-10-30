@@ -12,6 +12,7 @@ import {
   Copy,
   Crown,
   Flag,
+  Globe2,
   Loader2,
   Lock,
   MapPin,
@@ -51,6 +52,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useMatchCopy, type MatchStrings } from "@/i18n/match-strings";
 import { useFriendsCopy } from "@/i18n/friends-strings";
 import { useAuth } from "@/lib/auth";
+import { useLocale } from "@/i18n/context";
 import { FriendButton } from "@/components/friends/FriendButton";
 import {
   friendErrorKey,
@@ -428,6 +430,8 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
   replay: MatchReplay | undefined;
 }) {
   const [, setLocation] = useLocation();
+  const { user } = useAuth();
+  const { setLocale } = useLocale();
   const post = ["processing", "ready", "expired"].includes(room.phase);
   const explainerCopy = useExplainerCopy();
   // First visit to a match page before the game: point at Share, the way the
@@ -444,47 +448,58 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
         <div className="absolute inset-0 bg-gradient-to-b from-void/40 via-void/70 to-void" />
       </div>
       <div className="relative px-4 pb-5 pt-4">
-        <div className="flex items-center justify-between">
+        <header className="flex h-12 min-w-0 items-center gap-2 rounded-2xl border border-line bg-surface/90 px-2 backdrop-blur-md" data-testid="match-home-topbar">
           <button type="button" onClick={() => (window.history.length > 1 ? window.history.back() : setLocation("/home"))} aria-label={copy.back} className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur">
             <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
           </button>
-          <div className="flex items-center gap-2">
-            {room.phase === "pre" && (
-              <a href={calendarUrl(room.code)} aria-label={copy.calendar} className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur">
-                <CalendarPlus className="h-4 w-4" />
-              </a>
-            )}
-            <span className="relative">
-              <button
-                type="button"
-                onClick={() => {
-                  if (showInviteCoach) dismissInviteCoach();
-                  onShare();
-                }}
-                aria-label={copy.share}
-                className={cn(
-                  "flex h-10 items-center gap-1.5 rounded-full border bg-surface/80 px-3.5 text-sm font-semibold backdrop-blur",
-                  showInviteCoach ? "border-floodlight ring-4 ring-floodlight/20" : "border-line",
-                )}
-              >
-                <Share2 className="h-4 w-4" />{copy.share}
-              </button>
-              <AnimatePresence>
-                {showInviteCoach && (
-                  <CoachBubble
-                    testId="coach-match-invite"
-                    arrow="up"
-                    arrowOffset="calc(100% - 44px)"
-                    actionLabel={explainerCopy.gotIt}
-                    onAction={dismissInviteCoach}
-                    className="end-0 top-12 w-[min(17rem,calc(100vw-2rem))]"
-                  >
-                    {explainerCopy.match.invite}
-                  </CoachBubble>
-                )}
-              </AnimatePresence>
-            </span>
+          <PlayerAvatar name={user?.name ?? ""} avatarUrl={null} size={40} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-extrabold leading-5">{user?.name ? copy.hello(user.name.trim().split(/\s+/)[0]) : copy.helloGuest}</p>
+            <p className="truncate text-[11px] leading-4 text-muted-text">{room.field.name}</p>
           </div>
+          <button type="button" aria-label={copy.locale === "ar" ? "بدّل اللغة للإنجليزي" : "Change language"} onClick={() => setLocale(copy.locale === "ar" ? "en" : "ar")} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-muted-text" data-testid="button-match-language">
+            <Globe2 className="h-4 w-4" />
+          </button>
+          <Link href="/book" aria-label={copy.homeSteps[0]} className="flex h-10 shrink-0 items-center gap-1 rounded-full bg-floodlight px-2.5 text-xs font-extrabold text-void" data-testid="link-match-book">
+            <CalendarPlus className="h-4 w-4" />{copy.homeSteps[0]}
+          </Link>
+        </header>
+        <div className="mt-2 flex justify-end gap-2">
+          {room.phase === "pre" && (
+            <a href={calendarUrl(room.code)} aria-label={copy.calendar} className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur">
+              <CalendarPlus className="h-4 w-4" />
+            </a>
+          )}
+          <span className="relative">
+            <button
+              type="button"
+              onClick={() => {
+                if (showInviteCoach) dismissInviteCoach();
+                onShare();
+              }}
+              aria-label={copy.share}
+              className={cn(
+                "flex h-10 items-center gap-1.5 rounded-full border bg-surface/80 px-3.5 text-sm font-semibold backdrop-blur",
+                showInviteCoach ? "border-floodlight ring-4 ring-floodlight/20" : "border-line",
+              )}
+            >
+              <Share2 className="h-4 w-4" />{copy.share}
+            </button>
+            <AnimatePresence>
+              {showInviteCoach && (
+                <CoachBubble
+                  testId="coach-match-invite"
+                  arrow="up"
+                  arrowOffset="calc(100% - 44px)"
+                  actionLabel={explainerCopy.gotIt}
+                  onAction={dismissInviteCoach}
+                  className="end-0 top-12 w-[min(17rem,calc(100vw-2rem))]"
+                >
+                  {explainerCopy.match.invite}
+                </CoachBubble>
+              )}
+            </AnimatePresence>
+          </span>
         </div>
 
         <MatchPhasePills room={room} copy={copy} />
