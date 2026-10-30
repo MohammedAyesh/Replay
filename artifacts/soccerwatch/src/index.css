@@ -1498,6 +1498,20 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 }
 
 @media (max-width: 1023px) {
+  .app-shell--player-nav.app-shell--home-scroll > header.replay-header {
+    position: relative;
+    inset-block-start: auto;
+    left: auto;
+    right: auto;
+    z-index: 40;
+    width: auto;
+    max-width: none;
+  }
+
+  .app-shell--player-nav.app-shell--home-scroll > main {
+    margin-block-start: 0;
+  }
+
   .app-shell--player-nav > header.replay-header {
     position: fixed;
     inset-block-start: max(12px, env(safe-area-inset-top));

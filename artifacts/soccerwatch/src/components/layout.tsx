@@ -34,6 +34,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   React.useEffect(() => { recordInAppLocation(location); }, [location]);
 
   const isLogin = location === "/";
+  const isHomeRoute = location === "/home";
   const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find-quick/") || location.startsWith("/week/");
   const isWeeklyHighlight = location.startsWith("/week/");
   const isPortfolio = location.startsWith("/portfolio/");
@@ -60,11 +61,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
         isGuidedDemo ? "max-w-none app-shell--wide" : isAcademyConsole ? "max-w-none" : isLegalDocument ? "max-w-[680px]" : "max-w-[440px]",
         (isLogin || isAuthPage || isWholeGameClaim || isGuidedDemo || isAcademyConsole) ? "min-h-[100dvh] overflow-visible" : "h-[100dvh] overflow-hidden",
         !hideTabBar && "app-shell--player-nav",
+        isHomeRoute && "app-shell--home-scroll",
         hasAcademyLinks && !hideTabBar && "app-shell--academy-links",
       )}
     >
       {!hideHeader && (
-        <header className={`replay-header sticky top-3 z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md ${hasAcademyLinks ? "replay-header--with-academy" : ""}`}>
+        <header className={`replay-header ${isHomeRoute ? "replay-header--home-scroll" : "sticky top-3"} z-40 mx-3 mt-3 mb-2 shrink-0 rounded-2xl border border-line bg-surface/95 px-4 py-2.5 backdrop-blur-md ${hasAcademyLinks ? "replay-header--with-academy" : ""}`}>
           <div className={`replay-header-content flex items-center justify-between ${hasAcademyLinks ? "gap-2" : "gap-3"}`}>
             <div className={`replay-lockup flex min-w-0 items-center ${hasAcademyLinks ? "replay-lockup--with-academy gap-2.5" : "gap-2"}`}>
               <LogoMark size={34} />
