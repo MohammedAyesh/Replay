@@ -136,6 +136,7 @@ import type {
   FollowResult,
   GetAcademyFamilyMeParams,
   GetAdminAnalysisJobQuoteParams,
+  GetWeeklyHighlightCandidatesParams,
   HealthStatus,
   ImpressionInput,
   JerseySidecar,
@@ -183,7 +184,14 @@ import type {
   UserClip,
   VarMark,
   VarMarkInput,
-  ViewInput
+  ViewInput,
+  WeeklyHighlight,
+  WeeklyHighlightCandidates,
+  WeeklyHighlightCopiedResult,
+  WeeklyHighlightNotice,
+  WeeklyHighlightPicksInput,
+  WeeklyHighlightPublishResult,
+  WeeklyHighlightSaveResult
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -655,6 +663,489 @@ export function useHealthCheck<TData = Awaited<ReturnType<typeof healthCheck>>, 
 
 
 
+
+export const getGetHomeWeeklyHighlightUrl = () => {
+
+
+
+
+  return `/api/highlights/home`
+}
+
+export const getHomeWeeklyHighlight = async ( options?: RequestInit): Promise<WeeklyHighlight | null> => {
+
+  return customFetch<WeeklyHighlight | null>(getGetHomeWeeklyHighlightUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetHomeWeeklyHighlightQueryKey = () => {
+    return [
+    `/api/highlights/home`
+    ] as const;
+    }
+
+
+export const getGetHomeWeeklyHighlightQueryOptions = <TData = Awaited<ReturnType<typeof getHomeWeeklyHighlight>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHomeWeeklyHighlight>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetHomeWeeklyHighlightQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getHomeWeeklyHighlight>>> = ({ signal }) => getHomeWeeklyHighlight({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHomeWeeklyHighlight>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetHomeWeeklyHighlightQueryResult = NonNullable<Awaited<ReturnType<typeof getHomeWeeklyHighlight>>>
+export type GetHomeWeeklyHighlightQueryError = ErrorType<void>
+
+
+
+export function useGetHomeWeeklyHighlight<TData = Awaited<ReturnType<typeof getHomeWeeklyHighlight>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHomeWeeklyHighlight>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetHomeWeeklyHighlightQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetWeeklyHighlightUrl = (id: number,) => {
+
+
+
+
+  return `/api/highlights/${id}`
+}
+
+export const getWeeklyHighlight = async (id: number, options?: RequestInit): Promise<WeeklyHighlight> => {
+
+  return customFetch<WeeklyHighlight>(getGetWeeklyHighlightUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWeeklyHighlightQueryKey = (id: number,) => {
+    return [
+    `/api/highlights/${id}`
+    ] as const;
+    }
+
+
+export const getGetWeeklyHighlightQueryOptions = <TData = Awaited<ReturnType<typeof getWeeklyHighlight>>, TError = ErrorType<void>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWeeklyHighlight>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWeeklyHighlightQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWeeklyHighlight>>> = ({ signal }) => getWeeklyHighlight(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWeeklyHighlight>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWeeklyHighlightQueryResult = NonNullable<Awaited<ReturnType<typeof getWeeklyHighlight>>>
+export type GetWeeklyHighlightQueryError = ErrorType<void>
+
+
+
+export function useGetWeeklyHighlight<TData = Awaited<ReturnType<typeof getWeeklyHighlight>>, TError = ErrorType<void>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWeeklyHighlight>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWeeklyHighlightQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetWeeklyHighlightCandidatesUrl = (params: GetWeeklyHighlightCandidatesParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/admin/weekly-highlights/candidates?${stringifiedParams}` : `/api/admin/weekly-highlights/candidates`
+}
+
+export const getWeeklyHighlightCandidates = async (params: GetWeeklyHighlightCandidatesParams, options?: RequestInit): Promise<WeeklyHighlightCandidates> => {
+
+  return customFetch<WeeklyHighlightCandidates>(getGetWeeklyHighlightCandidatesUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetWeeklyHighlightCandidatesQueryKey = (params?: GetWeeklyHighlightCandidatesParams,) => {
+    return [
+    `/api/admin/weekly-highlights/candidates`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetWeeklyHighlightCandidatesQueryOptions = <TData = Awaited<ReturnType<typeof getWeeklyHighlightCandidates>>, TError = ErrorType<void>>(params: GetWeeklyHighlightCandidatesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWeeklyHighlightCandidates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetWeeklyHighlightCandidatesQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getWeeklyHighlightCandidates>>> = ({ signal }) => getWeeklyHighlightCandidates(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getWeeklyHighlightCandidates>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetWeeklyHighlightCandidatesQueryResult = NonNullable<Awaited<ReturnType<typeof getWeeklyHighlightCandidates>>>
+export type GetWeeklyHighlightCandidatesQueryError = ErrorType<void>
+
+
+
+export function useGetWeeklyHighlightCandidates<TData = Awaited<ReturnType<typeof getWeeklyHighlightCandidates>>, TError = ErrorType<void>>(
+ params: GetWeeklyHighlightCandidatesParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getWeeklyHighlightCandidates>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetWeeklyHighlightCandidatesQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSaveWeeklyHighlightPicksUrl = () => {
+
+
+
+
+  return `/api/admin/weekly-highlights/save`
+}
+
+export const saveWeeklyHighlightPicks = async (weeklyHighlightPicksInput: WeeklyHighlightPicksInput, options?: RequestInit): Promise<WeeklyHighlightSaveResult> => {
+
+  return customFetch<WeeklyHighlightSaveResult>(getSaveWeeklyHighlightPicksUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(weeklyHighlightPicksInput)
+  }
+);}
+
+
+
+
+export const getSaveWeeklyHighlightPicksMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveWeeklyHighlightPicks>>, TError,{data: BodyType<WeeklyHighlightPicksInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof saveWeeklyHighlightPicks>>, TError,{data: BodyType<WeeklyHighlightPicksInput>}, TContext> => {
+
+const mutationKey = ['saveWeeklyHighlightPicks'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof saveWeeklyHighlightPicks>>, {data: BodyType<WeeklyHighlightPicksInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  saveWeeklyHighlightPicks(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SaveWeeklyHighlightPicksMutationResult = NonNullable<Awaited<ReturnType<typeof saveWeeklyHighlightPicks>>>
+    export type SaveWeeklyHighlightPicksMutationBody = BodyType<WeeklyHighlightPicksInput>
+    export type SaveWeeklyHighlightPicksMutationError = ErrorType<void>
+
+    export const useSaveWeeklyHighlightPicks = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof saveWeeklyHighlightPicks>>, TError,{data: BodyType<WeeklyHighlightPicksInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof saveWeeklyHighlightPicks>>,
+        TError,
+        {data: BodyType<WeeklyHighlightPicksInput>},
+        TContext
+      > => {
+      return useMutation(getSaveWeeklyHighlightPicksMutationOptions(options));
+    }
+
+export const getPublishWeeklyHighlightsUrl = () => {
+
+
+
+
+  return `/api/admin/weekly-highlights/publish`
+}
+
+export const publishWeeklyHighlights = async (weeklyHighlightPicksInput: WeeklyHighlightPicksInput, options?: RequestInit): Promise<WeeklyHighlightPublishResult> => {
+
+  return customFetch<WeeklyHighlightPublishResult>(getPublishWeeklyHighlightsUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(weeklyHighlightPicksInput)
+  }
+);}
+
+
+
+
+export const getPublishWeeklyHighlightsMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishWeeklyHighlights>>, TError,{data: BodyType<WeeklyHighlightPicksInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof publishWeeklyHighlights>>, TError,{data: BodyType<WeeklyHighlightPicksInput>}, TContext> => {
+
+const mutationKey = ['publishWeeklyHighlights'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof publishWeeklyHighlights>>, {data: BodyType<WeeklyHighlightPicksInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  publishWeeklyHighlights(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type PublishWeeklyHighlightsMutationResult = NonNullable<Awaited<ReturnType<typeof publishWeeklyHighlights>>>
+    export type PublishWeeklyHighlightsMutationBody = BodyType<WeeklyHighlightPicksInput>
+    export type PublishWeeklyHighlightsMutationError = ErrorType<void>
+
+    export const usePublishWeeklyHighlights = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof publishWeeklyHighlights>>, TError,{data: BodyType<WeeklyHighlightPicksInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof publishWeeklyHighlights>>,
+        TError,
+        {data: BodyType<WeeklyHighlightPicksInput>},
+        TContext
+      > => {
+      return useMutation(getPublishWeeklyHighlightsMutationOptions(options));
+    }
+
+export const getListWeeklyHighlightNoticesUrl = () => {
+
+
+
+
+  return `/api/admin/weekly-highlights/notices`
+}
+
+export const listWeeklyHighlightNotices = async ( options?: RequestInit): Promise<WeeklyHighlightNotice[]> => {
+
+  return customFetch<WeeklyHighlightNotice[]>(getListWeeklyHighlightNoticesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListWeeklyHighlightNoticesQueryKey = () => {
+    return [
+    `/api/admin/weekly-highlights/notices`
+    ] as const;
+    }
+
+
+export const getListWeeklyHighlightNoticesQueryOptions = <TData = Awaited<ReturnType<typeof listWeeklyHighlightNotices>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWeeklyHighlightNotices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListWeeklyHighlightNoticesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listWeeklyHighlightNotices>>> = ({ signal }) => listWeeklyHighlightNotices({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listWeeklyHighlightNotices>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListWeeklyHighlightNoticesQueryResult = NonNullable<Awaited<ReturnType<typeof listWeeklyHighlightNotices>>>
+export type ListWeeklyHighlightNoticesQueryError = ErrorType<void>
+
+
+
+export function useListWeeklyHighlightNotices<TData = Awaited<ReturnType<typeof listWeeklyHighlightNotices>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listWeeklyHighlightNotices>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListWeeklyHighlightNoticesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getMarkWeeklyHighlightNoticeCopiedUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/weekly-highlights/notices/${id}/copied`
+}
+
+export const markWeeklyHighlightNoticeCopied = async (id: number, options?: RequestInit): Promise<WeeklyHighlightCopiedResult> => {
+
+  return customFetch<WeeklyHighlightCopiedResult>(getMarkWeeklyHighlightNoticeCopiedUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getMarkWeeklyHighlightNoticeCopiedMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markWeeklyHighlightNoticeCopied>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markWeeklyHighlightNoticeCopied>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['markWeeklyHighlightNoticeCopied'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markWeeklyHighlightNoticeCopied>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  markWeeklyHighlightNoticeCopied(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkWeeklyHighlightNoticeCopiedMutationResult = NonNullable<Awaited<ReturnType<typeof markWeeklyHighlightNoticeCopied>>>
+
+    export type MarkWeeklyHighlightNoticeCopiedMutationError = ErrorType<void>
+
+    export const useMarkWeeklyHighlightNoticeCopied = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markWeeklyHighlightNoticeCopied>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof markWeeklyHighlightNoticeCopied>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getMarkWeeklyHighlightNoticeCopiedMutationOptions(options));
+    }
 
 export const getLoginUrl = () => {
 

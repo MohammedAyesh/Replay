@@ -52,3 +52,4 @@ export * from "./demoLeads";
 export * from "./freeMatchRewards";
 export * from "./goalVotes";
 export * from "./momentChecks";
+export * from "./weeklyHighlights";

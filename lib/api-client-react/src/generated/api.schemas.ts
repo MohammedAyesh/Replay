@@ -5,6 +5,172 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+export type WeeklyHighlightClipEventType = typeof WeeklyHighlightClipEventType[keyof typeof WeeklyHighlightClipEventType];
+
+
+export const WeeklyHighlightClipEventType = {
+  goal: 'goal',
+  assist: 'assist',
+  save: 'save',
+  tackle: 'tackle',
+} as const;
+
+export interface WeeklyHighlightClip {
+  position: number;
+  clipId: number;
+  eventType: WeeklyHighlightClipEventType;
+  /** @nullable */
+  minute?: number | null;
+  /** @nullable */
+  youX?: number | null;
+  /** @nullable */
+  youY?: number | null;
+  title: string;
+  startTime: string;
+  endTime: string;
+  /** @nullable */
+  matchCode?: string | null;
+  /** @nullable */
+  matchDate?: string | null;
+  /** @nullable */
+  availableUntil?: string | null;
+  videoUrl: string;
+  previewUrl: string;
+}
+
+export type WeeklyHighlightStatus = typeof WeeklyHighlightStatus[keyof typeof WeeklyHighlightStatus];
+
+
+export const WeeklyHighlightStatus = {
+  draft: 'draft',
+  published: 'published',
+} as const;
+
+export type WeeklyHighlightKind = typeof WeeklyHighlightKind[keyof typeof WeeklyHighlightKind];
+
+
+export const WeeklyHighlightKind = {
+  personal: 'personal',
+  field: 'field',
+} as const;
+
+export interface WeeklyHighlight {
+  id: number;
+  /** @nullable */
+  userId: number | null;
+  fieldId: number;
+  weekStart: string;
+  weekEnd: string;
+  title: string;
+  clipCount: number;
+  durationSec: number;
+  status: WeeklyHighlightStatus;
+  /** @nullable */
+  publishedAt: string | null;
+  fieldName: string;
+  kind: WeeklyHighlightKind;
+  clips: WeeklyHighlightClip[];
+}
+
+export type WeeklyHighlightPickEventType = typeof WeeklyHighlightPickEventType[keyof typeof WeeklyHighlightPickEventType];
+
+
+export const WeeklyHighlightPickEventType = {
+  goal: 'goal',
+  assist: 'assist',
+  save: 'save',
+  tackle: 'tackle',
+} as const;
+
+export interface WeeklyHighlightPick {
+  clipId: number;
+  eventType: WeeklyHighlightPickEventType;
+  /** @nullable */
+  minute?: number | null;
+  /** @nullable */
+  youX?: number | null;
+  /** @nullable */
+  youY?: number | null;
+}
+
+export interface WeeklyHighlightGroupInput {
+  userId?: number;
+  fieldId: number;
+  clips: WeeklyHighlightPick[];
+}
+
+export interface WeeklyHighlightPicksInput {
+  weekStart: string;
+  personal: WeeklyHighlightGroupInput[];
+  fields: WeeklyHighlightGroupInput[];
+}
+
+export interface WeeklyHighlightCandidateClip {
+  id: number;
+  title: string;
+  durationSec: number;
+  exportedUrl: string;
+  fieldId: number;
+}
+
+export interface WeeklyHighlightCandidatePlayer {
+  userId: number;
+  name: string;
+  clips: WeeklyHighlightCandidateClip[];
+}
+
+export interface WeeklyHighlightCandidateField {
+  id: number;
+  name: string;
+  clips: WeeklyHighlightCandidateClip[];
+}
+
+export interface WeeklyHighlightSavedGroup {
+  /** @nullable */
+  userId: number | null;
+  fieldId: number;
+  clips: WeeklyHighlightPick[];
+}
+
+export interface WeeklyHighlightCandidates {
+  weekStart: string;
+  weekEnd: string;
+  players: WeeklyHighlightCandidatePlayer[];
+  fields: WeeklyHighlightCandidateField[];
+  saved: WeeklyHighlightSavedGroup[];
+}
+
+export type WeeklyHighlightNoticeStatus = typeof WeeklyHighlightNoticeStatus[keyof typeof WeeklyHighlightNoticeStatus];
+
+
+export const WeeklyHighlightNoticeStatus = {
+  queued: 'queued',
+  copied: 'copied',
+} as const;
+
+export interface WeeklyHighlightNotice {
+  id: number;
+  userId: number;
+  userName: string;
+  highlightId: number;
+  message: string;
+  status: WeeklyHighlightNoticeStatus;
+  url: string;
+}
+
+export interface WeeklyHighlightSaveResult {
+  saved: number[];
+}
+
+export interface WeeklyHighlightPublishResult {
+  published: number[];
+  notices: WeeklyHighlightNotice[];
+}
+
+export interface WeeklyHighlightCopiedResult {
+  ok: boolean;
+}
+
 export type AnalysisJobQuoteOptionTargetMin = typeof AnalysisJobQuoteOptionTargetMin[keyof typeof AnalysisJobQuoteOptionTargetMin];
 
 
@@ -3792,6 +3958,10 @@ export interface SentPlayerIdentificationRequest {
 export interface PlayerIdentificationRequestActionResponse {
   ok: boolean;
 }
+
+export type GetWeeklyHighlightCandidatesParams = {
+weekStart: string;
+};
 
 export type GetAdminAnalysisJobQuoteParams = {
 /**

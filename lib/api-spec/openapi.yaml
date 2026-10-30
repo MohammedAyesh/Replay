@@ -15,6 +15,8 @@ tags:
     description: Soccer fields
   - name: recordings
     description: Field recordings
+  - name: weeklyHighlights
+    description: Weekly highlight stories
   - name: clips
     description: Highlight clips
   - name: savedClips
@@ -218,6 +220,171 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /highlights/home:
+    get:
+      operationId: getHomeWeeklyHighlight
+      tags: [weeklyHighlights]
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Chosen personal or field highlight, or null
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/WeeklyHighlight"
+                  - type: "null"
+        "401":
+          description: Authenticated account required
+
+  /highlights/{id}:
+    get:
+      operationId: getWeeklyHighlight
+      tags: [weeklyHighlights]
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Published highlight
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyHighlight"
+        "401":
+          description: Authenticated account required
+        "404":
+          description: Highlight not found or not visible to this player
+
+  /admin/weekly-highlights/candidates:
+    get:
+      operationId: getWeeklyHighlightCandidates
+      tags: [weeklyHighlights]
+      security:
+        - clerkSession: []
+      parameters:
+        - name: weekStart
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Eligible clips and saved picks for a Saturday week
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyHighlightCandidates"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Admin access required
+
+  /admin/weekly-highlights/save:
+    post:
+      operationId: saveWeeklyHighlightPicks
+      tags: [weeklyHighlights]
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WeeklyHighlightPicksInput"
+      responses:
+        "200":
+          description: Saved draft highlight IDs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyHighlightSaveResult"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Admin access required
+        "400":
+          description: Invalid picks
+
+  /admin/weekly-highlights/publish:
+    post:
+      operationId: publishWeeklyHighlights
+      tags: [weeklyHighlights]
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WeeklyHighlightPicksInput"
+      responses:
+        "200":
+          description: Published highlight IDs and generated notices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyHighlightPublishResult"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Admin access required
+        "400":
+          description: Invalid picks
+
+  /admin/weekly-highlights/notices:
+    get:
+      operationId: listWeeklyHighlightNotices
+      tags: [weeklyHighlights]
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Player notices with share links
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WeeklyHighlightNotice"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Admin access required
+
+  /admin/weekly-highlights/notices/{id}/copied:
+    post:
+      operationId: markWeeklyHighlightNoticeCopied
+      tags: [weeklyHighlights]
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Notice marked as copied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyHighlightCopiedResult"
+        "401":
+          description: Authenticated account required
+        "403":
+          description: Admin access required
+        "404":
+          description: Notice not found
 
   /auth/login:
     post:
@@ -5214,6 +5381,167 @@ paths:
 
 components:
   schemas:
+    WeeklyHighlightClip:
+      type: object
+      required: [position, clipId, eventType, title, startTime, endTime, videoUrl, previewUrl]
+      properties:
+        position: { type: integer }
+        clipId: { type: integer }
+        eventType: { type: string, enum: [goal, assist, save, tackle] }
+        minute: { type: ["integer", "null"] }
+        youX: { type: ["number", "null"] }
+        youY: { type: ["number", "null"] }
+        title: { type: string }
+        startTime: { type: string }
+        endTime: { type: string }
+        matchCode: { type: ["string", "null"] }
+        matchDate: { type: ["string", "null"] }
+        availableUntil: { type: ["string", "null"], format: date-time }
+        videoUrl: { type: string }
+        previewUrl: { type: string }
+    WeeklyHighlight:
+      type: object
+      required: [id, userId, fieldId, weekStart, weekEnd, title, clipCount, durationSec, status, publishedAt, fieldName, kind, clips]
+      properties:
+        id: { type: integer }
+        userId: { type: ["integer", "null"] }
+        fieldId: { type: integer }
+        weekStart: { type: string, format: date }
+        weekEnd: { type: string, format: date }
+        title: { type: string }
+        clipCount: { type: integer }
+        durationSec: { type: integer }
+        status: { type: string, enum: [draft, published] }
+        publishedAt: { type: ["string", "null"], format: date-time }
+        fieldName: { type: string }
+        kind: { type: string, enum: [personal, field] }
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightClip"
+    WeeklyHighlightPick:
+      type: object
+      required: [clipId, eventType]
+      properties:
+        clipId: { type: integer }
+        eventType: { type: string, enum: [goal, assist, save, tackle] }
+        minute: { type: ["integer", "null"] }
+        youX: { type: ["number", "null"] }
+        youY: { type: ["number", "null"] }
+    WeeklyHighlightGroupInput:
+      type: object
+      required: [fieldId, clips]
+      properties:
+        userId: { type: integer }
+        fieldId: { type: integer }
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightPick"
+    WeeklyHighlightPicksInput:
+      type: object
+      required: [weekStart, personal, fields]
+      properties:
+        weekStart: { type: string, format: date }
+        personal:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightGroupInput"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightGroupInput"
+    WeeklyHighlightCandidateClip:
+      type: object
+      required: [id, title, durationSec, exportedUrl, fieldId]
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        durationSec: { type: integer }
+        exportedUrl: { type: string }
+        fieldId: { type: integer }
+    WeeklyHighlightCandidatePlayer:
+      type: object
+      required: [userId, name, clips]
+      properties:
+        userId: { type: integer }
+        name: { type: string }
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightCandidateClip"
+    WeeklyHighlightCandidateField:
+      type: object
+      required: [id, name, clips]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightCandidateClip"
+    WeeklyHighlightSavedGroup:
+      type: object
+      required: [userId, fieldId, clips]
+      properties:
+        userId: { type: ["integer", "null"] }
+        fieldId: { type: integer }
+        clips:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightPick"
+    WeeklyHighlightCandidates:
+      type: object
+      required: [weekStart, weekEnd, players, fields, saved]
+      properties:
+        weekStart: { type: string, format: date }
+        weekEnd: { type: string, format: date }
+        players:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightCandidatePlayer"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightCandidateField"
+        saved:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightSavedGroup"
+    WeeklyHighlightNotice:
+      type: object
+      required: [id, userId, userName, highlightId, message, status, url]
+      properties:
+        id: { type: integer }
+        userId: { type: integer }
+        userName: { type: string }
+        highlightId: { type: integer }
+        message: { type: string }
+        status: { type: string, enum: [queued, copied] }
+        url: { type: string }
+    WeeklyHighlightSaveResult:
+      type: object
+      required: [saved]
+      properties:
+        saved:
+          type: array
+          items: { type: integer }
+    WeeklyHighlightPublishResult:
+      type: object
+      required: [published, notices]
+      properties:
+        published:
+          type: array
+          items: { type: integer }
+        notices:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyHighlightNotice"
+    WeeklyHighlightCopiedResult:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean }
     AnalysisJobQuote:
       type: object
       required: [chunks, options, note]

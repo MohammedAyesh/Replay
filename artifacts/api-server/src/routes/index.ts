@@ -50,6 +50,7 @@ import academyJoinRouter from "./academyJoin";
 import academyFamilyRouter from "./academyFamily";
 import academyLiveSessionsRouter from "./academyLiveSessions";
 import demoBrandingRouter from "./demoBranding";
+import weeklyHighlightsRouter from "./weeklyHighlights";
 
 const router: IRouter = Router();
 
@@ -69,6 +70,7 @@ router.use(clipsRouter);
 router.use(savedClipsRouter);
 router.use(userClipsRouter);
 router.use(userReelsRouter);
+router.use(weeklyHighlightsRouter);
 router.use(accountRouter);
 router.use(adsRouter);
 router.use(bannersRouter);

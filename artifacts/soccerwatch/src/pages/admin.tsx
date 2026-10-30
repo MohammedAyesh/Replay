@@ -25,6 +25,7 @@ import SettingsTab from "@/components/admin/SettingsTab";
 import DemoLeadsTab from "@/components/admin/DemoLeadsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
 import BrandingTab from "@/components/admin/BrandingTab";
+import { WeeklyHighlightsTab } from "@/components/admin/WeeklyHighlightsTab";
 import {
   getGetFeedQueryKey,
   getListClipsQueryKey,
@@ -52,7 +53,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads" | "weekly-highlights";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -7093,12 +7094,14 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   branding: { label: "Branding", render: () => <BrandingTab /> },
   settings: { label: "Settings", render: () => <SettingsTab /> },
   "demo-leads": { label: "Demo leads", render: () => <DemoLeadsTab /> },
+  "weekly-highlights": { label: "Weekly highlights", render: () => <WeeklyHighlightsTab /> },
 };
 
 const TAB_ORDER = Object.keys(TABS) as Tab[];
 
 export default function Admin() {
   const { user, isLoading, isAdmin } = useAuth();
+  const { t } = useTranslation();
   const [, setLocation] = useLocation();
   const [tab, setTab] = useState<Tab>("clips");
   const openReports = useAdminReports("open", Boolean(user) && isAdmin && !isLoading);
@@ -7141,7 +7144,7 @@ export default function Admin() {
               tab === id ? "text-turf" : "text-muted-text hover:text-text"
             )}
           >
-            {TABS[id].label}
+            {id === "weekly-highlights" ? t.weeklyHighlights.adminTab : TABS[id].label}
             {id === "reports" && (openReports.data?.length ?? 0) > 0 && (
               <span
                 data-testid="badge-open-report-count"

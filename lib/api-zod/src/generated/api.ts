@@ -126,6 +126,209 @@ export const HealthCheckResponse = zod.object({
 })
 
 
+export const GetHomeWeeklyHighlightResponse = zod.union([zod.object({
+  "id": zod.number(),
+  "userId": zod.number().nullable(),
+  "fieldId": zod.number(),
+  "weekStart": zod.coerce.date(),
+  "weekEnd": zod.coerce.date(),
+  "title": zod.string(),
+  "clipCount": zod.number(),
+  "durationSec": zod.number(),
+  "status": zod.enum(['draft', 'published']),
+  "publishedAt": zod.coerce.date().nullable(),
+  "fieldName": zod.string(),
+  "kind": zod.enum(['personal', 'field']),
+  "clips": zod.array(zod.object({
+  "position": zod.number(),
+  "clipId": zod.number(),
+  "eventType": zod.enum(['goal', 'assist', 'save', 'tackle']),
+  "minute": zod.number().nullish(),
+  "youX": zod.number().nullish(),
+  "youY": zod.number().nullish(),
+  "title": zod.string(),
+  "startTime": zod.string(),
+  "endTime": zod.string(),
+  "matchCode": zod.string().nullish(),
+  "matchDate": zod.string().nullish(),
+  "availableUntil": zod.coerce.date().nullish(),
+  "videoUrl": zod.string(),
+  "previewUrl": zod.string()
+}))
+}),zod.null()])
+
+
+export const GetWeeklyHighlightParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetWeeklyHighlightResponse = zod.object({
+  "id": zod.number(),
+  "userId": zod.number().nullable(),
+  "fieldId": zod.number(),
+  "weekStart": zod.coerce.date(),
+  "weekEnd": zod.coerce.date(),
+  "title": zod.string(),
+  "clipCount": zod.number(),
+  "durationSec": zod.number(),
+  "status": zod.enum(['draft', 'published']),
+  "publishedAt": zod.coerce.date().nullable(),
+  "fieldName": zod.string(),
+  "kind": zod.enum(['personal', 'field']),
+  "clips": zod.array(zod.object({
+  "position": zod.number(),
+  "clipId": zod.number(),
+  "eventType": zod.enum(['goal', 'assist', 'save', 'tackle']),
+  "minute": zod.number().nullish(),
+  "youX": zod.number().nullish(),
+  "youY": zod.number().nullish(),
+  "title": zod.string(),
+  "startTime": zod.string(),
+  "endTime": zod.string(),
+  "matchCode": zod.string().nullish(),
+  "matchDate": zod.string().nullish(),
+  "availableUntil": zod.coerce.date().nullish(),
+  "videoUrl": zod.string(),
+  "previewUrl": zod.string()
+}))
+})
+
+
+export const GetWeeklyHighlightCandidatesQueryParams = zod.object({
+  "weekStart": zod.date()
+})
+
+export const GetWeeklyHighlightCandidatesResponse = zod.object({
+  "weekStart": zod.coerce.date(),
+  "weekEnd": zod.coerce.date(),
+  "players": zod.array(zod.object({
+  "userId": zod.number(),
+  "name": zod.string(),
+  "clips": zod.array(zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "durationSec": zod.number(),
+  "exportedUrl": zod.string(),
+  "fieldId": zod.number()
+}))
+})),
+  "fields": zod.array(zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "clips": zod.array(zod.object({
+  "id": zod.number(),
+  "title": zod.string(),
+  "durationSec": zod.number(),
+  "exportedUrl": zod.string(),
+  "fieldId": zod.number()
+}))
+})),
+  "saved": zod.array(zod.object({
+  "userId": zod.number().nullable(),
+  "fieldId": zod.number(),
+  "clips": zod.array(zod.object({
+  "clipId": zod.number(),
+  "eventType": zod.enum(['goal', 'assist', 'save', 'tackle']),
+  "minute": zod.number().nullish(),
+  "youX": zod.number().nullish(),
+  "youY": zod.number().nullish()
+}))
+}))
+})
+
+
+export const SaveWeeklyHighlightPicksBody = zod.object({
+  "weekStart": zod.coerce.date(),
+  "personal": zod.array(zod.object({
+  "userId": zod.number().optional(),
+  "fieldId": zod.number(),
+  "clips": zod.array(zod.object({
+  "clipId": zod.number(),
+  "eventType": zod.enum(['goal', 'assist', 'save', 'tackle']),
+  "minute": zod.number().nullish(),
+  "youX": zod.number().nullish(),
+  "youY": zod.number().nullish()
+}))
+})),
+  "fields": zod.array(zod.object({
+  "userId": zod.number().optional(),
+  "fieldId": zod.number(),
+  "clips": zod.array(zod.object({
+  "clipId": zod.number(),
+  "eventType": zod.enum(['goal', 'assist', 'save', 'tackle']),
+  "minute": zod.number().nullish(),
+  "youX": zod.number().nullish(),
+  "youY": zod.number().nullish()
+}))
+}))
+})
+
+export const SaveWeeklyHighlightPicksResponse = zod.object({
+  "saved": zod.array(zod.number())
+})
+
+
+export const PublishWeeklyHighlightsBody = zod.object({
+  "weekStart": zod.coerce.date(),
+  "personal": zod.array(zod.object({
+  "userId": zod.number().optional(),
+  "fieldId": zod.number(),
+  "clips": zod.array(zod.object({
+  "clipId": zod.number(),
+  "eventType": zod.enum(['goal', 'assist', 'save', 'tackle']),
+  "minute": zod.number().nullish(),
+  "youX": zod.number().nullish(),
+  "youY": zod.number().nullish()
+}))
+})),
+  "fields": zod.array(zod.object({
+  "userId": zod.number().optional(),
+  "fieldId": zod.number(),
+  "clips": zod.array(zod.object({
+  "clipId": zod.number(),
+  "eventType": zod.enum(['goal', 'assist', 'save', 'tackle']),
+  "minute": zod.number().nullish(),
+  "youX": zod.number().nullish(),
+  "youY": zod.number().nullish()
+}))
+}))
+})
+
+export const PublishWeeklyHighlightsResponse = zod.object({
+  "published": zod.array(zod.number()),
+  "notices": zod.array(zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "userName": zod.string(),
+  "highlightId": zod.number(),
+  "message": zod.string(),
+  "status": zod.enum(['queued', 'copied']),
+  "url": zod.string()
+}))
+})
+
+
+export const ListWeeklyHighlightNoticesResponseItem = zod.object({
+  "id": zod.number(),
+  "userId": zod.number(),
+  "userName": zod.string(),
+  "highlightId": zod.number(),
+  "message": zod.string(),
+  "status": zod.enum(['queued', 'copied']),
+  "url": zod.string()
+})
+export const ListWeeklyHighlightNoticesResponse = zod.array(ListWeeklyHighlightNoticesResponseItem)
+
+
+export const MarkWeeklyHighlightNoticeCopiedParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const MarkWeeklyHighlightNoticeCopiedResponse = zod.object({
+  "ok": zod.boolean()
+})
+
+
 /**
  * @summary Login with email and password
  */

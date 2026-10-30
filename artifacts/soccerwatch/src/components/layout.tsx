@@ -34,7 +34,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   React.useEffect(() => { recordInAppLocation(location); }, [location]);
 
   const isLogin = location === "/";
-  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find-quick/");
+  const isImmersivePlayer = location.startsWith("/player/") || location.startsWith("/claim/") || location.startsWith("/find-quick/") || location.startsWith("/week/");
+  const isWeeklyHighlight = location.startsWith("/week/");
   const isPortfolio = location.startsWith("/portfolio/");
   // Find yourself is part of the app (header, language switch, tab bar) but
   // scrolls as a document, so its tab bar is pinned to the viewport.
@@ -113,8 +114,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      {!isGuidedDemo && <OrientationLock />}
-      {!isGuidedDemo && <InstallBanner />}
+      {!isGuidedDemo && !isWeeklyHighlight && <OrientationLock />}
+      {!isGuidedDemo && !isWeeklyHighlight && <InstallBanner />}
 
       {!hideTabBar && (
         <nav

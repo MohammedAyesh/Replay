@@ -56,6 +56,7 @@ import SimpleDemo from "@/pages/demo/SimpleDemo";
 import AcademyConsole from "@/pages/academy-console";
 import AcademyJoinPage from "@/pages/academy-join";
 import AcademyFamilyPage from "@/pages/academy-family";
+import WeeklyHighlightPage from "@/pages/weekly-highlight";
 
 const MatchReportDevPreview = import.meta.env.DEV
   ? lazy(() => import("@/pages/match-report-dev-preview"))
@@ -583,6 +584,7 @@ function AppRouter() {
           </AuthHeroLayout>
         </Route>
         <Route path="/home" component={Home} />
+        <Route path="/week/:id" component={WeeklyHighlightPage} />
         {/* <Route path="/watch" component={Watch} /> */}
         <Route path="/view" component={View} />
         <Route path="/fields"><Fields /></Route>

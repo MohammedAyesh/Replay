@@ -18,6 +18,8 @@ import {
   brandingAssetsTable,
   footageRequestsTable,
   claimMatchProgressTable,
+  weeklyHighlightsTable,
+  highlightClipsTable,
 } from "@workspace/db";
 import {
   CreateUserClipBody,
@@ -2592,7 +2594,12 @@ router.get("/user-clips/:id/share-link", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Clip not found" });
     return;
   }
-  if (clip.userId !== userId && clip.visibility !== "public") {
+  const [viewer] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  const highlighted = await db.select({ id: weeklyHighlightsTable.id }).from(highlightClipsTable)
+    .innerJoin(weeklyHighlightsTable, eq(weeklyHighlightsTable.id, highlightClipsTable.highlightId))
+    .where(and(eq(highlightClipsTable.clipId, clipId), eq(weeklyHighlightsTable.status, "published"),
+      or(isNull(weeklyHighlightsTable.userId), eq(weeklyHighlightsTable.userId, userId)))).limit(1);
+  if (clip.userId !== userId && clip.visibility !== "public" && !viewer?.isAdmin && !highlighted.length) {
     res.status(404).json({ error: "Clip not found" });
     return;
   }
@@ -2622,8 +2629,16 @@ router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
   const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const clipId = parseInt(rawId, 10);
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
-  const [clip] = await db.select().from(userClipsTable)
-    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
+  const [viewer] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  const highlightAccess = clip && await db.select({ id: weeklyHighlightsTable.id })
+    .from(highlightClipsTable).innerJoin(weeklyHighlightsTable, eq(weeklyHighlightsTable.id, highlightClipsTable.highlightId))
+    .where(and(eq(highlightClipsTable.clipId, clipId), eq(weeklyHighlightsTable.status, "published"),
+      or(isNull(weeklyHighlightsTable.userId), eq(weeklyHighlightsTable.userId, userId)))).limit(1);
+  if (clip && clip.userId !== userId && !viewer?.isAdmin && !highlightAccess?.length) {
+    res.status(404).json({ error: "Export not available" });
+    return;
+  }
   if (!clip || isSoftDeletedClip(clip) || !clip.exportedUrl) {
     res.status(404).json({ error: "Export not available" });
     return;
@@ -2687,12 +2702,14 @@ router.get("/user-clips/:id/download", async (req, res): Promise<void> => {
   const clipId = parseInt(rawId, 10);
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
 
-  const [clip] = await db
-    .select()
-    .from(userClipsTable)
-    .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.userId, userId)));
+  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
+  const [viewer] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  const featured = await db.select({ id: weeklyHighlightsTable.id }).from(highlightClipsTable)
+    .innerJoin(weeklyHighlightsTable, eq(weeklyHighlightsTable.id, highlightClipsTable.highlightId))
+    .where(and(eq(highlightClipsTable.clipId, clipId), eq(weeklyHighlightsTable.status, "published"),
+      or(isNull(weeklyHighlightsTable.userId), eq(weeklyHighlightsTable.userId, userId)))).limit(1);
 
-  if (!clip || isSoftDeletedClip(clip) || !clip.exportedUrl) {
+  if (!clip || (clip.userId !== userId && !viewer?.isAdmin && !featured.length) || isSoftDeletedClip(clip) || !clip.exportedUrl) {
     res.status(404).json({ error: "Export not ready" });
     return;
   }
