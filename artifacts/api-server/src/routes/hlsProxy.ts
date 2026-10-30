@@ -130,6 +130,13 @@ async function fetchProgressiveMp4Range(
       return response;
     }
 
+    // Forbidden, missing or gone has nothing to do with the window size:
+    // hand it back at once instead of halving the range seven times and
+    // reporting a misleading 502 (2026-10-30, early play).
+    if (response.status === 401 || response.status === 403 || response.status === 404 || response.status === 410) {
+      return response;
+    }
+
     try {
       await response.body?.cancel();
     } catch {
