@@ -1024,7 +1024,9 @@ export const GetFieldRecordingsResponseItem = zod.object({
   "fieldName": zod.string().nullish(),
   "hasTracking": zod.boolean().describe('Whether this recording has an uploaded tracking bundle.'),
   "viewerHasClaim": zod.boolean().describe('Whether the signed-in viewer has an identity claim for this recording.'),
-  "viewerClaimState": zod.union([zod.literal('in_progress'),zod.literal('pending'),zod.literal('confirmed'),zod.literal('disputed'),zod.literal('needs_resolution'),zod.literal('released'),zod.literal('rejected'),zod.literal(null)]).nullable().describe('The signed-in viewer\'s progress or claim state, or null when they have not started or are not signed in.')
+  "viewerClaimState": zod.union([zod.literal('in_progress'),zod.literal('pending'),zod.literal('confirmed'),zod.literal('disputed'),zod.literal('needs_resolution'),zod.literal('released'),zod.literal('rejected'),zod.literal(null)]).nullable().describe('The signed-in viewer\'s progress or claim state, or null when they have not started or are not signed in.'),
+  "matchCode": zod.string().nullable().describe('Existing match room code linked to this recording, if any.'),
+  "viewerInMatch": zod.boolean().describe('Whether the signed-in viewer has already joined the linked match room.')
 })
 export const GetFieldRecordingsResponse = zod.array(GetFieldRecordingsResponseItem)
 

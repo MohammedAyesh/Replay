@@ -12,6 +12,9 @@ import {
   claimMatchProgressTable,
   claimMatchIdentityBindingsTable,
   recordingSchedulesTable,
+  footageRequestsTable,
+  matchRoomsTable,
+  matchPlayersTable,
 } from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -28,6 +31,9 @@ let viewerId: number;
 let recordingIds: number[] = [];
 let bundleIds: number[] = [];
 let scheduleIds: number[] = [];
+let footageRequestId: number | null = null;
+let matchRoomId: number | null = null;
+let matchCode = "";
 
 beforeAll(async () => {
   const [{ default: fieldsRouter }] = await Promise.all([
@@ -97,6 +103,32 @@ beforeAll(async () => {
     .returning({ id: recordingsTable.id, date: recordingsTable.date });
   recordingIds = recordings.map((recording) => recording.id);
 
+  const [booking] = await db.insert(footageRequestsTable).values({
+    fieldId,
+    cameraId: "test-camera",
+    requestedBy: viewerId,
+    startLocal: "2026-09-02 11:05",
+    endLocal: "2026-09-02 11:25",
+    requestedSeconds: 1200,
+    status: "scheduled",
+  }).returning({ id: footageRequestsTable.id });
+  footageRequestId = booking.id;
+  matchCode = `F${Date.now().toString().slice(-5)}`;
+  const [room] = await db.insert(matchRoomsTable).values({
+    footageRequestId,
+    fieldId,
+    code: matchCode,
+    captainToken: `captain-${TEST_TAG}`,
+  }).returning({ id: matchRoomsTable.id });
+  matchRoomId = room.id;
+  await db.insert(matchPlayersTable).values({
+    matchId: matchRoomId,
+    userId: viewerId,
+    displayName: "Claim viewer",
+    inviteToken: `invite-${TEST_TAG}`,
+    rsvp: "in",
+  });
+
   const schedules = await db
     .insert(recordingSchedulesTable)
     .values(recordings.map((recording) => ({
@@ -119,8 +151,8 @@ beforeAll(async () => {
           width: 1920,
           height: 1080,
           frameRate: 25,
-          frameCount: 750,
-          duration: 30,
+          frameCount: 45000,
+          duration: 1800,
           matchOffset: 0,
           videoStartSeconds: 0,
           segmentCount: 1,
@@ -190,6 +222,9 @@ afterAll(async () => {
   if (recordingIds.length) {
     await db.delete(recordingsTable).where(inArray(recordingsTable.id, recordingIds));
   }
+  if (footageRequestId) {
+    await db.delete(footageRequestsTable).where(eq(footageRequestsTable.id, footageRequestId));
+  }
   if (scheduleIds.length) {
     await db.delete(recordingSchedulesTable).where(inArray(recordingSchedulesTable.id, scheduleIds));
   }
@@ -207,12 +242,16 @@ describe("GET /api/fields/:id/recordings", () => {
         hasTracking: false,
         viewerHasClaim: false,
         viewerClaimState: null,
+        matchCode: null,
+        viewerInMatch: false,
       });
     expect(response.body.find((recording: { id: number }) => recording.id === recordingIds[1]))
       .toMatchObject({
         hasTracking: true,
         viewerHasClaim: true,
         viewerClaimState: "confirmed",
+        matchCode,
+        viewerInMatch: true,
       });
     expect(response.body.find((recording: { id: number }) => recording.id === recordingIds[2]))
       .toMatchObject({
@@ -241,6 +280,8 @@ describe("GET /api/fields/:id/recordings", () => {
       hasTracking: true,
       viewerHasClaim: false,
       viewerClaimState: null,
+      matchCode,
+      viewerInMatch: false,
     });
   });
 });

@@ -12,6 +12,7 @@ import {
   Pause,
   Play,
   MoveHorizontal,
+  Settings2,
   Square,
   X,
 } from "lucide-react";
@@ -144,6 +145,8 @@ export type ClipPlayerProps = {
   timelineMarkers?: ClipTimelineMarker[];
   /** Stretches shaded in a thin strip under the seek bar (recorded footage only). */
   timelineBands?: ClipTimelineBand[];
+  /** Optional full-recording action rendered in the bottom control bar. */
+  joinAction?: { label: string; onClick: () => void; disabled?: boolean };
   /** Called as playback moves, with the video position in seconds. */
   onPositionChange?: (seconds: number) => void;
   /** Seek on demand; unlike seekToSeconds it repeats when the id changes. */
@@ -214,85 +217,69 @@ function MiniMap({ frame, srcAspect }: { frame: Frame; srcAspect: number }) {
 function QualityPicker({
   levels,
   active,
+  playingLevel,
   open,
   onToggle,
   onSelect,
 }: {
   levels: Array<{ width: number; height: number; bitrate: number; index: number }>;
   active: number;
+  playingLevel: number;
   open: boolean;
   onToggle: () => void;
   onSelect: (index: number) => void;
 }) {
   if (levels.length === 0) return null;
-  const resolutionLabel = (level: { width: number; height: number }) =>
-    level.width > 0 && level.height > 0
-      ? `${level.width}×${level.height}`
-      : `${level.height}p`;
-  const levelLabel = (level: { width: number; height: number; bitrate: number }) => {
-    const resolution = resolutionLabel(level);
-    return level.bitrate > 0
-      ? `${resolution} · ${(level.bitrate / 1_000_000).toFixed(1)} Mbps`
-      : resolution;
-  };
-  const singleLevel = levels.length === 1;
-  const activeLevel = levels.find((level) => level.index === active);
-  const buttonLabel = singleLevel
-    ? resolutionLabel(levels[0])
-    : active === -1
-      ? "Auto"
-      : activeLevel
-        ? levelLabel(activeLevel)
-        : "Auto";
+  const heightLabel = (level?: { height: number }) => level?.height ? `${level.height}p` : null;
+  const currentLevel = levels.find((level) => level.index === playingLevel);
+  const selectedLevel = levels.find((level) => level.index === active);
+  const buttonLabel = active === -1
+    ? `Auto${heightLabel(currentLevel) ? ` · ${heightLabel(currentLevel)}` : ""}`
+    : heightLabel(selectedLevel) ?? "Quality";
   return (
-    <div
-      className="absolute end-3 z-[60] pointer-events-auto"
-      style={{ top: "calc(env(safe-area-inset-top) + 4rem)" }}
-    >
-      <div className="relative">
-        <button
-          type="button"
-          data-testid="button-video-quality"
-          aria-label={singleLevel ? `Only resolution available: ${buttonLabel}` : "Select video quality"}
-          aria-haspopup={singleLevel ? "dialog" : "menu"}
-          aria-expanded={open}
-          title={singleLevel ? "Only one resolution is available; click for details" : "Select video quality"}
-          onClick={onToggle}
-          className="px-3 py-1.5 rounded-full bg-black/70 backdrop-blur-sm text-white text-xs font-bold border border-white/20"
-        >
-          {buttonLabel}
-        </button>
-        {open && (
-          <div
-            role={singleLevel ? "status" : "menu"}
-            aria-label="Video quality"
-            className="absolute top-full end-0 mt-1 bg-black/95 backdrop-blur-md rounded-xl overflow-hidden shadow-xl border border-white/10 min-w-[8rem]"
+    <div className="relative shrink-0">
+      <button
+        type="button"
+        data-testid="button-video-quality"
+        aria-label={`Video quality: ${buttonLabel}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`Video quality: ${buttonLabel}`}
+        onClick={onToggle}
+        className="flex h-10 min-w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 px-2 text-[11px] font-bold text-white"
+      >
+        <Settings2 className="h-4 w-4 min-[400px]:hidden" />
+        <span className="hidden whitespace-nowrap min-[400px]:inline">{buttonLabel}</span>
+      </button>
+      {open && (
+        <div role="menu" aria-label="Video quality" className="absolute bottom-full end-0 z-[60] mb-2 min-w-48 overflow-hidden rounded-xl border border-white/10 bg-black/95 shadow-xl backdrop-blur-md">
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={active === -1}
+            data-testid="video-quality-auto"
+            onClick={() => onSelect(-1)}
+            className={cn("block w-full px-3 py-2.5 text-left text-xs transition-colors hover:bg-white/10", active === -1 ? "text-primary" : "text-white")}
           >
-            {singleLevel ? (
-              <p className="max-w-64 px-3 py-2.5 text-xs leading-5 text-white/80">
-                This player received one compatible HLS quality level ({buttonLabel}). If Bunny lists more variants, they must be present in this video's HLS playlist and supported by the browser.
-              </p>
-            ) : (
-              [{ width: 0, height: 0, bitrate: 0, index: -1 }, ...levels].map((level) => (
-                <button
-                  key={level.index}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={active === level.index}
-                  data-testid={`video-quality-${level.index}`}
-                  onClick={() => onSelect(level.index)}
-                  className={cn(
-                    "block w-full px-4 py-2.5 text-xs font-semibold text-left transition-colors",
-                    active === level.index ? "text-primary" : "text-white hover:bg-white/10",
-                  )}
-                >
-                  {level.index === -1 ? "Auto" : levelLabel(level)}
-                </button>
-              ))
-            )}
-          </div>
-        )}
-      </div>
+            <span className="block font-semibold">Auto{currentLevel ? ` · ${heightLabel(currentLevel)}` : ""}</span>
+            {currentLevel && <span className="mt-0.5 block text-[10px] text-white/60">{currentLevel.width}×{currentLevel.height} · {(currentLevel.bitrate / 1_000_000).toFixed(1)} Mbps</span>}
+          </button>
+          {levels.map((level) => (
+            <button
+              key={level.index}
+              type="button"
+              role="menuitemradio"
+              aria-checked={active === level.index}
+              data-testid={`video-quality-${level.index}`}
+              onClick={() => onSelect(level.index)}
+              className={cn("block w-full px-3 py-2.5 text-left text-xs transition-colors hover:bg-white/10", active === level.index ? "text-primary" : "text-white")}
+            >
+              <span className="block font-semibold">{heightLabel(level)}</span>
+              <span className="mt-0.5 block text-[10px] text-white/60">{level.width}×{level.height} · {(level.bitrate / 1_000_000).toFixed(1)} Mbps</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -321,6 +308,7 @@ export function ClipPlayer({
   seekToUtcMs,
   timelineMarkers,
   timelineBands,
+  joinAction,
   onPositionChange,
   seekRequest,
   stageBadge,
@@ -516,6 +504,7 @@ export function ClipPlayer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [qualityLevels, setQualityLevels] = useState<Array<{ width: number; height: number; bitrate: number; index: number }>>([]);
   const [activeQuality, setActiveQuality] = useState(-1);
+  const [playingQuality, setPlayingQuality] = useState(-1);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
   const [sourceStage, setSourceStageState] = useState<PlaybackSourceStage>(initialSourceStage);
   const [playbackRate, setPlaybackRate] = useState(1);
@@ -1070,6 +1059,7 @@ export function ClipPlayer({
     startStartupTimer();
     setQualityLevels([]);
     setActiveQuality(-1);
+    setPlayingQuality(-1);
     setShowQualityPicker(false);
 
     const isHlsSource = /\.m3u8(?:$|\?)/i.test(activeSrc);
@@ -1106,6 +1096,9 @@ export function ClipPlayer({
             })
             .sort((a, b) => b.width - a.width || b.height - a.height || b.bitrate - a.bitrate));
         });
+      });
+      hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+        if (!disposed && hlsRef.current === hls) setPlayingQuality(data.level);
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
@@ -1656,17 +1649,6 @@ export function ClipPlayer({
         </div>
       </div>
 
-      <QualityPicker
-        levels={qualityLevels}
-        active={activeQuality}
-        open={showQualityPicker}
-        onToggle={() => setShowQualityPicker((open) => !open)}
-        onSelect={(index) => {
-          if (hlsRef.current) hlsRef.current.currentLevel = index;
-          setActiveQuality(index);
-          setShowQualityPicker(false);
-        }}
-      />
       {followAvailable && (
         <button
           type="button"
@@ -1836,6 +1818,20 @@ export function ClipPlayer({
                 >
                   {playbackRate}×
                 </button>
+                {!usingFallback && /\.m3u8(?:$|\?)/i.test(activeSrc) && (
+                  <QualityPicker
+                    levels={qualityLevels}
+                    active={activeQuality}
+                    playingLevel={playingQuality}
+                    open={showQualityPicker}
+                    onToggle={() => setShowQualityPicker((open) => !open)}
+                    onSelect={(index) => {
+                      if (hlsRef.current) hlsRef.current.currentLevel = index;
+                      setActiveQuality(index);
+                      setShowQualityPicker(false);
+                    }}
+                  />
+                )}
                 <button
                   type="button"
                   aria-label={`Frame shape ${selectedRatio}`}
@@ -1863,6 +1859,17 @@ export function ClipPlayer({
                   {explainerCopy.player.clip}
                 </button>
               </div>
+              {joinAction && (
+                <button
+                  type="button"
+                  data-testid="button-join-match"
+                  disabled={joinAction.disabled}
+                  onClick={joinAction.onClick}
+                  className="mt-2 flex h-10 w-full items-center justify-center rounded-full bg-primary px-4 text-sm font-bold text-primary-foreground disabled:opacity-50"
+                >
+                  {joinAction.label}
+                </button>
+              )}
             </div>
           </motion.div>
         )}

@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { and, count, eq, sql } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 import {
   db,
   fieldsTable,
@@ -9,6 +9,7 @@ import {
   recordingTrackingSegmentsTable,
   claimMatchProgressTable,
   claimMatchIdentityBindingsTable,
+  matchPlayersTable,
 } from "@workspace/db";
 import {
   GetFieldParams,
@@ -19,6 +20,7 @@ import {
 } from "@workspace/api-zod";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
 import { createPublicFootageContext, isPublicRecordingInContext } from "../lib/publicFootage";
+import { roomsForRecording } from "../lib/matchFeed";
 
 const router: IRouter = Router();
 
@@ -174,10 +176,28 @@ router.get("/fields/:id/recordings", async (req, res): Promise<void> => {
     .orderBy(recordingsTable.date);
 
   const visibleRecordings = recordings.filter(({ recording }) => isPublicRecordingInContext(recording, field, context));
+  const matchContexts = await Promise.all(visibleRecordings.map(async ({ recording }) => {
+    const rooms = await roomsForRecording(recording.id);
+    if (rooms.length === 0) return { matchCode: null, viewerInMatch: false };
+    const memberships = viewerId
+      ? await db.select({ matchId: matchPlayersTable.matchId })
+        .from(matchPlayersTable)
+        .where(and(
+          eq(matchPlayersTable.userId, viewerId),
+          inArray(matchPlayersTable.matchId, rooms.map(({ room }) => room.id)),
+        ))
+      : [];
+    const joinedRoomId = memberships[0]?.matchId;
+    const joinedRoom = joinedRoomId != null
+      ? rooms.find(({ room }) => room.id === joinedRoomId)
+      : undefined;
+    const selected = joinedRoom ?? rooms[0];
+    return { matchCode: selected.room.code, viewerInMatch: Boolean(joinedRoom) };
+  }));
 
   res.json(
     GetFieldRecordingsResponse.parse(
-      visibleRecordings.map(({ recording, hasTrackingBundle, trackingSegmentCount, viewerProgressId, viewerClaimState }) => ({
+      visibleRecordings.map(({ recording, hasTrackingBundle, trackingSegmentCount, viewerProgressId, viewerClaimState }, index) => ({
         id: recording.id,
         fieldId: recording.fieldId,
         court: recording.court,
@@ -191,6 +211,7 @@ router.get("/fields/:id/recordings", async (req, res): Promise<void> => {
         hasTracking: hasTrackingBundle !== null && Number(trackingSegmentCount ?? 0) > 0,
         viewerHasClaim: viewerClaimState !== null,
         viewerClaimState: viewerClaimState ?? (viewerProgressId !== null ? "in_progress" : null),
+        ...matchContexts[index],
       }))
     )
   );

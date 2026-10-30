@@ -30,4 +30,11 @@ export interface FieldRecording {
      * @nullable
      */
   viewerClaimState: FieldRecordingViewerClaimState;
+  /**
+     * Existing match room code linked to this recording, if any.
+     * @nullable
+     */
+  matchCode: string | null;
+  /** Whether the signed-in viewer has already joined the linked match room. */
+  viewerInMatch: boolean;
 }

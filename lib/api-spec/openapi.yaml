@@ -6182,7 +6182,7 @@ components:
 
     FieldRecording:
       type: object
-      required: [id, fieldId, court, date, timeSlot, duration, hasTracking, viewerHasClaim, viewerClaimState]
+      required: [id, fieldId, court, date, timeSlot, duration, hasTracking, viewerHasClaim, viewerClaimState, matchCode, viewerInMatch]
       properties:
         id:
           type: integer
@@ -6214,6 +6214,12 @@ components:
           type: ["string", "null"]
           enum: [in_progress, pending, confirmed, disputed, needs_resolution, released, rejected, null]
           description: The signed-in viewer's progress or claim state, or null when they have not started or are not signed in.
+        matchCode:
+          type: ["string", "null"]
+          description: Existing match room code linked to this recording, if any.
+        viewerInMatch:
+          type: boolean
+          description: Whether the signed-in viewer has already joined the linked match room.
 
     RecordingViewInput:
       type: object

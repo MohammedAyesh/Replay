@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useMemo } from "react";
-import { Link, useRoute, useLocation } from "wouter";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { Link, useRoute, useLocation, useSearch } from "wouter";
 import {
   useGetBunnyCollections,
   useGetBunnyCollectionVideos,
@@ -25,6 +25,8 @@ import { useClaimCopy } from "@/i18n/claim-strings";
 import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
 import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
+import { useJoinMatch, MatchApiError } from "@/lib/match-api";
+import { useToast } from "@/hooks/use-toast";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -396,11 +398,14 @@ function RecordingRow({
 export default function FieldDetail() {
   const [, params] = useRoute("/fields/:id");
   const [, setLocation] = useLocation();
+  const search = useSearch();
+  const searchParams = useMemo(() => new URLSearchParams(search), [search]);
   const guid = params?.id ?? "";
   const { t, locale } = useTranslation();
-  const { user, isGuest } = useAuth();
+  const { user, isGuest, isLoading: authLoading } = useAuth();
   const canClaim = CLAIM_YOUR_MATCH_ENABLED && Boolean(user) && !isGuest;
   const claimCopy = useClaimCopy();
+  const { toast } = useToast();
 
   const { data: collections } = useGetBunnyCollections({
     query: {
@@ -422,7 +427,7 @@ export default function FieldDetail() {
     collection?.id ?? 0,
     {
       query: {
-        enabled: canClaim && collection?.id != null,
+        enabled: collection?.id != null,
         queryKey: getGetFieldRecordingsQueryKey(collection?.id ?? 0),
         staleTime: 60 * 1000,
       },
@@ -433,6 +438,28 @@ export default function FieldDetail() {
     [fieldRecordings],
   );
   const [activeVideo, setActiveVideo] = useState<BunnyVideo | null>(null);
+  const activeRecording = useMemo(() => {
+    if (!activeVideo || !fieldRecordings?.length) return undefined;
+    const urlMatch = fieldRecordings.find((recording) =>
+      recording.videoUrl === activeVideo.guid || recording.videoUrl?.includes(activeVideo.guid),
+    );
+    if (urlMatch) return urlMatch;
+    const meta = parseVideoFilename(activeVideo.title);
+    if (!meta) return undefined;
+    return fieldRecordings.find((recording) => {
+      if (recording.date !== meta.isoDate) return false;
+      const time = /^(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(recording.timeSlot);
+      if (!time) return false;
+      let hour = Number(time[1]);
+      const minute = Number(time[2]);
+      const meridiem = time[3]?.toUpperCase();
+      if (meridiem === "PM" && hour < 12) hour += 12;
+      if (meridiem === "AM" && hour === 12) hour = 0;
+      return Math.abs(hour * 3600 + minute * 60 - meta.startSeconds) < 60;
+    });
+  }, [activeVideo, fieldRecordings]);
+  const joinMatch = useJoinMatch(activeRecording?.matchCode ?? "");
+  const joinAttemptedRef = useRef<string | null>(null);
   const createUserClip = useCreateUserClip();
   const viewTracking = useRecordingViewTracking(
     collection?.id && activeVideo
@@ -440,6 +467,47 @@ export default function FieldDetail() {
       : null,
   );
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    const requestedVideoId = searchParams.get("video");
+    if (!requestedVideoId || !videos?.length) return;
+    const requestedVideo = videos.find((video) => video.guid === requestedVideoId);
+    if (requestedVideo) setActiveVideo(requestedVideo);
+  }, [searchParams, videos]);
+
+  const joinThisMatch = useCallback(async () => {
+    const recording = activeRecording;
+    const code = recording?.matchCode;
+    if (!recording || !code) return;
+    if (!user || isGuest) {
+      const resume = `/fields/${guid}?video=${encodeURIComponent(activeVideo?.guid ?? "")}&join=1`;
+      setLocation(`/sign-up?redirect_url=${encodeURIComponent(resume)}`);
+      return;
+    }
+    if (recording.viewerInMatch) {
+      setLocation(`/m/${encodeURIComponent(code)}`);
+      return;
+    }
+    try {
+      await joinMatch.mutateAsync({ rsvp: "in" });
+      setLocation(canClaim && recording.hasTracking
+        ? `/find/${recording.id}`
+        : `/m/${encodeURIComponent(code)}`);
+    } catch (error) {
+      toast({
+        title: error instanceof MatchApiError ? error.message : (locale === "ar" ? "تعذّر الانضمام للماتش" : "Could not join this match"),
+        variant: "destructive",
+      });
+    }
+  }, [activeRecording, activeVideo?.guid, canClaim, guid, isGuest, joinMatch, locale, setLocation, toast, user]);
+
+  useEffect(() => {
+    if (searchParams.get("join") !== "1" || authLoading || !user || isGuest || !activeRecording?.matchCode) return;
+    const attemptKey = `${activeRecording.id}:${activeRecording.matchCode}`;
+    if (joinAttemptedRef.current === attemptKey) return;
+    joinAttemptedRef.current = attemptKey;
+    void joinThisMatch();
+  }, [activeRecording, authLoading, isGuest, joinThisMatch, searchParams, user]);
 
   // Group videos by ISO date
   const videosByDate = useMemo(() => {
@@ -679,6 +747,13 @@ export default function FieldDetail() {
             onPlaybackStart={viewTracking.onPlaybackStart}
             onPlaybackProgress={viewTracking.onPlaybackProgress}
             layout="overlay"
+            joinAction={activeRecording?.matchCode ? {
+              label: activeRecording.viewerInMatch
+                ? (locale === "ar" ? "افتح الماتش" : "Open my match")
+                : (locale === "ar" ? "انضم للماتش" : "Join this match"),
+              onClick: () => void joinThisMatch(),
+              disabled: joinMatch.isPending,
+            } : undefined}
             canSave={Boolean(user) && !isGuest}
             onClose={() => {
               viewTracking.flush();
