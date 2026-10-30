@@ -73,7 +73,7 @@ export type RecordingPlay = {
 };
 
 /** Bumped whenever what is derived here changes, so cached results are rebuilt. */
-const DERIVE_VERSION = 6;
+const DERIVE_VERSION = 7; // 7: bibs judged by their place on the colour plane (bibCore)
 
 const MAX_CACHED = 6;
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
