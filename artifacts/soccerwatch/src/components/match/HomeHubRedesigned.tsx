@@ -29,8 +29,8 @@ const words = {
     inviteWhatsApp: "Invite on WhatsApp", how: "How it works", every: (n: number) => `EVERY ${n}TH GAME FREE`,
     toGo: (n: number) => `${n} paid games to go`, waiting: "Waiting on you", answer: "Answer", vote: "Vote",
     numbers: "Your numbers", beta: "BETA", noTime: "That time is already being recorded. Pick another time.",
-    field: "Field", date: "Date", start: "Start time", hours: "Hours", record: "Record", openMatch: "Open match", deduction: (n: string) => `Free match deduction: −${n} JOD`, pay: (n: string) => `Pay ${n} JOD with CliQ`,
-    confirmFree: "Confirm, it's free", choose: "Choose a time", booked: "Booking confirmed",
+    field: "Field", date: "Date", start: "Start time", hours: "Duration", custom: "Custom", customMinutes: "Duration in minutes", rate: (d: string, n: number, p: string) => `${d} · ${n} billable × ${p} JOD`, record: "Record", openMatch: "Open match", deduction: (n: string) => `Free match deduction: −${n} JOD`, pay: (n: string) => `Pay ${n} JOD with CliQ`,
+    confirmFree: "Confirm, it's free", choose: "Choose a time", invalidDuration: "Choose a duration in 30-minute steps.", booked: "Booking confirmed",
     mute: "Mute highlight", unmute: "Unmute highlight", language: "Switch language to Arabic",
   },
   ar: {
@@ -44,8 +44,8 @@ const words = {
     inviteWhatsApp: "اعزمهم عالواتساب", how: "كيف بتشتغل؟", every: (n: number) => `كل ${n} مباريات، وحدة ببلاش`,
     toGo: (n: number) => `باقي ${n} مباريات مدفوعة`, waiting: "مستنيين ردّك", answer: "ردّ", vote: "صوّت",
     numbers: "أرقامك", beta: "تجريبي", noTime: "هالوقت محجوز للتسجيل. اختار وقت ثاني.",
-    field: "الملعب", date: "اليوم", start: "وقت البداية", hours: "الساعات", record: "سجّل", openMatch: "افتح المباراة", deduction: (n: string) => `خصم المباراة المجانية: −${n} د.أ`, pay: (n: string) => `ادفع ${n} د.أ بكليك`,
-    confirmFree: "أكد، الحجز مجاني", choose: "اختار وقت", booked: "تم تأكيد الحجز",
+    field: "الملعب", date: "اليوم", start: "وقت البداية", hours: "المدة", custom: "مخصص", customMinutes: "المدة بالدقائق", rate: (d: string, n: number, p: string) => `${d} · ${n} ساعات × ${p} د.أ`, record: "سجّل", openMatch: "افتح المباراة", deduction: (n: string) => `خصم المباراة المجانية: −${n} د.أ`, pay: (n: string) => `ادفع ${n} د.أ بكليك`,
+    confirmFree: "أكد، الحجز مجاني", choose: "اختار وقت", invalidDuration: "اختار مدة بمضاعفات نص ساعة.", booked: "تم تأكيد الحجز",
     mute: "اكتم الصوت", unmute: "شغّل الصوت", language: "بدّل اللغة للإنجليزي",
   },
 } as const;
@@ -273,10 +273,15 @@ function RecordSheet({ open, onOpenChange, recent, s, locale }: { open: boolean;
   const [fieldId, setFieldId] = useState<number | null>(null);
   const [date, setDate] = useState(days[0]);
   const [start, setStart] = useState<number | null>(null);
-  const [hours, setHours] = useState(1);
+  const [durationChoice, setDurationChoice] = useState<number | "custom">(60);
+  const [customMinutes, setCustomMinutes] = useState("150");
   const [result, setResult] = useState<BookingResult | null>(null);
   const price = fields.data?.pricePerHourFils ?? 0;
-  const maxHours = Math.max(1, Math.min(3, Math.floor((fields.data?.maxMinutes ?? 180) / 60)));
+  const maxMinutes = fields.data?.maxMinutes ?? 180;
+  const maxCustomMinutes = Math.floor(maxMinutes / 30) * 30;
+  const durationMinutes = durationChoice === "custom" ? Number(customMinutes) : durationChoice;
+  const validDuration = Number.isInteger(durationMinutes) && durationMinutes >= 30 && durationMinutes <= maxMinutes && durationMinutes % 30 === 0;
+  const billableHours = validDuration ? Math.ceil(durationMinutes / 60) : 0;
   useEffect(() => {
     if (!open) return;
     const match = prior;
@@ -292,17 +297,20 @@ function RecordSheet({ open, onOpenChange, recent, s, locale }: { open: boolean;
     setFieldId(match?.field.id ?? fieldList[0]?.id ?? null);
     setDate(passed ? days[0] : suggestedDate);
     setStart(match && !passed ? time : null);
-    setHours(match ? Math.min(maxHours, Math.max(1, Math.ceil(minutes / 60))) : 1);
+    const preferredMinutes = match ? minutes : 60;
+    const safeMinutes = Math.min(maxCustomMinutes, Math.max(30, Math.round(preferredMinutes / 30) * 30));
+    setCustomMinutes(String(safeMinutes));
+    setDurationChoice([60, 90, 120].includes(safeMinutes) ? safeMinutes : "custom");
     setResult(null);
-  }, [open, prior, fieldList, days, maxHours]);
+  }, [open, prior, fieldList, days, maxMinutes]);
   const free = fields.data?.freeMatch;
   const useFree = Boolean(free?.reward);
-  const total = Math.max(0, hours - (useFree ? free!.reward!.freeHours : 0)) * price;
+  const total = validDuration ? Math.max(0, billableHours - (useFree ? free!.reward!.freeHours : 0)) * price : 0;
   const times = Array.from({ length: 34 }, (_, i) => 7 * 60 + i * 30);
   const submit = async () => {
-    if (!fieldId || start == null) return;
+    if (!fieldId || start == null || !validDuration) return;
     if (!user || isGuest) return setLocation(`/sign-up?redirect_url=${encodeURIComponent("/home?record=1")}`);
-    const endMinute = start + hours * 60;
+    const endMinute = start + durationMinutes;
     const endDate = endMinute >= 1440 ? (() => { const d = new Date(`${date}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + 1); return d.toISOString().slice(0, 10); })() : date;
     try { setResult(await create.mutateAsync({ fieldId, startLocal: `${date} ${String(Math.floor(start / 60)).padStart(2, "0")}:${String(start % 60).padStart(2, "0")}`, endLocal: `${endDate} ${String(Math.floor((endMinute % 1440) / 60)).padStart(2, "0")}:${String(endMinute % 60).padStart(2, "0")}`, title: null, payWith: "cliq", useFreeMatch: useFree || undefined })); }
     catch (e) { const msg = e instanceof MatchApiError && /record|taken|already/i.test(e.message) ? s.noTime : copy.error; toast({ title: msg, variant: "destructive" }); }
@@ -312,10 +320,15 @@ function RecordSheet({ open, onOpenChange, recent, s, locale }: { open: boolean;
     {result ? <><div className="mt-4 rounded-2xl border border-line bg-raised p-4">{result.method === "free" ? <p>{s.confirmFree}</p> : result.method === "field" ? <FieldPaymentPanel amountFils={result.amountFils} reference={result.reference} /> : <PaymentPanel amountFils={result.amountFils} cliqAlias={result.cliqAlias} reference={result.reference} />}</div><Link href={`/m/${result.code}`} className="mt-3 flex min-h-11 items-center justify-center rounded-full border border-line text-sm font-bold">{s.openMatch}</Link></> : <>
       <label className="mt-4 block text-xs text-muted-text">{s.field}<select value={fieldId ?? ""} onChange={(e) => setFieldId(Number(e.target.value))} className="mt-1 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-text">{fieldList.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
       <p className="mt-4 text-xs text-muted-text">{s.date}</p><div className="mt-2 grid grid-cols-7 gap-1">{days.map((d, i) => <button key={d} onClick={() => { setDate(d); setStart(null); }} className={cn("min-h-11 rounded-lg border text-[10px]", date === d ? "border-turf bg-turf text-void" : "border-line bg-surface")}>{i === 0 ? (locale === "ar" ? "اليوم" : "Today") : dayLabel(Date.parse(`${d}T12:00:00Z`), locale)}</button>)}</div>
-      <p className="mt-4 text-xs text-muted-text">{s.hours}</p><div className="mt-2 grid grid-cols-3 gap-2">{[1,2,3].filter((h) => h <= maxHours).map((h) => <button key={h} onClick={() => setHours(h)} className={cn("min-h-10 rounded-xl border text-sm", hours === h ? "border-turf bg-turf/10 text-turf" : "border-line bg-surface")}>{h}</button>)}</div>
+       <p className="mt-4 text-xs text-muted-text">{s.hours}</p>
+       <div className="mt-2 grid grid-cols-4 gap-2">
+         {[60, 90, 120].filter((m) => m <= maxMinutes).map((m) => <button key={m} type="button" onClick={() => setDurationChoice(m)} className={cn("min-h-10 rounded-xl border px-1 text-xs", durationChoice === m ? "border-turf bg-turf/10 text-turf" : "border-line bg-surface")}>{copy.book.minutes(m)}</button>)}
+         <button type="button" onClick={() => { if (durationChoice !== "custom") setCustomMinutes(String(Math.min(maxCustomMinutes, 150))); setDurationChoice("custom"); }} className={cn("min-h-10 rounded-xl border px-1 text-xs", durationChoice === "custom" ? "border-turf bg-turf/10 text-turf" : "border-line bg-surface")}>{s.custom}</button>
+       </div>
+       {durationChoice === "custom" && <label className="mt-3 block text-xs text-muted-text">{s.customMinutes}<input type="number" inputMode="numeric" min={30} max={maxCustomMinutes} step={30} value={customMinutes} onChange={(e) => setCustomMinutes(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm text-text" dir="ltr" /></label>}
       <p className="mt-4 text-xs text-muted-text">{s.start}</p><div className="mt-2 grid grid-cols-4 gap-2" dir="ltr">{times.filter((m) => { if (date > today) return true; const nowText = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Amman", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date()); return m >= Number(nowText.slice(0, 2)) * 60 + Number(nowText.slice(3, 5)); }).map((m) => <button key={m} onClick={() => setStart(m)} className={cn("min-h-10 rounded-lg border font-mono text-xs", start === m ? "border-floodlight bg-floodlight text-void" : "border-line bg-surface")}>{String(Math.floor(m / 60)).padStart(2,"0")}:{String(m%60).padStart(2,"0")}</button>)}</div>
-      <div className="mt-4 flex items-center justify-between rounded-2xl border border-line bg-raised p-3"><div className="min-w-0"><span className="block text-xs text-muted-text">{s.hours} × {formatJod(price)} JOD</span>{useFree && <span className="block text-xs text-muted-text">{s.deduction(formatJod(Math.min(hours, free!.reward!.freeHours) * price))}</span>}</div><b dir="ltr" className="font-mono">{formatJod(total)} JOD</b></div>
-      <button disabled={start == null || create.isPending || fields.isLoading || !fields.data?.enabled || !fieldList.length} onClick={() => void submit()} className="mt-3 min-h-12 w-full rounded-full bg-floodlight font-display font-extrabold text-void disabled:opacity-40">{total === 0 ? s.confirmFree : s.pay(formatJod(total))}</button>
+       <div className="mt-4 flex items-center justify-between rounded-2xl border border-line bg-raised p-3"><div className="min-w-0"><span className="block text-xs text-muted-text">{validDuration ? s.rate(copy.book.minutes(durationMinutes), billableHours, formatJod(price)) : s.invalidDuration}</span>{useFree && validDuration && <span className="block text-xs text-muted-text">{s.deduction(formatJod(Math.min(billableHours, free!.reward!.freeHours) * price))}</span>}</div><b dir="ltr" className="font-mono">{formatJod(total)} JOD</b></div>
+       <button disabled={!validDuration || start == null || create.isPending || fields.isLoading || !fields.data?.enabled || !fieldList.length} onClick={() => void submit()} className="mt-3 min-h-12 w-full rounded-full bg-floodlight font-display font-extrabold text-void disabled:opacity-40">{total === 0 ? s.confirmFree : s.pay(formatJod(total))}</button>
     </>}
   </SheetContent></Sheet>;
 }
