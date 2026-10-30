@@ -149,3 +149,142 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 const status = (code = state.ctx!.room.code) => request(app).get(`/api/matches/${code}/early-play`);
+const video = (range?: string, code = state.ctx!.room.code) => {
+  const r = request(app).get(`/api/matches/${code}/early-play/video`).buffer(true).parse((res, cb) => {
+    const chunks: Buffer[] = [];
+    res.on("data", (c: Buffer) => chunks.push(c));
+    res.on("end", () => cb(null, Buffer.concat(chunks)));
+  });
+  return range ? r.set("Range", range) : r;
+};
+const bunnyCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).includes("video.bunnycdn.com")).length;
+
+describe("early-play status: states", () => {
+  it("ready when the footage request is already ready", async () => {
+    state.ctx = ctx({ status: "ready" });
+    const r = await status();
+    expect(r.status).toBe(200);
+    expect(r.body.state).toBe("ready");
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+  it("ready when the footage request is partial", async () => {
+    state.ctx = ctx({ status: "partial" });
+    expect((await status()).body.state).toBe("ready");
+  });
+  it("waiting when vps1 has no job yet", async () => {
+    state.ctx = ctx({ vpsJobId: null });
+    const r = await status();
+    expect(r.body).toMatchObject({ state: "waiting" });
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+  it("waiting when the videoId exists but the upload has not finished", async () => {
+    state.job = job({ status: "running", phase: "upload", uploaded: false, videoId: GUID });
+    const r = await status();
+    expect(r.body).toMatchObject({ state: "waiting", phase: "upload" });
+    expect(bunnyCalls()).toBe(0);
+  });
+  it("waiting when there is no videoId at all", async () => {
+    state.job = job({ status: "running", phase: "download", percent: 40 });
+    expect((await status()).body).toMatchObject({ state: "waiting", phase: "download" });
+  });
+  it("early once uploaded:true, with streamUrl, codec, progress and duration", async () => {
+    const r = await status();
+    expect(r.body).toMatchObject({
+      state: "early",
+      streamUrl: `/api/matches/${state.ctx!.room.code}/early-play/video`,
+      codec: "hvc1",
+      encodeProgress: 37,
+      durationSec: 1801,
+    });
+  });
+  it("early for an old job with no `uploaded` field in phase encode", async () => {
+    state.job = job({ status: "running", phase: "encode", videoId: GUID });
+    expect((await status()).body.state).toBe("early");
+  });
+  it("an old job with no `uploaded` field in phase upload is still waiting", async () => {
+    state.job = job({ status: "running", phase: "upload", videoId: GUID });
+    expect((await status()).body.state).toBe("waiting");
+  });
+  it("uses the gapstore status path for gs- jobs", async () => {
+    state.ctx = ctx({ vpsJobId: "gs-31afa0d9b27b" });
+    await status();
+    expect(vi.mocked(controlFetch).mock.calls[0][0]).toBe("/gapstore/camera1/pull/gs-31afa0d9b27b");
+  });
+  it("encodeProgress is clamped to 0..100", async () => {
+    state.job = uploadedJob({ encodeProgress: 250 });
+    expect((await status()).body.encodeProgress).toBe(100);
+  });
+});
+
+describe("early-play status: Bunny outcomes", () => {
+  it("Bunny status 4 → ready", async () => {
+    state.play = earlyPlay({ status: 4 });
+    expect((await status()).body.state).toBe("ready");
+  });
+  it.each([5, 6])("Bunny status %i → bunny_failed", async (s) => {
+    state.play = earlyPlay({ status: s });
+    expect((await status()).body).toMatchObject({ state: "unavailable", reasonCode: "bunny_failed" });
+  });
+  it("allowEarlyPlay false → early_play_off", async () => {
+    state.play = earlyPlay({}, { allowEarlyPlay: false });
+    expect((await status()).body).toMatchObject({ state: "unavailable", reasonCode: "early_play_off" });
+  });
+  it("originalUrl null (uploaded before the setting) → early_play_off", async () => {
+    state.play = earlyPlay({}, { originalUrl: null });
+    expect((await status()).body.reasonCode).toBe("early_play_off");
+  });
+  it("originalUrl on a foreign host is refused → early_play_off", async () => {
+    state.play = earlyPlay({}, { originalUrl: `https://evil.example.com/${GUID}/original` });
+    expect((await status()).body.reasonCode).toBe("early_play_off");
+  });
+  it("originalUrl for a different guid is refused → early_play_off", async () => {
+    state.play = earlyPlay({}, { originalUrl: "https://vz-03425ccd-3d0.b-cdn.net/other-guid/original" });
+    expect((await status()).body.reasonCode).toBe("early_play_off");
+  });
+  it("Bunny 404 → bunny_not_found", async () => {
+    state.play = playJson("", 404);
+    expect((await status()).body).toMatchObject({ state: "unavailable", reasonCode: "bunny_not_found" });
+  });
+  it("Bunny 500 → bunny_error", async () => {
+    state.play = playJson({ error: "boom" }, 500);
+    expect((await status()).body.reasonCode).toBe("bunny_error");
+  });
+  it("Bunny timeout / network error → bunny_error", async () => {
+    state.play = async () => { throw new DOMException("timed out", "TimeoutError"); };
+    expect((await status()).body.reasonCode).toBe("bunny_error");
+  });
+  it("Bunny bad JSON → bunny_error", async () => {
+    state.play = playJson("<html>not json</html>");
+    expect((await status()).body.reasonCode).toBe("bunny_error");
+  });
+  it("Bunny JSON array → bunny_error", async () => {
+    state.play = playJson([1, 2]);
+    expect((await status()).body.reasonCode).toBe("bunny_error");
+  });
+  it("Bunny with no numeric status → bunny_error", async () => {
+    state.play = earlyPlay({ status: "3" });
+    expect((await status()).body.reasonCode).toBe("bunny_error");
+  });
+});
+
+describe("early-play status: vps1 outcomes", () => {
+  it("vps1 throws (unreachable / timeout) → vps_unreachable", async () => {
+    state.job = async () => { throw new Error("ETIMEDOUT"); };
+    expect((await status()).body).toMatchObject({ state: "unavailable", reasonCode: "vps_unreachable" });
+  });
+  it("vps1 404 → vps_unreachable", async () => {
+    state.job = job({ detail: "Not Found" }, 404);
+    expect((await status()).body.reasonCode).toBe("vps_unreachable");
+  });
+  it("vps1 non-JSON body → vps_unreachable", async () => {
+    state.job = job("Internal Server Error", 200);
+    expect((await status()).body.reasonCode).toBe("vps_unreachable");
+  });
+  it("vps1 500 → vps_unreachable", async () => {
+    state.job = job({ error: "x" }, 500);
+    expect((await status()).body.reasonCode).toBe("vps_unreachable");
+  });
+  it("job cancelled on vps1 → request_cancelled", async () => {
+    state.job = job({ status: "cancelled", phase: "failed" });
+    expect((await status()).body).toMatchObject({ state: "unavailable", reasonCode: "request_cancelled" });
+  });
