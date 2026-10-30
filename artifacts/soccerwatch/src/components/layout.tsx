@@ -121,7 +121,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <nav
           className={cn(
             isWholeGameClaim ? "fixed" : "absolute",
-            "bottom-3 start-3 end-3 z-50 mx-auto grid h-[66px] max-w-[408px] grid-flow-col auto-cols-fr items-center gap-0.5 rounded-[22px] border border-line bg-raised p-1.5 pb-safe text-muted-foreground shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+            "bottom-3 start-3 end-3 z-50 mx-auto grid h-[66px] max-w-[408px] grid-flow-col auto-cols-fr items-center gap-0.5 rounded-[22px] border border-line bg-raised p-1.5 text-muted-foreground shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
           )}
         >
           <NavItem

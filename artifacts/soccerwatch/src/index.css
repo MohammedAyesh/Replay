@@ -1498,8 +1498,37 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 }
 
 @media (max-width: 1023px) {
+  .app-shell--player-nav > header.replay-header {
+    position: fixed;
+    inset-block-start: max(12px, env(safe-area-inset-top));
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    z-index: 60;
+    width: auto;
+    max-width: 416px;
+    margin-inline: auto;
+  }
+
+  .app-shell--player-nav > main {
+    margin-block-start: calc(84px + max(0px, env(safe-area-inset-top) - 12px));
+  }
+
   .app-shell--player-nav > nav {
     position: fixed;
+    inset-block-end: calc(12px + env(safe-area-inset-bottom));
+  }
+
+  .app-shell--player-nav > main :is(.field-detail-recordings, .admin-page-content) {
+    padding-block-end: max(6rem, calc(78px + env(safe-area-inset-bottom)));
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .app-shell--player-nav > header.replay-header {
+    inset-block-start: max(18px, env(safe-area-inset-top));
+    left: max(24px, env(safe-area-inset-left));
+    right: max(24px, env(safe-area-inset-right));
+    max-width: 1320px;
   }
 }
 
