@@ -440,3 +440,87 @@ describe("early-play video proxy", () => {
     expect(r.headers["content-range"]).toBe(`bytes 0-${len - 1}/${state.original.length}`);
     expect((r.body as Buffer).equals(state.original.subarray(0, len))).toBe(true);
   });
+  it("a bounded range larger than the cap is capped too", async () => {
+    const r = await video(`bytes=1000-${30 * 1024 * 1024}`);
+    expect(r.status).toBe(206);
+    expect((r.body as Buffer).length).toBe(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
+    expect(r.headers["content-range"]).toBe(`bytes 1000-${1000 + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${state.original.length}`);
+  });
+  it("a mid-file range returns the right bytes", async () => {
+    const start = 20 * 1024 * 1024 + 4096;
+    const r = await video(`bytes=${start}-${start + 8191}`);
+    expect(r.status).toBe(206);
+    expect((r.body as Buffer).equals(state.original.subarray(start, start + 8192))).toBe(true);
+  });
+  it("the last bytes of the file", async () => {
+    const total = state.original.length;
+    const r = await video(`bytes=${total - 10}-`);
+    expect(r.status).toBe(206);
+    expect((r.body as Buffer).length).toBe(10);
+    expect(r.headers["content-range"]).toBe(`bytes ${total - 10}-${total - 1}/${total}`);
+  });
+  it("start beyond the end → 416", async () => {
+    const r = await video(`bytes=${state.original.length + 5}-`);
+    expect(r.status).toBe(416);
+  });
+  it.each(["bytes=abc", "bytes=5-2", "items=0-1", "bytes=0-1,5-6"])("malformed Range %s → 416", async (range) => {
+    const r = await video(range);
+    expect(r.status).toBe(416);
+  });
+  it("upstream 403 → 403 with a plain message, no stack trace", async () => {
+    state.originalStatus = 403;
+    const r = await video("bytes=0-1");
+    expect(r.status).toBe(403);
+    expect(String(r.body)).not.toMatch(/at .*\.ts|Error:/);
+  });
+  it("upstream 404 → 404 'Original video not found'", async () => {
+    state.originalStatus = 404;
+    const r = await video("bytes=0-1");
+    expect(r.status).toBe(404);
+    expect(String(r.body)).toContain("Original video not found");
+  });
+  it("Bunny reaching status 4 meanwhile → 409 {state: ready}", async () => {
+    state.play = earlyPlay({ status: 4 });
+    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`).set("Range", "bytes=0-1");
+    expect(r.status).toBe(409);
+    expect(r.body).toEqual({ state: "ready" });
+  });
+  it("not early yet → 503 with the reason, never the bytes", async () => {
+    state.job = job({ status: "running", phase: "upload", uploaded: false, videoId: GUID });
+    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`).set("Range", "bytes=0-1");
+    expect(r.status).toBe(503);
+    expect(r.body.state).toBe("waiting");
+  });
+  it("a cancelled job → 404", async () => {
+    state.job = job({ status: "cancelled" });
+    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`).set("Range", "bytes=0-1");
+    expect(r.status).toBe(404);
+  });
+  it("sends the Referer Bunny's pull zone needs, and never the client's own headers", async () => {
+    await video("bytes=0-1").set("Cookie", "session=secret");
+    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/original"))!;
+    const headers = new Headers((call[1] as RequestInit).headers);
+    expect(headers.get("referer")).toMatch(/^https:\/\/.+\.b-cdn\.net\/$/);
+    expect(headers.get("cookie")).toBeNull();
+  });
+  it("only ever fetches the guid Bunny reported, whatever the client sends", async () => {
+    await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video?url=https://evil.example.com/x`).set("Range", "bytes=0-1");
+    const urls = fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes(".b-cdn.net"));
+    expect(urls.every((u) => u === ORIGINAL)).toBe(true);
+  });
+  it("a client that disconnects aborts the upstream fetch", async () => {
+    state.hangAfterFirstChunk = true;
+    const server = app.listen(0);
+    const { port } = server.address() as AddressInfo;
+    await new Promise<void>((resolve) => {
+      const req = http.get({ port, path: `/api/matches/${state.ctx!.room.code}/early-play/video`, headers: { Range: "bytes=0-" } }, (res) => {
+        res.once("data", () => { req.destroy(); resolve(); });
+      });
+      req.on("error", () => resolve());
+    });
+    await new Promise((r) => setTimeout(r, 100));
+    server.close();
+    expect(state.upstreamSignals.length).toBeGreaterThan(0);
+    expect(state.upstreamSignals.some((s) => s.aborted)).toBe(true);
+  });
+});
