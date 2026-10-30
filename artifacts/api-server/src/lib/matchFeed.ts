@@ -60,6 +60,7 @@ import {
   bibPick,
   bibObservedKits,
   isBibKit,
+  kitAcrossBib,
   teamDribbles,
   teamStats,
   type ClaimedPart,
@@ -268,7 +269,10 @@ function cacheFingerprints(
       // 4: goals timed at the ball's entry into the mouth, one per restart.
       // 5: goals count only once a player confirms them; own goals; dribbles
       //    need the beaten man within 3 m, passes over 30 m/s are tracker jumps.
-      version: 5,
+      // 6: bib games split on the bib's place on the colour plane, the side
+      //    across from a measured claimant is the other side of the bib line,
+      //    and team totals count the game, not the warm-up (76P7TR).
+      version: 6,
       matchId,
       matchPlayerId: player.id,
       userId: player.userId,
@@ -359,6 +363,17 @@ const SIDES = ["A", "B", "C"] as const;
 /** A two-side split with fewer than minShare of the touches on one side is not shown. */
 export const TEAM_SPLIT = { minTouches: 100, minShare: 0.05 } as const;
 
+/**
+ * Whether a moment on the recording timeline is inside the game: the bundle's
+ * "game" phases when it has them (the warm-up, breaks and the time after are
+ * left out), else every moment.
+ */
+export function playedOnly(play: Pick<RecordingPlay, "phases">): (t: number) => boolean {
+  const games = (play.phases ?? []).filter((phase) => phase.kind === "game");
+  if (!games.length) return () => true;
+  return (t) => games.some((phase) => t >= phase.start && t < phase.end);
+}
+
 function roomColour(room: MatchRoom, side: string): string {
   return side === "A" ? room.teamAColor : side === "B" ? room.teamBColor : room.teamCColor;
 }
@@ -395,7 +410,16 @@ function sideKits(room: MatchRoom, roster: MatchPlayer[], play: RecordingPlay, r
     // the light/dark 2-means put the bibs with the other side's white shirts.
     const bibKits = play.bib ? bibObservedKits(play.sidecars, play.bib, segs) : null;
     const observed = bibKits ? { kits: bibKits } : observedTeamKits(play.sidecars, segs);
-    if (observed) {
+    // 2026-10-30, 76P7TR (recording 403): pink bibs against white, black and red
+    // shirts, one claimant in white on side B. "The observed shirt farthest from
+    // his" was the non-bib average (dark grey), not the bib, so both sides fell
+    // outside the bib line and the match split white against dark: 77% to 23%.
+    // In a bib game the unmeasured side is whoever is across the bib line.
+    const measuredSide = kits.A?.measured ? "A" : kits.B?.measured ? "B" : null;
+    if (bibKits && play.bib && measuredSide) {
+      const other = measuredSide === "A" ? "B" : "A";
+      kits[other] = { lab: kitAcrossBib(kits[measuredSide].lab, play.bib, bibKits), measured: false };
+    } else if (observed) {
       const side = (key: "A" | "B") => ({
         measured: kits[key]?.measured ? kits[key].lab : null,
         swatch: hexToLab(roomColour(room, key)),
@@ -739,17 +763,25 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
     hasBall ||= play.hasBall;
     hasPitch ||= play.hasPitch;
     const events = passEvents(touches, pick);
-    if (pick && kits && touches.length) {
+    // Team totals count the game itself, not the warm-up or a break: 76P7TR's
+    // first 25 minutes were a kickabout (game from 1514 s) and counted in full.
+    // Confirmed goals always count. Without detected phases, everything counts.
+    const played = playedOnly(play);
+    const teamTouches = touches.filter((t) => played(t.t));
+    const teamDribbleRows = dribbles.filter((d) => played(d.t0));
+    const teamShots = shots.filter((x) => played(x.t));
+    const teamEvents = teamTouches.length === touches.length ? events : passEvents(teamTouches, pick);
+    if (pick && kits && teamTouches.length) {
       const sideNames = ctx.room.teamCount >= 3 && !game ? ["A", "B", "C"] : [game?.teamX ?? "A", game?.teamY ?? "B"];
       const multi = ctx.room.teamCount >= 3 && !game
-        ? multiSideStats(touches, dribbles, goals, shots, play.kits, kits, sideNames)
+        ? multiSideStats(teamTouches, teamDribbleRows, goals, teamShots, play.kits, kits, sideNames)
         : null;
       const metricSides = multi ? sideNames : [game?.teamX ?? "A", game?.teamY ?? "B"];
       const metricColours = metricSides.map((side) => kits[side]?.lab ?? hexToLab(roomColour(ctx.room, side)) ?? pick.a);
       const metricMeasured = metricSides.map((side) => kits[side]?.measured ?? false);
-      const s: any = multi ?? teamStats(touches, events, pick);
-      const dr: any = multi ?? teamDribbles(dribbles, play.kits, pick);
-      const sh = multi?.shots ?? perSide(shots, pick);
+      const s: any = multi ?? teamStats(teamTouches, teamEvents, pick);
+      const dr: any = multi ?? teamDribbles(teamDribbleRows, play.kits, pick);
+      const sh = multi?.shots ?? perSide(teamShots, pick);
       const gl = multi?.goals ?? perSide(goals, pick);
       const prev = team as MatchTeamStats | null;
       team = prev
