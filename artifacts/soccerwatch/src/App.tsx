@@ -61,6 +61,9 @@ import WeeklyHighlightPage from "@/pages/weekly-highlight";
 const MatchReportDevPreview = import.meta.env.DEV
   ? lazy(() => import("@/pages/match-report-dev-preview"))
   : null;
+const EarlyPlayDevPreview = import.meta.env.DEV
+  ? lazy(() => import("@/pages/early-play-dev-preview"))
+  : null;
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -610,6 +613,11 @@ function AppRouter() {
         {MatchReportDevPreview && (
           <Route path="/__dev/match-report">
             <Suspense fallback={null}><MatchReportDevPreview /></Suspense>
+          </Route>
+        )}
+        {EarlyPlayDevPreview && (
+          <Route path="/__dev/early-play">
+            <Suspense fallback={null}><EarlyPlayDevPreview /></Suspense>
           </Route>
         )}
         <Route path="/m/:code" component={MatchPage} />

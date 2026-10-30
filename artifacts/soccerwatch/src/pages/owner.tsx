@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { HlsPlayer } from "@/components/HlsPlayer";
+import { EarlyPlay } from "@/components/match/EarlyPlay";
 import { StreamingPanel } from "@/components/StreamingPanel";
 import { VarPlayer } from "@/components/var-player/VarPlayer";
 import { Button } from "@/components/ui/button";
@@ -1197,6 +1198,9 @@ function RequestCard({
         <p className="text-xs leading-5 text-muted-foreground" data-testid={`message-owner-request-${request.id}`}>
           {isScheduled ? `${message} ${request.startLocal.slice(11)}` : statusMessage}
         </p>
+        {isProgressing && request.match?.code && request.academyName === null && (
+          <EarlyPlay code={request.match.code} locale={locale} compact />
+        )}
         {isReady && request.academyName === null && (
           <p className="mt-2 text-[11px] font-medium text-foreground" data-testid={`summary-owner-request-${request.id}`}>
             {copy.playerLabel} · {requestedDuration} · {copy.charged} {formatJod(request.amountFils)} {copy.currency}

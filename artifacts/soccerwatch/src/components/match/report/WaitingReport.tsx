@@ -13,6 +13,7 @@ import { Num, Section } from "./ReportParts";
 import { Disclosure } from "./StatsReport";
 import { SquadBlock, type MatchReportSlots } from "./MatchReport";
 import { waitingSteps } from "./waiting-steps";
+import { EarlyPlay } from "@/components/match/EarlyPlay";
 
 type Copy = MatchStrings & { locale: "en" | "ar" };
 type R = ReportStrings & { locale: "en" | "ar" };
@@ -93,6 +94,7 @@ export function WaitingReport({ room, copy, now, colors, names, replay, onShare,
                   </div>
                   {step.progressPercent !== undefined && <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised"><span className="block h-full bg-turf" style={{ width: `${step.progressPercent}%` }} /></div>}
                   <p className="mt-2 text-xs leading-5 text-muted-text">{r.processingDesc}</p>
+                  <EarlyPlay code={room.code} locale={copy.locale} compact />
                   <div className="mt-3 border-t border-line pt-3">
                     <label className="flex min-h-11 items-center gap-2 text-sm font-semibold">
                       <input type="checkbox" checked={notify} onChange={(event) => setNotifyEnabled(event.target.checked)} className="h-4 w-4 accent-turf" />

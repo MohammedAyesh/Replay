@@ -126,8 +126,7 @@ async function bunnyPlay(videoId: string): Promise<
   }
   if (response.status === 404) return { ok: false, reasonCode: "bunny_not_found", reason: "Bunny no longer has this video." };
   if (!response.ok) {
-    return { ok: false, reasonCode: response.status === 5 || response.status === 6 ? "bunny_failed" : "bunny_error",
-      reason: response.status === 5 || response.status === 6 ? "Bunny could not encode this video." : `Bunny returned HTTP ${response.status}.` };
+    return { ok: false, reasonCode: "bunny_error", reason: `Bunny returned HTTP ${response.status}.` };
   }
   let body: Record<string, unknown>;
   try {
@@ -246,8 +245,10 @@ async function getCachedResult(requestId: number, ctx: NonNullable<Awaited<Retur
   return item;
 }
 
-function directHost(req: Request): boolean {
-  return req.get("host")?.trim().toLowerCase() === "replayjo.com";
+export function isDirectEarlyPlayHost(hostHeader?: string, forwardedHeader?: string, trustProxy = false): boolean {
+  const forwarded = trustProxy ? forwardedHeader?.split(",", 1)[0]?.trim() : undefined;
+  const host = (forwarded || hostHeader || "").trim().toLowerCase();
+  return host === "replayjo.com";
 }
 
 function logNonEarly(req: Request, code: string, result: PlayResult): void {
@@ -261,7 +262,7 @@ router.get("/matches/:code/early-play", async (req, res): Promise<void> => {
   try {
     const item = await getCachedResult(ctx.request.id, ctx);
     const result = { ...item.result };
-    if (result.state === "early" && directHost(req)) result.directUrl = item.metadata?.originalUrl ?? undefined;
+    if (result.state === "early" && isDirectEarlyPlayHost(req.get("host"), req.get("x-forwarded-host"), Boolean(req.app.get("trust proxy")))) result.directUrl = item.metadata?.originalUrl ?? undefined;
     logNonEarly(req, ctx.room.code, result);
     res.json(result);
   } catch {

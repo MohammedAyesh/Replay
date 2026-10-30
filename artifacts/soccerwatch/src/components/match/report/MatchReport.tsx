@@ -35,6 +35,7 @@ import { shouldShowWaiting } from "./waiting-steps";
 import { useClientSettings } from "@/lib/client-settings";
 import { resolveReportLayout } from "@/lib/report-layout";
 import { useReportLayoutCopy } from "@/i18n/report-layout-strings";
+import { earlyPlayPositionKey } from "@/components/match/EarlyPlay";
 import {
   Disclosure,
   EveryoneSection,
@@ -96,6 +97,15 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
     const becameReady = !readyBefore.current.ready && room.footage.ready;
     readyBefore.current.ready = room.footage.ready;
     if (!becameReady) return;
+    try {
+      const position = Number(sessionStorage.getItem(earlyPlayPositionKey(room.code)));
+      if (room.footage.shareToken && Number.isFinite(position) && position >= 0) {
+        sessionStorage.removeItem(earlyPlayPositionKey(room.code));
+        const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
+        window.location.replace(`${basePath}/w/${encodeURIComponent(room.footage.shareToken)}?m=${encodeURIComponent(room.code)}&t=${Math.floor(position)}`);
+        return;
+      }
+    } catch { /* Browser storage may be disabled. */ }
     try {
       if (window.localStorage.getItem(waitingNotifyStorageKey(room.code)) !== "1") return;
     } catch { return; }
