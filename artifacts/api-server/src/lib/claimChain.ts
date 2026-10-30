@@ -854,6 +854,77 @@ export function normaliseChain(
   return merged;
 }
 
+/**
+ * Keep only the frames of a claimed chain that the identity board has not
+ * struck off. A parked or deleted piece (a referee, a spectator) is never a
+ * player, so a save cannot claim it either. Run on a normalised chain.
+ */
+export function withoutStruckOff(
+  chain: ChainPart[],
+  decisions: IdentityDecision[] | undefined,
+  tracksById: ReadonlyMap<string, Pick<Track, "id" | "startFrame" | "endFrame">>,
+): ChainPart[] {
+  if (!decisions?.length) return chain;
+  const out: ChainPart[] = [];
+  for (const part of chain) {
+    const track = tracksById.get(part.trackId);
+    if (!track) continue;
+    for (const range of survivingRanges(decisions, track)) {
+      const fromFrame = Math.max(part.fromFrame, range.fromFrame);
+      const toFrame = Math.min(part.toFrame, range.toFrame);
+      if (toFrame < fromFrame) continue;
+      const next: ChainPart = { ...part, fromFrame, toFrame };
+      if (next.reviewedThrough !== undefined) {
+        next.reviewedThrough = Math.min(Math.max(next.reviewedThrough, fromFrame), toFrame + 1);
+      }
+      out.push(next);
+    }
+  }
+  return out;
+}
+
+/**
+ * One person is on one track at a time.
+ *
+ * A save may name two tracks for the same frames: the page keeps both halves
+ * of a player the tracker followed twice, and nothing stopped a request from
+ * naming every track in the match. Credited twice, those frames count twice
+ * in distance and hand the claimant everyone's touches and goals. Longer
+ * parts win; a shorter part keeps only the frames no longer part covers.
+ * Run on a normalised chain; the result is sorted by frame.
+ */
+export function oneTrackAtATime(chain: ChainPart[]): ChainPart[] {
+  const byLength = [...chain].sort((a, b) =>
+    (b.toFrame - b.fromFrame) - (a.toFrame - a.fromFrame)
+    || a.fromFrame - b.fromFrame
+    || a.trackId.localeCompare(b.trackId));
+  // Frames already credited, as sorted disjoint [from, to] ranges.
+  const taken: Array<[number, number]> = [];
+  const out: ChainPart[] = [];
+  for (const part of byLength) {
+    let cursor = part.fromFrame;
+    const pieces: Array<[number, number]> = [];
+    for (const [a, b] of taken) {
+      if (b < cursor) continue;
+      if (a > part.toFrame) break;
+      if (a > cursor) pieces.push([cursor, a - 1]);
+      cursor = Math.max(cursor, b + 1);
+      if (cursor > part.toFrame) break;
+    }
+    if (cursor <= part.toFrame) pieces.push([cursor, part.toFrame]);
+    for (const [fromFrame, toFrame] of pieces) {
+      const next: ChainPart = { ...part, fromFrame, toFrame };
+      if (next.reviewedThrough !== undefined) {
+        next.reviewedThrough = Math.min(Math.max(next.reviewedThrough, fromFrame), toFrame + 1);
+      }
+      out.push(next);
+      taken.push([fromFrame, toFrame]);
+    }
+    taken.sort((x, y) => x[0] - y[0]);
+  }
+  return out.sort((a, b) => a.fromFrame - b.fromFrame || a.trackId.localeCompare(b.trackId));
+}
+
 export type ChainIdentity = {
   id: string;
   parts: ChainPart[];

@@ -37,9 +37,9 @@ import {
   recordingTrackingBundlesTable,
   fieldsTable,
 } from "@workspace/db";
-import { normaliseChain, type ChainPart } from "../lib/claimChain";
+import { normaliseChain, oneTrackAtATime, withoutStruckOff, type ChainPart } from "../lib/claimChain";
 import { applyCuts } from "../lib/checkDeck";
-import { momentChecksFor } from "../lib/momentChecks";
+import { clearMomentChecks, momentChecksFor } from "../lib/momentChecks";
 import {
   detectedShots,
   shotContext,
@@ -352,8 +352,16 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   // Stretches the claimant said were not him in the "Is this you?" deck stay
   // off, whatever the page sends (it builds its pieces from its own answers).
   const cuts = [...(await momentChecksFor(ctx.userId, ctx.recordingId)).values()].flatMap((c) => c.cut ? [c.cut] : []);
+  // Then: nothing the identity board struck off, and one track per frame.
   const chain: ChainPart[] = normaliseChain(
-    applyCuts(parsed.data.parts, cuts).map((part) => ({ ...part, reviewedThrough: part.toFrame + 1 })),
+    oneTrackAtATime(withoutStruckOff(
+      normaliseChain(
+        applyCuts(parsed.data.parts, cuts).map((part) => ({ ...part, reviewedThrough: part.toFrame + 1 })),
+        ctx.tracksById,
+      ),
+      ctx.manifest.identityDecisions,
+      ctx.tracksById,
+    )),
     ctx.tracksById,
   );
 
@@ -507,6 +515,9 @@ router.delete("/recordings/:id/claim-match/game", async (req, res): Promise<void
   if (!ctx) return;
   try {
     await persistChain(ctx, [], { chosen: null, fallback: null }, { kind: "decision", answeredFrame: null });
+    // Starting over starts the "Is this you?" answers over too: an old "Not me"
+    // is a cut every later save would re-apply to the new claim.
+    await clearMomentChecks(ctx.userId, ctx.recordingId);
     await db.delete(claimMatchOffPitchSpansTable).where(and(
       eq(claimMatchOffPitchSpansTable.userId, ctx.userId),
       eq(claimMatchOffPitchSpansTable.recordingId, ctx.recordingId),

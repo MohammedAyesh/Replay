@@ -136,15 +136,17 @@ export function outsideMatchWindowSpans(manifest: WindowManifest): Array<{ fromS
  * Merged, because coverage subtracts the total off-pitch time from the
  * denominator: a bench span declared during the warm-up would otherwise be
  * subtracted twice. Idempotent, so applying it to a list that already has the
- * window in it changes nothing. Without a window the input is returned as is,
- * so recordings without one behave exactly as before.
+ * window in it changes nothing. Without a window the spans are still clamped
+ * to the recording and merged.
  */
 export function offPitchWithMatchWindow<T extends { fromSeconds: number; toSeconds: number }>(
   offPitch: readonly T[],
   manifest: WindowManifest,
 ): Array<{ fromSeconds: number; toSeconds: number }> {
   const outside = outsideMatchWindowSpans(manifest);
-  if (!outside.length) return offPitch.map((span) => ({ fromSeconds: span.fromSeconds, toSeconds: span.toSeconds }));
+  // Clamped and merged even without a match window: a bench span past the end
+  // of the recording, or the same span twice, would otherwise be subtracted
+  // from the time on the pitch more than once and push coverage to 100%.
   const all = [...offPitch, ...outside]
     .filter((span) => finite(span.fromSeconds) && finite(span.toSeconds))
     .map((span) => ({

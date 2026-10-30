@@ -40,3 +40,22 @@ export async function saveMomentCheck(userId: number, recordingId: number, momen
     set: { verdict, trackId: values.trackId, fromFrame: values.fromFrame, toFrame: values.toFrame, updatedAt: new Date() },
   });
 }
+
+/**
+ * Forget one claimant's "Is this you?" answers on a recording.
+ *
+ * Called by Start over. A "Not me" is stored as a cut that every later save
+ * re-applies, so without this a mis-swipe would still cut the new claim, and a
+ * goal the player wrongly turned down could never come back.
+ */
+export async function clearMomentChecks(userId: number, recordingId: number): Promise<void> {
+  try {
+    await db.delete(claimMomentChecksTable).where(and(
+      eq(claimMomentChecksTable.userId, userId),
+      eq(claimMomentChecksTable.recordingId, recordingId),
+    ));
+  } catch (error) {
+    // Before migration 0039 there is nothing to forget.
+    if (!isMissingRelationError(error)) throw error;
+  }
+}

@@ -112,6 +112,21 @@ export type GameStats = {
   km: number;
 };
 
+/** Most the headline distance may be scaled up from what was actually measured. */
+export const MAX_DISTANCE_SCALE = 3;
+
+/**
+ * How far to scale measured distance up to the time the player was found.
+ *
+ * Short gaps in clean tracking (a pass behind a teammate, a box jump) are
+ * filled at the player's own pace. A few seconds of tracking stretched over a
+ * whole block is a guess, not a measurement: it once turned 22 m into 1.8 km.
+ */
+export function distanceScale(time: number, found: number): number {
+  if (!(time > 0) || !(found > time)) return 1;
+  return Math.min(MAX_DISTANCE_SCALE, found / time);
+}
+
 export function computeStats(ctx: Ctx): GameStats {
   const segs = trackOfYou(ctx);
   const pitch = ctx.game.pitch;
@@ -184,7 +199,7 @@ export function computeStats(ctx: Ctx): GameStats {
       found += t.fs + t.bs;
     }
   }
-  const km = (dist / 1000) * Math.max(1, time ? found / time : 1);
+  const km = (dist / 1000) * distanceScale(time, found);
   return { dist, time, avg: time ? dist / time : 0, top, zones, runsN, sprintsN, heat, perK, dropped, found, km };
 }
 

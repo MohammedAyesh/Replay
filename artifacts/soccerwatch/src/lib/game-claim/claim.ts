@@ -397,7 +397,26 @@ export function questions(ctx: Ctx, k: number): Junction[] {
   const qs: Junction[] = [];
   if (!y.cid || !d.byCid[y.cid]) return qs;
   for (const c of [y.cid, ...y.added]) {
-    for (const j of d.byCid[c]?.junctions ?? []) {
+    const members = d.byCid[c]?.members ?? [];
+    for (const j0 of d.byCid[c]?.junctions ?? []) {
+      let j = j0;
+      // A "No" at an earlier join puts that join's later piece out. The pieces
+      // the tracker chained on after it were never checked against the
+      // claimant, so ask about each from the last piece still theirs.
+      if (j.ask && !keep.has(j.a) && keep.has(j.b)) {
+        const B = d.pieces[j.b];
+        const prev = B ? members
+          .filter((m) => m !== j.b && keep.has(m) && d.pieces[m] && d.pieces[m].t0 < B.t0)
+          .map((m) => d.pieces[m])
+          .sort((x, z) => z.t1 - x.t1)[0] : undefined;
+        if (!prev) continue;
+        j = {
+          ...j,
+          a: prev.id,
+          gap: Math.max(0, Math.round((B.t0 - prev.t1) * 10) / 10),
+          dm: Math.round(reach(prev, B).dm * 10) / 10,
+        };
+      }
       if (!j.ask || !keep.has(j.a) || !keep.has(j.b) || has(y.out, j.a) || has(y.out, j.b)) continue;
       const A = d.pieces[j.a];
       const B = d.pieces[j.b];

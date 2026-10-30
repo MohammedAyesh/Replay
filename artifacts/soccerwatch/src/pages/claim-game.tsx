@@ -38,7 +38,7 @@ import {
 } from "@workspace/api-client-react";
 
 import { useAuth } from "@/lib/auth";
-import { useCheckDeck } from "@/lib/check-deck";
+import { checkDeckKey, useCheckDeck } from "@/lib/check-deck";
 import { useCheckCopy } from "@/i18n/check-strings";
 import { useFriends, useSendPlayerIdentificationRequest } from "@/lib/friends-api";
 import { useGameCopy, type GameStrings } from "@/i18n/game-strings";
@@ -872,11 +872,14 @@ export function GameClaim({
       setSavedClaim(null);
       void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
       void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
+      void queryClient.invalidateQueries({ queryKey: checkDeckKey(recordingId) });
     }
     pendingClaimName.current = null;
     setPendingNamePick(null);
     const off = S.off;
-    ctxRef.current.S = { ...newState(game), off };
+    // Keep the bookings this claim is for: the server reads them from the
+    // saved state to put the player on the right match and record team switches.
+    ctxRef.current.S = { ...newState(game), off, matchChoices: [...matchChoices] };
     pendingContinuationNumber.current = new URLSearchParams(window.location.search).get("number");
     t0.current = null;
     tap();
@@ -1731,7 +1734,8 @@ export function GameClaim({
         setPendingNamePick(null);
         void queryClient.invalidateQueries({ queryKey: getGetClaimMatchQueryKey(recordingId) });
         void queryClient.invalidateQueries({ queryKey: getGetClaimChainQueryKey(recordingId) });
-        ctxRef.current.S = newState(game);
+        void queryClient.invalidateQueries({ queryKey: checkDeckKey(recordingId) });
+        ctxRef.current.S = { ...newState(game), matchChoices: [...matchChoices] };
         t0.current = null;
         go("intro");
       }} />;

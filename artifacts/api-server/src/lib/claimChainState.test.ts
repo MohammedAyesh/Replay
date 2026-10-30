@@ -159,3 +159,26 @@ describe("segment and event counts", () => {
     expect(state.earnedClips).toHaveLength(3);
   });
 });
+
+describe("off-pitch spans cannot inflate coverage", () => {
+  it("ignores bench time past the end of the recording", () => {
+    const state = deriveChainClaimState(manifest, segments, [part("A", 0, 30)], {
+      hasOpenQuestion: false,
+      offPitch: [{ fromSeconds: 300, toSeconds: 1e9 }],
+    });
+    // 30 s claimed out of the 300 s the player was on the pitch.
+    expect(state.coveragePercent).toBeCloseTo(10, 1);
+  });
+
+  it("counts overlapping bench spans once", () => {
+    const state = deriveChainClaimState(manifest, segments, [part("A", 0, 30)], {
+      hasOpenQuestion: false,
+      offPitch: [
+        { fromSeconds: 100, toSeconds: 500 },
+        { fromSeconds: 100, toSeconds: 500 },
+      ],
+    });
+    // On the pitch 0-100 and 500-600: 200 s, of which 30 s claimed.
+    expect(state.coveragePercent).toBeCloseTo(15, 1);
+  });
+});

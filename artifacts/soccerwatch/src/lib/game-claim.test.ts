@@ -32,6 +32,7 @@ import { gameFromManifest, kitsFromPeople, loadChunkData } from "./game-claim/lo
 import type { Chunk, Game, Group } from "./game-claim/model";
 import { complement, union } from "./game-claim/model";
 import { benchSpansOut, chainParts } from "./game-claim/parts";
+import { computeStats } from "./game-claim/stats";
 import {
   applyShirtConfirmationParts,
   emptyShirtConfirmationState,
@@ -648,6 +649,34 @@ describe("timeline", () => {
 });
 
 describe("questions", () => {
+  it("after a No at A→B, asks about the piece that followed B instead of keeping it silently", () => {
+    const chunk = buildChunk({
+      k: 0,
+      start: 0,
+      dur: 60,
+      frameRate: FPS,
+      tracks: [walk("A", 0, 15, 100, 20), walk("B", 17, 30, 420, 20), walk("C", 32, 45, 700, 20)],
+      crossings: [],
+      sprites: {},
+    });
+    group("g1", ["A", "B", "C"], chunk, {
+      junctions: [
+        { a: "A", b: "B", gap: 2, dm: 0, d: 0.3, ask: true },
+        { a: "B", b: "C", gap: 2, dm: 0, d: 0.3, ask: true },
+      ],
+    });
+    const g = game();
+    const ctx: Ctx = { game: g, CH: { 0: chunk }, S: newState(g) };
+    Y(ctx, 0).cid = "g1";
+    expect(questions(ctx, 0).map((j) => `${j.a}-${j.b}`)).toEqual(["A-B", "B-C"]);
+    // The claimant says B is not them (the page puts j.b out).
+    Y(ctx, 0).out.push("B");
+    // C followed B, not A: it must be asked about, from the last piece that is still theirs.
+    expect(questions(ctx, 0).map((j) => `${j.a}-${j.b}`)).toEqual(["A-C"]);
+    Y(ctx, 0).out.push("C");
+    expect(questions(ctx, 0)).toEqual([]);
+  });
+
   it("asks the normal question for sequential pieces, and not once one is dropped", () => {
     const ctx = fixture();
     expect(questions(ctx, 0).map((j) => `${j.a}-${j.b}`)).toEqual(["A-B"]);
@@ -848,5 +877,32 @@ describe("kitsFromPeople", () => {
   it("gives up when only one kit has two people", () => {
     const chunk = { groups: [g("a", 500), g("b", 400), g("c", 300)] } as unknown as Parameters<typeof kitsFromPeople>[0];
     expect(kitsFromPeople(chunk, sidecar([["a", "dark", 20], ["b", "dark", 20], ["c", "light", 200]]))).toBeNull();
+  });
+});
+
+describe("computeStats distance", () => {
+  it("does not scale a few seconds of measured running up to a whole block of found time", () => {
+    const chunk = buildChunk({
+      k: 0,
+      start: 0,
+      dur: 600,
+      frameRate: FPS,
+      // ~3 m/s for 7.5 s: about 22 m measured.
+      tracks: [walk("A", 0, 7.5, 100, 117)],
+      crossings: [],
+      sprites: {},
+    });
+    group("g1", ["A"], chunk);
+    // The piece is credited for the whole block, but only 7.5 s of it was tracked cleanly.
+    chunk.pieces.A.t1 = 600;
+    const g = game(600);
+    g.pitch = { w: 105, h: 68, grid: [[[0, 0], [105, 0]], [[0, 68], [105, 68]]] };
+    const ctx: Ctx = { game: g, CH: { 0: chunk }, S: newState(g) };
+    Y(ctx, 0).cid = "g1";
+    const st = computeStats(ctx);
+    expect(st.dist).toBeGreaterThan(15);
+    expect(st.dist).toBeLessThan(30);
+    // The headline km may fill short gaps, but never multiply a sliver of tracking 80-fold.
+    expect(st.km).toBeLessThanOrEqual((st.dist / 1000) * 3 + 1e-9);
   });
 });
