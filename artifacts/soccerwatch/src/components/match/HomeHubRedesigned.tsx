@@ -3,7 +3,9 @@ import { Link, useLocation, useSearch } from "wouter";
 import { ArrowUpRight, Camera, Gift, Globe2, Volume2, VolumeX } from "lucide-react";
 import { getGetHomeWeeklyHighlightQueryKey, getListUserClipsQueryKey, useGetHomeWeeklyHighlight, useListUserClips, type WeeklyHighlight } from "@workspace/api-client-react";
 import { FreeMatchRulesSheet } from "@/components/free-match/FreeMatch";
+import { StatTileCard } from "@/components/home/StatTile";
 import { HomeAvatar } from "@/components/match/HomeHub";
+import { BetaPill } from "@/components/match/StatsBeta";
 import { MatchApiError, formatJod, shareOrCopy, whatsappLink, useBookingFields, useCreateBooking, useMyMatches, useReplayProfile, type BookingResult, type FreeMatchStatus, type MyMatchItem } from "@/lib/match-api";
 import { FieldPaymentPanel, PaymentPanel } from "@/components/match/PaymentPanel";
 import { PlayerAvatar } from "@/components/match/bits";
@@ -95,6 +97,7 @@ export function HomeHubRedesigned() {
   const firstName = (user?.name ?? "").trim().split(/\s+/)[0] ?? "";
   const hero = data?.live[0] ?? data?.upcoming[0] ?? null;
   const waiting = [...(data?.invites ?? []), ...(data?.recent ?? []).filter((m) => m.voteOpen)];
+  const statTiles = data?.statTiles?.length ? data.statTiles : data?.statTile ? [data.statTile] : [];
   const mockClip = (clips.data ?? []).find((clip) => !clip.isMatchMoment);
   const requestedMockKind = new URLSearchParams(search).get("homeHighlight") === "field" ? "field" : "personal";
   const mockWeekStart = (() => {
@@ -152,7 +155,18 @@ export function HomeHubRedesigned() {
           })}
         </div>
       </section>}
-      {user?.id && <Link href={`/players/${user.id}`} className="flex h-14 items-center justify-between rounded-2xl border border-line bg-surface px-4" data-testid="link-home-numbers"><span className="font-display font-bold">{s.numbers} <span className="text-[10px] text-muted-text">{s.beta}</span></span><ArrowUpRight className="h-4 w-4 text-muted-text" /></Link>}
+      {user?.id && <section data-testid="home-your-numbers">
+        <div className="mb-2 flex min-h-12 items-center justify-between gap-3">
+          <h2 className="flex items-center gap-2 font-display font-bold">{s.numbers}<BetaPill /></h2>
+          <Link href={`/players/${user.id}`} aria-label={s.numbers} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-muted-text" data-testid="link-home-numbers"><ArrowUpRight className="h-4 w-4" /></Link>
+        </div>
+        {statTiles.length > 0 && <>
+          <p className="mb-3 px-1 text-[11px] leading-4 text-muted-text">{copy.statsBeta.note}</p>
+          <div className="flex flex-col gap-3" data-testid="home-stat-tiles">
+            {statTiles.map((tile, index) => <StatTileCard key={`${tile.kind}-${index}`} tile={tile} />)}
+          </div>
+        </>}
+      </section>}
       <RecordSheet open={recordOpen} onOpenChange={setRecordOpen} recent={[...(data?.recent ?? []), ...(data?.upcoming ?? []), ...(data?.live ?? [])]} s={s} locale={locale} />
     </div>
   );
