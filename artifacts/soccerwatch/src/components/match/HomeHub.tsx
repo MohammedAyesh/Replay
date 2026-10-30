@@ -215,7 +215,7 @@ function Step({ index, label, children }: { index: number; label: string; childr
  * The player's face with a camera badge. No photo yet: the badge opens the
  * phone's picker straight away. With a photo: a sheet to change or remove it.
  */
-function HomeAvatar({ name, avatarUrl }: { name: string; avatarUrl: string | null }) {
+export function HomeAvatar({ name, avatarUrl, size = 76 }: { name: string; avatarUrl: string | null; size?: number }) {
   const copy = useMatchCopy();
   const { locale } = useLocale();
   const { toast } = useToast();
@@ -249,18 +249,20 @@ function HomeAvatar({ name, avatarUrl }: { name: string; avatarUrl: string | nul
   };
   return (
     <div className="relative shrink-0">
-      <PlayerAvatar name={name} avatarUrl={avatarUrl} size={76} className={cn("border-2 border-turf", busy ? "opacity-50" : undefined)} />
+      <PlayerAvatar name={name} avatarUrl={avatarUrl} size={size} className={cn("border-2 border-turf", busy ? "opacity-50" : undefined)} />
       <button
         type="button"
         disabled={busy}
         onClick={() => (avatarUrl ? setSheet(true) : pick())}
         aria-label={avatarUrl ? copy.photo.change : copy.photo.add}
         data-testid="button-home-photo"
-        className={avatarUrl
-          ? "absolute -bottom-1 -end-1 flex h-[30px] w-[30px] items-center justify-center rounded-full border-[3px] border-void bg-raised text-text before:absolute before:-inset-2.5 before:content-['']"
-          : "absolute -bottom-1 -end-1 flex h-[30px] w-[30px] items-center justify-center rounded-full border-[3px] border-void bg-raised text-text before:absolute before:-inset-2 before:content-['']"}
+        className={size <= 44
+          ? "absolute inset-0 z-10 rounded-full"
+          : avatarUrl
+            ? "absolute -bottom-1 -end-1 flex h-[30px] w-[30px] items-center justify-center rounded-full border-[3px] border-void bg-raised text-text before:absolute before:-inset-2.5 before:content-['']"
+            : "absolute -bottom-1 -end-1 flex h-[30px] w-[30px] items-center justify-center rounded-full border-[3px] border-void bg-raised text-text before:absolute before:-inset-2 before:content-['']"}
       >
-        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className={avatarUrl ? "h-[11px] w-[11px]" : "h-[13px] w-[13px]"} strokeWidth={2.4} />}
+        {size > 44 && (busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Camera className={avatarUrl ? "h-[11px] w-[11px]" : "h-[13px] w-[13px]"} strokeWidth={2.4} />)}
       </button>
       <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { void onFile(e.target.files?.[0]); e.target.value = ""; }} />
       <Sheet open={sheet} onOpenChange={setSheet}>

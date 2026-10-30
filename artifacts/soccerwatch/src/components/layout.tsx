@@ -46,11 +46,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isMatchRoom = location.startsWith("/m/");
   const isGuidedDemo = location === "/demo" || location.startsWith("/demo/");
   const isAcademyConsole = location === "/academy" || location.startsWith("/academy/");
+  const isSignedInHome = location === "/home" && Boolean(user) && !isGuest;
   const { isFullscreenVideo } = useFullscreenVideo();
 
   const isAuthPage = location.startsWith("/sign-in") || location.startsWith("/sign-up") || location === "/consent" || location === "/onboarding";
-  const hideHeader = isLogin || isImmersivePlayer || isPortfolio || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom || isGuidedDemo || isAcademyConsole;
-  const hideTabBar = hideHeader || location.startsWith("/f/") || isPublicStandalonePath(location);
+  const hideHeader = isLogin || isImmersivePlayer || isPortfolio || isAuthPage || isFullscreenVideo || isOwnerShare || isOwnerVar || isMatchRoom || isGuidedDemo || isAcademyConsole || isSignedInHome;
+  const hideTabBar = (hideHeader && !isSignedInHome) || location.startsWith("/f/") || isPublicStandalonePath(location);
 
   return (
     <div
