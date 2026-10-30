@@ -136,3 +136,80 @@ export function EarlyPlay({ code, locale, compact = false, previewState }: Props
     if (plan.kind === "fallback") { fallbackToProxy(); return; }
     if (plan.kind === "message") { setError(mediaMessage(plan.mediaCode, locale)); return; }
     // MediaError 4: a missing or forbidden URL looks exactly like an
+    // unsupported codec. Re-read the status and probe 2 bytes before deciding.
+    const latest = await fetchStatus();
+    let probeStatus: number | null = null;
+    let probeReason: EarlyPlayReason | undefined;
+    if (latest?.state === "early" && latest.streamUrl) {
+      try {
+        const probe = await fetch(latest.streamUrl, { headers: { Range: "bytes=0-1" }, credentials: "include" });
+        probeStatus = probe.status;
+        if (probe.status === 503) probeReason = ((await probe.json().catch(() => ({}))) as { reasonCode?: EarlyPlayReason }).reasonCode;
+        else await probe.body?.cancel().catch(() => {});
+      } catch { probeStatus = null; }
+    }
+    const outcome = interpretProbe(latest, probeStatus, probeReason);
+    if (latest) setStatus(latest);
+    if (outcome.kind === "ready") {
+      void queryClient.invalidateQueries({ queryKey: matchKey(code) });
+      setOpen(false);
+      return;
+    }
+    if (outcome.kind === "unsupported") { setSupported(false); setOpen(false); return; }
+    setError(probeMessage(outcome, locale));
+  }, [code, fallbackToProxy, fetchStatus, locale, queryClient]);
+
+  if (!showCard(status)) return null;
+  const current = status!;
+  const retry = () => { setError(""); setRetryNonce((n) => n + 1); };
+  const openPlayer = () => {
+    pendingSeek.current = readPosition(code, current.durationSec);
+    setSource(initialSource(current));
+    setError("");
+    setOpen(true);
+  };
+  const closePlayer = () => { clearTimers(); writePosition(code, null); setOpen(false); };
+
+  return (
+    <section className={`rounded-2xl border border-turf/30 bg-surface ${compact ? "mt-3 p-3" : "mt-4 p-4"}`} data-testid="early-play-card">
+      {current.state === "waiting" && <p className="text-xs text-muted-text" data-testid="early-play-waiting">
+        {ar ? `النسخة المبكرة بتتوفر بعد ما يخلص رفع الفيديو${current.phase ? ` (${current.phase})` : ""}.` : `Early version available once the upload finishes${current.phase ? ` (${current.phase})` : ""}.`}
+      </p>}
+      {current.state === "unavailable" && <div className="flex flex-wrap items-center gap-3 text-xs text-muted-text" role="status" data-testid={`early-play-reason-${current.reasonCode}`}>
+        <span>{reasonMessage(current.reasonCode, locale)}</span>
+        {(current.reasonCode === "bunny_error" || current.reasonCode === "vps_unreachable") && (
+          <button type="button" onClick={() => void refresh()} className="min-h-11 rounded-lg border border-line px-3 font-semibold text-turf">
+            {ar ? "جرّب مرة ثانية" : "Retry"}
+          </button>
+        )}
+      </div>}
+      {current.state === "early" && supported === false && <p className="text-xs leading-5 text-muted-text" data-testid="early-play-unsupported">
+        {probeMessage({ kind: "unsupported" }, locale)}
+      </p>}
+      {current.state === "early" && supported && (!open ? (
+        <button type="button" onClick={openPlayer}
+          className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-floodlight px-4 text-sm font-bold text-void" data-testid="early-play-open">
+          <Play className="h-4 w-4 fill-current" />{ar ? "شوف هلّق — النسخة المبكرة" : "Watch now — early version"}
+        </button>
+      ) : (
+        <div className="fixed inset-0 z-[100] flex flex-col justify-center bg-black p-3" role="dialog" aria-modal="true" data-testid="early-play-player">
+          <button type="button" onClick={closePlayer} className="mb-2 ms-auto flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white" aria-label={ar ? "سكّر" : "Close"}><X /></button>
+          {!error && <video ref={videoRef} controls playsInline className="max-h-[78vh] w-full bg-black" data-source={source}
+            onError={() => void handleError()}
+            onLoadedMetadata={() => { if (pendingSeek.current > 0 && videoRef.current) { videoRef.current.currentTime = pendingSeek.current; pendingSeek.current = 0; } }}
+            onLoadedData={() => { gotFrame.current = true; window.clearTimeout(firstFrameTimer.current); }}
+            onPlaying={armStall}
+            onTimeUpdate={() => { gotFrame.current = true; writePosition(code, videoRef.current?.currentTime ?? 0); if (!videoRef.current?.paused) armStall(); }}
+            onPause={() => window.clearTimeout(stallTimer.current)}
+            onEnded={() => { clearTimers(); writePosition(code, null); }} />}
+          <p className="mt-3 text-center text-xs leading-5 text-white/75" data-testid="early-play-note">
+            {ar ? `نسخة مبكرة: الجودة كاملة وممكن التحميل يكون أبطأ. المقاطع والإحصائيات والتنزيل بيجوا بعد ما تخلص المعالجة (${current.encodeProgress ?? 0}٪).` : `Early version: full quality, may load slower. Clips, stats and downloads arrive when processing finishes (${current.encodeProgress ?? 0}%).`}
+          </p>
+          {offline && <p className="mt-2 text-center text-sm text-amber-200" role="status" data-testid="early-play-offline">{offlineMessage(locale)}</p>}
+          {error && <div className="mt-3 flex items-center justify-center gap-3 text-sm text-white" role="alert" data-testid="early-play-error">{error}<button type="button" onClick={retry} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white/15 px-3"><RefreshCw className="h-4 w-4" />{ar ? "جرّب مرة ثانية" : "Retry"}</button></div>}
+        </div>
+      ))}
+      {pollFailed && !open && <p className="mt-2 text-[11px] text-muted-text" data-testid="early-play-poll-failed">{pollFailedMessage(locale)}</p>}
+    </section>
+  );
+}
