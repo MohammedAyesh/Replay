@@ -116,3 +116,74 @@ describe("MediaError 4 probe interpretation", () => {
     ["status now unavailable → its reason", { state: "unavailable", reasonCode: "bunny_not_found" }, null, undefined, "reason"],
     ["status request failed → network", null, null, undefined, "network"],
   ];
+  it.each(cases)("%s", (_name, latest, probe, reason, kind) => {
+    expect(interpretProbe(latest, probe, reason).kind).toBe(kind);
+  });
+  it("a 404 never produces the 'phone can't play' sentence", () => {
+    expect(probeMessage(interpretProbe(early(), 404), "en")).not.toMatch(/phone/i);
+  });
+  it("503 without a reason code still gets a sentence", () => {
+    expect(interpretProbe(early(), 503)).toEqual({ kind: "reason", reasonCode: "bunny_error" });
+  });
+  it("an unavailable status carries its own reason code through", () => {
+    expect(interpretProbe({ state: "unavailable", reasonCode: "request_cancelled" }, null)).toEqual({ kind: "reason", reasonCode: "request_cancelled" });
+  });
+});
+
+describe("timeouts", () => {
+  it("no first frame in 8 s on the direct URL → fall back", () => {
+    expect(onFirstFrameTimeout("direct", false, early({ directUrl: DIRECT }))).toBe("fallback");
+  });
+  it("a frame arrived, or already on the proxy → keep waiting", () => {
+    expect(onFirstFrameTimeout("direct", true, early({ directUrl: DIRECT }))).toBe("wait");
+    expect(onFirstFrameTimeout("proxy", false, early())).toBe("wait");
+  });
+  it("a stall on the direct URL falls back; on the proxy it offers Retry", () => {
+    expect(onStall("direct", early({ directUrl: DIRECT }))).toBe("fallback");
+    expect(onStall("proxy", early())).toBe("offer-retry");
+  });
+});
+
+describe("messages, English and Ammani Arabic", () => {
+  const reasons: EarlyPlayReason[] = ["early_play_off", "bunny_failed", "bunny_not_found", "bunny_error", "vps_unreachable", "request_cancelled"];
+  it("every reason code has its own English and Arabic sentence", () => {
+    const en = reasons.map((r) => reasonMessage(r, "en"));
+    const ar = reasons.map((r) => reasonMessage(r, "ar"));
+    expect(new Set(en).size).toBe(reasons.length);
+    expect(new Set(ar).size).toBe(reasons.length);
+    for (const s of ar) expect(s).toMatch(ARABIC);
+    for (const s of en) expect(s).not.toMatch(ARABIC);
+  });
+  it("an unknown reason gets a generic sentence instead of undefined", () => {
+    expect(reasonMessage(undefined, "en")).toMatch(/early version/i);
+    expect(reasonMessage(undefined, "ar")).toMatch(ARABIC);
+  });
+  it("MediaError 1-4 each have their own text; anything else reads as network", () => {
+    expect(new Set([1, 2, 3, 4].map((c) => mediaMessage(c, "en"))).size).toBe(4);
+    expect(new Set([1, 2, 3, 4].map((c) => mediaMessage(c, "ar"))).size).toBe(4);
+    expect(mediaMessage(42, "en")).toBe(mediaMessage(2, "en"));
+  });
+  it("every probe outcome has an English and an Arabic sentence", () => {
+    const outcomes: ProbeOutcome[] = [{ kind: "unsupported" }, { kind: "ready" }, { kind: "gone" }, { kind: "not_allowed" }, { kind: "reason", reasonCode: "bunny_failed" }, { kind: "network" }];
+    for (const o of outcomes) {
+      expect(probeMessage(o, "en").length).toBeGreaterThan(10);
+      expect(probeMessage(o, "ar")).toMatch(ARABIC);
+    }
+    expect(new Set(outcomes.map((o) => probeMessage(o, "en"))).size).toBe(outcomes.length);
+  });
+  it("stall, offline and poll-failure notes exist in both languages", () => {
+    for (const fn of [stallMessage, offlineMessage, pollFailedMessage]) {
+      expect(fn("en").length).toBeGreaterThan(5);
+      expect(fn("ar")).toMatch(ARABIC);
+    }
+  });
+});
+
+describe("saved position", () => {
+  it.each([[null, 0], ["", 0], ["abc", 0], ["-4", 0], ["0", 0], ["NaN", 0], ["725.4", 725.4]] as const)("%s → %s", (raw, want) => {
+    expect(savedPosition(raw, 1801)).toBe(want);
+  });
+  it("a position at the very end starts over instead of opening on the last frame", () => {
+    expect(savedPosition("1800.5", 1801)).toBe(0);
+  });
+});
