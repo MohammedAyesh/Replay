@@ -74,6 +74,12 @@ export type ClaimState = {
   switches?: SwitchEvent[];
   /** Match windows selected on the intro screen (server-provided match codes). */
   matchChoices?: string[];
+  /**
+   * The off ranges the last startClaimWithWindows added for the chosen games
+   * (outside the games, and bench). Removed before the next call adds its own,
+   * so going back and picking another game does not stack both sets.
+   */
+  windowOff?: OffRange[];
 };
 
 export function newState(game: Game): ClaimState {
@@ -861,6 +867,12 @@ export function startClaimWithWindows(
     .slice()
     .sort((a, b) => a[0] - b[0]);
 
+  const sameRange = (x: OffRange, y: OffRange) => x[0] === y[0] && x[1] === y[1] && x[2] === y[2];
+  const previous = ctx.S.windowOff ?? [];
+  if (previous.length) ctx.S.off = ctx.S.off.filter((r) => !previous.some((w) => sameRange(r, w)));
+  const before = ctx.S.off.slice();
+  ctx.S.windowOff = [];
+
   if (selected.length) {
     let at = 0;
     for (const [start, end] of selected) {
@@ -881,6 +893,10 @@ export function startClaimWithWindows(
       Y(ctx, chunk.k).skipped = !overlaps;
     }
     ctx.S.off.sort((a, b) => a[0] - b[0]);
+    ctx.S.windowOff = ctx.S.off.filter((r) => !before.includes(r));
+  } else if (previous.length) {
+    // The earlier call hid the blocks outside its games; no game now, so none is hidden.
+    for (const chunk of ctx.game.chunks) Y(ctx, chunk.k).skipped = false;
   }
 
   return startClaim(ctx);

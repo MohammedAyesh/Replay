@@ -400,6 +400,13 @@ export function GameClaim({
   // The last block's save builds the player's clips, stats and squad places on
   // the server and takes seconds; without this the finished screen sat blank.
   const [finishing, setFinishing] = useState(false);
+  // The tracking was replaced while the page was open: every save now 409s.
+  const [bundleReplaced, setBundleReplaced] = useState(false);
+  // A block's tracking failed to download: show Retry, not "Loading…" for ever.
+  const [chunkError, setChunkError] = useState(false);
+  // Saves go out one at a time, in order; a reset drops the ones still queued.
+  const saveQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const saveGen = useRef(0);
   const [staleNoticeDismissed, setStaleNoticeDismissed] = useState(false);
   const [labelError, setLabelError] = useState(false);
   const t0 = useRef<number | null>(null);
@@ -482,6 +489,10 @@ export function GameClaim({
           body: JSON.stringify(body),
           ...(keepalive ? { keepalive: true } : {}),
         });
+        if (r.status === 409) {
+          setBundleReplaced(true);
+          return false;
+        }
         if (!r.ok) {
           setSaveError(true);
           return false;
@@ -504,20 +515,31 @@ export function GameClaim({
         return false;
       }
     };
-    try {
-      return await sendClaimSave(
-        chunksNeededForSave,
-        keepalive,
-        async (key) => {
-          await loadChunk(key);
-          currentCtx.CH = chunks.current;
-        },
-        send,
-      );
-    } catch {
-      setSaveError(true);
-      return false;
-    }
+    const run = async (): Promise<boolean> => {
+      // A save queued before Start over belongs to the claim that was deleted.
+      if (gen !== saveGen.current) return true;
+      try {
+        return await sendClaimSave(
+          chunksNeededForSave,
+          keepalive,
+          async (key) => {
+            await loadChunk(key);
+            currentCtx.CH = chunks.current;
+          },
+          send,
+        );
+      } catch {
+        setSaveError(true);
+        return false;
+      }
+    };
+    const gen = saveGen.current;
+    // Leaving the page cannot wait behind a slow save; everything else queues,
+    // so an older save can never land after a newer one (or after "done").
+    if (keepalive) return run();
+    const queued = saveQueue.current.then(run, run);
+    saveQueue.current = queued.catch(() => undefined);
+    return queued;
   }, [fingerprint, loadChunk, recordingId, queryClient, reportMatchCode]);
 
   const save = useCallback((options: { immediate?: boolean; keepalive?: boolean } = {}) => {
@@ -873,8 +895,21 @@ export function GameClaim({
     else applyShirtIdentityToChunk(k);
   };
 
+  /** Drop pending and queued saves, and wait for one already sent, before a reset. */
+  const settleSaves = async () => {
+    if (saveTimer.current !== null) {
+      window.clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    saveGen.current++;
+    await saveQueue.current;
+  };
+
   const startNew = async () => {
+    // Starting again deletes the saved claim: ask first, as Done's "Start over" does.
+    if (savedClaim && !window.confirm(copy.done.againConfirm)) return;
     pendingNextGuess.current = null;
+    await settleSaves();
     if (savedClaim || resetByAdmin) {
       try {
         await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { method: "DELETE", credentials: "include" });
@@ -889,7 +924,7 @@ export function GameClaim({
     const off = S.off;
     // Keep the bookings this claim is for: the server reads them from the
     // saved state to put the player on the right match and record team switches.
-    ctxRef.current.S = { ...newState(game), off, matchChoices: [...matchChoices] };
+    ctxRef.current.S = { ...newState(game), off, matchChoices: [...matchChoices], windowOff: S.windowOff };
     pendingContinuationNumber.current = new URLSearchParams(window.location.search).get("number");
     t0.current = null;
     tap();
@@ -912,7 +947,8 @@ export function GameClaim({
       go("roster");
       return;
     }
-    await ensure(ctxRef.current.S.k!);
+    // A failed download lands on the kit step, which shows Retry.
+    await ensure(ctxRef.current.S.k!).catch(() => setChunkError(true));
     go("kit");
   };
 
@@ -938,7 +974,7 @@ export function GameClaim({
     );
     const firstChunk = firstRosterChunk(ctxRef.current, filteredByChunk);
     if (firstChunk === null) {
-      void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go);
+      void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go).catch(() => { setChunkError(true); go("kit"); });
       return;
     }
 
@@ -1210,7 +1246,12 @@ export function GameClaim({
     window.scrollTo({ top: 0 });
     if (where === "next" && S.k !== null) {
       const nextK = S.k;
-      await ensure(nextK);
+      try {
+        await ensure(nextK);
+      } catch {
+        setChunkError(true);
+        return;
+      }
       resolveLoadedChunk(nextK);
       setVer((v) => v + 1);
       save();
@@ -1299,8 +1340,15 @@ export function GameClaim({
         <p className="max-w-xs text-sm text-muted-text">{copy.common.finishingLede}</p>
       </div>
     );
+  } else if (needsChunk && chunkError && !currentChunk) {
+    body = (
+      <div className="flex flex-col items-center gap-3 py-12 text-center" role="alert">
+        <p className="max-w-xs text-sm text-muted-text">{copy.common.chunkFailed}</p>
+        <Btn kind="primary" onClick={() => { setChunkError(false); setVer((v) => v + 1); }}>{copy.common.retry}</Btn>
+      </div>
+    );
   } else if (needsChunk && (S.k === null || !currentChunk)) {
-    if (S.k !== null) void ensure(S.k).then(() => setVer((v) => v + 1));
+    if (S.k !== null) void ensure(S.k).then(() => setVer((v) => v + 1), () => setChunkError(true));
     body = <p className="py-10 text-center text-sm text-muted-text">{S.step === "next" ? copy.common.loadingChunk : copy.common.loading}</p>;
   } else if (S.step === "intro") {
     body = (
@@ -1337,7 +1385,7 @@ export function GameClaim({
             (rec 402: the button sat ~21,000 px down). */}
         <Row>
           <Btn className="w-full sm:w-auto" testId="button-roster-not-here" onClick={() => {
-            void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go);
+            void enterKitAfterLoadingCurrentChunk(ctxRef.current.S.k, ensure, go).catch(() => { setChunkError(true); go("kit"); });
           }}>{copy.roster.notHere}</Btn>
         </Row>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1442,7 +1490,7 @@ export function GameClaim({
                 go("done");
                 return;
               }
-              await ensure(S.k);
+              await ensure(S.k).catch(() => setChunkError(true));
               setVer((v) => v + 1);
             }}
             className="rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-text"
@@ -1668,7 +1716,7 @@ export function GameClaim({
                 <Btn kind="primary" onClick={() => commitSwitch(pendingSwitchKind, switchMatchCode ?? selected?.code ?? null, switchSide)}>{copy.next.confirmSwitch}</Btn>
               </Row>;
             })()}
-            <Row><Btn onClick={() => beginSwitch(true)}>Use current video time</Btn></Row>
+            <Row><Btn onClick={() => beginSwitch(true)}>{copy.next.useVideoTime}</Btn></Row>
           </Section>
         )}
         <GapsScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp}
@@ -1709,7 +1757,7 @@ export function GameClaim({
                 <Btn kind="primary" onClick={() => commitSwitch(pendingSwitchKind, switchMatchCode ?? selected?.code ?? null, switchSide)}>{copy.next.confirmSwitch}</Btn>
               </Row>;
             })()}
-            <Row><Btn onClick={() => beginSwitch(true)}>Use current video time</Btn></Row>
+            <Row><Btn onClick={() => beginSwitch(true)}>{copy.next.useVideoTime}</Btn></Row>
           </Section>
         )}
         {mediaSlot}
@@ -1753,6 +1801,7 @@ export function GameClaim({
       onContinue={() => continuation && (!matchChoices.length || matchChoices.includes(continuation.matchCode)) && setLocation(`/find/${continuation.recordingId}?match=${encodeURIComponent(continuation.matchCode)}&kit=${encodeURIComponent(S.shirtIdentity?.kitKey ?? S.team ?? "")}&number=${encodeURIComponent(S.shirtIdentity?.number ?? "")}`)}
       onAgain={async () => {
         if (!window.confirm(copy.done.againConfirm)) return;
+        await settleSaves();
         try { await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { method: "DELETE", credentials: "include" }); } catch { /* ignore */ }
         setSavedClaim(null);
         pendingClaimName.current = null;
@@ -1789,7 +1838,12 @@ export function GameClaim({
           <Btn kind="ghost" size="sm" onClick={() => setStaleNoticeDismissed(true)}>{copy.common.close}</Btn>
         </div>
       )}
-      {saveError && <p className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.saveFailed}</p>}
+      {bundleReplaced ? (
+        <div role="alert" className="flex items-start justify-between gap-3 rounded-xl border border-line bg-surface px-4 py-3">
+          <p className="text-sm leading-6 text-muted-text">{copy.common.bundleReplaced}</p>
+          <Btn kind="primary" size="sm" onClick={() => window.location.reload()}>{copy.common.reload}</Btn>
+        </div>
+      ) : saveError && <p className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.saveFailed}</p>}
       {labelError && <p role="status" className="rounded-xl border border-line bg-surface px-3 py-2 text-xs text-muted-text">{copy.common.labelFailed}</p>}
       {body}
       {pendingNamePick && (
@@ -2281,7 +2335,8 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuati
   return (
     <div className="flex flex-col gap-4">
       <Eyebrow>{copy.done.eyebrow}</Eyebrow>
-      <Title>{copy.done.title}</Title>
+      <Title>{tt.fs > 0 ? copy.done.title : copy.done.titleNone}</Title>
+      {tt.fs <= 0 && <Lede>{copy.done.noneLede}</Lede>}
       {deckCards.length > 0 && (
         // "Is this you?": the moments we're not sure were his wait for him here
         <button type="button" data-testid="button-open-check-deck" onClick={() => setDeckLocation(`/find/${recordingId}/check`)}

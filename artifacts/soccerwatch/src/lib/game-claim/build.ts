@@ -52,7 +52,11 @@ export function buildChunk(input: BundleChunkInput): Chunk {
       const box = boxes[i];
       const t = box.frame / fps - start;
       if (t < -0.01 || t > dur + 0.01) continue;
-      const isLast = i === boxes.length - 1;
+      // The last box inside THIS block, not the track's last box: at 19.99 fps the
+      // half-second sampling drifts, and a track running on past the block end
+      // otherwise stops up to 0.5 s early and leaves a fake hole at 9:59.
+      const nextT = i + 1 < boxes.length ? boxes[i + 1].frame / fps - start : Infinity;
+      const isLast = nextT > dur + 0.01;
       if (t - last >= SAMPLE_STEP - 0.01 || (isLast && t > last)) {
         samples.push([Math.round(t * 100) / 100, box.x, box.y, box.w, box.h]);
         last = t;

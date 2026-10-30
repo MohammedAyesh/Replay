@@ -348,6 +348,18 @@ function CardView({ card, depth, copy, url, srcAspect, active, load, videoState,
     }
   };
 
+  // A drag the system took away (a call, a system gesture) is not an answer:
+  // put the card back. Some browsers report the cancel at 0,0, which read as
+  // a long left swipe, i.e. "Not me".
+  const onCancel = (e: React.PointerEvent) => {
+    if (!drag.current || drag.current.id !== e.pointerId) return;
+    drag.current = null;
+    if (ref.current) {
+      ref.current.style.transition = "transform .2s ease-out";
+      paint(0, 0);
+    }
+  };
+
   const behind = depth > 0;
   return (
     <div
@@ -356,7 +368,7 @@ function CardView({ card, depth, copy, url, srcAspect, active, load, videoState,
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}
-      onPointerCancel={onUp}
+      onPointerCancel={onCancel}
       className={cn("absolute inset-0 flex select-none flex-col overflow-hidden rounded-3xl border border-line bg-surface shadow-[0_20px_48px_rgba(0,0,0,.45)]",
         active ? "z-20 cursor-grab touch-none" : "z-10")}
       style={behind ? { transform: `translateY(${12 * depth}px) scale(${1 - 0.05 * depth})`, opacity: depth === 1 ? 1 : 0, transition: "transform .24s, opacity .24s" } : undefined}
@@ -467,6 +479,8 @@ function Done({ copy, results, best, total, failed, onClips, onBack }: {
   const sentBack = results.filter((r) => r.card.kind === "you" && r.verdict === "no").length;
   const goals = results.filter((r) => r.card.kind === "goal" && r.verdict === "yes").length;
   const answered = results.filter((r) => r.verdict !== "skip").length;
+  // Closed before the last card: say what is left, not "Deck cleared".
+  const left = Math.max(0, total - results.length);
   const confetti = useMemo(() => Array.from({ length: 22 }, (_, k) => ({
     left: `${(k * 41) % 100}%`, w: 5 + (k % 3) * 2, h: 9 + (k % 4) * 2,
     color: ["#D4FF4F", "#2FD8C4", "#7B5CFF", "#F2F4F8"][k % 4],
@@ -480,18 +494,18 @@ function Done({ copy, results, best, total, failed, onClips, onBack }: {
   ];
   return (
     <div className="absolute inset-0 z-30 flex flex-col gap-4 overflow-hidden bg-void px-4 pb-[max(16px,env(safe-area-inset-bottom))] pt-[max(16px,env(safe-area-inset-top))]">
-      {answered > 0 && confetti.map((c, k) => (
+      {answered > 0 && left === 0 && confetti.map((c, k) => (
         <span key={k} aria-hidden="true" className="pointer-events-none absolute top-0 rounded-[2px]"
           style={{ left: c.left, width: c.w, height: c.h, background: c.color, animation: c.anim }} />
       ))}
       <div className="flex min-h-12 items-center justify-center">
-        <span className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-turf rtl:text-xs rtl:tracking-normal">{copy.doneEyebrow}</span>
+        <span className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-turf rtl:text-xs rtl:tracking-normal">{left > 0 ? copy.pausedEyebrow : copy.doneEyebrow}</span>
       </div>
       <div className="flex flex-col items-center gap-2.5 rounded-3xl border border-floodlight/40 bg-surface px-5 py-6 text-center">
         <span className="flex h-[72px] w-[72px] items-center justify-center rounded-[20px] bg-floodlight/15 text-floodlight [animation:deck-pop_.5s_ease-out_both]"><Trophy className="h-9 w-9" /></span>
         <span className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-floodlight rtl:text-xs rtl:tracking-normal">{answered === total ? copy.badgeAll : copy.badgeSome}</span>
-        <h2 className="font-display text-[30px] font-bold leading-[1.05]">{copy.doneTitle}</h2>
-        <p className="text-sm leading-6 text-muted-text">{copy.doneDesc}</p>
+        <h2 className="font-display text-[30px] font-bold leading-[1.05]">{left > 0 ? copy.pausedTitle(left) : copy.doneTitle}</h2>
+        <p className="text-sm leading-6 text-muted-text">{left > 0 ? copy.pausedDesc : copy.doneDesc}</p>
       </div>
       <div className="grid grid-cols-2 gap-2">
         {tiles.map((tile) => (

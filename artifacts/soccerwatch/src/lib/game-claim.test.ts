@@ -906,3 +906,24 @@ describe("computeStats distance", () => {
     expect(st.km).toBeLessThanOrEqual((st.dist / 1000) * 3 + 1e-9);
   });
 });
+
+describe("buildChunk at the end of a block", () => {
+  it("keeps a track that runs past the block running to the block's end (19.99 fps)", () => {
+    const fps = 19.99;
+    const boxes = [];
+    for (let f = 0; f <= Math.round(605 * fps); f++) boxes.push({ frame: f, x: 100, y: 400, w: 40, h: 100 });
+    const chunk = buildChunk({ k: 0, start: 0, dur: 600, frameRate: fps, tracks: [{ id: "A", boxes }], crossings: [], sprites: {} });
+    // Otherwise "Where were you?" asks about a hole at 9:59.65 that is the same player.
+    expect(chunk.pieces.A.t1).toBeGreaterThan(599.9);
+  });
+});
+
+describe("startClaimWithWindows run twice", () => {
+  it("replaces the first booking's windows instead of stacking them (Back, then a different game)", () => {
+    const ctx = orderFixture([600, 600, 600, 600]);
+    expect(startClaimWithWindows(ctx, [[0, 600]])).toBe("kit");
+    // The player goes back and picks the other game instead.
+    expect(startClaimWithWindows(ctx, [[1200, 1800]])).toBe("kit");
+    expect(ctx.S.order).toEqual([2]);
+  });
+});
