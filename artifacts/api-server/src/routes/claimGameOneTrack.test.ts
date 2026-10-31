@@ -131,4 +131,18 @@ describe("whole-game claim saves: one person, one track at a time", () => {
     const chain = mocks.persistChain.mock.calls[0][1] as Array<{ trackId: string }>;
     expect(chain).toEqual([]);
   });
+
+  it("keeps a claim complete when the deck's \"Not me\" cuts are what pushed it under the bar", async () => {
+    await request(appFor())
+      .put("/api/recordings/42/claim-match/game")
+      .send({
+        state: { step: "done" },
+        parts: [{ trackId: "X", fromFrame: 0, toFrame: 999 }],
+        bench: [],
+        done: true,
+        bundleFingerprint: "bundle-a",
+      });
+    // Same rule as the deck route: completion is judged with the deck's cuts counted back in.
+    expect(mocks.syncChainClaim.mock.calls[0][3]).toEqual({ creditDeckCuts: true });
+  });
 });

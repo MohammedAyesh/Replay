@@ -450,7 +450,8 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     console.error("[claim-game] bench write failed", { recordingId: ctx.recordingId, error });
   }
 
-  await syncChainClaim(ctx, chain, !parsed.data.done);
+  // The page re-applies the deck's "Not me" cuts on every save; judge completion as the deck does.
+  await syncChainClaim(ctx, chain, !parsed.data.done, { creditDeckCuts: true });
 
   // A finished claim puts the claimant on the roster of every match booked
   // over this recording, on the team their shirt matches. Best effort: the
