@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
+import { usePageBack } from "@/lib/use-page-back";
 import { ArrowLeft, BarChart3, ChevronRight, Film, Play, Scissors, Share2 } from "lucide-react";
 import type { PlayerStats, Stats } from "@/components/match/MatchStats";
 import { GoalReviewBox, goalStatusOf, reviewOf } from "@/components/match/GoalReview";
@@ -62,13 +63,14 @@ function rankText(L: L, standing: MyStanding | null): string | null {
 
 function LayoutHeader({ room, copy, L, now, onShare, title }: { room: MatchRoom; copy: Copy; L: L; now: number; onShare: () => void; title?: string }) {
   const [, setLocation] = useLocation();
+  const pageBack = usePageBack();
   const played = room.players.filter((player) => player.rsvp === "in").length;
   const score = room.score ? `${room.score.a}–${room.score.b}` : null;
   return (
     <div className="flex items-center gap-2 pt-3">
       <button
         type="button"
-        onClick={() => (window.history.length > 1 ? window.history.back() : setLocation("/home"))}
+        onClick={pageBack}
         aria-label={copy.back}
         className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line"
       >

@@ -418,7 +418,7 @@ const ar: GameStrings = {
   kit: {
     title: "شو كنت لابس؟",
     people: (n: number) => arCount(n, "لاعب واحد", "لاعبين", "لاعبين", "لاعب"),
-    claimCounts: (free: number, taken: number) => `${free} متاحين · ${taken} انختاروا`,
+    claimCounts: (free: number, taken: number) => `${arCount(free, "واحد متاح", "اثنين متاحين", "متاحين", "متاح")} · ${arCount(taken, "واحد انختار", "اثنين انختاروا", "انختاروا", "انختاروا")}`,
     startElsewhere: "ابدأ من مكان ثاني:",
     noPlay: "(ما في لعب)",
     everyone: "الكل",

@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
+import { usePageBack } from "@/lib/use-page-back";
 import { ArrowLeft, Check, ChevronLeft, Crosshair, Flag, Footprints, Goal, HelpCircle, Play, Share2, X, Zap } from "lucide-react";
 import type { PlayerStats, Stats } from "@/components/match/MatchStats";
 import { PlayerAvatar } from "@/components/match/bits";
@@ -105,6 +106,7 @@ function SofaHeader({ room, copy, S, colors, names, replay, onShare, tab, setTab
   replay: MatchReplay | undefined; onShare: () => void; tab: Tab; setTab: (tab: Tab) => void;
 }) {
   const [, setLocation] = useLocation();
+  const pageBack = usePageBack();
   const setScore = useSetScore(room.code);
   const suggested = replay?.suggested ?? null;
   // The score editor lives in the captain tools at the bottom of Overview: open it there.
@@ -131,7 +133,7 @@ function SofaHeader({ room, copy, S, colors, names, replay, onShare, tab, setTab
   return (
     <div className="flex flex-col">
       <div className="flex h-12 items-center justify-between pt-1">
-        <button type="button" onClick={() => (window.history.length > 1 ? window.history.back() : setLocation("/home"))} aria-label={copy.back} className="flex h-11 w-11 items-center justify-center">
+        <button type="button" onClick={pageBack} aria-label={copy.back} className="flex h-11 w-11 items-center justify-center">
           <ArrowLeft className="h-5 w-5 rtl:rotate-180" />
         </button>
         <span className="truncate text-sm font-semibold text-muted-text">{room.title || room.field.name}</span>

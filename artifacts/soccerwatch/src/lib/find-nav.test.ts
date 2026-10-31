@@ -3,6 +3,7 @@ import {
   authPathWithReturn,
   findBackTarget,
   findPath,
+  pageBackTarget,
   matchReportPath,
   previousInAppLocation,
   recordInAppLocation,
@@ -77,5 +78,34 @@ describe("in-app navigation trail", () => {
     recordInAppLocation("/find/42");
     recordInAppLocation("/find/42");
     expect(previousInAppLocation()).toBe("/m/AB12");
+  });
+});
+
+describe("back on the match page and other app pages", () => {
+  it("goes back in history only to an earlier Replay page", () => {
+    expect(pageBackTarget("/matches", "/m/AB12")).toEqual({ kind: "history" });
+    expect(pageBackTarget("/home", "/m/AB12")).toEqual({ kind: "history" });
+  });
+
+  it("does not leave Replay when the match was opened from a link (no earlier app page)", () => {
+    // window.history.length > 1 is true in a tab that visited WhatsApp or another site first.
+    expect(pageBackTarget(null, "/m/AB12")).toEqual({ kind: "path", path: "/home" });
+  });
+
+  it("does not bounce between Find yourself and the match report", () => {
+    expect(pageBackTarget("/find/403", "/m/AB12")).toEqual({ kind: "path", path: "/home" });
+    expect(pageBackTarget("/find/403/check", "/m/AB12")).toEqual({ kind: "path", path: "/home" });
+  });
+
+  it("does not 'go back' to the page it is already on", () => {
+    expect(pageBackTarget("/m/AB12", "/m/AB12")).toEqual({ kind: "path", path: "/home" });
+  });
+
+  it("never sends the player into sign-in or onboarding", () => {
+    expect(pageBackTarget("/sign-in", "/m/AB12")).toEqual({ kind: "path", path: "/home" });
+  });
+
+  it("uses the fallback it is given", () => {
+    expect(pageBackTarget(null, "/m/AB12", "/matches")).toEqual({ kind: "path", path: "/matches" });
   });
 });

@@ -66,7 +66,7 @@ import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
-  addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, clearPick, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
+  addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, clearPick, clearRosterPick, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
   hkey, recordSwitch, restoreClaimVisitOrder, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
@@ -1661,7 +1661,7 @@ export function GameClaim({
     body = <ReviewScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp}
       act={act} go={go} show={show} media={media} previewGroup={previewGroup}
       writeGroupDecision={writeGroupDecision} writeRejectedGroup={writeRejectedGroup}
-      writeRejectedTrack={writeRejectedTrack} />;
+      writeRejectedTrack={writeRejectedTrack} hasSquadList={rosterPlayers.length > 0} />;
   } else if (S.step === "joins" && currentChunk && S.k !== null) {
     const next = nextIllustratedJoin(ctx, S.k, S.qi);
     const j = next.junction;
@@ -1850,7 +1850,15 @@ export function GameClaim({
         <ClaimantNameDialog
           defaultName={claimName || accountName}
           saving={false}
-          onCancel={() => setPendingNamePick(null)}
+          onCancel={() => {
+            // Closing the name box keeps the pick (under the account name) and
+            // does not ask again: it used to drop the pick and re-open on every
+            // later "That's me".
+            const pending = pendingNamePick;
+            namePromptHandled.current = true;
+            setPendingNamePick(null);
+            if (pending) completeGroupPick(pending);
+          }}
           onConfirm={confirmClaimName}
         />
       )}
@@ -1903,7 +1911,7 @@ function Tile({ d, photo, nearbyLabel, label, children, onClick, out, pickOn }: 
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
-      className={`relative flex flex-col items-center gap-1 rounded-xl border bg-surface p-1 ${out ? "border-[#FF5A3C]" : pickOn ? "border-floodlight" : "border-line"} ${onClick ? "cursor-pointer" : ""}`}
+      className={`relative flex flex-col items-center gap-1 rounded-xl border bg-surface p-1 ${out ? "border-violet" : pickOn ? "border-floodlight" : "border-line"} ${onClick ? "cursor-pointer" : ""}`}
     >
       <div className={out ? "opacity-25" : ""}>
         <CropWithNote d={d} picture={photo} h={108} nearbyLabel={nearbyLabel} />
@@ -1956,13 +1964,13 @@ function GroupCard({
                 aria-label={removed ? photoRemoval.restoreLabel : photoRemoval.removeLabel}
                 aria-pressed={removed}
                 onClick={() => photoRemoval.onToggle(id)}
-                className={`relative inline-flex w-fit shrink-0 overflow-hidden rounded-xl border p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-floodlight ${removed ? "border-[#FF5A3C]" : "border-line hover:border-floodlight"}`}
+                className={`relative inline-flex w-fit shrink-0 overflow-hidden rounded-xl border p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-floodlight ${removed ? "border-violet" : "border-line hover:border-floodlight"}`}
               >
                 <span className={removed ? "opacity-25" : ""}>
                   <CropWithNote d={d} picture={picture} h={104} nearbyLabel={copy.media.nearbyPicture} />
                 </span>
                 {removed && (
-                  <span aria-hidden="true" className="absolute inset-0 grid place-items-center bg-black/20 text-3xl font-bold leading-none text-[#FF5A3C]">
+                  <span aria-hidden="true" className="absolute inset-0 grid place-items-center bg-black/20 text-3xl font-bold leading-none text-[#A98CFF]">
                     ×
                   </span>
                 )}
@@ -2110,7 +2118,7 @@ function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
 
 function ReviewScreen({
   ctx, d, copy, mediaSlot, span, disp, act, go, show, media, previewGroup,
-  writeGroupDecision, writeRejectedGroup, writeRejectedTrack,
+  writeGroupDecision, writeRejectedGroup, writeRejectedTrack, hasSquadList,
 }: {
   ctx: Ctx; d: LoadedChunk; copy: GameStrings; mediaSlot: React.ReactNode; span: string; disp: (t: number) => string;
   act: (fn: () => void, counts?: boolean) => void; go: (s: Step) => void; show: (v: MediaView) => void;
@@ -2118,6 +2126,7 @@ function ReviewScreen({
   writeGroupDecision: (d: LoadedChunk, g: Group, rejected?: Group) => void;
   writeRejectedGroup: (d: LoadedChunk, g: Group) => void;
   writeRejectedTrack: (k: number, trackId: string | null | undefined, localSeconds: number) => void;
+  hasSquadList: boolean;
 }) {
   const S = ctx.S;
   const k = d.k;
@@ -2157,7 +2166,7 @@ function ReviewScreen({
                 act(() => { if (i >= 0) y.out.splice(i, 1); else y.out.push(m.id); });
               }}>
               <button type="button" aria-label={copy.media.play} onClick={(e) => { e.stopPropagation(); watchPiece(m.id); }}
-                className="absolute bottom-7 end-2 grid h-6 w-6 place-items-center rounded-full bg-black/60 text-[10px] text-white">▶</button>
+                className="absolute bottom-7 end-1.5 grid h-9 w-9 place-items-center rounded-full bg-black/60 text-xs text-white">▶</button>
             </Tile>
           );
         })}
@@ -2207,10 +2216,13 @@ function ReviewScreen({
         }}>{copy.review.looksRight}</Btn>
         <Btn testId="button-review-not-me" onClick={() => {
           if (g) writeRejectedGroup(d, g);
+          // A squad-list pick seeded every block: clear it everywhere and go
+          // back to the squad list, or later blocks open on the wrong person.
+          const fromSquad = clearRosterPick(ctx);
           // Forget this block's pick before saving, or the rejected person
-          // stays in the saved claim as you.
-          clearPick(ctx, k);
-          go(S.oi ? "next" : "gallery");
+          // stays in the saved claim as you; and never offer them again here.
+          clearPick(ctx, k, g?.cid ?? null);
+          go(fromSquad && hasSquadList ? "roster" : S.oi ? "next" : "gallery");
         }}>{copy.review.notMe}</Btn>
         <Btn title={copy.review.cameOff} onClick={() => act(() => {
           const t = media.current?.now() ?? 0;
@@ -2409,7 +2421,8 @@ function TeammateSuggestionForm({
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
   const selected = rosterPlayers.find((player) => player.id === playerId);
-  const isArabic = document.documentElement.dir === "rtl";
+  // The language setting, not the page direction: they disagreed until the next render.
+  const isArabic = useGameCopy().locale === "ar";
   const label = (player: MatchRosterPlayer) => [
     player.name || (isArabic ? "لاعب" : "Player"),
     player.number ? `#${player.number}` : "",
@@ -2421,7 +2434,7 @@ function TeammateSuggestionForm({
       <h3 className="font-display text-base font-bold">{isArabic ? "بتعرف مين من أصحابك؟" : "Recognize a teammate?"}</h3>
       <p className="mt-1 text-xs text-muted-text">{isArabic
         ? "اقترح اللاعب على صاحبك. هو اللي بأكد هويته وبكمل اختياره."
-        : "Suggest a player to a friend. They confirm it and complete their own claim."}</p>
+        : "Suggest a player to a friend. They confirm it and finish finding themselves."}</p>
       {sent ? <p role="status" className="mt-3 text-sm font-semibold text-turf">{isArabic ? "انبعث الطلب لصاحبك." : "Request sent to your friend."}</p> : (
         <div className="mt-3 flex flex-col gap-2">
           <label className="text-xs font-semibold text-muted-text">

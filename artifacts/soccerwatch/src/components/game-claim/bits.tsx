@@ -41,7 +41,7 @@ export function Btn({
       onClick={onClick}
       className={cn(
         "inline-flex items-center justify-center rounded-full font-semibold leading-snug transition-colors disabled:opacity-40",
-        size === "sm" ? "min-h-9 px-3.5 py-1.5 text-xs" : "min-h-12 px-5 py-2 text-sm",
+        size === "sm" ? "min-h-10 px-3.5 py-1.5 text-xs" : "min-h-12 px-5 py-2 text-sm",
         kind === "primary" && cn("bg-floodlight font-bold text-void hover:opacity-90", size === "md" && "text-base"),
         // #7B5CFF fails AA as text on Void; violet TEXT is #A98CFF, the border keeps the brand violet.
         kind === "violet" && "border border-violet text-[#A98CFF] hover:bg-violet/10",
@@ -170,7 +170,7 @@ export function ChunkTimeline({
       {offs.map((o, i) => seg(OUT(o[2]) ? "bg-[#3a4257]" : "bg-[#5b6479]", [Math.max(0, o[0]), Math.min(dur, o[1])], `o${i}`))}
       {t.holes.map((h, i) =>
         seg(
-          cn("bg-[repeating-linear-gradient(45deg,rgba(255,90,60,.35)_0_4px,transparent_4px_8px)]", cur && hkey(cur) === hkey(h) && "shadow-[inset_0_0_0_2px_#D4FF4F]"),
+          cn("bg-[repeating-linear-gradient(45deg,rgba(143,160,181,.35)_0_4px,transparent_4px_8px)]", cur && hkey(cur) === hkey(h) && "shadow-[inset_0_0_0_2px_#D4FF4F]"),
           [h.t0, h.t1],
           `h${i}`,
         ),
@@ -190,7 +190,7 @@ export function ChunkTimeline({
         <span><b className="me-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-turf align-[-1px]" />{copy.found(mmss(t.fs + t.bs))}</span>
         <span><b className="me-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-[#3a4257] align-[-1px]" />{copy.outOfPlay}</span>
         {t.os > 0 && <span><b className="me-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-[#5b6479] align-[-1px]" />{copy.offCamera(mmss(t.os))}</span>}
-        <span><b className="me-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-[#FF5A3C]/70 align-[-1px]" />{copy.missing(mmss(missing))}</span>
+        <span><b className="me-1.5 inline-block h-2.5 w-2.5 rounded-sm bg-muted-text/50 align-[-1px]" />{copy.missing(mmss(missing))}</span>
       </div>
     </div>
   );

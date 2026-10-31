@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
+import { usePageBack } from "@/lib/use-page-back";
 import { AnimatePresence } from "framer-motion";
 import { CoachBubble } from "@/components/explainers/CoachBubble";
 import { useExplainerCopy } from "@/i18n/explainer-strings";
@@ -428,6 +429,7 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
   replay: MatchReplay | undefined;
 }) {
   const [, setLocation] = useLocation();
+  const pageBack = usePageBack();
   const post = ["processing", "ready", "expired"].includes(room.phase);
   const explainerCopy = useExplainerCopy();
   // First visit to a match page before the game: point at Share, the way the
@@ -445,7 +447,7 @@ function Hero({ room, copy, now, colors, names, onShare, replay }: {
       </div>
       <div className="relative px-4 pb-5 pt-4">
         <div className="flex items-center justify-between">
-          <button type="button" onClick={() => (window.history.length > 1 ? window.history.back() : setLocation("/home"))} aria-label={copy.back} className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur">
+          <button type="button" onClick={pageBack} aria-label={copy.back} className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-surface/80 backdrop-blur">
             <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
           </button>
           <div className="flex items-center gap-2">

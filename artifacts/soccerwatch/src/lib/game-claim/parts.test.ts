@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dropOverlappingShortRosterParts, firstRosterChunk, materializeRosterParts, seedRosterParts, chainParts } from "./parts";
-import { clearPick, newState, pick, Y, type Ctx } from "./claim";
+import { clearPick, clearRosterPick, newState, pick, Y, type Ctx } from "./claim";
 
 function makeContext(loaded: boolean): Ctx {
   const chunk = {
@@ -201,5 +201,26 @@ describe("Not me", () => {
     expect(Y(ctx, 1).skipped).toBe(false);
     expect(ctx.S.qi).toBe(0);
     expect(chainParts(ctx)).toEqual([]);
+  });
+});
+describe("Not me after picking from the squad list", () => {
+  it("clears that squad player from every block, not only the current one", () => {
+    const ctx = makeContext(false);
+    seedRosterParts(ctx, 1, [{ trackId: "s1:t7", fromFrame: 105, toFrame: 140 }]);
+    seedRosterParts(ctx, 2, [{ trackId: "s2:t3", fromFrame: 12_000, toFrame: 12_400 }]);
+    seedRosterParts(ctx, 3, [{ trackId: "s3:t1", fromFrame: 24_000, toFrame: 24_400 }]);
+    expect(chainParts(ctx)).toHaveLength(3);
+
+    expect(clearRosterPick(ctx)).toBe(true);
+
+    expect(chainParts(ctx)).toEqual([]);
+    for (const k of [1, 2, 3]) expect(Y(ctx, k).rosterParts ?? []).toEqual([]);
+  });
+
+  it("reports false when the pick did not come from the squad list", () => {
+    const ctx = makeContext(true);
+    Y(ctx, 1).cid = "g7";
+    expect(clearRosterPick(ctx)).toBe(false);
+    expect(Y(ctx, 1).cid).toBe("g7");
   });
 });

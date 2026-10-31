@@ -201,7 +201,7 @@ describe("HomeHub booking and free-match actions", () => {
     });
 
     expect(markup).toContain('data-testid="link-free-match-find"');
-    expect(markup).toContain('href="/find/77"');
+    expect(markup).toContain(`href="/find/77?match=MATCH1"`);
     expect(markup).not.toContain('data-testid="button-free-match-share"');
     expect(countBookLinks(markup)).toBe(1);
   });

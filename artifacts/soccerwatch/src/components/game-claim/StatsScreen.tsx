@@ -17,7 +17,7 @@ import { TeamsSection } from "./TeamsSection";
  * match page); the ball on the map comes from the bundle's ball data.
  */
 
-const ZONE_COLOUR: Record<ZoneKey, string> = { walk: "#3a4f6b", jog: "#2FD8C4", run: "#D4FF4F", sprint: "#FF5A3C" };
+const ZONE_COLOUR: Record<ZoneKey, string> = { walk: "#3a4f6b", jog: "#2FD8C4", run: "#D4FF4F", sprint: "#7B5CFF" };
 const kmh = (v: number) => (v * 3.6).toFixed(1);
 
 export function StatsScreen({
@@ -329,7 +329,7 @@ function drawHeat(cv: HTMLCanvasElement | null, heat: Float32Array) {
   }
   const sorted = [...B].filter((v) => v > 0).sort((p, q) => p - q);
   const top = sorted.length ? sorted[Math.floor(sorted.length * 0.98)] : 1;
-  const stops: Array<[number, number[]]> = [[0, [47, 216, 196, 0]], [0.25, [47, 216, 196, 120]], [0.6, [212, 255, 79, 190]], [1, [255, 90, 60, 230]]];
+  const stops: Array<[number, number[]]> = [[0, [47, 216, 196, 0]], [0.25, [47, 216, 196, 120]], [0.6, [212, 255, 79, 190]], [1, [123, 92, 255, 230]]];
   const col = (f: number) => {
     f = Math.min(1, Math.max(0, f));
     let i = 0;

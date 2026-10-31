@@ -5,6 +5,7 @@ import {
   chunkPercent,
   afterChunk,
   candidates,
+  clearPick,
   claimVisitOrder,
   firstChunk,
   inPlaySec,
@@ -925,5 +926,18 @@ describe("startClaimWithWindows run twice", () => {
     // The player goes back and picks the other game instead.
     expect(startClaimWithWindows(ctx, [[1200, 1800]])).toBe("kit");
     expect(ctx.S.order).toEqual([2]);
+  });
+});
+
+describe("Not me on \"Is this you?\"", () => {
+  it("does not offer the person just turned down again", () => {
+    const ctx = fixture();
+    expect(rankNext(ctx, 0).map(({ g }) => g.cid)).toContain("g1");
+    clearPick(ctx, 0, "g1");
+    expect(rankNext(ctx, 0).map(({ g }) => g.cid)).not.toContain("g1");
+    // Picking again later in the same block still works; the rejection stays.
+    Y(ctx, 0).cid = "g2";
+    clearPick(ctx, 0);
+    expect(rankNext(ctx, 0).map(({ g }) => g.cid)).not.toContain("g1");
   });
 });

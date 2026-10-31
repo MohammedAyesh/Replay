@@ -395,18 +395,18 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
         )}
       </div>
       {videoError && <p className="px-3 pt-2 text-xs text-muted-text">{copy.videoError}</p>}
-      <div dir="ltr" className="flex items-center gap-2 bg-surface px-3 py-2">
+      <div dir="ltr" className="flex items-center gap-1.5 bg-surface px-3 py-2">
         <button
           type="button"
           onClick={togglePlay}
           aria-label={playing ? copy.pause : copy.play}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-floodlight font-bold text-void"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-floodlight font-bold text-void"
         >
           {playing ? "❚❚" : "▶"}
         </button>
-        <button type="button" onClick={() => seek(trackingTime() - 2)} className="rounded-full border border-line px-2.5 py-1 text-xs text-text">{copy.back2}</button>
-        <button type="button" onClick={() => seek(trackingTime() + 2)} className="rounded-full border border-line px-2.5 py-1 text-xs text-text">{copy.fwd2}</button>
-        <span className="w-14 shrink-0 font-display text-xs tabular-nums text-text">{mmss((scrub ?? clock) + (game.matchOffset || 0))}</span>
+        <button type="button" onClick={() => seek(trackingTime() - 2)} className="flex h-10 min-w-10 shrink-0 items-center justify-center rounded-full border border-line px-2 text-xs text-text">{copy.back2}</button>
+        <button type="button" onClick={() => seek(trackingTime() + 2)} className="flex h-10 min-w-10 shrink-0 items-center justify-center rounded-full border border-line px-2 text-xs text-text">{copy.fwd2}</button>
+        <span className="w-12 shrink-0 font-display text-xs tabular-nums text-text">{mmss((scrub ?? clock) + (game.matchOffset || 0))}</span>
         <input
           type="range"
           aria-label={copy.scrub}
@@ -422,8 +422,8 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
           onBlur={finishScrub}
           className="min-w-0 flex-1 accent-[#D4FF4F]"
         />
-        <button type="button" aria-label={copy.zoomOut} onClick={() => zoom(1 / 1.35)} className="rounded-full border border-line px-2.5 py-1 text-xs text-text">−</button>
-        <button type="button" aria-label={copy.zoomIn} onClick={() => zoom(1.35)} className="rounded-full border border-line px-2.5 py-1 text-xs text-text">+</button>
+        <button type="button" aria-label={copy.zoomOut} onClick={() => zoom(1 / 1.35)} className="flex h-10 min-w-10 shrink-0 items-center justify-center rounded-full border border-line px-2 text-xs text-text">−</button>
+        <button type="button" aria-label={copy.zoomIn} onClick={() => zoom(1.35)} className="flex h-10 min-w-10 shrink-0 items-center justify-center rounded-full border border-line px-2 text-xs text-text">+</button>
       </div>
     </div>
   );
