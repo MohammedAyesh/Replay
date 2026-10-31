@@ -655,6 +655,8 @@ export async function syncChainClaim(
   ctx: ChainContext,
   chain: ChainPart[],
   hasOpenQuestion: boolean,
+  /** see completeDespiteDeckCuts: the check deck and the recording-wide re-sync pass it */
+  options: { creditDeckCuts?: boolean } = {},
 ): Promise<void> {
   try {
     const offPitchRows = await db
@@ -668,12 +670,15 @@ export async function syncChainClaim(
         eq(claimMatchOffPitchSpansTable.userId, ctx.userId),
       ));
 
-    const state = deriveChainClaimState(
+    const derived = deriveChainClaimState(
       ctx.manifest,
       ctx.segments.map((segment) => ({ tracks: segment.tracks, events: segment.events })),
       chain,
       { offPitch: offPitchRows, hasOpenQuestion },
     );
+    const state = options.creditDeckCuts
+      ? await completeDespiteDeckCuts(ctx, chain, derived, { offPitch: offPitchRows, hasOpenQuestion })
+      : derived;
 
     const [bundle] = await db
       .select()
@@ -798,6 +803,36 @@ export async function syncChainClaim(
 }
 
 /**
+ * "Is this you?" (routes/checkDeck): a deck "Not me" takes ±5 s of that track
+ * off the claim, and on a claim just over the bar three of them took it under
+ * and cost the player every clip of the match. So completion is judged with
+ * the deck's cut frames counted back in: a claim that counted before a "no"
+ * still counts after it. Only the completion is credited -- coverage, clips
+ * and the binding all come from the cut chain, so the cut moment earns
+ * nothing. It cannot complete a claim that did not count before the cuts.
+ */
+async function completeDespiteDeckCuts(
+  ctx: ChainContext,
+  chain: ChainPart[],
+  state: ReturnType<typeof deriveChainClaimState>,
+  opts: Parameters<typeof deriveChainClaimState>[3],
+): Promise<ReturnType<typeof deriveChainClaimState>> {
+  if (state.completed || !chain.length) return state;
+  const cuts = [...(await momentChecksFor(ctx.userId, ctx.recordingId)).values()]
+    .flatMap((check) => (check.cut ? [check.cut] : []));
+  if (!cuts.length) return state;
+  const credited = deriveChainClaimState(
+    ctx.manifest,
+    ctx.segments.map((segment) => ({ tracks: segment.tracks, events: segment.events })),
+    [...chain, ...cuts],
+    opts,
+  );
+  return credited.completed
+    ? { ...state, completed: true, completionReason: `${credited.completionReason} (counting moments marked "not me")` }
+    : state;
+}
+
+/**
  * Re-derive every claim on a recording after something that changes what a
  * claim is worth without changing the claim -- the match window.
  *
@@ -842,7 +877,7 @@ export async function resyncChainClaimsForRecording(
       if (!loaded.ctx) continue;
       const chain = chainOf(loaded.ctx.manifest, loaded.ctx.identityId);
       if (!chain.length) continue;
-      await syncChainClaim(loaded.ctx, chain, !row.completed);
+      await syncChainClaim(loaded.ctx, chain, !row.completed, { creditDeckCuts: true });
       synced++;
     } catch (error) {
       console.error("[claim-chain] resync failed", { recordingId, userId: row.userId, error });

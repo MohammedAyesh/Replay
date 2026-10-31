@@ -52,7 +52,7 @@ function focusAt(focus: FocusPoint[], t: number): FocusPoint | null {
 export type DeckVideoState = "loading" | "ready" | "buffered" | "failed";
 
 export const DeckVideo = memo(function DeckVideo({
-  card, url, srcAspect, active, load, onState, ringColor, tag,
+  card, url, srcAspect, active, load, onState, ringColor, tag, fieldViewLabel,
 }: {
   card: DeckCard;
   url: string;
@@ -64,6 +64,8 @@ export const DeckVideo = memo(function DeckVideo({
   onState?: (id: string, state: DeckVideoState) => void;
   ringColor: string;
   tag: string;
+  /** the minimap's label ("field view"), in the page's language */
+  fieldViewLabel: string;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -270,7 +272,7 @@ export const DeckVideo = memo(function DeckVideo({
       <div className="pointer-events-none absolute right-3 top-3 h-9 w-32 overflow-hidden rounded-md border border-white/30 bg-black/55" dir="ltr">
         <div className="absolute inset-y-0 left-1/2 w-px bg-white/20" />
         <div ref={frameRef} className="absolute rounded-[2px] border-2 border-floodlight" />
-        <span className="absolute inset-x-0 bottom-px text-center text-[8px] font-medium uppercase tracking-wide text-white/50">field view</span>
+        <span className="absolute inset-x-0 bottom-px text-center text-[8px] font-medium uppercase tracking-wide text-white/50 rtl:tracking-normal">{fieldViewLabel}</span>
       </div>
       <div className="pointer-events-none absolute inset-x-3 bottom-3 h-1 overflow-hidden rounded-full bg-white/20" dir="ltr">
         <div ref={barRef} className="h-full origin-left bg-floodlight" style={{ transform: "scaleX(0)" }} />
