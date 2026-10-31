@@ -43,6 +43,8 @@ export type BackupBranding = {
 
 const CACHE_TTL_MS = 30 * 60_000;
 const cache = new Map<string, { at: number; value: Promise<BackupBranding> }>();
+const cardJobs = new Map<string, Promise<{ buffer: Buffer; ext: "webm" | "mov" }>>();
+let cardEncodeQueue = Promise.resolve();
 
 /** vps1 sends its Storage key only to the Storage origin, never the pull zone. */
 function storageOriginUrl(remotePath: string): string {
@@ -58,6 +60,21 @@ async function uploadContentAddressed(buffer: Buffer, folder: string, ext: strin
 
 /** The card alone (transparent where the footage shows), as a small video. */
 export async function encodeCard(job: EndScreenJob, dims: Dims): Promise<{ buffer: Buffer; ext: "webm" | "mov" }> {
+  const key = createHash("sha256").update(JSON.stringify({ job, dims })).digest("hex");
+  const existing = cardJobs.get(key);
+  if (existing) return existing;
+
+  const encoded = cardEncodeQueue.then(() => encodeCardUnqueued(job, dims));
+  cardJobs.set(key, encoded);
+  cardEncodeQueue = encoded.then(() => undefined, () => undefined);
+  try {
+    return await encoded;
+  } finally {
+    cardJobs.delete(key);
+  }
+}
+
+async function encodeCardUnqueued(job: EndScreenJob, dims: Dims): Promise<{ buffer: Buffer; ext: "webm" | "mov" }> {
   // VP9 with alpha is ~0.3 MB for a 3 s portrait card. QuickTime RLE is the
   // fallback for an FFmpeg built without libvpx: lossless, ~10x larger.
   const variants: Array<{ ext: "webm" | "mov"; args: string[] }> = [
@@ -122,7 +139,10 @@ async function compute(
           kind: plan.endScreen.spec.kind,
         };
       } catch (err) {
-        logger.warn({ err, clipId: clip.id }, "Could not hand the end screen to vps1 — it renders without one");
+        logger.warn(
+          { err, clipId: clip.id, overlayUrl: result.overlayUrl },
+          "Could not prepare the end screen for vps1 — handing over with the overlay only",
+        );
       }
     }
   } finally {

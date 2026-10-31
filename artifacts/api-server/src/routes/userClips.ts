@@ -935,7 +935,7 @@ async function runBackgroundExport(
         .set({ exportStatus: "done", exportedUrl })
         .where(and(
           eq(userClipsTable.id, clipId),
-          inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
+          inArray(userClipsTable.exportStatus, ["pending", PENDING_VPS1_OVERFLOW, PENDING_LOCAL_FALLBACK]),
         ))
         .returning({ id: userClipsTable.id });
       // A re-render (new end screen, admin re-clip) supersedes this server's
@@ -1107,7 +1107,7 @@ async function failOverToBackup(
       .set({ exportStatus: PENDING_VPS1_AFTER_PRIMARY })
       .where(and(
         eq(userClipsTable.id, clip.id),
-        inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK]),
+        inArray(userClipsTable.exportStatus, ["pending", PENDING_VPS1_OVERFLOW, PENDING_LOCAL_FALLBACK]),
       ))
       .returning({ id: userClipsTable.id });
     if (!claimed) return;

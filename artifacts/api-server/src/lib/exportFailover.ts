@@ -110,13 +110,11 @@ export type BackupBrandingProvider = (
 ) => Promise<{ overlayUrl: string | null; endScreen: BackupExportSpec["endScreen"] }>;
 
 let brandingProvider: BackupBrandingProvider | null = null;
-const BRANDING_TIMEOUT_MS = 25_000;
-
 export function setBackupBrandingProvider(provider: BackupBrandingProvider | null): void {
   brandingProvider = provider;
 }
 
-async function brandingFor(
+export async function prepareBackupBranding(
   clip: ClipRow,
   overlayUrl: string | null,
   exportRevision?: string,
@@ -124,14 +122,11 @@ async function brandingFor(
   if (!brandingProvider) return { overlayUrl, endScreen: null };
   const provider = brandingProvider;
   try {
-    // Branding never holds a hand-off up for long: past the timeout vps1 gets
-    // the uploaded overlay and no end screen, as before drawn branding existed.
-    return await Promise.race([
-      provider(clip, overlayUrl, exportRevision),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timed out")), BRANDING_TIMEOUT_MS).unref?.()),
-    ]);
+    // Do not submit a job until its branding is ready. In particular, never
+    // turn a slow end-card encode into an unbranded vps1 hand-off.
+    return await provider(clip, overlayUrl, exportRevision);
   } catch (err) {
-    logger.warn({ err, clipId: clip.id }, "Drawn branding for vps1 unavailable — handing over without it");
+    logger.warn({ err, clipId: clip.id }, "Could not prepare drawn branding for vps1 — using uploaded branding where available");
     return { overlayUrl, endScreen: null };
   }
 }
@@ -188,7 +183,7 @@ async function reconcileUncached(
   clip: ClipRow,
   opts: { overlayUrl?: string | null; primaryActive?: boolean; exportRevision?: string },
 ): Promise<BackupOutcome> {
-  const branding = await brandingFor(clip, opts.overlayUrl ?? null, opts.exportRevision);
+  const branding = await prepareBackupBranding(clip, opts.overlayUrl ?? null, opts.exportRevision);
   const spec = backupSpecFor(clip, branding.overlayUrl, opts.exportRevision, branding.endScreen);
   let status: BackupExportStatus;
   try {
@@ -211,6 +206,13 @@ async function reconcileUncached(
           { clipId: clip.id, job: status.job },
           "Ignoring an invalid vps1 Bunny Storage URL; keeping the vps1 export reference",
         );
+      }
+      // If Method A is still rendering locally, its branded output remains
+      // authoritative. Leave the row pending so Method A can publish; if it
+      // fails, the next sweep can claim the already-finished backup export.
+      if (opts.primaryActive) {
+        logger.info({ clipId: clip.id, job: status.job }, "Backup export is ready; waiting for the active primary render");
+        return { state: "running", progress: 100, stage: "waiting_for_primary" };
       }
       // Never overwrite a finished Method A export; both are valid, first wins.
       const updated = await db
