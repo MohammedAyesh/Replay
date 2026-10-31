@@ -72,7 +72,8 @@ import {
 import { setGoalVote } from "../lib/goalReview";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { browserVideoUrl } from "../lib/checkDeck";
-import { REEL, reelCards, type ReelPlay, type ReelRecording } from "../lib/goalReel";
+import { REEL, reelCards, reelWindow, type ReelPlay, type ReelRecording } from "../lib/goalReel";
+import { reelClip } from "../lib/goalReelClip";
 import { resyncChainClaimsForRecording } from "./claimChain";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, invalidateMatchStatsCacheForRecording, playerMatchForm } from "../lib/matchStatsCache";
@@ -760,9 +761,70 @@ router.get("/m/:code/goals/reel", async (req, res): Promise<void> => {
     }
     const cards = reelCards(replay.review, plays);
     res.json({ recordings, cards, open: replay.review.filter((g) => g.status === "open").length });
+    // The page fetches this list as soon as the button shows, so cut the first
+    // cards now: by the time the reel opens their files are on disk.
+    const raw = new Map(rows.map((row) => [row.id, row.videoUrl]));
+    for (const card of cards.slice(0, 3)) {
+      const videoUrl = raw.get(card.recordingId);
+      if (videoUrl) void reelClip(videoUrl, card.start, card.end).catch(() => { /* the page asks again */ });
+    }
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "goal reel failed");
     res.status(500).json({ error: "Could not build the reel" });
+  }
+});
+
+/**
+ * GET /m/:code/goals/reel/clip?recordingId=&key= -- one reel card as a small
+ * MP4 (lib/goalReelClip.ts): the HLS segments that cover it, remuxed on the
+ * server, so a phone downloads one file per card instead of streaming
+ * playlists and segments through the proxy. X-Clip-Offset says where the file
+ * starts on the video's clock.
+ */
+router.get("/m/:code/goals/reel/clip", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  if (!(await canConfirmGoals(user, ctx))) {
+    res.status(403).json({ error: "Only players in this match can confirm goals" });
+    return;
+  }
+  const recordingId = Number(req.query.recordingId);
+  const key = Number(req.query.key);
+  if (!Number.isSafeInteger(recordingId) || recordingId <= 0 || !Number.isSafeInteger(key) || key < 0) {
+    res.status(400).json({ error: "Invalid clip" });
+    return;
+  }
+  const linked = await recordingsForRoom(ctx);
+  if (!linked.some((link) => link.recordingId === recordingId)) {
+    res.status(404).json({ error: "That recording is not this match's" });
+    return;
+  }
+  try {
+    const [row] = await db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable).where(eq(recordingsTable.id, recordingId));
+    const play = await loadRecordingPlay(recordingId);
+    if (!row?.videoUrl || !play) {
+      res.status(404).json({ error: "No footage" });
+      return;
+    }
+    // the key is the chance's tracking time x 10
+    const t = key / 10;
+    if (play.manifest.duration > 0 && t > play.manifest.duration + 60) {
+      res.status(404).json({ error: "No footage at that time" });
+      return;
+    }
+    const win = reelWindow(t, play.manifest.videoStartSeconds ?? 0);
+    const clip = await reelClip(row.videoUrl, win.start, win.end);
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("X-Clip-Offset", clip.offset.toFixed(3));
+    res.sendFile(clip.path, (error) => {
+      if (error && !res.headersSent) res.status(500).json({ error: "Could not send the clip" });
+    });
+  } catch (error) {
+    logger.warn({ code: ctx.room.code, recordingId, key, err: error }, "goal reel clip failed");
+    res.status(502).json({ error: "Could not cut the clip" });
   }
 });
 

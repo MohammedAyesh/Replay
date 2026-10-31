@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiBase, matchKey } from "@/lib/match-api";
 import type { FocusPoint } from "@/lib/check-deck";
@@ -90,4 +91,88 @@ export function createVoteSaver(code: string, onFailed: (ids: string[]) => void)
       while (running) await running;
     },
   };
+}
+
+/* ------------------------------------------------------------- the clips */
+
+export type ReelClipState =
+  | { status: "loading" }
+  | { status: "ready"; url: string; offset: number }
+  | { status: "failed" };
+
+export const reelClipUrl = (code: string, card: Pick<ReelCard, "recordingId" | "key">) =>
+  `${apiBase}/m/${encodeURIComponent(code)}/goals/reel/clip?recordingId=${card.recordingId}&key=${card.key}`;
+
+/** cards fetched ahead of the one on screen */
+export const REEL_AHEAD = 3;
+/** downloads at once; the card on screen always goes first */
+const PARALLEL = 2;
+
+/**
+ * Each card's MP4, downloaded into memory ahead of time: the card on screen
+ * first, then the next REEL_AHEAD, two at a time. A file is kept while its
+ * card is within reach (one back for Back), then released. A failed download
+ * is tried once more.
+ */
+export function useReelClips(code: string, cards: readonly ReelCard[] | null, index: number) {
+  const [clips, setClips] = useState<Record<string, ReelClipState>>({});
+  const urls = useRef(new Map<string, string>());
+  const inFlight = useRef(new Map<string, AbortController>());
+  const tries = useRef(new Map<string, number>());
+  const [nonce, setNonce] = useState(0);
+
+  useEffect(() => {
+    if (!cards?.length) return;
+    const keep = new Set(cards.slice(Math.max(0, index - 1), index + REEL_AHEAD + 1).map((c) => c.id));
+    // release what is out of reach
+    for (const [id, url] of urls.current) {
+      if (keep.has(id)) continue;
+      URL.revokeObjectURL(url);
+      urls.current.delete(id);
+      setClips((s) => { const { [id]: _, ...rest } = s; return rest; });
+    }
+    for (const [id, ctl] of inFlight.current) if (!keep.has(id)) { ctl.abort(); inFlight.current.delete(id); }
+    // fetch in order of need: this card, the next ones, then the one before
+    const order = [...cards.slice(index, index + REEL_AHEAD + 1), ...(index > 0 ? [cards[index - 1]!] : [])];
+    for (const card of order) {
+      if (inFlight.current.size >= PARALLEL) break;
+      if (urls.current.has(card.id) || inFlight.current.has(card.id)) continue;
+      if ((tries.current.get(card.id) ?? 0) >= 2) continue;
+      const ctl = new AbortController();
+      inFlight.current.set(card.id, ctl);
+      tries.current.set(card.id, (tries.current.get(card.id) ?? 0) + 1);
+      setClips((s) => (s[card.id]?.status === "loading" ? s : { ...s, [card.id]: { status: "loading" } }));
+      void (async () => {
+        try {
+          const response = await fetch(reelClipUrl(code, card), { credentials: "include", signal: ctl.signal });
+          if (!response.ok) throw new Error(`clip ${response.status}`);
+          const offset = Number(response.headers.get("x-clip-offset") ?? "0") || 0;
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: "video/mp4" }));
+          urls.current.set(card.id, url);
+          setClips((s) => ({ ...s, [card.id]: { status: "ready", url, offset } }));
+        } catch {
+          if (ctl.signal.aborted) return;
+          if ((tries.current.get(card.id) ?? 0) >= 2) setClips((s) => ({ ...s, [card.id]: { status: "failed" } }));
+        } finally {
+          if (inFlight.current.get(card.id) === ctl) inFlight.current.delete(card.id);
+          setNonce((n) => n + 1);
+        }
+      })();
+    }
+  }, [code, cards, index, nonce]);
+
+  // everything goes when the reel closes
+  useEffect(() => () => {
+    for (const ctl of inFlight.current.values()) ctl.abort();
+    for (const url of urls.current.values()) URL.revokeObjectURL(url);
+  }, []);
+
+  const retry = useCallback((id: string) => {
+    tries.current.delete(id);
+    setClips((s) => ({ ...s, [id]: { status: "loading" } }));
+    setNonce((n) => n + 1);
+  }, []);
+
+  return { clips, retry };
 }

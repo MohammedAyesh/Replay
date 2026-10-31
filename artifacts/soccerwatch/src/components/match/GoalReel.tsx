@@ -2,9 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, CircleAlert, Loader2, Play, Trophy, Undo2, X } from "lucide-react";
-import { DeckVideo, type DeckVideoState } from "@/components/check-deck/DeckVideo";
-import type { DeckCard } from "@/lib/check-deck";
-import { createVoteSaver, useGoalReel, type ReelCard } from "@/lib/goal-reel";
+import { ReelVideo, type ReelVideoState } from "@/components/match/ReelVideo";
+import { createVoteSaver, useGoalReel, useReelClips, type ReelCard, type ReelClipState } from "@/lib/goal-reel";
 import { matchKey, type MatchRoom, type TeamSide } from "@/lib/match-api";
 import { useGoalReelCopy, type GoalReelStrings } from "@/i18n/goal-reel-strings";
 import { cn } from "@/lib/utils";
@@ -33,12 +32,6 @@ const FLOOD = "#D4FF4F";
 const SWIPE = 96;
 /** how long a decided card takes to fly off, ms */
 const FLY_MS = 220;
-/** the card behind waits this long for the one on screen before loading anyway, ms */
-const PRELOAD_GRACE = 2500;
-
-const toDeckCard = (card: ReelCard): DeckCard => ({
-  id: card.id, kind: "goal", at: card.at, start: card.start, end: card.end, clock: card.clock, focus: card.focus,
-});
 
 /** Open the reel: the list of chances is fetched as soon as the button is on the page. */
 export function GoalReelButton({ room, names, colors, openCount, className, variant = "primary" }: {
@@ -103,8 +96,7 @@ export function GoalReel({ room, names, colors, onClose }: {
   const [done, setDone] = useState(false);
   const [failed, setFailed] = useState<string[]>([]);
   const [toast, setToast] = useState<{ text: string; key: number } | null>(null);
-  const [videoState, setVideoState] = useState<Record<string, DeckVideoState>>({});
-  const [graceFor, setGraceFor] = useState<string | null>(null);
+  const [videoState, setVideoState] = useState<Record<string, ReelVideoState>>({});
   const flying = useRef(false);
   const saver = useMemo(() => createVoteSaver(room.code, (ids) => setFailed((f) => [...f, ...ids])), [room.code]);
 
@@ -134,16 +126,9 @@ export function GoalReel({ room, names, colors, onClose }: {
   const close = useCallback(() => { if (answered && !done) setDone(true); else leave(); }, [answered, done, leave]);
 
   const current = cards && !done ? cards[i] ?? null : null;
-  useEffect(() => {
-    if (!current) return;
-    const timer = window.setTimeout(() => setGraceFor(current.id), PRELOAD_GRACE);
-    return () => window.clearTimeout(timer);
-  }, [current]);
-  // one card loads at a time: each starts once the one in front has its whole moment in
-  const settled = (id: string | undefined) => !id || videoState[id] === "buffered" || videoState[id] === "failed";
-  const primed = (id: string | undefined) => !id || videoState[id] === "ready" || settled(id);
-  const frontDone = current ? settled(current.id) || graceFor === current.id : false;
-  const onVideoState = useCallback((id: string, state: DeckVideoState) => {
+  // each card is one small MP4, downloaded ahead of time (lib/goal-reel.ts)
+  const { clips, retry } = useReelClips(room.code, cards, i);
+  const onVideoState = useCallback((id: string, state: ReelVideoState) => {
     setVideoState((s) => (s[id] === state ? s : { ...s, [id]: state }));
   }, []);
 
@@ -234,12 +219,12 @@ export function GoalReel({ room, names, colors, onClose }: {
                 copy={copy}
                 names={names}
                 colors={colors}
-                url={rec?.videoUrl ?? ""}
                 srcAspect={rec && rec.srcW > 0 && rec.srcH > 0 ? rec.srcW / rec.srcH : 3840 / 1080}
                 active={k === 0}
-                load={k === 0 || (k === 1 && frontDone) || (k === 2 && frontDone && primed(stack[1]?.card.id))}
+                clip={k <= 1 ? clips[card.id] ?? { status: "loading" } : null}
                 videoState={videoState[card.id] ?? "loading"}
                 onVideoState={onVideoState}
+                onRetry={() => retry(card.id)}
                 onDecide={decide}
               />
             );
@@ -318,10 +303,12 @@ function cardText(card: ReelCard, copy: GoalReelStrings & { locale: "en" | "ar" 
   return { question, reason };
 }
 
-function CardView({ card, depth, copy, names, colors, url, srcAspect, active, load, videoState, onVideoState, onDecide }: {
+function CardView({ card, depth, copy, names, colors, clip, srcAspect, active, videoState, onVideoState, onRetry, onDecide }: {
   card: ReelCard; depth: number; copy: GoalReelStrings & { locale: "en" | "ar" }; names: Record<TeamSide, string>; colors: Record<TeamSide, string>;
-  url: string; srcAspect: number; active: boolean; load: boolean; videoState: DeckVideoState;
-  onVideoState: (id: string, state: DeckVideoState) => void;
+  /** the card's file: null for a card too far back in the stack to need a player */
+  clip: ReelClipState | null; srcAspect: number; active: boolean; videoState: ReelVideoState;
+  onVideoState: (id: string, state: ReelVideoState) => void;
+  onRetry: () => void;
   onDecide: (verdict: Verdict) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -329,7 +316,6 @@ function CardView({ card, depth, copy, names, colors, url, srcAspect, active, lo
   const noRef = useRef<HTMLDivElement | null>(null);
   const upRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{ x: number; y: number; id: number } | null>(null);
-  const deckCard = useMemo(() => toDeckCard(card), [card]);
   const text = cardText(card, copy, names);
 
   const paint = (dx: number, dy: number) => {
@@ -388,18 +374,24 @@ function CardView({ card, depth, copy, names, colors, url, srcAspect, active, lo
       data-testid={active ? "reel-card-active" : undefined}
     >
       <div className="relative min-h-0 flex-1">
-        {url && (
-          <DeckVideo card={deckCard} url={url} srcAspect={srcAspect} active={active} load={load}
-            onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView} />
+        {clip && (
+          <ReelVideo card={card} src={clip.status === "ready" ? clip.url : null} offset={clip.status === "ready" ? clip.offset : 0}
+            srcAspect={srcAspect} active={active} onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView} />
         )}
         <div className="pointer-events-none absolute left-3 right-40 top-3 flex flex-wrap gap-1.5" dir="ltr">
           <span className="rounded-md bg-black/60 px-2 py-0.5 font-display text-xs font-bold text-white">{card.minute}′</span>
           {card.likely && <span className="rounded-md bg-turf px-2 py-0.5 font-display text-xs font-bold text-void">{copy.likely}</span>}
         </div>
-        {videoState === "failed" && (
-          <div className="pointer-events-none absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-xl bg-black/60 p-3 text-center text-xs text-white">{copy.videoFailed}</div>
+        {(clip?.status === "failed" || videoState === "failed") && (
+          <div className="absolute inset-x-6 top-1/2 flex -translate-y-1/2 flex-col items-center gap-2 rounded-xl bg-black/70 p-3 text-center text-xs text-white">
+            {copy.videoFailed}
+            {active && (
+              <button type="button" onPointerDown={(e) => e.stopPropagation()} onClick={onRetry}
+                className="min-h-9 rounded-full border border-white/40 px-4 font-semibold">{copy.retry}</button>
+            )}
+          </div>
         )}
-        {active && videoState === "loading" && (
+        {active && clip?.status !== "failed" && videoState === "loading" && (
           <div className="pointer-events-none absolute inset-x-0 top-1/2 flex -translate-y-1/2 items-center justify-center gap-2 text-xs font-semibold text-muted-text">
             <Loader2 className="h-4 w-4 animate-spin" />{copy.videoSlow}
           </div>

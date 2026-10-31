@@ -37,7 +37,7 @@ const MIN_LEVEL_HEIGHT = 600;
 /** how quickly the frame catches up with the player, per animation frame */
 const EASE = 0.18;
 
-function focusAt(focus: FocusPoint[], t: number): FocusPoint | null {
+export function focusAt(focus: FocusPoint[], t: number): FocusPoint | null {
   if (!focus.length) return null;
   if (t <= focus[0][0]) return focus[0];
   const last = focus[focus.length - 1];
