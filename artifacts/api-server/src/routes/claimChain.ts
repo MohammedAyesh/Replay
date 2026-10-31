@@ -45,6 +45,9 @@ import {
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   claimMatchProgressTable,
+  footageRequestsTable,
+  matchPlayerStatsCacheTable,
+  matchRoomsTable,
   recordingTrackingBundlesTable,
   recordingsTable,
   usersTable,
@@ -61,6 +64,7 @@ import {
   syncIdentityBinding,
   trackingBundleFingerprint,
 } from "./claimMatch";
+import { extractBunnyVideoId } from "./userClips";
 import { deriveChainClaimState, isChainComplete, requiredCoverageFor } from "../lib/claimChainState";
 import { clipPartsToMatchWindow, matchWindowSeconds, offPitchWithMatchWindow } from "../lib/matchWindow";
 import {
@@ -737,10 +741,27 @@ export async function syncChainClaim(
           // only goals a player in the match confirmed (goalReview); a goal
           // confirmed later re-syncs every claim on the recording
           const goalVotes = (await goalVotesFor([ctx.recordingId])).get(ctx.recordingId) ?? [];
+          const [recordingForStats] = await db.select().from(recordingsTable)
+            .where(eq(recordingsTable.id, ctx.recordingId));
+          const videoId = recordingForStats ? extractBunnyVideoId(recordingForStats.videoUrl) : null;
+          const [cachedStats] = videoId
+            ? await db.select({ stats: matchPlayerStatsCacheTable.stats })
+              .from(matchPlayerStatsCacheTable)
+              .innerJoin(matchRoomsTable, eq(matchPlayerStatsCacheTable.matchId, matchRoomsTable.id))
+              .innerJoin(footageRequestsTable, eq(matchRoomsTable.footageRequestId, footageRequestsTable.id))
+              .where(and(
+                eq(matchPlayerStatsCacheTable.userId, ctx.userId),
+                eq(footageRequestsTable.videoId, videoId),
+              ))
+              .limit(1)
+            : [];
           // "Is this you?": a moment where his piece could be someone else
           // waits for his "yes" in the check deck before it becomes a clip
           // (lib/checkDeck). A "no" has already taken it off the claim.
-          const mine = personalMoments(play, parts, ctx.segments, ctx.manifest, goalVotes);
+          const mine = personalMoments(play, parts, ctx.segments, ctx.manifest, goalVotes, {
+            topSpeedAt: cachedStats?.stats.extras?.topSpeedAt,
+            topSpeedKmh: cachedStats?.stats.topSpeedKmh,
+          });
           const answers = await momentChecksFor(ctx.userId, ctx.recordingId);
           const waiting = new Set(unsureMoments(mine, parts, ctx.segments, play.manifest, play.kits)
             .filter((u) => answers.get(u.moment.id)?.verdict !== "yes")

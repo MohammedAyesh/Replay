@@ -69,6 +69,7 @@ const FPS = 10;
 
 let app: Express;
 let storeUploadBundle: typeof import("./claimMatch").storeUploadBundle;
+let materializeClaimMoments: typeof import("./claimMatch").materializeClaimMoments;
 let fieldId: number;
 let adminId: number;
 let playerId: number;
@@ -196,12 +197,14 @@ beforeAll(async () => {
   const claimChain = await import("./claimChain");
   const claimGame = await import("./claimGame");
   const matchWindow = await import("./matchWindow");
-  ({ storeUploadBundle } = await import("./claimMatch"));
+  const claimMatch = await import("./claimMatch");
+  ({ storeUploadBundle, materializeClaimMoments } = await import("./claimMatch"));
   app = express();
   app.use(express.json());
   app.use("/api", claimChain.default);
   app.use("/api", claimGame.default);
   app.use("/api", matchWindow.default);
+  app.use("/api", claimMatch.default);
 
   const [field] = await db.insert(fieldsTable).values({ name: `${TAG} field`, location: "Test" })
     .returning({ id: fieldsTable.id });
@@ -363,6 +366,23 @@ describe("the endpoint", () => {
     expect((await setVideoStart({ seconds: 1.48 }, 2_000_000_000)).status).toBe(404);
   });
 
+  it("does not materialize a raw bundle event without a saved follow path", async () => {
+    const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId));
+    const rawEvent = {
+      id: "raw-shot",
+      title: "Shot on target",
+      momentSeconds: 30,
+      kind: "shot",
+      status: "ready",
+    };
+    const result = await materializeClaimMoments(playerId, recording, baseManifest, [rawEvent]);
+    expect(result[0]).toEqual(rawEvent);
+    expect(await db.select().from(userClipsTable).where(and(
+      eq(userClipsTable.userId, playerId),
+      eq(userClipsTable.title, rawEvent.title),
+    ))).toHaveLength(0);
+  });
+
   it("dry-runs without changing the bundle or clearing its play cache", async () => {
     const oldUpdatedAt = new Date("2020-01-01T00:00:00.000Z");
     await db.update(recordingTrackingBundlesTable)
@@ -380,6 +400,18 @@ describe("the endpoint", () => {
     expect(await db.select().from(recordingTrackingBundlesTable)
       .where(eq(recordingTrackingBundlesTable.recordingId, recordingId))).toEqual(before);
     expect(playCache.get(recordingId)).toBe(cacheEntry);
+  });
+
+  it("offers an admin-only read-only list of match-window proposals", async () => {
+    const before = await storedManifest();
+    actAs(playerId);
+    expect((await request(app).get("/api/admin/recordings/match-window-dry-run")).status).toBe(403);
+    actAs(adminId);
+    const res = await request(app).get("/api/admin/recordings/match-window-dry-run");
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ dryRun: true, applied: false });
+    expect(res.body.recordings.some((item: { recordingId: number }) => item.recordingId === recordingId)).toBe(true);
+    expect(await storedManifest()).toEqual(before);
   });
 
   it("updates only videoStartSeconds and updatedAt, preserving claim data and segments", async () => {
@@ -490,7 +522,7 @@ describe("claims inside the window", () => {
     expect(chain.coveragePercent).toBe(100);
   });
 
-  it("completes a 46% claim after a window lifts coverage above 60% with no open question", async () => {
+  it("completes a 46% claim but does not materialize a raw event without a player path", async () => {
     const testVideoId = "01234567-89ab-cdef-0123-456789abcdef";
     await db.update(recordingsTable)
       .set({ videoUrl: `https://test.b-cdn.net/${testVideoId}/playlist.m3u8` })
@@ -501,6 +533,9 @@ describe("claims inside the window", () => {
       { trackId: "late", fromFrame: 700, toFrame: 999 },
     ]);
     expect((await progress()).completed).toBe(false);
+    actAs(playerId);
+    expect((await request(app).get("/api/claim-match/clips")).body).toEqual([]);
+    expect(await db.select().from(userClipsTable).where(eq(userClipsTable.userId, playerId))).toHaveLength(0);
     actAs(playerId);
     expect((await request(app).get(chainUrl())).body.nextUncertainty).toBeNull();
 
@@ -514,12 +549,12 @@ describe("claims inside the window", () => {
     expect(row.completed).toBe(true);
     expect(row.earnedClips.map((clip) => clip.momentSeconds)).toEqual([85]);
     expect(row.clipsUnlocked).toBeGreaterThan(0);
-    expect(row.earnedClips[0]?.userClipId).toBeDefined();
+    expect(row.earnedClips[0]?.userClipId).toBeUndefined();
     const materialized = await db.select().from(userClipsTable).where(and(
       eq(userClipsTable.userId, playerId),
       eq(userClipsTable.videoId, testVideoId),
     ));
-    expect(materialized).toHaveLength(1);
+    expect(materialized).toHaveLength(0);
     await db.delete(userClipsTable).where(and(
       eq(userClipsTable.userId, playerId),
       eq(userClipsTable.videoId, testVideoId),

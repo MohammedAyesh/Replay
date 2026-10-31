@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import type { FollowPoint } from "../lib/personalMoments";
+import { followCrop, type FollowPoint } from "../lib/personalMoments";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import multer from "multer";
 import { unzipSync, strFromU8 } from "fflate";
@@ -30,6 +30,8 @@ import {
   claimMatchProgressTable,
   claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
+  clipDownloadsTable,
+  userClipsTable,
   type TrackingManifest,
   type TrackingPitchModel,
   type TrackingSegmentPayload,
@@ -82,7 +84,7 @@ import {
   voteMatchRosterShirtNumber,
 } from "../lib/matchRoster";
 import { parseJerseySidecar, type JerseySidecar } from "../lib/jerseySidecar";
-import { ensureClaimMomentUserClip } from "./userClips";
+import { ensureClaimMomentUserClip, parseRecordingDuration } from "./userClips";
 import {
   deleteClaimSegment,
   readClaimSegment,
@@ -1320,6 +1322,84 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
   res.json(ListClaimMatchClipsResponse.parse(groups));
 });
 
+async function claimClipCleanupCandidates(recordingId: number) {
+  const [recording, bundle] = await Promise.all([
+    db.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId)).then((rows) => rows[0]),
+    db.select({ manifest: recordingTrackingBundlesTable.manifest })
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId))
+      .then((rows) => rows[0]),
+  ]);
+  if (!recording || !bundle) return [];
+  const progress = await db.select().from(claimMatchProgressTable)
+    .where(eq(claimMatchProgressTable.recordingId, recordingId));
+  const links = progress.flatMap((row) => (row.earnedClips ?? [])
+    .filter((clip) => clip.userClipId)
+    .map((clip) => ({ userId: row.userId, clip })));
+  const clipIds = [...new Set(links.map(({ clip }) => clip.userClipId!).filter(Number.isInteger))];
+  if (!clipIds.length) return [];
+  const [clips, downloads] = await Promise.all([
+    db.select().from(userClipsTable).where(inArray(userClipsTable.id, clipIds)),
+    db.select({ clipId: clipDownloadsTable.clipId }).from(clipDownloadsTable)
+      .where(inArray(clipDownloadsTable.clipId, clipIds)),
+  ]);
+  const clipById = new Map(clips.map((clip) => [clip.id, clip]));
+  const downloaded = new Set(downloads.map((row) => row.clipId));
+  const manifest = bundle.manifest as TrackingManifest;
+  const duration = parseRecordingDuration(recording.duration) || manifest.duration;
+  const videoStart = manifest.videoStartSeconds ?? 0;
+  return links.flatMap(({ userId, clip: earned }) => {
+    const clip = clipById.get(earned.userClipId!);
+    if (!clip || downloaded.has(clip.id) || clip.shareCount > 0 || clip.endScreen
+      || clip.visibility !== "private" || clip.showInPortfolio || clip.isHidden) return [];
+    const start = Math.max(0, earned.momentSeconds - 8 + videoStart);
+    const end = Math.min(duration, earned.momentSeconds + 8 + videoStart);
+    const expectedStart = start / duration;
+    const expectedEnd = end / duration;
+    const aspect = manifest.width > 0 && manifest.height > 0 ? manifest.width / manifest.height : 0;
+    const expectedCrop = followCrop(earned.follow, videoStart, start, end, aspect);
+    const untouched = clip.title === earned.title
+      && Math.abs(Number(clip.startTime) - expectedStart) < 0.00001
+      && Math.abs(Number(clip.endTime) - expectedEnd) < 0.00001
+      && JSON.stringify(clip.cropPath ?? []) === JSON.stringify(expectedCrop);
+    return untouched ? [{ id: clip.id, userId, momentId: earned.id }] : [];
+  });
+}
+
+router.get("/admin/recordings/:recordingId/claim-clips-cleanup", async (req, res): Promise<void> => {
+  if (!await requireAdmin(req)) {
+    unauthenticatedResponse(res, req, "Administrator account required");
+    return;
+  }
+  const recordingId = parseId(req.params.recordingId);
+  if (!recordingId) {
+    res.status(400).json({ error: "Invalid recording ID" });
+    return;
+  }
+  const candidates = await claimClipCleanupCandidates(recordingId);
+  res.json({ recordingId, candidateIds: candidates.map((clip) => clip.id), candidates });
+});
+
+router.post("/admin/recordings/:recordingId/claim-clips-cleanup", async (req, res): Promise<void> => {
+  if (!await requireAdmin(req)) {
+    unauthenticatedResponse(res, req, "Administrator account required");
+    return;
+  }
+  const recordingId = parseId(req.params.recordingId);
+  if (!recordingId || req.body?.confirm !== true) {
+    res.status(400).json({ error: "A valid recording ID and confirm:true are required" });
+    return;
+  }
+  const candidates = await claimClipCleanupCandidates(recordingId);
+  const ids = candidates.map((clip) => clip.id);
+  if (ids.length) {
+    await db.update(userClipsTable)
+      .set({ isHidden: true, hiddenReason: "admin" })
+      .where(inArray(userClipsTable.id, ids));
+  }
+  res.json({ recordingId, hiddenIds: ids });
+});
+
 export async function materializeClaimMoments(
   userId: number,
   recording: typeof recordingsTable.$inferSelect,
@@ -1328,6 +1408,10 @@ export async function materializeClaimMoments(
 ): Promise<Array<ClaimEarnedClip & { follow?: FollowPoint[] }>> {
   return Promise.all(clips.map(async (clip) => {
     const { follow } = clip;
+    // Bundle events without a saved player/ball path are evidence for the
+    // claim, not exportable highlights. This also prevents old raw event
+    // records from being re-materialized after a claim sync.
+    if (!follow?.length) return clip;
     if (clip.userClipId) return clip;
     try {
       const materialized = await ensureClaimMomentUserClip({

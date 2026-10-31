@@ -9462,6 +9462,15 @@ components:
         userClipId:
           type: integer
           description: The user clip row backing this earned moment, when materialized.
+        follow:
+          type: array
+          description: Player follow points retained for delayed clip framing.
+          items:
+            type: array
+            minItems: 3
+            maxItems: 3
+            items:
+              type: number
 
     ClaimPlayerStats:
       type: object

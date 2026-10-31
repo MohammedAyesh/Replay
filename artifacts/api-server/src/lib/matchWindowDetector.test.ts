@@ -40,6 +40,26 @@ describe("match-window detector", () => {
     })).toBeNull();
   });
 
+  it("detects the second game on recording 406 after the opening game and long gap", () => {
+    expect(detectMatchWindow({
+      duration: 1802,
+      inPlay: [[0, 485], [1250, 1797]],
+    })).toMatchObject({
+      startSeconds: 1250,
+      endSeconds: 1802,
+      source: "detector",
+      why: expect.stringContaining("recording start"),
+    });
+  });
+
+  it("uses booking end context for the symmetric late-game case", () => {
+    expect(detectMatchWindow({
+      duration: 1802,
+      inPlay: [[0, 485], [1250, 1797]],
+      bookingEndSeconds: 1200,
+    })).toMatchObject({ startSeconds: 0, source: "detector" });
+  });
+
   it("rejects missing, invalid, and empty timelines", () => {
     expect(detectMatchWindow({ duration: 0, inPlay: [[1, 3]] })).toBeNull();
     expect(detectMatchWindow({ duration: 10, inPlay: [[4, 4], [12, 14]] })).toBeNull();

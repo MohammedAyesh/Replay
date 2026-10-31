@@ -19,7 +19,14 @@ import {
   SetRecordingMatchWindowParams,
   SetRecordingMatchWindowResponse,
 } from "@workspace/api-zod";
-import { db, recordingTrackingBundlesTable, usersTable, type TrackingManifest } from "@workspace/db";
+import {
+  db,
+  footageRequestsTable,
+  recordingsTable,
+  recordingTrackingBundlesTable,
+  usersTable,
+  type TrackingManifest,
+} from "@workspace/db";
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { loadRecordingPlay, playCache } from "../lib/matchPlayLoad";
@@ -29,6 +36,7 @@ import { parseStoredMatchWindow, type StoredMatchWindow } from "../lib/matchWind
 import { detectMatchWindow } from "../lib/matchWindowDetector";
 import { logger } from "../lib/logger";
 import { resyncChainClaimsForRecording } from "./claimChain";
+import { extractBunnyVideoId } from "./userClips";
 
 const router: IRouter = Router();
 
@@ -40,6 +48,30 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
     .from(usersTable)
     .where(eq(usersTable.id, userId));
   return user?.isAdmin ? user.id : null;
+}
+
+async function bookingEndForRecording(recordingId: number): Promise<number | null> {
+  const [recording] = await db.select({
+    videoUrl: recordingsTable.videoUrl,
+    date: recordingsTable.date,
+    timeSlot: recordingsTable.timeSlot,
+  }).from(recordingsTable).where(eq(recordingsTable.id, recordingId));
+  const videoId = recording ? extractBunnyVideoId(recording.videoUrl) : null;
+  if (!recording || !videoId) return null;
+  const requests = await db.select({ endLocal: footageRequestsTable.endLocal })
+    .from(footageRequestsTable)
+    .where(eq(footageRequestsTable.videoId, videoId));
+  if (requests.length !== 1) return null;
+  const toUtcMs = (value: string) => {
+    const match = value.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+    if (!match) return null;
+    return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]));
+  };
+  const date = String(recording.date).slice(0, 10);
+  const startMs = toUtcMs(`${date} ${recording.timeSlot}`);
+  const endMs = toUtcMs(requests[0]!.endLocal);
+  if (startMs === null || endMs === null || endMs < startMs) return null;
+  return (endMs - startMs) / 1000;
 }
 
 router.get("/admin/recordings/:id/match-window", async (req, res): Promise<void> => {
@@ -112,6 +144,7 @@ router.get("/admin/recordings/match-window-dry-run", async (req, res): Promise<v
           duration: play.manifest.duration,
           inPlay: play.inPlay ?? [],
           phases: play.phases,
+            bookingEndSeconds: await bookingEndForRecording(bundle.recordingId),
         })
         : null;
       results.push({

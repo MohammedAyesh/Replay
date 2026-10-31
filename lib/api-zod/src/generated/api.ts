@@ -1302,6 +1302,7 @@ export const ListClaimMatchClipsResponseItem = zod.object({
   "kind": zod.string(),
   "status": zod.string(),
   "userClipId": zod.number().optional().describe('The user clip row backing this earned moment, when materialized.')
+  ,"follow": zod.array(zod.tuple([zod.number(), zod.number(), zod.number()])).optional().describe('Player follow points retained for delayed clip framing.')
 }))
 })
 export const ListClaimMatchClipsResponse = zod.array(ListClaimMatchClipsResponseItem)

@@ -10,6 +10,7 @@ export type DetectorInput = {
   duration: number;
   inPlay: Array<[number, number]>;
   phases?: Array<{ kind: string; start: number; end: number }> | null;
+  bookingEndSeconds?: number | null;
 };
 
 /**
@@ -63,10 +64,15 @@ export function detectMatchWindow(input: DetectorInput): StoredMatchWindow | nul
       }
     }
     why = phase ? "Single continuous game phase with in-play spans." : "Single continuous in-play stretch.";
+  } else if (groups.length === 2 && groups[1]!.end >= duration - MATCH_WINDOW_DETECTOR.afterLastPlaySeconds
+    && Number.isFinite(input.bookingEndSeconds) && input.bookingEndSeconds! <= groups[1]!.start) {
+    selected = groups[0]!;
+    why = "The final game starts after the booking ends; the earlier game is the booked match.";
+  } else if (groups.length === 2 && groups[0]!.start <= 5
+    && groups[1]!.start - groups[0]!.end > MATCH_WINDOW_DETECTOR.splitGapSeconds) {
+    selected = groups[1]!;
+    why = "A game ran from the recording start, then a long no-play gap marked the next game's start.";
   } else {
-    // The phase timeline can confirm that multiple games occurred, but cannot
-    // identify which one was booked. Choosing either would silently exclude
-    // valid footage for some recordings; leave these for an admin instead.
     return null;
   }
   const startSeconds = phase && phase.start <= selected.start && selected.start - phase.start <= MATCH_WINDOW_DETECTOR.splitGapSeconds

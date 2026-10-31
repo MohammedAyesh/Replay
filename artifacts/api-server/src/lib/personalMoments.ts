@@ -145,6 +145,7 @@ export function personalMoments(
   manifest: TrackingManifest,
   /** players' verdicts on this recording's goal candidates: only confirmed goals are his goals (goalReview) */
   goalVotes: GoalVote[] = [],
+  fallbackStats: { topSpeedAt?: number | null; topSpeedKmh?: number | null } = {},
 ): PersonalMoment[] {
   // A moment outside the recording's match window is not this match's: the
   // claimant's parts are cut to it before anything is credited to them.
@@ -156,7 +157,8 @@ export function personalMoments(
   const own = playerMoments(parts, play.dribbles, goals, shots);
   const live = (t: number) => inSpans(play.inPlay, t);
   const pick = seedTeams(kitOfParts(parts, play.sidecars, play.fps), play.kitOptions, play.bib ?? null);
-  const passes = playerPlay(play.touches, passEvents(play.touches, pick), parts, Boolean(pick)).passes
+  const passAnalysis = playerPlay(play.touches, passEvents(play.touches, pick), parts, Boolean(pick));
+  const passes = passAnalysis.passes
     .filter((p) => p.give && p.completed && p.metres >= PERSONAL.longPassMetres && live(p.t0))
     .sort((a, b) => b.metres - a.metres)
     .slice(0, PERSONAL.maxPasses);
@@ -188,38 +190,54 @@ export function personalMoments(
     const path = follow(t);
     if (path) moments.push({ id: `me-pass-${Math.round(p.t0)}`, title: `Pass found · ${Math.round(p.metres)} m · ${clock(p.t0)}`, momentSeconds: t, kind: "long-pass", status: "ready", follow: path });
   }
-  // If the ball data has no classified action, a short cluster of the
-  // claimant's own touches is still a grounded highlight. Require both several
-  // touches and a usable player path; otherwise it is not an honest framed clip.
-  if (!moments.length) {
-    const ownTouches = play.touches
-      .filter((touch) => parts.some((part) =>
-        part.trackId === touch.trackId
-        && touch.f >= part.fromFrame
-        && touch.f <= part.toFrame)
-        && live(touch.t))
-      .sort((a, b) => a.t - b.t);
-    const spells: typeof ownTouches[] = [];
-    for (const touch of ownTouches) {
-      const spell = spells.at(-1);
-      if (spell && touch.t - spell.at(-1)!.t <= 5) spell.push(touch);
-      else spells.push([touch]);
-    }
-    for (const spell of spells) {
-      if (spell.length < 3 || spell.at(-1)!.t - spell[0]!.t < 2) continue;
-      const t = (spell[0]!.t + spell.at(-1)!.t) / 2;
-      const path = follow(t);
-      if (path) moments.push({
-        id: `me-touch-spell-${Math.round(spell[0]!.t)}`,
-        title: `Your touches · ${spell.length} · ${clock(spell[0]!.t)}`,
-        momentSeconds: t,
-        kind: "touch-spell",
-        status: "ready",
-        follow: path,
-      });
-    }
+  const ownTouches = play.touches
+    .filter((touch) => parts.some((part) => part.trackId === touch.trackId && touch.f >= part.fromFrame && touch.f <= part.toFrame) && live(touch.t))
+    .sort((a, b) => a.t - b.t);
+  const spells: typeof ownTouches[] = [];
+  for (const touch of ownTouches) {
+    const spell = spells.at(-1);
+    if (spell && touch.t - spell.at(-1)!.t <= 5) spell.push(touch);
+    else spells.push([touch]);
   }
-  return moments.sort((a, b) => a.momentSeconds - b.momentSeconds);
+  const fallback: PersonalMoment[] = [];
+  for (const spell of spells) {
+    if (spell.length < 3 || spell.at(-1)!.t - spell[0]!.t < 2) continue;
+    const t = (spell[0]!.t + spell.at(-1)!.t) / 2;
+    const path = follow(t);
+    if (path) fallback.push({
+      id: `me-touch-spell-${Math.round(spell[0]!.t)}`,
+      title: `Your touches · ${spell.length} · ${clock(spell[0]!.t)}`,
+      momentSeconds: t, kind: "touch-spell", status: "ready", follow: path,
+    });
+  }
+  const completedPasses = passAnalysis.passes.filter((p) =>
+    p.give && p.completed && live(p.t0));
+  for (const p of completedPasses) {
+    const t = (p.t0 + p.t1) / 2;
+    const path = follow(t);
+    if (path) fallback.push({
+      id: `me-pass-${Math.round(p.t0)}`,
+      title: `Completed pass · ${Math.round(p.metres)} m · ${clock(p.t0)}`,
+      momentSeconds: t, kind: "completed-pass", status: "ready", follow: path,
+    });
+  }
+  if (Number.isFinite(fallbackStats.topSpeedAt) && Number.isFinite(fallbackStats.topSpeedKmh)
+    && (fallbackStats.topSpeedKmh ?? 0) > 0 && live(fallbackStats.topSpeedAt!)) {
+    const t = fallbackStats.topSpeedAt!;
+    const path = follow(t);
+    if (path) fallback.push({
+      id: `me-fastest-run-${Math.round(t)}`,
+      title: `Fastest run · ${fallbackStats.topSpeedKmh!.toFixed(1)} km/h · ${clock(t)}`,
+      momentSeconds: t, kind: "fastest-run", status: "ready", follow: path,
+    });
+  }
+  const selected: PersonalMoment[] = [];
+  for (const candidate of [...moments, ...fallback]) {
+    if (selected.some((kept) => Math.abs(kept.momentSeconds - candidate.momentSeconds) < PERSONAL.halfWindow * 2)) continue;
+    selected.push(candidate);
+    if (selected.length >= Math.max(4, moments.length)) break;
+  }
+  return selected.sort((a, b) => a.momentSeconds - b.momentSeconds);
 }
 
 /**

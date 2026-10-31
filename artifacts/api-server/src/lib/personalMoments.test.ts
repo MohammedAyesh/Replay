@@ -112,39 +112,39 @@ describe("personal moment selection", () => {
     // Old recordings without in-play spans continue to include both passes.
     const oldRecording = personalMoments(play({ inPlay: null }), parts, trackedSegments, manifest);
     expect(oldRecording.filter((moment) => moment.kind === "long-pass").map((moment) => moment.id))
-      .toEqual(["me-pass-10", "me-pass-25"]);
+      .toEqual(["me-pass-10"]);
   });
 
   it("selects only live, won short dribbles, ranked by players beaten then distance", () => {
     const dribbles = [
       dribble(30, "won", 8, 3),
-      dribble(31, "won", 11, 3),
-      dribble(32, "won", 9, 2),
-      dribble(33, "won", 10, 2),
-      dribble(34, "won", 7, 1),
-      dribble(35, "won", 8, 1),
-      dribble(36, "won", 11, 1),
-      dribble(40, null, 8, 5),
-      dribble(41, "lost", 8, 5),
-      dribble(42, "won", 12.1, 5),
-      dribble(43, "won", null, 5),
+      dribble(50, "won", 11, 3),
+      dribble(70, "won", 9, 2),
+      dribble(90, "won", 10, 2),
+      dribble(110, "won", 7, 1),
+      dribble(130, "won", 8, 1),
+      dribble(150, "won", 11, 1),
+      dribble(160, null, 8, 5),
+      dribble(161, "lost", 8, 5),
+      dribble(162, "won", 12.1, 5),
+      dribble(163, "won", null, 5),
       dribble(10, "won", 8, 5),
     ];
-    const moments = personalMoments(play({ dribbles }), parts, trackedSegments, manifest);
+    const moments = personalMoments(play({ dribbles, inPlay: [[20, 180]] }), parts, trackedSegments, manifest);
     const selected = moments
       .filter((moment) => moment.kind === "dribble")
       .map((moment) => moment.id);
 
     expect(PERSONAL.dribbleMaxMetres).toBe(12);
     expect(selected).toHaveLength(PERSONAL.maxDribbles);
-    // Ties on players beaten prefer longer runs; only six moments are kept.
+    // Ranking prefers runs that beat more players; results are returned chronologically.
     expect(selected).toEqual([
       "me-dribble-30",
-      "me-dribble-31",
-      "me-dribble-32",
-      "me-dribble-33",
-      "me-dribble-35",
-      "me-dribble-36",
+      "me-dribble-50",
+      "me-dribble-70",
+      "me-dribble-90",
+      "me-dribble-130",
+      "me-dribble-150",
     ]);
   });
 
@@ -174,5 +174,28 @@ describe("personal moment selection", () => {
       momentSeconds: 22,
     });
     expect(moments[0]?.follow).toHaveLength(17);
+  });
+
+  it("fills four distinct player-framed moments from a touch-heavy claim", () => {
+    const times = [
+      ...Array.from({ length: 10 }, (_, i) => 10 + i * 0.4),
+      ...Array.from({ length: 10 }, (_, i) => 40 + i * 0.4),
+      ...Array.from({ length: 10 }, (_, i) => 70 + i * 0.4),
+      ...Array.from({ length: 7 }, (_, i) => 100 + i * 0.4),
+    ];
+    const touches = times.map((t) => touch(t, "s0:me", 5));
+    const moments = personalMoments(
+      play({ touches, dribbles: [dribble(130, "lost", 6, 0)], inPlay: [[0, 180]] }),
+      parts,
+      trackedSegments,
+      manifest,
+      [],
+      { topSpeedAt: 160, topSpeedKmh: 24.9 },
+    );
+    expect(moments).toHaveLength(4);
+    expect(moments.every((moment) => moment.follow && moment.follow.length > 0)).toBe(true);
+    for (let i = 1; i < moments.length; i++) {
+      expect(moments[i]!.momentSeconds - moments[i - 1]!.momentSeconds).toBeGreaterThanOrEqual(16);
+    }
   });
 });
