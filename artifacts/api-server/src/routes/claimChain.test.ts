@@ -177,6 +177,8 @@ async function labels() {
 
 const url = (suffix = "") => `/api/recordings/${recordingId}/claim-match/chain${suffix}`;
 const gameUrl = (suffix = "") => `/api/recordings/${recordingId}/claim-match/game${suffix}`;
+/** A /find save with parts names the bundle they were built on. */
+const gameFingerprint = async () => (await request(app).get(gameUrl())).body.bundleFingerprint as string;
 
 beforeAll(async () => {
   const { default: claimChainRouter, claimIdentityId: identityIdFor } = await import("./claimChain");
@@ -670,6 +672,7 @@ describe("two players pick the same person: counted for both, nothing taken away
       parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }, { trackId: "t2", fromFrame: 100, toFrame: 199 }],
       bench: [],
       done: true,
+      bundleFingerprint: await gameFingerprint(),
     });
     expect(rivalSave.status).toBe(200);
 
@@ -679,6 +682,7 @@ describe("two players pick the same person: counted for both, nothing taken away
       parts: [{ trackId: "t1", fromFrame: 50, toFrame: 99 }, { trackId: "t2", fromFrame: 100, toFrame: 199 }],
       bench: [],
       done: true,
+      bundleFingerprint: await gameFingerprint(),
     });
     expect(mySave.status).toBe(200);
 
@@ -724,13 +728,14 @@ describe("two players pick the same person: counted for both, nothing taken away
     expect(byUser.get(playerId)?.playerStats.confirmedSeconds).toBeCloseTo(6, 1);
   });
 
-  it.each(["done", "stats"] as const)("resets a finished /find claim at step %s and releases its identity binding", async (step) => {
+  it.each(["done", "stats"] as const)("resets a finished /find claim at step %s and clears its identity binding", async (step) => {
     actAs(playerId);
     const save = await request(app).put(gameUrl()).send({
       state: { step },
       parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }],
       bench: [],
       done: true,
+      bundleFingerprint: await gameFingerprint(),
     });
     expect(save.status).toBe(200);
 
@@ -746,7 +751,9 @@ describe("two players pick the same person: counted for both, nothing taken away
     expect(identities.some((identity) => identity.id === claimIdentityId(playerId, recordingId))).toBe(false);
     const after = await db.select().from(claimMatchIdentityBindingsTable)
       .where(eq(claimMatchIdentityBindingsTable.recordingId, recordingId));
-    expect(after.find((row) => row.userId === playerId)?.state).toBe("released");
+    // Cleared rather than released: "released" is an admin taking the claim
+    // away, and the page would say "reset by admin" after his own Start over.
+    expect(after.find((row) => row.userId === playerId)).toBeUndefined();
     const [progress] = await db.select().from(claimMatchProgressTable)
       .where(eq(claimMatchProgressTable.recordingId, recordingId));
     expect(progress?.gameState).toBeNull();
@@ -759,6 +766,7 @@ describe("two players pick the same person: counted for both, nothing taken away
       parts: [{ trackId: "t1", fromFrame: 0, toFrame: 99 }],
       bench: [],
       done: true,
+      bundleFingerprint: await gameFingerprint(),
     });
     expect(fullSave.status).toBe(200);
     const beforeManifest = await storedManifest();

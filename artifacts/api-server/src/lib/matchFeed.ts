@@ -24,6 +24,7 @@ import {
   matchPlayersTable,
   matchTeamSpansTable,
   matchGamesTable,
+  claimMatchOffPitchSpansTable,
   claimMatchProgressTable,
   matchRoomsTable,
   recordingTrackingBundlesTable,
@@ -220,10 +221,91 @@ function clipParts(parts: ClaimedPart[], fromSeconds: number, toSeconds: number,
     .filter((p) => p.toFrame > p.fromFrame);
 }
 
+/**
+ * Everything besides a player's own claimed parts that changes the cached
+ * numbers, read for the whole match: a team switch or a shirt change moves the
+ * team colours every player's passes and team totals are judged by, so one
+ * player's switch makes everyone's row stale.
+ *
+ *  - the roster's teams and the team spans (claim switches and hand-set ones);
+ *  - each claimant's saved switches and shirt changes, and which matches the
+ *    claim was saved for (matchStats reads the shirt epochs from them);
+ *  - off-pitch spans (bench time);
+ *  - goal votes (only confirmed goals count).
+ *
+ * Read before the stats inputs in matchStats: a write that lands while the
+ * stats are computed then leaves a fingerprint that is already out of date,
+ * and the next check recomputes instead of keeping old numbers as current.
+ */
+export type MatchStatsCacheExtraInputs = {
+  roster: Array<[number, number | null, string | null]>;
+  teamSpans: Array<[number, number, number | null, string | null, string, boolean]>;
+  claims: Array<[number, number, string[], Array<[number | null, string | null, boolean, boolean, string | null]>]>;
+  offPitch: Array<[number, number, number, number]>;
+  goalVotes: Array<[number, number, number, string]>;
+};
+
+const byJson = <T>(rows: T[]): T[] => rows
+  .map((row) => [JSON.stringify(row), row] as const)
+  .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  .map(([, row]) => row);
+
+export async function matchStatsCacheExtraInputs(
+  matchId: number,
+  roster: MatchPlayer[],
+  links: Array<Pick<LinkedRecording, "recordingId">>,
+): Promise<MatchStatsCacheExtraInputs> {
+  const recordingIds = [...new Set(links.map((link) => link.recordingId))];
+  const userIds = [...new Set(roster.flatMap((p) => (p.userId ? [p.userId] : [])))];
+  const [spans, progress, offPitch, votes] = await Promise.all([
+    readOptionalMatchTeamSpans("matchStatsCacheFingerprint", () => db.select().from(matchTeamSpansTable)
+      .where(eq(matchTeamSpansTable.matchId, matchId))),
+    recordingIds.length && userIds.length
+      ? db.select({ userId: claimMatchProgressTable.userId, recordingId: claimMatchProgressTable.recordingId, gameState: claimMatchProgressTable.gameState })
+        .from(claimMatchProgressTable)
+        .where(and(inArray(claimMatchProgressTable.recordingId, recordingIds), inArray(claimMatchProgressTable.userId, userIds)))
+      : Promise.resolve([]),
+    recordingIds.length && userIds.length
+      ? db.select({
+        userId: claimMatchOffPitchSpansTable.userId,
+        recordingId: claimMatchOffPitchSpansTable.recordingId,
+        fromSeconds: claimMatchOffPitchSpansTable.fromSeconds,
+        toSeconds: claimMatchOffPitchSpansTable.toSeconds,
+      }).from(claimMatchOffPitchSpansTable)
+        .where(and(inArray(claimMatchOffPitchSpansTable.recordingId, recordingIds), inArray(claimMatchOffPitchSpansTable.userId, userIds)))
+      : Promise.resolve([]),
+    goalVotesFor(recordingIds),
+  ]);
+  const text = (value: unknown) => (typeof value === "string" ? value : null);
+  return {
+    roster: byJson(roster.map((p) => [p.id, p.userId ?? null, p.team ?? null] as [number, number | null, string | null])),
+    teamSpans: byJson(spans.map((span) => [
+      span.matchPlayerId, span.fromOffsetSec, span.toOffsetSec ?? null, span.team ?? null, span.source, span.changedShirt === true,
+    ] as [number, number, number | null, string | null, string, boolean])),
+    claims: byJson(progress.map((row) => {
+      const state = row.gameState as { matchChoices?: unknown; switches?: unknown } | null;
+      const choices = Array.isArray(state?.matchChoices)
+        ? state.matchChoices.filter((x): x is string => typeof x === "string").sort()
+        : [];
+      const switches = (Array.isArray(state?.switches) ? state.switches : [])
+        .filter((entry): entry is Record<string, unknown> => !!entry && typeof entry === "object")
+        .map((e) => [
+          typeof e.atSeconds === "number" && Number.isFinite(e.atSeconds) ? e.atSeconds : null,
+          text(e.team), e.teamChanged === true, e.shirtChanged === true, text(e.matchCode),
+        ] as [number | null, string | null, boolean, boolean, string | null]);
+      return [row.recordingId, row.userId, choices, switches] as MatchStatsCacheExtraInputs["claims"][number];
+    })),
+    offPitch: byJson(offPitch.map((span) => [span.recordingId, span.userId, span.fromSeconds, span.toSeconds] as [number, number, number, number])),
+    goalVotes: byJson([...votes.entries()].flatMap(([recId, list]) =>
+      list.map((vote) => [recId, vote.atTenths, vote.userId, vote.verdict] as [number, number, number, string]))),
+  };
+}
+
 function cacheFingerprints(
   matchId: number,
   roster: MatchPlayer[],
   links: LinkedRecording[],
+  extra: MatchStatsCacheExtraInputs,
 ): MatchStatsCacheFingerprint[] {
   const fingerprints: MatchStatsCacheFingerprint[] = [];
   const sourceLinks = new Map<number, LinkedRecording>();
@@ -272,11 +354,15 @@ function cacheFingerprints(
       // 6: bib games split on the bib's place on the colour plane, the side
       //    across from a measured claimant is the other side of the bib line,
       //    and team totals count the game, not the warm-up (76P7TR).
-      version: 6,
+      // 7: team switches, shirt changes, off-pitch time and goal votes are
+      //    inputs too (matchStatsCacheExtraInputs): a switch left the old
+      //    numbers marked current.
+      version: 7,
       matchId,
       matchPlayerId: player.id,
       userId: player.userId,
       sources,
+      extra,
     };
     fingerprints.push({
       matchId,
@@ -329,7 +415,7 @@ export async function queueUncachedRecentMatchStats(
       const links = await recordingsForRoom(ctx, perField);
       if (!links.length) continue;
       const roster = await rosterFor(ctx.room.id);
-      const expected = cacheFingerprints(ctx.room.id, roster, links);
+      const expected = cacheFingerprints(ctx.room.id, roster, links, await matchStatsCacheExtraInputs(ctx.room.id, roster, links));
       if (await matchStatsCacheIsCurrent(ctx.room.id, expected)) continue;
       queueMatchStatsCacheForMatch(ctx.room.id);
       queued++;
@@ -346,7 +432,7 @@ export async function fillMatchStatsCacheForMatch(matchId: number): Promise<void
   const links = await recordingsForRoom(ctx);
   if (!links.length) return;
   const roster = await rosterFor(matchId);
-  const expected = cacheFingerprints(matchId, roster, links);
+  const expected = cacheFingerprints(matchId, roster, links, await matchStatsCacheExtraInputs(matchId, roster, links));
   if (await matchStatsCacheIsCurrent(matchId, expected)) return;
   await matchStats(ctx, true);
 }
@@ -634,6 +720,10 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
   team: MatchTeamStats | null;
 }> {
   const roster = await rosterFor(ctx.room.id);
+  const linked = await recordingsForRoom(ctx);
+  // Only a whole-match read with players is cached. Its fingerprint inputs are
+  // read first, before the stats' own inputs (see matchStatsCacheExtraInputs).
+  const cacheExtra = includePlayers && !game ? await matchStatsCacheExtraInputs(ctx.room.id, roster, linked) : null;
   const spanRows = await readOptionalMatchTeamSpans("matchStats", () => db.select().from(matchTeamSpansTable)
     .where(eq(matchTeamSpansTable.matchId, ctx.room.id)));
   const spans = new Map<number, Array<{
@@ -644,7 +734,6 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
     list.push(span);
     spans.set(span.matchPlayerId, list);
   }
-  const linked = await recordingsForRoom(ctx);
   const userIds = roster.flatMap((p) => p.userId ? [p.userId] : []);
   const progressRows = linked.length && userIds.length
     ? await db.select({ userId: claimMatchProgressTable.userId, recordingId: claimMatchProgressTable.recordingId, gameState: claimMatchProgressTable.gameState })
@@ -924,10 +1013,10 @@ export async function matchStats(ctx: RoomContext, includePlayers: boolean, game
     const row = perPlayer.get(playerId);
     if (row?.claimed) row.report = builder.build();
   }
-  if (includePlayers && !game) {
+  if (cacheExtra) {
     try {
       const byPlayerId = new Map([...perPlayer.values()].map((player) => [player.playerId, player]));
-      const cacheRows: MatchStatsCacheInput[] = cacheFingerprints(ctx.room.id, roster, plays.map((item) => item.link))
+      const cacheRows: MatchStatsCacheInput[] = cacheFingerprints(ctx.room.id, roster, plays.map((item) => item.link), cacheExtra)
         .flatMap((fingerprint) => {
           const player = byPlayerId.get(fingerprint.matchPlayerId);
           return player?.claimed ? [{ ...fingerprint, stats: cacheStatsValues(player, team) }] : [];

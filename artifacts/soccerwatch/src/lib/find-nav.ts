@@ -50,6 +50,28 @@ export function findBackTarget(previousPath: string | null | undefined, matchCod
 }
 
 /**
+ * Back on an ordinary app page (the match page, the match report).
+ *
+ * `window.history.length > 1` is no test for "came from inside Replay": a tab
+ * that visited WhatsApp or another site first has history too, so Back left
+ * the app. And Find yourself -> "See my match report" -> Back landed in Find
+ * yourself again, whose Back led to the report: the two bounced. Go back in
+ * history only to an earlier Replay page that is not this page, not Find
+ * yourself and not sign-in; otherwise go to `fallback`.
+ */
+export function pageBackTarget(
+  previousPath: string | null | undefined,
+  currentPath: string,
+  fallback = "/home",
+): FindBackTarget {
+  const previous = previousPath?.split("?")[0] ?? "";
+  const current = currentPath.split("?")[0];
+  return isPlaceToGoBackTo(previous) && previous !== current
+    ? { kind: "history" }
+    : { kind: "path", path: fallback };
+}
+
+/**
  * The match this /find visit is about: the one asked for in the link, else the
  * single match the saved claim chose, else the recording's only match.
  */

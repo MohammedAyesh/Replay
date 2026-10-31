@@ -1,4 +1,9 @@
 import { useLocale } from "./context";
+import { arCount } from "./ar-count";
+
+/** arCount's forms without the number, for a label under a number shown on its own */
+const arForm = (n: number, one: string, two: string, few: string, many: string): string =>
+  n === 1 ? one : n === 2 ? two : Number.isInteger(n) && n >= 0 && n <= 10 ? few : many;
 
 /**
  * Copy for "Is this you?" (/find/:id/check): the swipe deck a player gets
@@ -35,6 +40,7 @@ const en = {
   you: "You?",
   in: "In?",
   close: "Close",
+  fieldView: "field view",
   kickerYou: "Is this you?",
   kickerGoal: "Was it a goal?",
   momentShot: "Shot on target",
@@ -54,6 +60,8 @@ const en = {
   sourceShot: "Shot on target",
   ownGoal: "Off a defender",
   toastClip: "+1 clip",
+  toastKept: "Kept · counts once your match is found",
+  toastStale: "Already sorted",
   toastCounted: "Counted",
   toastNotYou: "Taken off your claim",
   toastGoal: "Goal confirmed",
@@ -63,14 +71,16 @@ const en = {
   doneEyebrow: "Deck cleared",
   doneTitle: "Your match is sorted",
   doneDesc: "Your clips and stats are updated.",
+  doneDescPending: "Your answers are saved. They count once your match is found.",
   pausedEyebrow: "Saved for later",
   pausedTitle: (n: number) => (n === 1 ? "1 moment left" : `${n} moments left`),
   pausedDesc: "Your answers so far are saved. Open the deck again from Find yourself to finish.",
   badgeAll: "Sharp eye · every card answered",
   badgeSome: "Nice work",
-  kept: "new clips of you",
-  sentBack: "sent back, not you",
-  goalsConfirmed: "goals you confirmed",
+  kept: (n: number): string => (n === 1 ? "new clip of you" : "new clips of you"),
+  keptPending: (n: number): string => (n === 1 ? "kept · counts once your match is found" : "kept · count once your match is found"),
+  sentBack: (_n: number): string => "sent back, not you",
+  goalsConfirmed: (n: number): string => (n === 1 ? "goal you confirmed" : "goals you confirmed"),
   bestStreak: "best streak",
   saveFailed: "Some answers didn't save. Open the deck again to retry them.",
   seeClips: "See my clips",
@@ -87,18 +97,24 @@ const ar: CheckStrings = {
   error: "ما قدرنا نحمّل لحظاتك. جرّب كمان مرة.",
   retry: "جرّب كمان مرة",
   claimed: "إنت محسوب",
-  introTitle: (n: number) => (n === 1 ? "في لحظة وحدة بدها نظرة منك" : `في ⁦${n}⁩ لحظات بدها نظرة منك`),
-  introGoalsOnly: (n: number) => (n === 1 ? "في هدف واحد بدّه تأكيد" : `في ⁦${n}⁩ أهداف بدها تأكيد`),
+  introTitle: (n: number) => `في ${arCount(n, "لحظة وحدة", "لحظتين", "لحظات", "لحظة")} ${n === 2 ? "بدهم" : "بدها"} نظرة منك`,
+  introGoalsOnly: (n: number) => `في ${arCount(n, "هدف واحد", "هدفين", "أهداف", "هدف")} ${arForm(n, "بدّه", "بدهم", "بدها", "بدهم")} تأكيد`,
   introDesc: "ما كنّا متأكدين إنه إنت بهاللحظات. قول إذا إنت: كل وحدة بتأكدها بتصير كليب وبتنحسب بإحصائياتك.",
-  introGoals: (n: number) => (n === 1
-    ? "في هدف بمباراتك مستني حدا يأكده. موجود بالمجموعة كمان."
-    : `في ⁦${n}⁩ أهداف بمباراتك مستنية حدا يأكدها. موجودة بالمجموعة كمان.`),
+  introGoals: (n: number) => {
+    const goals = arCount(n, "هدف", "هدفين", "أهداف", "هدف");
+    const many = `في ${goals} بمباراتك مستنيين حدا يأكدهم. موجودين بالمجموعة كمان.`;
+    return arForm(n,
+      "في هدف بمباراتك مستني حدا يأكده. موجود بالمجموعة كمان.",
+      many,
+      `في ${goals} بمباراتك مستنية حدا يأكدها. موجودة بالمجموعة كمان.`,
+      many);
+  },
   goalsOnlyDesc: "لسا ما حدا أكّدهم. جواب واحد من أي حدا بالمباراة بيخلي الهدف ينحسب.",
   start: "يلا",
   later: "بعدين",
   notMe: "مش أنا",
   cantTell: "مش متأكد",
-  skip: "تخطّي",
+  skip: "تخطّى",
   thatsMe: "هاد أنا",
   goal: "هدف",
   noGoal: "مش هدف",
@@ -112,11 +128,12 @@ const ar: CheckStrings = {
   you: "إنت؟",
   in: "فات؟",
   close: "سكّر",
+  fieldView: "الملعب",
   kickerYou: "هاد إنت؟",
   kickerGoal: "كان هدف؟",
   momentShot: "تسديدة على المرمى",
   momentGoal: "هدفك",
-  momentDribble: (beaten: number | null) => (beaten && beaten > 1 ? `مراوغة ⁦${beaten}⁩ لاعبين` : "مراوغة لاعب"),
+  momentDribble: (beaten: number | null) => `مراوغة ${arCount(beaten && beaten > 1 ? beaten : 1, "لاعب", "لاعبين", "لاعبين", "لاعب")}`,
   momentPass: (metres: number | null) => (metres ? `تمريرة طويلة · ⁦${Math.round(metres)} م⁩` : "تمريرة طويلة"),
   reasonTeammate: "واحد من فريقك مرّ جنبك",
   reasonCrowd: "في حدا لازق فيك",
@@ -131,6 +148,8 @@ const ar: CheckStrings = {
   sourceShot: "تسديدة على المرمى",
   ownGoal: "من مدافع",
   toastClip: "+1 كليب",
+  toastKept: "انحفظت · بتنحسب لما نلاقيك بالمباراة",
+  toastStale: "محسومة من قبل",
   toastCounted: "انحسبت",
   toastNotYou: "انشالت من لحظاتك",
   toastGoal: "تأكد الهدف",
@@ -140,14 +159,16 @@ const ar: CheckStrings = {
   doneEyebrow: "خلصت المجموعة",
   doneTitle: "مباراتك جاهزة",
   doneDesc: "كليباتك وإحصائياتك تحدّثت.",
+  doneDescPending: "أجوبتك انحفظت. بتنحسب لما نلاقيك بالمباراة.",
   pausedEyebrow: "محفوظة لبعدين",
-  pausedTitle: (n: number) => `باقي \u2066${n}\u2069 من اللحظات`,
+  pausedTitle: (n: number) => `باقي ${arCount(n, "لحظة وحدة", "لحظتين", "لحظات", "لحظة")}`,
   pausedDesc: "أجوبتك لهلأ انحفظت. افتح المجموعة كمان مرة من «لاقي حالك» عشان تكمّل.",
   badgeAll: "عين صقر · جاوبت على الكل",
   badgeSome: "شغل حلو",
-  kept: "كليبات جديدة إلك",
-  sentBack: "انشالت، مش إنت",
-  goalsConfirmed: "أهداف أكّدتها",
+  kept: (n: number) => arForm(n, "كليب جديد إلك", "كليبين جداد إلك", "كليبات جديدة إلك", "كليب جديد إلك"),
+  keptPending: (n: number) => `${arForm(n, "انحفظت", "انحفظوا", "انحفظت", "انحفظت")} · ${arForm(n, "بتنحسب", "بينحسبوا", "بتنحسب", "بتنحسب")} لما نلاقيك بالمباراة`,
+  sentBack: (n: number) => (n === 2 ? "انشالوا، مش إنت" : "انشالت، مش إنت"),
+  goalsConfirmed: (n: number) => arForm(n, "هدف أكّدته", "هدفين أكّدتهم", "أهداف أكّدتها", "هدف أكّدتهم"),
   bestStreak: "أطول سلسلة",
   saveFailed: "في أجوبة ما انحفظت. افتح المجموعة كمان مرة لنعيد نحاول.",
   seeClips: "شوف كليباتي",
@@ -157,6 +178,9 @@ const ar: CheckStrings = {
 };
 
 export type { CheckStrings };
+
+/** both languages, for tests */
+export const checkStrings = { en, ar };
 
 export function useCheckCopy(): CheckStrings & { locale: "en" | "ar"; isRtl: boolean } {
   const { locale } = useLocale();

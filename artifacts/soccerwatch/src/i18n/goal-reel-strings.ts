@@ -4,6 +4,7 @@ import { arCount } from "./ar-count";
 /** Copy for the "Was it a goal?" reel (components/match/GoalReel.tsx). English is the type. */
 const en = {
   title: "Was it a goal?",
+  fieldView: "field view",
   open: (n: number) => (n === 1 ? "Watch the 1 chance" : `Watch all ${n} chances`),
   openShort: "Watch them",
   openNote: "A few seconds each. Goal or no goal, and the next one plays.",
@@ -48,6 +49,7 @@ export type GoalReelStrings = typeof en;
 
 const ar: GoalReelStrings = {
   title: "كان جول؟",
+  fieldView: "الملعب",
   open: (n: number) => (n === 1 ? "شوف الفرصة" : `شوف كل الفرص (⁦${n}⁩)`),
   openShort: "شوفهم",
   openNote: "كل وحدة كم ثانية. جول ولا مش جول، وبتشتغل اللي بعدها.",

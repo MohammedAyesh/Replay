@@ -32,6 +32,11 @@ export const REEL = {
   maxVotesPerSave: 50,
 } as const;
 
+/** The stretch a card plays, video seconds: the same for the card and its clip file. */
+export function reelWindow(t: number, videoStartSeconds: number): { start: number; end: number } {
+  return { start: Math.max(0, t - REEL.before) + videoStartSeconds, end: t + REEL.after + videoStartSeconds };
+}
+
 export type ReelRecording = {
   recordingId: number;
   videoUrl: string;
@@ -92,13 +97,14 @@ export function reelCards(
     if (!play) continue;
     const vs = play.manifest.videoStartSeconds ?? 0;
     const from = Math.max(0, g.t - REEL.before), to = g.t + REEL.after;
+    const win = reelWindow(g.t, vs);
     cards.push({
       id: `${g.recordingId}:${g.key}`,
       recordingId: g.recordingId,
       key: g.key,
       at: g.t + vs,
-      start: from + vs,
-      end: to + vs,
+      start: win.start,
+      end: win.end,
       minute: Math.floor(g.atSeconds / 60) + 1,
       clock: clockOf(g.atSeconds),
       likely: g.source === "goal",

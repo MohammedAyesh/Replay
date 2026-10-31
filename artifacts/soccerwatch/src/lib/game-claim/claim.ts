@@ -30,6 +30,8 @@ export type ChunkAnswers = {
   manual: ManualPiece[];
   /** Exact parts imported from a match roster, waiting for this chunk to load. */
   rosterParts?: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
+  /** People the claimant said "Not me" to in this block: never offered again. */
+  notMe?: string[];
   skipped: boolean;
 };
 
@@ -742,7 +744,8 @@ export const SURE_TOP = 0;
 export function rankNext(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Array<{ g: Group; d: number | null }> {
   const d = ctx.CH[k];
   const q = profile(ctx, profileTimeForChunk(ctx, k, atTime), k);
-  if (!q) return d.groups.slice(0, 3).map((g) => ({ g, d: null }));
+  const notMe = new Set(Y(ctx, k).notMe ?? []);
+  if (!q) return d.groups.filter((g) => !notMe.has(g.cid)).slice(0, 3).map((g) => ({ g, d: null }));
   const prevK = ctx.S.order[ctx.S.oi - 1];
   const prevKept = prevK !== undefined && ctx.CH[prevK] ? kept(ctx, prevK) : [];
   const prevEnd = prevKept[prevKept.length - 1] ?? null;
@@ -752,6 +755,7 @@ export function rankNext(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start):
   const adjacent = prevMeta !== null
     && Math.abs(prevMeta.start + prevMeta.dur - currentStart) <= 1e-6;
   return d.groups
+    .filter((g) => !notMe.has(g.cid))
     .map((g) => {
       const gp = groupProfileOf(d, g.members);
       // Duration weight (calibrated on the truth set, not in the prototype):
@@ -814,11 +818,33 @@ export function pick(ctx: Ctx, k: number, cid: string, atTime = chunkMeta(ctx, k
  * extras, taps and roster parts -- so the rejected person is not saved as you.
  * The chunk stays playable (not skipped); the next pick fills it again.
  */
-export function clearPick(ctx: Ctx, k: number): void {
+export function clearPick(ctx: Ctx, k: number, rejectedCid?: string | null): void {
   const y = Y(ctx, k);
-  Object.assign(y, { cid: null, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], rosterParts: [] });
+  const notMe = new Set(y.notMe ?? []);
+  if (rejectedCid) notMe.add(rejectedCid);
+  Object.assign(y, { cid: null, out: [], added: [], dropped: [], extra: [], seen: [], manual: [], rosterParts: [], notMe: [...notMe] });
   ctx.S.qi = 0;
   ctx.S.autoAdded = 0;
+}
+
+/**
+ * "Not me" on a pick that came from the squad list. That pick seeded EVERY
+ * block with the squad player's parts, so clearing only the current block left
+ * the later blocks opening on the wrong person, and the saved claim kept them.
+ * Returns false (and changes nothing) when no block holds squad parts.
+ */
+export function clearRosterPick(ctx: Ctx): boolean {
+  const isRoster = (piece: { id: string }) => piece.id.startsWith("roster:");
+  const blocks = Object.values(ctx.S.you);
+  const fromSquad = blocks.some((y) => (y.rosterParts?.length ?? 0) > 0 || y.manual.some(isRoster));
+  if (!fromSquad) return false;
+  for (const y of blocks) {
+    y.rosterParts = [];
+    y.manual = y.manual.filter((piece) => !isRoster(piece));
+  }
+  ctx.S.qi = 0;
+  ctx.S.autoAdded = 0;
+  return true;
 }
 
 /** Advance to the next chunk in the rotated playable order; 'done' at its end. */

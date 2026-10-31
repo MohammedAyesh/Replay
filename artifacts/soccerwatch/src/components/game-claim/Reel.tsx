@@ -301,12 +301,12 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
           c2.beginPath(); c2.ellipse(mx, my, 34 + age * 150, 13 + age * 56, 0, 0, 7); c2.stroke();
         }
         drawMini(c2, OW, clip, t, ballAt(balls.get(clip.seg[0].k), t), copy, game.pitch!);
-        const sp = speedAt(clip, t) * 3.6, col = sp < 7.2 ? "#8fa0b5" : sp < 14.4 ? "#2FD8C4" : sp < 19.8 ? "#D4FF4F" : "#FF5A3C";
+        const sp = speedAt(clip, t) * 3.6, col = sp < 7.2 ? "#8fa0b5" : sp < 14.4 ? "#2FD8C4" : sp < 19.8 ? "#D4FF4F" : "#7B5CFF";
         c2.fillStyle = "rgba(0,0,0,.58)"; c2.fillRect(0, OH - 104, 372, 104);
         c2.textBaseline = "middle"; c2.fillStyle = "#9fb0c2"; c2.font = "500 20px system-ui,sans-serif";
         c2.fillText(mmss(t + game.matchOffset), 22, OH - 80);
         let lab: string, labCol = "#9fb0c2";
-        if (clip.kind === "pass") { const q = p ?? clip.ps[0]; lab = `${q.give ? c.passLabel : c.receivedLabel} ${q.metres.toFixed(0)} m ${q.ok ? "✓" : "✗"}`; labCol = q.ok ? "#2FD8C4" : "#FF5A3C"; }
+        if (clip.kind === "pass") { const q = p ?? clip.ps[0]; lab = `${q.give ? c.passLabel : c.receivedLabel} ${q.metres.toFixed(0)} m ${q.ok ? "✓" : "✗"}`; labCol = q.ok ? "#2FD8C4" : "#7B5CFF"; }
         else if (clip.kind === "touch") { lab = c.touchLabel(clip.n); labCol = "#FFC43C"; }
         else lab = c.peakLabel((clip.peak * 3.6).toFixed(1));
         c2.fillStyle = labCol; c2.fillText(lab, 215, OH - 80);
@@ -402,7 +402,7 @@ function drawMini(c2: CanvasRenderingContext2D, OW: number, clip: Clip, t: numbe
     if (p?.from && p.to) {
       const f = Math.max(0, Math.min(1, (t - p.t0) / Math.max(0.3, p.t1 - p.t0)));
       const x0 = px(p.from[0]), y0 = py(p.from[1]), x1 = px(p.to[0]), y1 = py(p.to[1]);
-      const col = p.ok ? "#2FD8C4" : "#FF5A3C";
+      const col = p.ok ? "#2FD8C4" : "#7B5CFF";
       c2.setLineDash([5, 4]); c2.strokeStyle = col + "aa"; c2.lineWidth = 2;
       c2.beginPath(); c2.moveTo(x0, y0); c2.lineTo(x1, y1); c2.stroke(); c2.setLineDash([]);
       c2.strokeStyle = col; c2.lineWidth = 3;

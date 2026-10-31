@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { findPath } from "@/lib/find-nav";
 import { Link } from "wouter";
 import { Check, ChevronRight, Gift, Loader2, Share2, Sparkles } from "lucide-react";
 import { PlayerAvatar } from "@/components/match/bits";
@@ -178,7 +179,7 @@ export function FreeMatchHomeCard({ status, canBook, className, hideStartAction 
   if (!attempt) {
     action = canBook && !hideStartAction ? <Link href="/book" className={primaryButton} data-testid="link-free-match-start">{free.book}</Link> : null;
   } else if (next?.key === "find" && attempt.findRecordingId) {
-    action = <Link href={`/find/${attempt.findRecordingId}`} className={primaryButton} data-testid="link-free-match-find">{free.findMe}</Link>;
+    action = <Link href={findPath(attempt.findRecordingId, attempt.code)} className={primaryButton} data-testid="link-free-match-find">{free.findMe}</Link>;
   } else if (next?.key === "friends") {
     action = (
       <button type="button" onClick={() => void share(attempt.code)} className={primaryButton} data-testid="button-free-match-share">

@@ -1,5 +1,6 @@
 import { ArrowLeft, Share2 } from "lucide-react";
 import { useLocation } from "wouter";
+import { usePageBack } from "@/lib/use-page-back";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { ReportStrings } from "@/i18n/report-strings";
 
@@ -8,11 +9,12 @@ type R = ReportStrings & { locale: "en" | "ar" };
 
 export function ReportHeader({ copy, r, onShare }: { copy: Copy; r: R; onShare: () => void }) {
   const [, setLocation] = useLocation();
+  const pageBack = usePageBack();
   return (
     <div className="flex items-center justify-between gap-2 pt-3">
       <button
         type="button"
-        onClick={() => (window.history.length > 1 ? window.history.back() : setLocation("/home"))}
+        onClick={pageBack}
         aria-label={copy.back}
         className="flex h-11 w-11 items-center justify-center rounded-full border border-line"
       >

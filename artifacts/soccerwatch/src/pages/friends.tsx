@@ -170,7 +170,7 @@ export default function FriendsPage() {
                 <p className="mt-1 text-xs text-muted-text">{[request.court, request.recordingDate].filter(Boolean).join(" · ")}</p>
                 <p className="mt-2 text-xs text-muted-text">{copy.locale === "ar"
                   ? "القبول بيفتح مراجعة اللاعب؛ هويتك ما بتنربط إلا لما تكمل اختيارك."
-                  : "Accept to review this player. They won't be linked to you unless you complete your own claim."}</p>
+                  : "Accept to review this player. They won't be linked to you unless you finish finding yourself."}</p>
                 <div className="mt-3 flex gap-2">
                   <button type="button" disabled={respondPlayerRequest.isPending} onClick={async () => {
                     try {

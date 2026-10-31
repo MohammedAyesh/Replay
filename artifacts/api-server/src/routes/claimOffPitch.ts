@@ -11,6 +11,14 @@ import {
 } from "@workspace/db";
 import { getLocalAccountUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { isRecordingVisible } from "../lib/recordingVisibility";
+import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
+import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
+
+/** Bench time is an input of the match stats: refresh their cache after a change. */
+async function refreshMatchStats(recordingId: number): Promise<void> {
+  await invalidateMatchStatsCacheForRecording(recordingId);
+  queueMatchStatsCacheForRecording(recordingId, 700);
+}
 
 export type OffPitchSpan = {
   fromSeconds: number;
@@ -303,6 +311,7 @@ router.post("/recordings/:id/claim-match/off-pitch", async (req, res): Promise<v
     }
     return [saved];
   });
+  await refreshMatchStats(recordingId);
   res.status(201).json(toResponse(created));
 });
 
@@ -333,6 +342,7 @@ router.delete("/recordings/:id/claim-match/off-pitch/:clientId", async (req, res
   await db
     .delete(claimMatchOffPitchSpansTable)
     .where(eq(claimMatchOffPitchSpansTable.id, existing.id));
+  await refreshMatchStats(recordingId);
   res.json({ deleted: true, clientId });
 });
 
