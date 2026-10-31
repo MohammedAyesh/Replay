@@ -14,7 +14,14 @@ vi.mock("./bunny", () => ({
   },
 }));
 
-import { decideBackupAction, BACKUP_MAX_RELAUNCHES, backupSpecFor } from "./exportFailover";
+import {
+  decideBackupAction,
+  BACKUP_MAX_RELAUNCHES,
+  backupSpecFor,
+  prepareBackupBranding,
+  reconcileBackup,
+  setBackupBrandingProvider,
+} from "./exportFailover";
 import {
   backupExportRef,
   backupJobFromRef,
@@ -101,6 +108,63 @@ describe("backup export references", () => {
       ...status,
       storageUrl: expected.replace("https:", "http:"),
     })).toBeNull();
+  });
+});
+
+describe("branded backup handoff", () => {
+  afterEach(() => {
+    setBackupBrandingProvider(null);
+    vi.useRealTimers();
+  });
+
+  it("waits for slow branding preparation instead of timing out and dropping the overlay", async () => {
+    vi.useFakeTimers();
+    let finish!: (value: { overlayUrl: string; endScreen: null }) => void;
+    setBackupBrandingProvider(() => new Promise((resolve) => { finish = resolve; }));
+    const pending = prepareBackupBranding({ id: 811 } as never, null);
+    let settled = false;
+    void pending.then(() => { settled = true; });
+
+    await vi.advanceTimersByTimeAsync(26_000);
+    expect(settled).toBe(false);
+    finish({ overlayUrl: "https://storage.test/branding/drawn/overlay.png", endScreen: null });
+    await expect(pending).resolves.toMatchObject({
+      overlayUrl: "https://storage.test/branding/drawn/overlay.png",
+      endScreen: null,
+    });
+  });
+
+  it("sends the overlay but leaves the row pending if vps1 finishes during the branded primary render", async () => {
+    const env = { ...process.env };
+    const originalFetch = globalThis.fetch;
+    const clipId = 812;
+    const job = `c${clipId}-0123456789abcdef`;
+    const submission: { body?: Record<string, unknown> } = {};
+    process.env.CONTABO_CONTROL_URL = "http://control.test";
+    process.env.CONTABO_CONTROL_KEY = "test-key";
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      submission.body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({
+        job, clipId, status: "ready", stage: null, progress: 100,
+        error: null, errorKind: null, running: false, output: null,
+      });
+    }) as typeof fetch;
+    setBackupBrandingProvider(async () => ({
+      overlayUrl: "https://storage.test/branding/drawn/overlay.png",
+      endScreen: null,
+    }));
+
+    try {
+      const outcome = await reconcileBackup({
+        id: clipId, videoId: "video", startTime: "0", endTime: "1", cropPath: [],
+        aspectRatio: "16:9", title: "Goal",
+      } as never, { primaryActive: true, cacheMs: 0 });
+      expect(submission.body?.overlayUrl).toBe("https://storage.test/branding/drawn/overlay.png");
+      expect(outcome).toMatchObject({ state: "running", stage: "waiting_for_primary" });
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.env = env;
+    }
   });
 });
 

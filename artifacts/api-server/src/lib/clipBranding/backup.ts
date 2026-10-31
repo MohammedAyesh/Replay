@@ -11,7 +11,7 @@ import {
 import { getOutputDims } from "../ffmpegExport";
 import type { SettingsContext } from "../settings";
 import { FPS, ffmpegWithCard, type EndScreenJob } from "./endScreenVideo";
-import { clipWantsDrawnBranding, planClipBranding, type BrandingClip } from "./plan";
+import { clipWantsDrawnBranding, planClipBranding, type BrandingClip, type ClipBrandingPlan } from "./plan";
 import type { Dims } from "./types";
 
 /**
@@ -24,8 +24,8 @@ import type { Dims } from "./types";
  * (clip_export/endscreen.py on vps1 mirrors endScreenVideo.ts).
  *
  * Content-addressed paths: the same card is uploaded once however often the
- * failover polls. Everything is best effort; any failure hands vps1 what it
- * had before (the uploaded overlay, no end screen).
+ * failover polls. Overlay preparation is independent of the optional end-card
+ * encode, so an expensive or failed card never removes a usable overlay.
  */
 
 export type BackupEndScreen = {
@@ -58,12 +58,59 @@ async function uploadContentAddressed(buffer: Buffer, folder: string, ext: strin
   return storageOriginUrl(remote);
 }
 
+export async function prepareBackupBrandingAssets(
+  clipId: number,
+  portrait: boolean,
+  uploadedOverlayUrl: string | null,
+  plan: ClipBrandingPlan,
+  deps: {
+    encodeCard: typeof encodeCard;
+    uploadAsset: typeof uploadContentAddressed;
+  } = { encodeCard, uploadAsset: uploadContentAddressed },
+): Promise<BackupBranding> {
+  const result: BackupBranding = { overlayUrl: uploadedOverlayUrl, endScreen: null };
+  if (plan.overlayPath) {
+    try {
+      const png = await fs.promises.readFile(plan.overlayPath);
+      result.overlayUrl = await deps.uploadAsset(png, "drawn", "png", "image/png");
+    } catch (err) {
+      logger.warn({ err, clipId }, "Could not hand the drawn overlay to vps1 — using the uploaded one");
+    }
+  }
+  if (plan.endScreen) {
+    try {
+      const dims = getOutputDims(portrait);
+      const card = await deps.encodeCard(plan.endScreen, dims);
+      result.endScreen = {
+        cardUrl: await deps.uploadAsset(
+          card.buffer,
+          "endscreens",
+          card.ext,
+          card.ext === "webm" ? "video/webm" : "video/quicktime",
+        ),
+        seconds: plan.endScreen.seconds,
+        blur: plan.endScreen.blur,
+        dim: plan.endScreen.dim,
+        kind: plan.endScreen.spec.kind,
+      };
+    } catch (err) {
+      logger.warn(
+        { err, clipId, overlayUrl: result.overlayUrl },
+        "Could not prepare the end screen for vps1 — handing over with the overlay only",
+      );
+    }
+  }
+  return result;
+}
+
 /** The card alone (transparent where the footage shows), as a small video. */
 export async function encodeCard(job: EndScreenJob, dims: Dims): Promise<{ buffer: Buffer; ext: "webm" | "mov" }> {
   const key = createHash("sha256").update(JSON.stringify({ job, dims })).digest("hex");
   const existing = cardJobs.get(key);
   if (existing) return existing;
 
+  // Keep bursts from running several full-frame RGBA encodes on the same
+  // small instance. Identical cards in the same burst share the queued job.
   const encoded = cardEncodeQueue.then(() => encodeCardUnqueued(job, dims));
   cardJobs.set(key, encoded);
   cardEncodeQueue = encoded.then(() => undefined, () => undefined);
@@ -117,34 +164,9 @@ async function compute(
   }
 
   const plan = await planClipBranding(clip, fieldId, portrait, ctx);
-  const result: BackupBranding = { ...plain };
+  let result: BackupBranding = { ...plain };
   try {
-    if (plan.overlayPath) {
-      try {
-        const png = await fs.promises.readFile(plan.overlayPath);
-        result.overlayUrl = await uploadContentAddressed(png, "drawn", "png", "image/png");
-      } catch (err) {
-        logger.warn({ err, clipId: clip.id }, "Could not hand the drawn overlay to vps1 — using the uploaded one");
-      }
-    }
-    if (plan.endScreen) {
-      try {
-        const dims = getOutputDims(portrait);
-        const card = await encodeCard(plan.endScreen, dims);
-        result.endScreen = {
-          cardUrl: await uploadContentAddressed(card.buffer, "endscreens", card.ext, card.ext === "webm" ? "video/webm" : "video/quicktime"),
-          seconds: plan.endScreen.seconds,
-          blur: plan.endScreen.blur,
-          dim: plan.endScreen.dim,
-          kind: plan.endScreen.spec.kind,
-        };
-      } catch (err) {
-        logger.warn(
-          { err, clipId: clip.id, overlayUrl: result.overlayUrl },
-          "Could not prepare the end screen for vps1 — handing over with the overlay only",
-        );
-      }
-    }
+    result = await prepareBackupBrandingAssets(clip.id, portrait, uploadedOverlayUrl, plan);
   } finally {
     for (const t of plan.temps) fs.unlink(t, () => {});
   }

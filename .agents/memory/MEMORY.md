@@ -48,6 +48,7 @@
 - [Account deletion retention](account-deletion.md) — delete Clerk first, anonymize retained records under a disabled placeholder, and disable the local account if its transaction fails.
 - [Menus inside linked cards](linked-card-menu-closure.md) — preventDefault stops link navigation but can skip Radix auto-dismiss; explicitly close the menu before opening an overlay.
 - [API test database isolation](api-test-database-isolation.md) — use a disposable DATABASE_URL; Vitest 4 supports `--maxWorkers`, not `--minWorkers`.
+- [Single-fork Vitest mocks](vitest-single-fork-mocks.md) — avoid partial module mocks in API test files; single-fork execution can leak mocked exports into other files.
 - [Disposable PostgreSQL lifecycle](disposable-postgres-test-lifecycle.md) — use one shell invocation; initialize with `-U postgres` and set socket directory to `PGDATA`.
 - [Render queue ownership without migrations](render-queue-ownership.md) — when schema changes are out of scope, coordinate cross-replica export ownership through conditional status transitions.
 - [GitHub REST commit fallback](github-rest-commit-fallback.md) — recreate local history from immutable blobs; use full-block chunks and verify every Git object before moving refs.
