@@ -19,6 +19,7 @@ import {
   observeClerkAuthMeRequest,
   recordAuthMeError,
 } from "./lib/clerkAuthDiagnostics";
+import { claimBundleChangedErrorHandler } from "./lib/claimBundleChanged";
 
 const app: Express = express();
 
@@ -117,6 +118,10 @@ app.use("/api", (_req, res, next) => {
 });
 
 app.use("/api", router);
+
+// A claim save that found its tracking bundle replaced under the row lock is
+// a 409 everywhere, including routes that do not catch it themselves.
+app.use(claimBundleChangedErrorHandler);
 
 // Preserve Express's default error handling while retaining a sanitized error
 // summary when Clerk or another middleware fails before /api/auth/me reaches

@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import type { FollowPoint } from "../lib/personalMoments";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import multer from "multer";
@@ -2079,6 +2079,63 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
   }));
 });
 
+/**
+ * Tracking files are fetched by segment index, so their URL stays the same
+ * when a recording is re-analysed. They used to be cached for up to a day,
+ * and a browser kept drawing the old tracking over the new analysis. Now
+ * every read revalidates: the ETag names the stored object (a re-analysis
+ * always writes new object paths), and a match is a 304 that never reads
+ * storage, so revalidating costs one small round trip.
+ */
+const TRACKING_FILE_CACHE_CONTROL = "private, no-cache";
+
+function strongEtag(...parts: Array<string | number>): string {
+  return `"${createHash("sha256").update(parts.map(String).join("\u0000")).digest("base64url").slice(0, 43)}"`;
+}
+
+function ifNoneMatchHits(req: Request, etag: string): boolean {
+  const header = req.headers["if-none-match"];
+  if (!header) return false;
+  return String(header).split(",").map((tag) => tag.trim())
+    .some((tag) => tag === "*" || tag.replace(/^W\//, "") === etag);
+}
+
+function notModified(req: Request, res: Response, etag: string): boolean {
+  res.setHeader("Cache-Control", TRACKING_FILE_CACHE_CONTROL);
+  res.setHeader("ETag", etag);
+  if (!ifNoneMatchHits(req, etag)) return false;
+  res.status(304).end();
+  return true;
+}
+
+/** One stored gzip tracking object, revalidated by its object path. */
+async function sendTrackingObject(
+  req: Request,
+  res: Response,
+  bundleId: number,
+  objectPath: string,
+  notFound: string,
+): Promise<void> {
+  const etag = strongEtag("claim-object", bundleId, objectPath);
+  if (ifNoneMatchHits(req, etag)) {
+    notModified(req, res, etag);
+    return;
+  }
+  let compressed: Buffer;
+  try {
+    compressed = await readCompressedClaimSegment(objectPath);
+  } catch {
+    res.status(404).json({ error: notFound });
+    return;
+  }
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Encoding", "gzip");
+  res.setHeader("Cache-Control", TRACKING_FILE_CACHE_CONTROL);
+  res.setHeader("ETag", etag);
+  res.setHeader("Content-Length", String(compressed.byteLength));
+  res.status(200).send(compressed);
+}
+
 router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res): Promise<void> => {
   const userId = await requireAccountUser(req);
   if (!userId) {
@@ -2108,16 +2165,7 @@ router.get("/recordings/:id/claim-match/segments/:segmentIndex", async (req, res
     res.status(404).json({ error: "Tracking segment not found" });
     return;
   }
-  try {
-    const compressed = await readCompressedClaimSegment(manifestSegment.objectPath);
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Encoding", "gzip");
-    res.setHeader("Cache-Control", "private, max-age=3600");
-    res.setHeader("Content-Length", String(compressed.byteLength));
-    res.status(200).send(compressed);
-  } catch {
-    res.status(404).json({ error: "Tracking segment not found" });
-  }
+  await sendTrackingObject(req, res, row.bundle.id, manifestSegment.objectPath, "Tracking segment not found");
 });
 
 export function validateUploadBundle(upload: UploadBundle): string | null {
@@ -2510,16 +2558,7 @@ router.get("/recordings/:id/claim-match/ball/:segmentIndex", async (req, res): P
     res.status(404).json({ error: "No ball data for this segment" });
     return;
   }
-  try {
-    const compressed = await readCompressedClaimSegment(manifestSegment.ballPath);
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Encoding", "gzip");
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.setHeader("Content-Length", String(compressed.byteLength));
-    res.status(200).send(compressed);
-  } catch {
-    res.status(404).json({ error: "Ball data not found" });
-  }
+  await sendTrackingObject(req, res, access.row!.bundle!.id, manifestSegment.ballPath, "Ball data not found");
 });
 
 /** GET /recordings/:id/claim-match/people/:segmentIndex -- the pipeline's grouping of this segment. */
@@ -2547,16 +2586,7 @@ router.get("/recordings/:id/claim-match/people/:segmentIndex", async (req, res):
     res.status(404).json({ error: "No grouping for this segment" });
     return;
   }
-  try {
-    const compressed = await readCompressedClaimSegment(manifestSegment.peoplePath);
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Encoding", "gzip");
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.setHeader("Content-Length", String(compressed.byteLength));
-    res.status(200).send(compressed);
-  } catch {
-    res.status(404).json({ error: "Grouping not found" });
-  }
+  await sendTrackingObject(req, res, access.row!.bundle!.id, manifestSegment.peoplePath, "Grouping not found");
 });
 
 function sampleRosterParts<T>(items: T[], maximum: number): T[] {
@@ -2706,7 +2736,8 @@ router.get("/recordings/:id/claim-match/roster", async (req, res): Promise<void>
     const response = GetClaimMatchRosterResponse.parse({
       players: await rosterPlayersWithPhotos(manifest, roster),
     });
-    res.setHeader("Cache-Control", "private, max-age=3600");
+    // Built from the manifest and several stored files: the ETag is the body's.
+    if (notModified(req, res, strongEtag("claim-roster", JSON.stringify(response)))) return;
     res.json(response);
   } catch {
     res.status(404).json({ error: "Match roster not found" });
@@ -2738,16 +2769,7 @@ router.get("/recordings/:id/claim-match/jersey/:segmentIndex", async (req, res):
     res.status(404).json({ error: "No jersey data for this segment" });
     return;
   }
-  try {
-    const compressed = await readCompressedClaimSegment(manifestSegment.jerseyPath);
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Encoding", "gzip");
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.setHeader("Content-Length", String(compressed.byteLength));
-    res.status(200).send(compressed);
-  } catch {
-    res.status(404).json({ error: "Jersey data not found" });
-  }
+  await sendTrackingObject(req, res, access.row!.bundle!.id, manifestSegment.jerseyPath, "Jersey data not found");
 });
 
 /**
@@ -2901,16 +2923,7 @@ router.get("/recordings/:id/claim-match/sprites/:segmentIndex", async (req, res)
     res.status(404).json({ error: "No sprites for this segment" });
     return;
   }
-  try {
-    const compressed = await readCompressedClaimSegment(spritesPath);
-    res.setHeader("Content-Type", "application/json");
-    res.setHeader("Content-Encoding", "gzip");
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.setHeader("Content-Length", String(compressed.byteLength));
-    res.status(200).send(compressed);
-  } catch {
-    res.status(404).json({ error: "Sprites not found" });
-  }
+  await sendTrackingObject(req, res, access.row.bundle.id, spritesPath, "Sprites not found");
 });
 
 /**

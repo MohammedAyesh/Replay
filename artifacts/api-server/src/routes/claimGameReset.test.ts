@@ -14,16 +14,31 @@ vi.mock("@workspace/db", () => {
   const table = (name: string) => new Proxy({}, { get: (_t, key) => `${name}.${String(key)}` });
   return {
   db: mocks.db,
+  claimChainLabelsTable: table("labels"),
+  claimMatchIdentityBindingsTable: table("bindings"),
   claimMatchOffPitchSpansTable: table("offPitch"),
   claimMatchProgressTable: table("progress"),
+  matchPlayersTable: table("matchPlayers"),
+  matchRoomsTable: table("matchRooms"),
+  matchTeamSpansTable: table("teamSpans"),
   recordingTrackingBundlesTable: table("bundles"),
   claimMomentChecksTable: table("momentChecks"),
+  userClipsTable: table("userClips"),
+  userReelsTable: table("userReels"),
 };
 });
-vi.mock("drizzle-orm", () => ({ and: (...args: unknown[]) => args, eq: (...args: unknown[]) => args }));
+vi.mock("drizzle-orm", () => ({
+  and: (...args: unknown[]) => args,
+  eq: (...args: unknown[]) => args,
+  inArray: (...args: unknown[]) => args,
+  isNull: (...args: unknown[]) => args,
+  notInArray: (...args: unknown[]) => args,
+}));
+vi.mock("../lib/matchStatsCacheJobs", () => ({ queueMatchStatsCacheForRecording: vi.fn() }));
 vi.mock("./claimChain", () => ({
   begin: mocks.begin,
   claimIdentityId: vi.fn(),
+  loadContext: vi.fn(),
   persistChain: mocks.persistChain,
   recordFindDecisionLabel: vi.fn(),
   syncChainClaim: vi.fn(),
@@ -50,6 +65,15 @@ function appFor() {
   return app;
 }
 
+/** A query builder that accepts any chain of calls and resolves to no rows. */
+function query(): any {
+  const builder: any = new Proxy(() => builder, {
+    get: (_target, key) => (key === "then" ? (resolve: (rows: unknown[]) => void) => resolve([]) : () => builder),
+    apply: () => builder,
+  });
+  return builder;
+}
+
 describe("Start over", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -57,9 +81,11 @@ describe("Start over", () => {
     mocks.persistChain.mockResolvedValue(undefined);
     mocks.syncIdentityBinding.mockResolvedValue(null);
     mocks.clearMomentChecks.mockResolvedValue(undefined);
-    mocks.db.delete.mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) });
-    mocks.db.select.mockReturnValue({ from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }) });
-    mocks.db.update.mockReturnValue({ set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue(undefined) }) });
+    const tx: any = { delete: query, select: query, update: query, transaction: async (fn: (t: unknown) => unknown) => fn(tx) };
+    mocks.db.delete.mockImplementation(query);
+    mocks.db.select.mockImplementation(query);
+    mocks.db.update.mockImplementation(query);
+    mocks.db.transaction.mockImplementation(async (fn: (t: unknown) => unknown) => fn(tx));
   });
 
   it("forgets this player's 'Is this you?' answers, so an old 'Not me' cannot cut the new claim", async () => {
