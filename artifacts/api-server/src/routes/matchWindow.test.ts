@@ -563,14 +563,13 @@ describe("bundle replacement", () => {
     });
   });
 
-  it("takes the new bundle's detector window over an admin one", async () => {
+  it("keeps the existing admin window over a detector result", async () => {
     await setWindow({ startSeconds: 70 });
     await storeUploadBundle(recordingId, adminId, upload({
       matchWindow: { startSeconds: 65, endSeconds: null, source: "detector" },
     }));
     const window = (await storedManifest()).provenance?.matchWindow as Record<string, unknown>;
-    expect(window).toMatchObject({ startSeconds: 65, source: "detector" });
-    expect(window.setBy).toBeUndefined();
+    expect(window).toMatchObject({ startSeconds: 70, source: "admin", setBy: adminId });
   });
 
   it("drops a detector window that does not fit the new footage", async () => {

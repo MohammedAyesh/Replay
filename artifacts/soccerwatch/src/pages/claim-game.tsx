@@ -90,6 +90,7 @@ type MatchRosterPlayer = ClaimMatchRosterResponse["players"][number];
 
 type ServerGame = {
   state: (ClaimState & { saved?: number }) | null;
+  completed?: boolean;
   bundleFingerprint: string;
   staleState?: boolean;
   inPlaySpans: Array<[number, number]>;
@@ -243,6 +244,7 @@ export default function ClaimGamePage() {
       videoUrl={recording?.videoUrl ?? null}
       eyebrow={recording ? `${recording.date ?? ""} · ${recording.court ?? ""}`.replace(/^ · | · $/g, "") : ""}
       saved={resetByAdmin ? null : server.state}
+      serverCompleted={server.completed ?? false}
       fingerprint={server.bundleFingerprint}
       staleState={server.staleState ?? false}
       copy={copy}
@@ -324,6 +326,7 @@ type Props = {
   videoUrl: string | null;
   eyebrow: string;
   saved: (ClaimState & { saved?: number }) | null;
+  serverCompleted: boolean;
   fingerprint: string;
   staleState?: boolean;
   copy: ReturnType<typeof useGameCopy>;
@@ -354,6 +357,7 @@ export function GameClaim({
   staleState = false, rosterPlayers, loadRoster,
   identities, identityId, identityName, resetByAdmin, coveragePercent, accountName,
   matches, matchWindow = null, continuation,
+  serverCompleted,
 }: Props) {
   const queryClient = useQueryClient();
   const friendsQuery = useFriends();
@@ -368,6 +372,7 @@ export function GameClaim({
   const ctx = ctxRef.current;
   const S = ctx.S;
   const [savedClaim, setSavedClaim] = useState(saved);
+  const [claimCompleted, setClaimCompleted] = useState(serverCompleted);
   const [claimName, setClaimName] = useState(identityName);
   const namePromptHandled = useRef(Boolean(identityName));
   const pendingClaimName = useRef<string | null>(null);
@@ -497,6 +502,8 @@ export function GameClaim({
           setSaveError(true);
           return false;
         }
+        const response = await r.json() as { completed?: boolean };
+        if (typeof response.completed === "boolean") setClaimCompleted(response.completed);
         setSaveError(false);
         if (body.done) {
           void queryClient.invalidateQueries({ queryKey: myMatchesKey });
@@ -1789,6 +1796,7 @@ export function GameClaim({
     );
   } else if (S.step === "done") {
     body = <DoneScreen ctx={ctx} copy={copy} elapsed={elapsed}
+      completed={claimCompleted}
       recordingId={recordingId}
       rosterPlayers={rosterPlayers}
       friends={friendsQuery.data?.friends ?? []}
@@ -2317,8 +2325,8 @@ function GapsScreen({ ctx, d, copy, mediaSlot, span, disp, act, pickSet, setPick
 
 /* ------------------------------------------------------------------- done */
 
-function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuation, onContinue, recordingId, rosterPlayers, friends, matchCode, sendSuggestion, suggestionPending }: {
-  ctx: Ctx; copy: GameStrings; elapsed: number; onStats: () => void; onReport: (() => void) | null; onAgain: () => void;
+function DoneScreen({ ctx, copy, elapsed, completed, onStats, onReport, onAgain, continuation, onContinue, recordingId, rosterPlayers, friends, matchCode, sendSuggestion, suggestionPending }: {
+  ctx: Ctx; copy: GameStrings; elapsed: number; completed: boolean; onStats: () => void; onReport: (() => void) | null; onAgain: () => void;
   continuation: ServerGame["continuation"]; onContinue: () => void;
   recordingId: number; rosterPlayers: MatchRosterPlayer[]; friends: Array<{ userId: number; name: string }>;
   matchCode: string | null;
@@ -2335,8 +2343,10 @@ function DoneScreen({ ctx, copy, elapsed, onStats, onReport, onAgain, continuati
   return (
     <div className="flex flex-col gap-4">
       <Eyebrow>{copy.done.eyebrow}</Eyebrow>
-      <Title>{tt.fs > 0 ? copy.done.title : copy.done.titleNone}</Title>
-      {tt.fs <= 0 && <Lede>{copy.done.noneLede}</Lede>}
+      <Title>{tt.fs <= 0 ? copy.done.titleNone : completed ? copy.done.title : copy.done.titlePartial}</Title>
+      {tt.fs <= 0
+        ? <Lede>{copy.done.noneLede}</Lede>
+        : !completed && <Lede>{copy.done.partialLede}</Lede>}
       {deckCards.length > 0 && (
         // "Is this you?": the moments we're not sure were his wait for him here
         <button type="button" data-testid="button-open-check-deck" onClick={() => setDeckLocation(`/find/${recordingId}/check`)}

@@ -5449,6 +5449,8 @@ function TrackingBundleUpload({
   const [busy, setBusy] = useState(false);
   const [savingStart, setSavingStart] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [windowInfo, setWindowInfo] = useState<string | null>(null);
+  const [loadingWindowInfo, setLoadingWindowInfo] = useState(false);
   const [videoStart, setVideoStart] = useState(
     recording.hasTrackingBundle ? String(recording.trackingVideoStartSeconds ?? 0) : "",
   );
@@ -5570,6 +5572,24 @@ function TrackingBundleUpload({
     }
   };
 
+  const loadWindowInfo = async () => {
+    setLoadingWindowInfo(true);
+    try {
+      const result = await apiFetch(`/admin/recordings/${recording.id}/match-window`) as {
+        currentWindow: { startSeconds: number; endSeconds: number | null; source: string; why?: string } | null;
+        dryRunWindow: { startSeconds: number; endSeconds: number | null; source: string; why?: string } | null;
+      };
+      const window = result.currentWindow ?? result.dryRunWindow;
+      setWindowInfo(window
+        ? `${result.currentWindow ? "Current" : "Dry run"} · ${window.startSeconds}s–${window.endSeconds ?? "end"} · ${window.source}${window.why ? ` · ${window.why}` : ""}`
+        : "No match window detected; no changes made.");
+    } catch (error) {
+      setWindowInfo(adminRequestErrorMessage(error, "Could not load match-window reasoning"));
+    } finally {
+      setLoadingWindowInfo(false);
+    }
+  };
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3 py-2">
       <div className="flex min-w-0 items-center gap-2">
@@ -5687,6 +5707,17 @@ function TrackingBundleUpload({
         {hasBundle && (
           <button
             type="button"
+            className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary disabled:opacity-50"
+            disabled={loadingWindowInfo}
+            data-testid={`button-match-window-info-${recording.id}`}
+            onClick={() => void loadWindowInfo()}
+          >
+            {loadingWindowInfo ? "Checking…" : "Match window"}
+          </button>
+        )}
+        {hasBundle && (
+          <button
+            type="button"
             className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors hover:border-primary hover:text-primary"
             data-testid={`button-verify-tracking-bundle-${recording.id}`}
             onClick={() => setVerifying((value) => !value)}
@@ -5707,6 +5738,7 @@ function TrackingBundleUpload({
            </button>
          )}
       </div>
+      {windowInfo && <p className="mt-2 w-full text-[10px] text-zinc-400" data-testid={`match-window-info-${recording.id}`}>{windowInfo}</p>}
        {playerMetrics && (
          <div className="mt-2 w-full rounded-lg border border-zinc-800 bg-zinc-950/60 p-3" data-testid={`admin-player-metrics-${recording.id}`}>
            <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">

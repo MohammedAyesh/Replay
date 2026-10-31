@@ -50,22 +50,23 @@ export function detectMatchWindow(input: DetectorInput): StoredMatchWindow | nul
   let why: string;
   if (groups.length === 1) {
     selected = groups[0]!;
-    phase = gamePhases.find((p) => p.end >= selected.start && p.start <= selected.end);
-    why = phase ? "Single continuous game phase with in-play spans." : "Single continuous in-play stretch.";
-  } else if (groups.length === 2 && gamePhases.length >= 2) {
-    const second = groups[1]!;
-    const secondPhase = gamePhases.find((p) => p.end >= second.start && p.start <= second.end);
-    if (secondPhase && secondPhase.start > groups[0]!.end) {
-      selected = second;
-      phase = secondPhase;
-      why = "A long no-play gap separates the previous game; this game starts after the gap.";
-    } else {
-      selected = groups[0]!;
-      phase = gamePhases.find((p) => p.end >= selected.start && p.start <= selected.end);
-      if (!phase) return null;
-      why = "A later game follows a long no-play gap; the booked game ends before it.";
+    const overlapping = gamePhases.filter((p) => p.end >= selected.start && p.start <= selected.end);
+    if (overlapping.length === 1) {
+      phase = overlapping[0];
+    } else if (overlapping.length > 1) {
+      const joinedByBreaks = overlapping.slice(1).every((next, index) => {
+        const previous = overlapping[index]!;
+        return breaks.some((p) => p.start <= next.start && p.end >= previous.end);
+      });
+      if (joinedByBreaks) {
+        phase = { kind: "game", start: overlapping[0]!.start, end: overlapping.at(-1)!.end };
+      }
     }
+    why = phase ? "Single continuous game phase with in-play spans." : "Single continuous in-play stretch.";
   } else {
+    // The phase timeline can confirm that multiple games occurred, but cannot
+    // identify which one was booked. Choosing either would silently exclude
+    // valid footage for some recordings; leave these for an admin instead.
     return null;
   }
   const startSeconds = phase && phase.start <= selected.start && selected.start - phase.start <= MATCH_WINDOW_DETECTOR.splitGapSeconds

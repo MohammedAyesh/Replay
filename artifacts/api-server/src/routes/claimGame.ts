@@ -243,7 +243,11 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   const ctx = await begin(req, res);
   if (!ctx) return;
   const [row] = await db
-    .select({ gameState: claimMatchProgressTable.gameState, updatedAt: claimMatchProgressTable.updatedAt })
+    .select({
+      gameState: claimMatchProgressTable.gameState,
+      completed: claimMatchProgressTable.completed,
+      updatedAt: claimMatchProgressTable.updatedAt,
+    })
     .from(claimMatchProgressTable)
     .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
   const state = row?.gameState ?? null;
@@ -258,6 +262,7 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   const stale = !!state && typeof state === "object" && (state as { bundle?: unknown }).bundle !== ctx.fingerprint;
   res.json({
     state: stale ? null : state,
+    completed: stale ? false : row?.completed ?? false,
     staleState: stale,
     bundleFingerprint: ctx.fingerprint,
     inPlaySpans: inPlaySpans(ctx),

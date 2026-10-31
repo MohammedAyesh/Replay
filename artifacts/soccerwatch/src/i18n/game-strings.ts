@@ -220,7 +220,9 @@ const en = {
   done: {
     eyebrow: "Done",
     title: "Found you across the whole game",
+    titlePartial: "We found you in part of this match",
     titleNone: "We didn't find you in this match",
+    partialLede: "This claim hasn't met the match-completion check yet, so it won't unlock clips or stats as a completed match.",
     noneLede: "Nothing is saved as you yet. Start over to try again, or pick the game you played in.",
     found: (ip: string) => `you on camera, out of ${ip} of play`,
     timeTaken: "time taken",
@@ -533,7 +535,9 @@ const ar: GameStrings = {
   done: {
     eyebrow: "خلصنا",
     title: "لقيناك بالماتش كامل",
+    titlePartial: "لقيناك بجزء من الماتش",
     titleNone: "ما لقيناك بهالماتش",
+    partialLede: "لسا ما حققت شروط إكمال الماتش، عشان هيك ما رح تنفتحلك اللقطات أو الإحصائيات كماتش مكتمل.",
     noneLede: "لسا ما انحفظ إشي إلك. ابدأ من جديد عشان تجرّب كمان مرة، أو اختار الماتش اللي لعبت فيه.",
     found: (ip: string) => `إنت عالكاميرا، من أصل ${ip} لعب`,
     timeTaken: "الوقت اللي أخذته",

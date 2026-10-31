@@ -181,12 +181,12 @@ describe("bundle upload and replacement", () => {
     expect(sanitizeUploadedProvenance({ linker: "x", matchWindow: { startSeconds: "soon" } })).toEqual({ linker: "x" });
   });
 
-  it("keeps the new bundle's own window over the old one", () => {
+  it("keeps an existing admin window over a detector result", () => {
     expect(matchWindowForReplacement(
       { startSeconds: 1200, source: "detector" },
       { startSeconds: 1460, source: "admin", setBy: 7 },
       7200,
-    )).toMatchObject({ startSeconds: 1200, source: "detector" });
+    )).toMatchObject({ startSeconds: 1460, source: "admin", setBy: 7 });
   });
 
   it("carries an admin window over when the new bundle has none", () => {

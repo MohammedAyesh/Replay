@@ -14,6 +14,19 @@ const manifest = {
   pitchModel: undefined,
 } as unknown as TrackingManifest;
 const parts = [{ trackId: "s0:me", fromFrame: 0, toFrame: 4000 }];
+const trackedSegments = [{
+  segmentIndex: 0,
+  tracks: [{
+    id: "s0:me",
+    boxes: Array.from({ length: 201 }, (_, index) => ({
+      frame: index * 20,
+      x: 900 + index / 10,
+      y: 400,
+      w: 40,
+      h: 90,
+    })),
+  }],
+}] as never;
 
 function touch(t: number, trackId: string, x: number, kit: Lab = WHITE): Touch {
   return {
@@ -92,12 +105,12 @@ function play(overrides: Partial<RecordingPlay> = {}): RecordingPlay {
 
 describe("personal moment selection", () => {
   it("keeps long passes only when their start time is in play", () => {
-    const moments = personalMoments(play(), parts, [], manifest);
+    const moments = personalMoments(play(), parts, trackedSegments, manifest);
     expect(moments.filter((moment) => moment.kind === "long-pass").map((moment) => moment.id))
       .toEqual(["me-pass-25"]);
 
     // Old recordings without in-play spans continue to include both passes.
-    const oldRecording = personalMoments(play({ inPlay: null }), parts, [], manifest);
+    const oldRecording = personalMoments(play({ inPlay: null }), parts, trackedSegments, manifest);
     expect(oldRecording.filter((moment) => moment.kind === "long-pass").map((moment) => moment.id))
       .toEqual(["me-pass-10", "me-pass-25"]);
   });
@@ -117,7 +130,7 @@ describe("personal moment selection", () => {
       dribble(43, "won", null, 5),
       dribble(10, "won", 8, 5),
     ];
-    const moments = personalMoments(play({ dribbles }), parts, [], manifest);
+    const moments = personalMoments(play({ dribbles }), parts, trackedSegments, manifest);
     const selected = moments
       .filter((moment) => moment.kind === "dribble")
       .map((moment) => moment.id);
@@ -133,5 +146,33 @@ describe("personal moment selection", () => {
       "me-dribble-35",
       "me-dribble-36",
     ]);
+  });
+
+  it("uses a player-framed touch spell only when no classified action exists", () => {
+    const touches = [20, 22, 24].map((t) => touch(t, "s0:me", 5));
+    const boxes = Array.from({ length: 401 }, (_, index) => ({
+      frame: 200 + index,
+      x: 900 + index / 10,
+      y: 400,
+      w: 40,
+      h: 90,
+    }));
+    const segments = [{
+      segmentIndex: 0,
+      tracks: [{ id: "s0:me", boxes }],
+    }] as never;
+    const moments = personalMoments(
+      play({ touches, inPlay: [[10, 80]] }),
+      parts,
+      segments,
+      manifest,
+    );
+    expect(moments).toHaveLength(1);
+    expect(moments[0]).toMatchObject({
+      id: "me-touch-spell-20",
+      kind: "touch-spell",
+      momentSeconds: 22,
+    });
+    expect(moments[0]?.follow).toHaveLength(17);
   });
 });

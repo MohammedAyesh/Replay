@@ -22,10 +22,11 @@ import {
 import { db, recordingTrackingBundlesTable, usersTable, type TrackingManifest } from "@workspace/db";
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { playCache } from "../lib/matchPlayLoad";
+import { loadRecordingPlay, playCache } from "../lib/matchPlayLoad";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { parseStoredMatchWindow, type StoredMatchWindow } from "../lib/matchWindow";
+import { detectMatchWindow } from "../lib/matchWindowDetector";
 import { logger } from "../lib/logger";
 import { resyncChainClaimsForRecording } from "./claimChain";
 
@@ -40,6 +41,96 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
     .where(eq(usersTable.id, userId));
   return user?.isAdmin ? user.id : null;
 }
+
+router.get("/admin/recordings/:id/match-window", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const params = SetRecordingMatchWindowParams.safeParse(req.params);
+  if (!params.success || !Number.isSafeInteger(params.data.id) || params.data.id <= 0) {
+    res.status(400).json({ error: "Invalid recording id" });
+    return;
+  }
+  const [bundle] = await db.select({ manifest: recordingTrackingBundlesTable.manifest })
+    .from(recordingTrackingBundlesTable)
+    .where(eq(recordingTrackingBundlesTable.recordingId, params.data.id));
+  if (!bundle) {
+    res.status(404).json({ error: "Tracking bundle not found" });
+    return;
+  }
+  const existing = parseStoredMatchWindow(bundle.manifest.provenance?.matchWindow);
+  const play = existing?.source === "admin" ? null : await loadRecordingPlay(params.data.id);
+  const detected = !existing && play
+    ? detectMatchWindow({
+      duration: play.manifest.duration,
+      inPlay: play.inPlay ?? [],
+      phases: play.phases,
+    })
+    : null;
+  res.json({
+    recordingId: params.data.id,
+    duration: bundle.manifest.duration,
+    currentWindow: existing,
+    dryRunWindow: detected,
+    applied: false,
+  });
+});
+
+router.get("/admin/recordings/match-window-dry-run", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const bundles = await db.select({
+    recordingId: recordingTrackingBundlesTable.recordingId,
+    manifest: recordingTrackingBundlesTable.manifest,
+  }).from(recordingTrackingBundlesTable).orderBy(recordingTrackingBundlesTable.recordingId);
+  const results: Array<{
+    recordingId: number;
+    currentWindow: StoredMatchWindow | null;
+    proposedWindow: StoredMatchWindow | null;
+    reason: string;
+  }> = [];
+  for (const bundle of bundles) {
+    const currentWindow = parseStoredMatchWindow(bundle.manifest.provenance?.matchWindow);
+    if (currentWindow?.source === "admin") {
+      results.push({
+        recordingId: bundle.recordingId,
+        currentWindow,
+        proposedWindow: null,
+        reason: "Skipped: existing admin window is authoritative.",
+      });
+      continue;
+    }
+    try {
+      const play = await loadRecordingPlay(bundle.recordingId);
+      const proposedWindow = play
+        ? detectMatchWindow({
+          duration: play.manifest.duration,
+          inPlay: play.inPlay ?? [],
+          phases: play.phases,
+        })
+        : null;
+      results.push({
+        recordingId: bundle.recordingId,
+        currentWindow,
+        proposedWindow,
+        reason: proposedWindow?.why ?? "No unambiguous match window detected.",
+      });
+    } catch {
+      results.push({
+        recordingId: bundle.recordingId,
+        currentWindow,
+        proposedWindow: null,
+        reason: "Dry run failed while loading tracking data; no changes were made.",
+      });
+    }
+  }
+  res.json({ dryRun: true, applied: false, recordings: results });
+});
 
 class WindowError extends Error {
   constructor(readonly status: number, message: string) {
