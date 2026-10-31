@@ -30,15 +30,19 @@ vi.mock("../lib/bunny", async (importOriginal) => {
   };
 });
 
-vi.mock("../lib/ffmpegExport", () => ({
-  renderClip: vi.fn(async () => "/tmp/admin-reclip-output.mp4"),
-  cleanupTempFile: vi.fn(),
-  bufferRemoteClip: vi.fn(async () => ({
-    bufferPath: "/tmp/admin-reclip-buffer.mp4",
-    bufferedDuration: 60,
-    adjustedOffsetSec: 0,
-  })),
-}));
+vi.mock("../lib/ffmpegExport", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/ffmpegExport")>();
+  return {
+    ...actual,
+    renderClip: vi.fn(async () => "/tmp/admin-reclip-output.mp4"),
+    cleanupTempFile: vi.fn(),
+    bufferRemoteClip: vi.fn(async () => ({
+      bufferPath: "/tmp/admin-reclip-buffer.mp4",
+      bufferedDuration: 60,
+      adjustedOffsetSec: 0,
+    })),
+  };
+});
 
 vi.mock("../lib/backupExport", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/backupExport")>();

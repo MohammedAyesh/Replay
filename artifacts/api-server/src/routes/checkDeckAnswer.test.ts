@@ -60,7 +60,12 @@ vi.mock("../lib/personalMoments", async (importOriginal) => {
   return {
     ...actual,
     // only moments on his claimed frames are his: a cut takes its moment away
-    personalMoments: vi.fn((_play: unknown, parts: Part[]) => MOMENTS.filter((m) => inParts(parts, m.momentSeconds)).map((m) => ({ ...m }))),
+    personalMoments: vi.fn((_play: unknown, parts: Part[]) => MOMENTS
+      .filter((m) => inParts(parts, m.momentSeconds))
+      .map((m) => ({
+        ...m,
+        follow: [[m.momentSeconds, 0.5, 0.5] as [number, number, number]],
+      }))),
     teamGoalMoments: vi.fn(() => []),
   };
 });
