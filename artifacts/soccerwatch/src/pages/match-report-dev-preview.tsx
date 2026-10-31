@@ -3,7 +3,7 @@ import { useSearch } from "wouter";
 import { MatchReport } from "@/components/match/report/MatchReport";
 import { useMatchCopy } from "@/i18n/match-strings";
 import { useLocale } from "@/i18n";
-import type { MatchRoom } from "@/lib/match-api";
+import type { MatchReplay, MatchRoom } from "@/lib/match-api";
 
 const startMs = Date.now() - 105 * 60_000;
 const endMs = Date.now() - 15 * 60_000;
@@ -31,6 +31,16 @@ const fixture = (ready: boolean): MatchRoom => ({
   clips: { mine: 0, match: 0 }, prices: { bookingFils: 0 }, booking: null,
 });
 
+/** ?goals=1: three chances nobody has decided, so "Was it a goal?" and its reel show */
+const chance = (key: number, atSeconds: number, source: "goal" | "shot" | "event"): MatchReplay["goals"][number] => ({
+  atSeconds, side: key % 2 ? "A" : "B", scorer: null, recordingId: 1, gameIndex: null, t: atSeconds - 30,
+  status: "open", source, key, ownGoal: false, confirmedBy: [], rejectedBy: [], myVote: null,
+});
+const goalsReplay: MatchReplay = {
+  recordings: [1], findRecordingId: null, goals: [], shots: null, suggested: null, canVoteGoals: true,
+  review: [chance(1, 612, "goal"), chance(2, 1480, "shot"), chance(3, 2290, "event")],
+};
+
 export default function MatchReportDevPreview() {
   const search = new URLSearchParams(useSearch());
   const { locale, setLocale } = useLocale();
@@ -45,7 +55,8 @@ export default function MatchReportDevPreview() {
       {!import.meta.env.DEV ? <p>Not found</p> : (
         <MatchReport
           room={fixture(ready)} copy={copy} now={Date.now()} colors={{ A: "#2FD8C4", B: "#7B5CFF", C: "#2FD8C4" }}
-          names={{ A: copy.teamA, B: copy.teamB, C: copy.teamC }} replay={{ recordings: [], findRecordingId: null, goals: [], shots: null, suggested: null }}
+          names={{ A: copy.teamA, B: copy.teamB, C: copy.teamC }}
+          replay={search.get("goals") === "1" ? goalsReplay : { recordings: [], findRecordingId: null, goals: [], shots: null, suggested: null }}
           onShare={() => {}} inviteText="Replay match: https://example.test/m/W5DEMO"
           slots={{ rsvp: null, booking: null, lockedStats: null, teams: null, invite: null, captainTools: null }}
         />

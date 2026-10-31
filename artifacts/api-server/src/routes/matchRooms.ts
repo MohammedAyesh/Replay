@@ -15,6 +15,7 @@ import {
   matchRoomsTable,
   matchTeamSpansTable,
   motmVotesTable,
+  recordingsTable,
   statUnlocksTable,
   usersTable,
   userClipsTable,
@@ -69,6 +70,9 @@ import {
   warnOptionalMatchTeamSpansFailureOnce,
 } from "../lib/optionalMatchTeamSpans";
 import { setGoalVote } from "../lib/goalReview";
+import { loadRecordingPlay } from "../lib/matchPlayLoad";
+import { browserVideoUrl } from "../lib/checkDeck";
+import { REEL, reelCards, type ReelPlay, type ReelRecording } from "../lib/goalReel";
 import { resyncChainClaimsForRecording } from "./claimChain";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, invalidateMatchStatsCacheForRecording, playerMatchForm } from "../lib/matchStatsCache";
@@ -721,6 +725,98 @@ router.post("/m/:code/goals/vote", async (req, res): Promise<void> => {
   void resyncChainClaimsForRecording(req, recordingId).catch((error) =>
     logger.warn({ recordingId, err: error }, "re-sync after a goal vote failed"));
   res.json({ ...(await matchReplay(ctx, user.id)), canVoteGoals: true });
+});
+
+/**
+ * GET /m/:code/goals/reel -- "Was it a goal?" as a reel (2026-10-31): every
+ * chance nobody has decided, as short stretches of the recording with the
+ * ball's path through each, for the match page to play one after another.
+ * Only for those who may vote. See lib/goalReel.ts.
+ */
+router.get("/m/:code/goals/reel", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  if (!(await canConfirmGoals(user, ctx))) {
+    res.status(403).json({ error: "Only players in this match can confirm goals" });
+    return;
+  }
+  try {
+    const replay = await matchReplay(ctx, user.id);
+    const ids = [...new Set(replay.review.filter((g) => g.status === "open").map((g) => g.recordingId))];
+    const rows = ids.length
+      ? await db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl }).from(recordingsTable).where(inArray(recordingsTable.id, ids))
+      : [];
+    const plays = new Map<number, ReelPlay>();
+    const recordings: ReelRecording[] = [];
+    for (const row of rows) {
+      if (!row.videoUrl) continue;
+      // matchReplay has just loaded these, so this is the in-memory copy
+      const play = await loadRecordingPlay(row.id);
+      if (!play) continue;
+      plays.set(row.id, { manifest: play.manifest, ball: play.sidecars.flatMap((sc) => sc?.ball ?? []) });
+      recordings.push({ recordingId: row.id, videoUrl: browserVideoUrl(row.videoUrl), srcW: play.manifest.width, srcH: play.manifest.height });
+    }
+    const cards = reelCards(replay.review, plays);
+    res.json({ recordings, cards, open: replay.review.filter((g) => g.status === "open").length });
+  } catch (error) {
+    logger.error({ code: ctx.room.code, err: error }, "goal reel failed");
+    res.status(500).json({ error: "Could not build the reel" });
+  }
+});
+
+const goalVotesSchema = z.object({
+  votes: z.array(goalVoteSchema).min(1).max(REEL.maxVotesPerSave),
+});
+
+/**
+ * POST /m/:code/goals/votes -- the reel's answers, several at once (2026-10-31).
+ * The same rule as POST /m/:code/goals/vote, but the match is read once and the
+ * claims on each recording re-synced once per save rather than once per answer,
+ * so a player flicking through thirty chances does not queue thirty re-syncs.
+ * A later answer on the same chance replaces an earlier one in the same save.
+ */
+router.post("/m/:code/goals/votes", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  if (!(await canConfirmGoals(user, ctx))) {
+    res.status(403).json({ error: "Only players in this match can confirm goals" });
+    return;
+  }
+  const body = goalVotesSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Invalid goal votes" });
+    return;
+  }
+  const latest = new Map<string, z.infer<typeof goalVoteSchema>>();
+  for (const v of body.data.votes) latest.set(`${v.recordingId}:${v.key}`, v);
+  const linked = new Set((await recordingsForRoom(ctx)).map((link) => link.recordingId));
+  const before = await matchReplay(ctx, user.id);
+  const offered = new Set(before.review.map((g) => `${g.recordingId}:${g.key}`));
+  const saved: string[] = [];
+  const skipped: string[] = [];
+  const touched = new Set<number>();
+  for (const [id, v] of latest) {
+    if (!linked.has(v.recordingId) || !offered.has(id)) { skipped.push(id); continue; }
+    try {
+      await setGoalVote(v.recordingId, v.key, user.id, v.verdict, ctx.room.id);
+      saved.push(id);
+      touched.add(v.recordingId);
+    } catch (error) {
+      logger.error({ code: ctx.room.code, recordingId: v.recordingId, key: v.key, err: error }, "goal vote failed");
+      res.status(503).json({ error: "Goal confirmation is not available yet", saved });
+      return;
+    }
+  }
+  for (const recordingId of touched) {
+    await invalidateMatchStatsCacheForRecording(recordingId);
+    void resyncChainClaimsForRecording(req, recordingId).catch((error) =>
+      logger.warn({ recordingId, err: error }, "re-sync after goal votes failed"));
+  }
+  res.json({ saved, skipped });
 });
 
 router.get("/me/matches", async (req, res): Promise<void> => {

@@ -186,6 +186,19 @@ export function applyCuts<T extends ClaimedPart>(parts: readonly T[], cuts: read
   return out;
 }
 
+/** A Bunny Stream playlist goes through the API's HLS proxy (the pull zone wants a Referer); anything else plays as it is. */
+export function browserVideoUrl(videoUrl: string): string {
+  try {
+    const parsed = new URL(videoUrl);
+    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
+      return `/api/hls-proxy/manifest?url=${encodeURIComponent(videoUrl)}`;
+    }
+  } catch {
+    // a relative source plays as it is
+  }
+  return videoUrl;
+}
+
 /* ------------------------------------------------------------------ cards */
 
 /** [video seconds, centre x, centre y, width, height], fractions of the frame */

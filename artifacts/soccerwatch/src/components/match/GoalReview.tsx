@@ -4,6 +4,7 @@ import { Check, Play, Undo2, X } from "lucide-react";
 import type { MatchStrings } from "@/i18n/match-strings";
 import { useGoalVote, type MatchReplay, type MatchRoom, type TeamSide } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
+import { GoalReelButton } from "@/components/match/GoalReel";
 
 /**
  * "Was it a goal?" (2026-10-25): every chance Replay found, and the players'
@@ -145,6 +146,8 @@ export function GoalReviewBox({ room, copy, colors, names, replay, className }: 
         <div className="rounded-2xl border border-white/10 bg-white/[.03] p-3" data-testid="goal-review">
           <p className="text-sm font-bold">{copy.gvAskTitle}</p>
           <p className="mt-1 text-[11px] leading-4 text-muted-text">{copy.gvAskNote}</p>
+          {/* the quick way: every open chance played one after another */}
+          {canVote && <GoalReelButton room={room} names={names} colors={colors} openCount={open.length} className="mt-3" />}
           <ul className="mt-3 flex flex-col gap-2">{openShown.map(row)}</ul>
           {open.length > openShown.length || showAll ? (
             <button type="button" onClick={() => setShowAll((v) => !v)} className="mt-2 text-xs font-semibold text-turf">

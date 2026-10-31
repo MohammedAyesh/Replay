@@ -3,6 +3,8 @@ import { Link, useLocation } from "wouter";
 import { ArrowLeft, BarChart3, ChevronRight, Film, Play, Scissors, Share2 } from "lucide-react";
 import type { PlayerStats, Stats } from "@/components/match/MatchStats";
 import { GoalReviewBox, goalStatusOf, reviewOf } from "@/components/match/GoalReview";
+import { GoalReelButton } from "@/components/match/GoalReel";
+import { useGoalReelCopy } from "@/i18n/goal-reel-strings";
 import { formatDay } from "@/components/match/bits";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { MatchStrings } from "@/i18n/match-strings";
@@ -111,21 +113,27 @@ function openChances(replay: MatchReplay | undefined) {
 /** The goal review, folded into one row that opens it in a sheet. */
 export function GoalsToCheck({ room, copy, r, colors, names, replay, L }: { room: MatchRoom; copy: Copy; r: R; colors: Record<TeamSide, string>; names: Record<TeamSide, string>; replay: MatchReplay | undefined; L: L }) {
   const [open, setOpen] = useState(false);
+  const reelCopy = useGoalReelCopy();
   const chances = openChances(replay);
   const likely = chances.filter((goal) => goal.source === "goal").length;
   if (!replay?.canVoteGoals || !chances.length) return null;
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="flex min-h-12 w-full items-center gap-3 rounded-2xl border border-live/40 bg-live/10 px-3.5 text-start"
-        data-testid="button-goals-to-check"
-      >
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-live" aria-hidden="true" />
-        <span className="flex-1 text-sm font-semibold">{likely ? L.goalsToCheck(likely) : L.chancesToCheck(chances.length)}</span>
-        <ChevronRight className="h-4 w-4 text-muted-text rtl:rotate-180" />
-      </button>
+      <div className="flex flex-col gap-1.5" data-testid="goals-to-check">
+        {/* one tap plays every open chance, one after another */}
+        <GoalReelButton room={room} names={names} colors={colors} openCount={chances.length} variant="row" />
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex min-h-11 w-full items-center gap-2 rounded-xl px-3.5 text-start text-xs font-semibold text-muted-text"
+          data-testid="button-goals-to-check"
+        >
+          <span className="h-2 w-2 shrink-0 rounded-full bg-live" aria-hidden="true" />
+          <span className="flex-1">{likely ? L.goalsToCheck(likely) : L.chancesToCheck(chances.length)}</span>
+          <span className="text-turf">{reelCopy.list}</span>
+          <ChevronRight className="h-4 w-4 rtl:rotate-180" />
+        </button>
+      </div>
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent side="bottom" dir={L.locale === "ar" ? "rtl" : "ltr"} closeLabel={r.close} className="flex max-h-[88dvh] flex-col overflow-y-auto rounded-t-3xl border-line bg-void px-5 pb-8 pt-5 text-text">
           <SheetHeader className="pe-8 text-start">

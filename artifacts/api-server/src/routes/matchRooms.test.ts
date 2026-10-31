@@ -345,6 +345,19 @@ describe("a match from invite to vote", () => {
     expect((await request(app).post(`/api/m/${room.code}/goals/vote`).set(as("outsider")).send({ recordingId: 1, key: 10, verdict: "goal" })).status).toBe(403);
     expect((await request(app).post(`/api/m/${room.code}/goals/vote`).set(as("ali")).send({ recordingId: 1, key: 10, verdict: "maybe" })).status).toBe(400);
     expect((await request(app).post(`/api/m/${room.code}/goals/vote`).set(as("ali")).send({ recordingId: 999999, key: 10, verdict: "goal" })).status).toBe(404);
+    // The reel ("Was it a goal?" played through): the same rights as the vote.
+    expect((await request(app).get(`/api/m/${room.code}/goals/reel`).set(as("outsider"))).status).toBe(403);
+    expect((await request(app).get(`/api/m/${room.code}/goals/reel`)).status).toBe(401);
+    const reel = await request(app).get(`/api/m/${room.code}/goals/reel`).set(as("ali"));
+    expect(reel.status).toBe(200);
+    expect(reel.body).toEqual({ recordings: [], cards: [], open: 0 });
+    expect((await request(app).post(`/api/m/${room.code}/goals/votes`).set(as("outsider")).send({ votes: [{ recordingId: 1, key: 10, verdict: "goal" }] })).status).toBe(403);
+    expect((await request(app).post(`/api/m/${room.code}/goals/votes`).set(as("ali")).send({ votes: [] })).status).toBe(400);
+    expect((await request(app).post(`/api/m/${room.code}/goals/votes`).set(as("ali")).send({ votes: [{ recordingId: 1, key: 10, verdict: "maybe" }] })).status).toBe(400);
+    // a chance the match does not offer is never voted on
+    const stray = await request(app).post(`/api/m/${room.code}/goals/votes`).set(as("ali")).send({ votes: [{ recordingId: 999999, key: 10, verdict: "goal" }] });
+    expect(stray.status).toBe(200);
+    expect(stray.body).toEqual({ saved: [], skipped: ["999999:10"] });
 
     // The story renderer's context for a clip cut from this match.
     await request(app).post(`/api/m/${room.code}/teams/auto`).set(as("omar")).send({});
