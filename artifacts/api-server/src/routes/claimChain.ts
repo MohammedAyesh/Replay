@@ -53,6 +53,7 @@ import {
   type TrackingManifest,
 } from "@workspace/db";
 import { unauthenticatedResponse } from "../lib/clerkUserBridge";
+import { ClaimBundleChangedError, claimBundleChangedErrorHandler } from "../lib/claimBundleChanged";
 import {
   getClaimMatchWritableBundle,
   materializeClaimMoments,
@@ -484,6 +485,24 @@ export function subtractParts(
 }
 
 /**
+ * The fingerprint of the bundle as it is now, when it is no longer the one
+ * `ctx` was built from; null while it still is. Computed the way loadContext
+ * computes ctx.fingerprint. A bundle stored before the summary existed cannot
+ * be fingerprinted without its segments, but every replacement writes a
+ * summary and fresh object paths, so changed paths mean a different bundle.
+ */
+function replacedBundleFingerprint(ctx: ChainContext, fresh: TrackingManifest): string | null {
+  const summary = fresh.summary?.segments;
+  if (summary?.length) {
+    const now = trackingBundleFingerprint(fresh, summary);
+    return now === ctx.fingerprint ? null : now;
+  }
+  const paths = (m: TrackingManifest) => JSON.stringify((m.segments ?? []).map((s) => [s.index, s.objectPath]));
+  if (paths(fresh) === paths(ctx.manifest)) return null;
+  return typeof fresh.provenance?.bundleFingerprint === "string" ? fresh.provenance.bundleFingerprint : "legacy";
+}
+
+/**
  * Write the chain back into manifest.identities, under a row lock.
  *
  * Re-reads the manifest INSIDE the lock. The copy the request was built from
@@ -527,6 +546,10 @@ export async function persistChain(
       .from(recordingTrackingBundlesTable)
       .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
     const manifest = (fresh?.manifest ?? ctx.manifest) as TrackingManifest;
+    // The bundle may have been replaced since ctx was read. Its track ids
+    // would be written into the new manifest: refuse, and let the page reload.
+    const replaced = fresh ? replacedBundleFingerprint(ctx, manifest) : null;
+    if (replaced !== null) throw new ClaimBundleChangedError(replaced);
 
     const existing = (manifest.identities ?? []).find((item) => item.id === ctx.identityId);
     const nextName = name.chosen ?? existing?.name ?? name.fallback ?? null;
@@ -1435,5 +1458,9 @@ router.post("/admin/recordings/:id/claim-match/chain-for-user", async (req, res)
     progress: progress ?? null,
   });
 });
+
+// A save that found the bundle replaced under its lock (persistChain) is a
+// 409 like any other stale-bundle write, not a 500.
+router.use(claimBundleChangedErrorHandler);
 
 export default router;

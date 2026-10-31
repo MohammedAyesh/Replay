@@ -21,11 +21,13 @@
  * matches" all see a game claim exactly as they see a chain claim.
  */
 import { Router, type IRouter } from "express";
-import { and, eq, notInArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray } from "drizzle-orm";
 import { z } from "zod";
 
 import {
   db,
+  claimChainLabelsTable,
+  claimMatchIdentityBindingsTable,
   claimMatchOffPitchSpansTable,
   claimMatchProgressTable,
   matchTeamSpansTable,
@@ -36,6 +38,8 @@ import {
   recordingsTable,
   recordingTrackingBundlesTable,
   fieldsTable,
+  userClipsTable,
+  userReelsTable,
 } from "@workspace/db";
 import { normaliseChain, oneTrackAtATime, withoutStruckOff, type ChainPart } from "../lib/claimChain";
 import { applyCuts } from "../lib/checkDeck";
@@ -70,12 +74,21 @@ import {
 import {
   begin,
   claimIdentityId,
+  loadContext,
   persistChain,
   recordFindDecisionLabel,
   syncChainClaim,
   type ChainContext,
 } from "./claimChain";
-import { getClaimMatchWritableBundle, requireAccountUser, syncIdentityBinding } from "./claimMatch";
+import { getClaimMatchWritableBundle, requireAccountUser } from "./claimMatch";
+import { ClaimBundleChangedError, sendBundleReplaced } from "../lib/claimBundleChanged";
+import {
+  deleteBunnyClipAssets,
+  deleteBunnyStoragePath,
+  getPortfolioClipStoragePath,
+  isBunnyStorageConfigured,
+} from "../lib/bunny";
+import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { recordingWindow } from "../lib/matchFeed";
@@ -98,6 +111,16 @@ const SaveBody = z.object({
   /** the claimant reached the done screen */
   done: z.boolean(),
   bundleFingerprint: z.string().min(1).nullish(),
+}).superRefine((save, issue) => {
+  // Parts are track ids, and track ids belong to one bundle: a save that
+  // writes them has to say which bundle it was built on.
+  if (save.parts !== undefined && !save.bundleFingerprint) {
+    issue.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["bundleFingerprint"],
+      message: "bundleFingerprint is required when parts are sent",
+    });
+  }
 });
 
 const DecisionLabelBody = z.object({
@@ -120,6 +143,26 @@ const DecisionLabelBody = z.object({
     });
   }
 });
+
+/**
+ * The part of the page's state the match stats read: which matches the claim
+ * is for, and its team / shirt switches (lib/matchFeed.ts). A save that
+ * changes it has to refresh the stats cache.
+ */
+function statsStateKey(state: unknown): string {
+  const doc = (state && typeof state === "object" ? state : {}) as { matchChoices?: unknown; switches?: unknown };
+  return JSON.stringify({
+    matchChoices: Array.isArray(doc.matchChoices) ? doc.matchChoices : [],
+    switches: Array.isArray(doc.switches) ? doc.switches : [],
+  });
+}
+
+async function refreshMatchStats(recordingId: number): Promise<void> {
+  await invalidateMatchStatsCacheForRecording(recordingId).catch((error) => {
+    console.error("[claim-game] stats-cache invalidation failed", { recordingId, error });
+  });
+  queueMatchStatsCacheForRecording(recordingId, 700);
+}
 
 /** State is the page's own document; keep it bounded rather than trusting its size. */
 const MAX_STATE_BYTES = 2_000_000;
@@ -327,12 +370,15 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   const ctx = await begin(req, res);
   if (!ctx) return;
   if (parsed.data.bundleFingerprint && parsed.data.bundleFingerprint !== ctx.fingerprint) {
-    res.status(409).json({
-      error: "This recording's tracking has been replaced. Reload before continuing your claim.",
-      currentBundleFingerprint: ctx.fingerprint,
-    });
+    sendBundleReplaced(res, ctx.fingerprint);
     return;
   }
+
+  const [previous] = await db
+    .select({ gameState: claimMatchProgressTable.gameState })
+    .from(claimMatchProgressTable)
+    .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
+  const statsStateChanged = statsStateKey(previous?.gameState ?? null) !== statsStateKey(parsed.data.state);
 
   if (parsed.data.parts === undefined) {
     const state = { ...parsed.data.state, bundle: ctx.fingerprint };
@@ -343,6 +389,8 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
         target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
         set: { gameState: state, updatedAt: new Date() },
       });
+    // A switch or shirt change saved on its own moves the team colours.
+    if (statsStateChanged) await refreshMatchStats(ctx.recordingId);
     res.json({ ok: true });
     return;
   }
@@ -368,6 +416,11 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   try {
     await persistChain(ctx, chain, { chosen: parsed.data.name ?? null, fallback: null }, { kind: "decision", answeredFrame: null });
   } catch (error) {
+    // The bundle was replaced between reading it and the save's row lock.
+    if (error instanceof ClaimBundleChangedError) {
+      sendBundleReplaced(res, error.currentBundleFingerprint);
+      return;
+    }
     console.error("[claim-game] identity write failed", { recordingId: ctx.recordingId, error });
     res.status(500).json({ error: "Could not save your claim" });
     return;
@@ -418,6 +471,7 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   }
 
   const state = { ...parsed.data.state, bundle: ctx.fingerprint };
+  let teamSpansWritten = false;
   // Claim switches are imported as spans, never as training labels.  Replace
   // this user's claim spans on each save so autosaves remain idempotent.
   if (parsed.data.done && rawChoices.length) {
@@ -476,6 +530,7 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
           }];
         }).flat();
         if (values.length) await db.insert(matchTeamSpansTable).values(values);
+        teamSpansWritten = true;
       }
     } catch (error) {
       if (isMissingMatchTeamSpansTable(error)) {
@@ -496,6 +551,9 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
       target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
       set: { gameState: state, updatedAt: new Date() },
     });
+  // syncChainClaim refreshed the stats before the team spans and the switches
+  // were written; a fill that ran in between computed the old teams.
+  if (teamSpansWritten || statsStateChanged) await refreshMatchStats(ctx.recordingId);
 
   const [progress] = await db
     .select({ claimedPercent: claimMatchProgressTable.claimedPercent, completed: claimMatchProgressTable.completed })
@@ -510,45 +568,182 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   });
 });
 
+/**
+ * The moment clips Replay made from this claim that are still only Replay's:
+ * listed on the claim's progress row (the same marker My Clips → Moments
+ * uses), never tied to a recording, booking, academy or live job the way a
+ * clip the player cut is, and untouched since -- not made public, not in his
+ * portfolio or a live reel, no end screen chosen, never shared or liked, not
+ * already deleted by him. Anything else he has made his own, and it stays.
+ */
+async function untouchedMomentClips(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  userId: number,
+  earnedClipIds: number[],
+): Promise<Array<{ id: number; posterPath: string | null; exportedUrl: string | null }>> {
+  if (!earnedClipIds.length) return [];
+  const candidates = await tx.select().from(userClipsTable).where(and(
+    eq(userClipsTable.userId, userId),
+    inArray(userClipsTable.id, earnedClipIds),
+  ));
+  const reels = await tx.select({ clipIds: userReelsTable.clipIds }).from(userReelsTable).where(and(
+    eq(userReelsTable.userId, userId),
+    isNull(userReelsTable.deletedAt),
+  ));
+  const inReel = new Set(reels.flatMap((reel) => Array.isArray(reel.clipIds) ? reel.clipIds : []));
+  return candidates
+    .filter((clip) => clip.sourceRecordingId === null
+      && clip.footageRequestId === null
+      && clip.academyId === null
+      && clip.matchCode === null
+      && clip.liveClipJobId === null
+      && clip.visibility === "private"
+      && !clip.showInPortfolio
+      && clip.hiddenReason !== "deleted"
+      && clip.endScreen === null
+      && clip.posterPath === null
+      && clip.likeCount === 0
+      && clip.shareCount === 0
+      && !inReel.has(clip.id))
+    .map((clip) => ({ id: clip.id, posterPath: clip.posterPath, exportedUrl: clip.exportedUrl }));
+}
+
+/** Best effort: the rendered MP4 and poster of a moment clip Start over removed. */
+async function deleteRemovedClipAssets(clips: Array<{ id: number; posterPath: string | null; exportedUrl: string | null }>) {
+  if (!clips.length || !isBunnyStorageConfigured()) return;
+  const results = await Promise.allSettled(clips.flatMap((clip) => {
+    const copy = clip.exportedUrl ? getPortfolioClipStoragePath(clip.id, clip.exportedUrl) : null;
+    return [
+      deleteBunnyClipAssets(clip.id, clip.posterPath),
+      ...(copy ? [deleteBunnyStoragePath(copy)] : []),
+    ];
+  }));
+  for (const result of results) {
+    if (result.status === "rejected") console.error("[claim-game] reset clip asset cleanup failed", result.reason);
+  }
+}
+
+function isMissingRelation(error: unknown): boolean {
+  const code = (error as { code?: unknown; cause?: { code?: unknown } } | null)?.code
+    ?? (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return code === "42P01";
+}
+
 router.delete("/recordings/:id/claim-match/game", async (req, res): Promise<void> => {
-  const ctx = await begin(req, res, { includeSegments: false });
+  let ctx = await begin(req, res, { includeSegments: false });
   if (!ctx) return;
   try {
-    await persistChain(ctx, [], { chosen: null, fallback: null }, { kind: "decision", answeredFrame: null });
+    try {
+      await persistChain(ctx, [], { chosen: null, fallback: null }, { kind: "decision", answeredFrame: null });
+    } catch (error) {
+      if (!(error instanceof ClaimBundleChangedError)) throw error;
+      // A re-analysis landed after begin(): start over on the bundle as it is now.
+      const reloaded = await loadContext(req, ctx.recordingId, ctx.userId, { includeSegments: false });
+      if (!reloaded.ctx) throw error;
+      ctx = reloaded.ctx;
+      await persistChain(ctx, [], { chosen: null, fallback: null }, { kind: "decision", answeredFrame: null });
+    }
+    const { userId, recordingId } = ctx;
     // Starting over starts the "Is this you?" answers over too: an old "Not me"
     // is a cut every later save would re-apply to the new claim.
-    await clearMomentChecks(ctx.userId, ctx.recordingId);
-    await db.delete(claimMatchOffPitchSpansTable).where(and(
-      eq(claimMatchOffPitchSpansTable.userId, ctx.userId),
-      eq(claimMatchOffPitchSpansTable.recordingId, ctx.recordingId),
-    ));
-    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
-      .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
-    if (bundle) {
-      await syncIdentityBinding(ctx.userId, ctx.recordingId, bundle, {
-        identityResolution: null,
-        vouchedFragments: [],
-      });
+    await clearMomentChecks(userId, recordingId);
+
+    // The matches booked over this recording, and this recording's share of
+    // each: the same rule PUT uses to replace claim team spans.
+    let matches: Array<{ code: string; startSeconds: number; endSeconds: number; recordingOffsetSec: number }> = [];
+    try {
+      matches = (await claimMatchChoices(ctx)).matches as typeof matches;
+    } catch (error) {
+      warnOptionalMatchTeamSpansFailureOnce("claimGameResetMatches", error);
     }
-    await db
-      .update(claimMatchProgressTable)
-      .set({
-        gameState: null,
-        currentTrackId: null,
-        stage: "find",
-        confirmedFromSeconds: 0,
-        currentPositionSeconds: 0,
-        claimedPercent: 0,
-        clipsUnlocked: 0,
-        correctionCount: 0,
-        completed: false,
-        earnedClips: [],
-        updatedAt: new Date(),
-      })
-      .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
-    await invalidateMatchStatsCacheForRecording(ctx.recordingId).catch((error) => {
-      console.error("[claim-game] reset stats-cache invalidation failed", { recordingId: ctx.recordingId, error });
+    const rooms = matches.length
+      ? await db.select({ id: matchRoomsTable.id, code: matchRoomsTable.code }).from(matchRoomsTable)
+        .where(inArray(matchRoomsTable.code, matches.map((m) => m.code)))
+      : [];
+
+    const removedClips = await db.transaction(async (tx) => {
+      await tx.delete(claimMatchOffPitchSpansTable).where(and(
+        eq(claimMatchOffPitchSpansTable.userId, userId),
+        eq(claimMatchOffPitchSpansTable.recordingId, recordingId),
+      ));
+      // His decisions are what answeredFrames and correctionCount are read
+      // from; a fresh claim must not inherit them. Savepoint: the table may
+      // be absent on a database still waiting for its migration.
+      await tx.transaction(async (sp) => {
+        await sp.delete(claimChainLabelsTable).where(and(
+          eq(claimChainLabelsTable.userId, userId),
+          eq(claimChainLabelsTable.recordingId, recordingId),
+        ));
+      }).catch((error) => { if (!isMissingRelation(error)) throw error; });
+      // Team switches the claim wrote, in this recording's share of each
+      // match. A span from another recording, or one set by hand, stays.
+      await tx.transaction(async (sp) => {
+        for (const match of matches) {
+          const room = rooms.find((r) => r.code === match.code);
+          if (!room) continue;
+          const [player] = await sp.select({ id: matchPlayersTable.id }).from(matchPlayersTable)
+            .where(and(eq(matchPlayersTable.matchId, room.id), eq(matchPlayersTable.userId, userId)));
+          if (!player) continue;
+          const spans = await sp.select().from(matchTeamSpansTable).where(and(
+            eq(matchTeamSpansTable.matchId, room.id),
+            eq(matchTeamSpansTable.matchPlayerId, player.id),
+            eq(matchTeamSpansTable.source, "claim"),
+          ));
+          const ids = spans
+            .filter((span) => {
+              const fromRecording = span.fromOffsetSec - match.recordingOffsetSec;
+              return fromRecording >= match.startSeconds && fromRecording < match.endSeconds;
+            })
+            .map((span) => span.id);
+          if (ids.length) await sp.delete(matchTeamSpansTable).where(inArray(matchTeamSpansTable.id, ids));
+        }
+      }).catch((error) => {
+        if (!isMissingMatchTeamSpansTable(error)) throw error;
+        warnOptionalMatchTeamSpansFailureOnce("claimGameResetTeamSpans", error);
+      });
+      // Cleared, not released: "released" is how an administrator taking a
+      // claim away is recorded, and the page reads it as "reset by admin".
+      await tx.delete(claimMatchIdentityBindingsTable).where(and(
+        eq(claimMatchIdentityBindingsTable.userId, userId),
+        eq(claimMatchIdentityBindingsTable.recordingId, recordingId),
+      ));
+      const [progress] = await tx.select({ earnedClips: claimMatchProgressTable.earnedClips })
+        .from(claimMatchProgressTable)
+        .where(and(eq(claimMatchProgressTable.userId, userId), eq(claimMatchProgressTable.recordingId, recordingId)))
+        .for("update");
+      const earnedClipIds = (progress?.earnedClips ?? [])
+        .map((clip) => clip.userClipId)
+        .filter((id): id is number => typeof id === "number");
+      const clips = await untouchedMomentClips(tx, userId, earnedClipIds);
+      if (clips.length) {
+        await tx.delete(userClipsTable).where(and(
+          eq(userClipsTable.userId, userId),
+          inArray(userClipsTable.id, clips.map((clip) => clip.id)),
+        ));
+      }
+      await tx
+        .update(claimMatchProgressTable)
+        .set({
+          gameState: null,
+          currentTrackId: null,
+          stage: "find",
+          confirmedFromSeconds: 0,
+          currentPositionSeconds: 0,
+          claimedPercent: 0,
+          clipsUnlocked: 0,
+          correctionCount: 0,
+          completed: false,
+          earnedClips: [],
+          updatedAt: new Date(),
+        })
+        .where(and(eq(claimMatchProgressTable.userId, userId), eq(claimMatchProgressTable.recordingId, recordingId)));
+      return clips;
     });
+    await deleteRemovedClipAssets(removedClips);
+    await invalidateMatchStatsCacheForRecording(recordingId).catch((error) => {
+      console.error("[claim-game] reset stats-cache invalidation failed", { recordingId, error });
+    });
+    queueMatchStatsCacheForRecording(recordingId);
     res.json({ ok: true });
   } catch (error) {
     console.error("[claim-game] reset failed", { recordingId: ctx.recordingId, error });
