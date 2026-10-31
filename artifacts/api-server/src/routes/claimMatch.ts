@@ -71,6 +71,7 @@ import {
   readMatchWindow,
   type StoredMatchWindow,
 } from "../lib/matchWindow";
+import { detectMatchWindow } from "../lib/matchWindowDetector";
 import { parseBallSidecar, type BallSidecar } from "../lib/matchPlay";
 import { playCache } from "../lib/matchPlayLoad";
 import { parsePeopleSidecar, type PeopleSidecar } from "../lib/peopleSidecar";
@@ -1296,7 +1297,7 @@ router.get("/claim-match/clips", async (req, res): Promise<void> => {
   )))).filter((row): row is (typeof rows)[number] => row !== null);
 
   const groups = (await Promise.all(visibleRows.map(async ({ progress, bindingState, recording, fieldName, bundleManifest }) => {
-    if (bindingState !== "confirmed") return null;
+    if (bindingState !== "confirmed" || !progress.completed) return null;
     const clips = bundleManifest
       ? await materializeClaimMoments(userId, recording, bundleManifest, progress.earnedClips ?? [])
       : progress.earnedClips ?? [];
@@ -1324,8 +1325,9 @@ export async function materializeClaimMoments(
   recording: typeof recordingsTable.$inferSelect,
   manifest: TrackingManifest,
   clips: Array<ClaimEarnedClip & { follow?: FollowPoint[] }>,
-): Promise<ClaimEarnedClip[]> {
-  return Promise.all(clips.map(async ({ follow, ...clip }) => {
+): Promise<Array<ClaimEarnedClip & { follow?: FollowPoint[] }>> {
+  return Promise.all(clips.map(async (clip) => {
+    const { follow } = clip;
     if (clip.userClipId) return clip;
     try {
       const materialized = await ensureClaimMomentUserClip({
@@ -2172,11 +2174,10 @@ export function matchWindowForReplacement(
   previous: unknown,
   duration: number,
 ): StoredMatchWindow | null {
-  const fromUpload = fitMatchWindow(parseStoredMatchWindow(uploaded, "detector"), duration);
-  if (fromUpload) return { ...fromUpload, source: "detector" };
   const kept = parseStoredMatchWindow(previous, "detector");
-  if (kept?.source !== "admin") return null;
-  return fitMatchWindow(kept, duration);
+  if (kept?.source === "admin") return fitMatchWindow(kept, duration);
+  const fromUpload = fitMatchWindow(parseStoredMatchWindow(uploaded, "detector"), duration);
+  return fromUpload ? { ...fromUpload, source: "detector" } : null;
 }
 
 export async function storeUploadBundle(recordingId: number, adminId: number, upload: UploadBundle) {
@@ -2239,11 +2240,19 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
       matchRosterPath = storedRoster.objectPath;
     }
     const bundleFingerprint = trackingBundleFingerprint(upload.manifest, upload.segments);
-    const matchWindow = matchWindowForReplacement(
+    let matchWindow = matchWindowForReplacement(
       upload.manifest.provenance?.matchWindow,
       previousBundle?.manifest.provenance?.matchWindow,
       upload.manifest.duration,
     );
+    if (!matchWindow) {
+      const phasesBlock = upload.manifest.provenance?.phases as { phases?: Array<{ kind: string; start: number; end: number }> } | undefined;
+      matchWindow = detectMatchWindow({
+        duration: upload.manifest.duration,
+        inPlay: upload.segments.flatMap((segment) => (segment.inPlaySpans ?? []).map((span) => [span.start, span.end] as [number, number])),
+        phases: phasesBlock?.phases,
+      });
+    }
     const { matchWindow: _uploadedWindow, ...uploadedProvenance } = upload.manifest.provenance ?? {};
     const manifest: TrackingManifest = {
       ...upload.manifest,

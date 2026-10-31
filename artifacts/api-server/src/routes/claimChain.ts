@@ -778,7 +778,7 @@ export async function syncChainClaim(
       clipsUnlocked: state.completed && bindingAwards ? earnedClips.length : 0,
       correctionCount: ctx.answeredFrames.size,
       completed: state.completed,
-      earnedClips: earnedClips.map(({ follow: _follow, ...clip }) => clip),
+      earnedClips,
       updatedAt: new Date(),
     };
     await db

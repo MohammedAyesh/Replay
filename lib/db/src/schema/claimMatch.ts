@@ -25,6 +25,8 @@ export type ClaimEarnedClip = {
   momentSeconds: number;
   kind: string;
   status: string;
+  /** Tracking-clock player-follow points retained for delayed materialisation. */
+  follow?: Array<[number, number, number]>;
   /** The real user_clips row created for this accepted match moment. */
   userClipId?: number;
 };
