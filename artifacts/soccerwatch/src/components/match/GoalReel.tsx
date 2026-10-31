@@ -390,7 +390,7 @@ function CardView({ card, depth, copy, names, colors, url, srcAspect, active, lo
       <div className="relative min-h-0 flex-1">
         {url && (
           <DeckVideo card={deckCard} url={url} srcAspect={srcAspect} active={active} load={load}
-            onState={onVideoState} ringColor={FLOOD} tag={copy.tag} />
+            onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView} />
         )}
         <div className="pointer-events-none absolute left-3 right-40 top-3 flex flex-wrap gap-1.5" dir="ltr">
           <span className="rounded-md bg-black/60 px-2 py-0.5 font-display text-xs font-bold text-white">{card.minute}′</span>
