@@ -5,6 +5,7 @@ import { ArrowLeft, Check, ChevronLeft, Crosshair, Flag, Footprints, Goal, HelpC
 import type { PlayerStats, Stats } from "@/components/match/MatchStats";
 import { PlayerAvatar } from "@/components/match/bits";
 import { reviewOf, useGoalVoting } from "@/components/match/GoalReview";
+import { GoalReelButton } from "@/components/match/GoalReel";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { ReportStrings } from "@/i18n/report-strings";
 import { useReportLayoutCopy, type LayoutStrings } from "@/i18n/report-layout-strings";
@@ -756,8 +757,10 @@ function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSe
   const during = shown.filter((event) => event.phase === "during");
   const after = shown.filter((event) => event.phase === "after");
 
+  const openChances = reviewOf(replay).filter((g) => g.status === "open").length;
   return (
     <div className="flex flex-col gap-3 pt-3" data-testid="sofa-moments">
+      {canVote && <GoalReelButton room={room} names={names} colors={colors} openCount={openChances} variant="row" />}
       {filters.length > 1 && (
         <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4" role="tablist" aria-label={S.tabMoments}>
           {filters.map((f) => (

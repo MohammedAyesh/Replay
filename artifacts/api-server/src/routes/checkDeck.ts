@@ -27,6 +27,7 @@ import {
   CHECK,
   applyCuts,
   ballFocus,
+  browserVideoUrl,
   clockOf,
   goalCardsFor,
   momentNumbers,
@@ -73,18 +74,6 @@ async function claimCompleted(ctx: ChainContext): Promise<boolean> {
     .from(claimMatchProgressTable)
     .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
   return progress?.completed === true;
-}
-
-function browserVideoUrl(videoUrl: string): string {
-  try {
-    const parsed = new URL(videoUrl);
-    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
-      return `/api/hls-proxy/manifest?url=${encodeURIComponent(videoUrl)}`;
-    }
-  } catch {
-    // a relative source plays as it is
-  }
-  return videoUrl;
 }
 
 router.get("/recordings/:id/claim-match/check-deck", async (req, res): Promise<void> => {
