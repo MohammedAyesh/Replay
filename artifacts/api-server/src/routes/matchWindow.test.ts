@@ -45,6 +45,7 @@ import {
   recordingTrackingBundlesTable,
   recordingTrackingSegmentsTable,
   recordingsTable,
+  userClipsTable,
   usersTable,
   type TrackingManifest,
   type TrackingSegmentPayload,
@@ -489,23 +490,43 @@ describe("claims inside the window", () => {
     expect(chain.coveragePercent).toBe(100);
   });
 
-  it("measures completion against the window, and only the claimant's own save completes it", async () => {
-    // 30 s of a 100 s recording: 30%, short of the bar.
-    await adminSetChain([{ trackId: "late", fromFrame: 700, toFrame: 999 }]);
+  it("completes a 46% claim after a window lifts coverage above 60% with no open question", async () => {
+    const testVideoId = "01234567-89ab-cdef-0123-456789abcdef";
+    await db.update(recordingsTable)
+      .set({ videoUrl: `https://test.b-cdn.net/${testVideoId}/playlist.m3u8` })
+      .where(eq(recordingsTable.id, recordingId));
+    // 16 s on the first track plus 30 s on the second: 46% of the 100 s file.
+    await adminSetChain([
+      { trackId: "early", fromFrame: 540, toFrame: 699 },
+      { trackId: "late", fromFrame: 700, toFrame: 999 },
+    ]);
     expect((await progress()).completed).toBe(false);
+    actAs(playerId);
+    expect((await request(app).get(chainUrl())).body.nextUncertainty).toBeNull();
 
-    await setWindow({ startSeconds: 70 });
+    await setWindow({ startSeconds: 50 });
     actAs(playerId);
     const chain = (await request(app).get(chainUrl())).body;
-    expect(chain.coveragePercent).toBe(100);
+    expect(chain.coveragePercent).toBeGreaterThanOrEqual(60);
+    expect(chain.coveragePercent).toBe(92);
     expect(chain.completed).toBe(true);
-    // The re-derivation after an admin edit never grants a completion...
-    expect((await progress()).completed).toBe(false);
-    // ...the claimant's next save does.
-    await adminSetChain([{ trackId: "late", fromFrame: 700, toFrame: 999 }]);
     const row = await progress();
     expect(row.completed).toBe(true);
     expect(row.earnedClips.map((clip) => clip.momentSeconds)).toEqual([85]);
+    expect(row.clipsUnlocked).toBeGreaterThan(0);
+    expect(row.earnedClips[0]?.userClipId).toBeDefined();
+    const materialized = await db.select().from(userClipsTable).where(and(
+      eq(userClipsTable.userId, playerId),
+      eq(userClipsTable.videoId, testVideoId),
+    ));
+    expect(materialized).toHaveLength(1);
+    await db.delete(userClipsTable).where(and(
+      eq(userClipsTable.userId, playerId),
+      eq(userClipsTable.videoId, testVideoId),
+    ));
+    await db.update(recordingsTable)
+      .set({ videoUrl: "https://example.test/match-window.m3u8" })
+      .where(eq(recordingsTable.id, recordingId));
   });
 
   it("does not bring back a claim an admin released", async () => {

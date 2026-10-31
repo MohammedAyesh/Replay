@@ -806,12 +806,12 @@ export async function syncChainClaim(
  * leave them describing the old window until each claimant next tapped. This
  * runs the same sync for every claimant with a progress row.
  *
- * It can only take an award away, never grant one: a claim that was complete
- * is re-judged with no open question (it was settled), and one that was not
- * is re-judged as still open, so it completes on the claimant's own next
- * save -- the person finishes their claim, not an admin's edit. Clips already
- * materialised into My Clips are left where they are; only the progress row's
- * list changes. Best effort per claimant, like syncChainClaim itself.
+ * Completion is re-judged against the real open-question state. An unanswered
+ * question still blocks the award; a claim with no open question may complete
+ * when a corrected match window or other recording-wide change lifts it over
+ * the coverage bar. Newly earned moments and their player-follow paths are
+ * materialised through the same sync path as a claimant save. Best effort per
+ * claimant, like syncChainClaim itself.
  */
 export async function resyncChainClaimsForRecording(
   req: Parameters<typeof requireAccountUser>[0],
@@ -842,7 +842,10 @@ export async function resyncChainClaimsForRecording(
       if (!loaded.ctx) continue;
       const chain = chainOf(loaded.ctx.manifest, loaded.ctx.identityId);
       if (!chain.length) continue;
-      await syncChainClaim(loaded.ctx, chain, !row.completed);
+      const name = loaded.ctx.manifest.identities?.find((identity) =>
+        identity.id === loaded.ctx!.identityId)?.name ?? null;
+      const preview = describe(loaded.ctx, chain, name);
+      await syncChainClaim(loaded.ctx, chain, preview.nextUncertainty !== null);
       synced++;
     } catch (error) {
       console.error("[claim-chain] resync failed", { recordingId, userId: row.userId, error });
