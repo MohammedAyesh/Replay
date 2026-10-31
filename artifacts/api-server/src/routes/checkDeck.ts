@@ -4,6 +4,9 @@
  *
  *   GET  /recordings/:id/claim-match/check-deck          the cards
  *   POST /recordings/:id/claim-match/check-deck/answer   { cardId, verdict: yes | no | skip }
+ *        -> { ok, clip, userClipId?, completed? }: `clip` is true only when a
+ *           clip of that moment is made (a "yes" on a claim that counts);
+ *           `completed` is whether his claim counts after the answer
  *
  * Each card carries what the page needs to play it at once: the stretch of
  * the recording, and where the player (or the ball) is through it, so the
@@ -63,6 +66,13 @@ async function deckState(ctx: ChainContext): Promise<Deck | null> {
     .from(claimMatchProgressTable)
     .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
   return { ctx, play, parts, unsure: unsureMoments(mine, parts, ctx.segments, play.manifest, play.kits), completed: progress?.completed === true };
+}
+
+async function claimCompleted(ctx: ChainContext): Promise<boolean> {
+  const [progress] = await db.select({ completed: claimMatchProgressTable.completed })
+    .from(claimMatchProgressTable)
+    .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
+  return progress?.completed === true;
 }
 
 function browserVideoUrl(videoUrl: string): string {
@@ -221,22 +231,25 @@ router.post("/recordings/:id/claim-match/check-deck/answer", async (req, res): P
         await db.update(userClipsTable).set({ isHidden: true })
           .where(and(eq(userClipsTable.id, made), eq(userClipsTable.userId, ctx.userId)));
       }
-      await syncChainClaim(ctx, saved.chain, !deck.completed);
+      // A claim that counted keeps counting: the cut takes these frames, not the match.
+      await syncChainClaim(ctx, saved.chain, !deck.completed, { creditDeckCuts: true });
       await invalidateMatchStatsCacheForRecording(ctx.recordingId);
-      res.json({ ok: true, clip: false });
+      res.json({ ok: true, clip: false, completed: await claimCompleted(ctx) });
       return;
     }
     await saveMomentCheck(ctx.userId, ctx.recordingId, momentId, verdict, null);
     if (verdict === "yes") {
-      await syncChainClaim(ctx, chain, !deck.completed);
-      const [progress] = await db.select({ earnedClips: claimMatchProgressTable.earnedClips })
+      await syncChainClaim(ctx, chain, !deck.completed, { creditDeckCuts: true });
+      const [progress] = await db.select({ earnedClips: claimMatchProgressTable.earnedClips, completed: claimMatchProgressTable.completed })
         .from(claimMatchProgressTable)
         .where(and(eq(claimMatchProgressTable.userId, ctx.userId), eq(claimMatchProgressTable.recordingId, ctx.recordingId)));
+      // `clip` is the truth the deck's "+1 clip" waits for: the moment is in
+      // the claim's earned clips, which only a claim that counts has.
       const clip = (progress?.earnedClips ?? []).find((c) => c.id === momentId);
-      res.json({ ok: true, clip: Boolean(clip), userClipId: clip?.userClipId ?? null });
+      res.json({ ok: true, clip: Boolean(clip), userClipId: clip?.userClipId ?? null, completed: progress?.completed === true });
       return;
     }
-    res.json({ ok: true, clip: false });
+    res.json({ ok: true, clip: false, completed: deck.completed });
   } catch (error) {
     logger.error({ recordingId: ctx.recordingId, cardId, err: error }, "check deck answer failed");
     res.status(503).json({ error: "Could not save that answer" });

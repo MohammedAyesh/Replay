@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowUp, Check, CircleAlert, Flame, Trophy, X } from "lucide-react";
 import { getGetClaimChainQueryKey, getGetClaimMatchQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
-import { createAnswerQueue, checkDeckKey, useCheckDeck, type DeckCard, type DeckVerdict } from "@/lib/check-deck";
+import { createAnswerQueue, checkDeckKey, deckTally, toastKind, useCheckDeck, type AnswerOutcome, type DeckCard, type DeckResult, type DeckVerdict, type ToastKind } from "@/lib/check-deck";
 import { DeckVideo, type DeckVideoState } from "@/components/check-deck/DeckVideo";
 import { useCheckCopy, type CheckStrings } from "@/i18n/check-strings";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,6 @@ import { cn } from "@/lib/utils";
  */
 
 type Screen = "intro" | "deck" | "done";
-type Result = { card: DeckCard; verdict: DeckVerdict };
 
 const TURF = "#2FD8C4";
 const FLOOD = "#D4FF4F";
@@ -45,7 +44,7 @@ export default function CheckDeckPage() {
 
   const [screen, setScreen] = useState<Screen>("intro");
   const [i, setI] = useState(0);
-  const [results, setResults] = useState<Result[]>([]);
+  const [results, setResults] = useState<DeckResult[]>([]);
   const [streak, setStreak] = useState(0);
   const [best, setBest] = useState(0);
   const [toast, setToast] = useState<{ text: string; key: number } | null>(null);
@@ -96,12 +95,20 @@ export default function CheckDeckPage() {
       el.style.opacity = "0";
     }
     try { navigator.vibrate?.(verdict === "skip" ? 6 : 14); } catch { /* not supported */ }
-    void queue.push(current.id, verdict);
-    const isGoal = current.kind === "goal";
-    const text = verdict === "yes" ? (isGoal ? copy.toastGoal : copy.toastClip)
-      : verdict === "no" ? (isGoal ? copy.toastNoGoal : copy.toastNotYou) : null;
-    if (text) setToast({ text, key: Date.now() });
-    setResults((r) => [...r, { card: current, verdict }]);
+    const card = current;
+    // "+1 clip" only for a clip the server makes: on a claim that counts, the
+    // toast waits for its answer; on one that does not yet, it says "kept".
+    const deckCompleted = deckQuery.data?.completed === true;
+    const show = (kind: ToastKind | "wait" | null) => {
+      if (kind && kind !== "wait") setToast({ text: toastText(kind, copy), key: Date.now() });
+    };
+    const now = toastKind(card, verdict, deckCompleted);
+    show(now);
+    void queue.push(card.id, verdict).then((outcome: AnswerOutcome) => {
+      setResults((r) => r.map((x) => (x.card.id === card.id ? { ...x, outcome } : x)));
+      if (now === "wait") show(toastKind(card, verdict, deckCompleted, outcome));
+    });
+    setResults((r) => [...r, { card, verdict }]);
     setStreak((s) => {
       const next = verdict === "skip" ? s : s + 1;
       setBest((b) => Math.max(b, next));
@@ -112,7 +119,7 @@ export default function CheckDeckPage() {
       if (i + 1 >= cards.length) finish();
       else setI(i + 1);
     }, 230);
-  }, [cards, current, screen, queue, copy, i, finish]);
+  }, [cards, current, screen, queue, copy, i, finish, deckQuery.data?.completed]);
 
   useEffect(() => {
     if (!toast) return;
@@ -219,7 +226,7 @@ export default function CheckDeckPage() {
       )}
 
       {screen === "done" && (
-        <Done copy={copy} results={results} best={best} total={cards.length} failed={failed.length > 0}
+        <Done copy={copy} results={results} best={best} total={cards.length} failed={failed.length > 0} completed={deck.completed}
           onClips={() => setLocation("/my-clips")} onBack={back} />
       )}
       <style>{`
@@ -297,6 +304,17 @@ function cardText(card: DeckCard, copy: CheckStrings) {
   const r = y.reasons[0];
   const reason = r === "teammate" ? copy.reasonTeammate : r === "crowd" ? copy.reasonCrowd : r === "join" ? copy.reasonJoin : copy.reasonShort;
   return { kicker: copy.kickerYou, question, reason, yes: copy.thatsMe, no: copy.notMe };
+}
+
+function toastText(kind: ToastKind, copy: CheckStrings): string {
+  switch (kind) {
+    case "clip": return copy.toastClip;
+    case "kept": return copy.toastKept;
+    case "stale": return copy.toastStale;
+    case "notYou": return copy.toastNotYou;
+    case "goal": return copy.toastGoal;
+    case "noGoal": return copy.toastNoGoal;
+  }
 }
 
 function CardView({ card, depth, copy, url, srcAspect, active, load, videoState, onVideoState, onDecide }: {
@@ -377,7 +395,7 @@ function CardView({ card, depth, copy, url, srcAspect, active, load, videoState,
       <div className="relative min-h-0 flex-1">
         {url && (
           <DeckVideo card={card} url={url} srcAspect={srcAspect} active={active} load={load}
-            onState={onVideoState} ringColor={ring} tag={isGoal ? copy.in : copy.you} />
+            onState={onVideoState} ringColor={ring} tag={isGoal ? copy.in : copy.you} fieldViewLabel={copy.fieldView} />
         )}
         <div className="pointer-events-none absolute left-3 right-40 top-3 flex flex-wrap gap-1.5" dir="ltr">
           <span dir="ltr" className="rounded-md bg-black/60 px-2 py-0.5 font-display text-xs font-bold text-white">{card.clock}</span>
@@ -389,8 +407,8 @@ function CardView({ card, depth, copy, url, srcAspect, active, load, videoState,
         {active && videoState === "loading" && (
           <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-xs font-semibold text-muted-text">{copy.videoSlow}</div>
         )}
-        <div ref={yesRef} className="pointer-events-none absolute start-5 top-16 -rotate-12 rounded-xl border-[3px] border-floodlight bg-void/55 px-3 py-1 font-display text-2xl font-bold uppercase tracking-wider text-floodlight" style={{ opacity: 0 }}>{text.yes}</div>
-        <div ref={noRef} className="pointer-events-none absolute end-5 top-16 rotate-12 rounded-xl border-[3px] border-text bg-void/55 px-3 py-1 font-display text-2xl font-bold uppercase tracking-wider text-text" style={{ opacity: 0 }}>{text.no}</div>
+        <div ref={yesRef} className="pointer-events-none absolute left-5 top-16 -rotate-12 rounded-xl border-[3px] border-floodlight bg-void/55 px-3 py-1 font-display text-2xl font-bold uppercase tracking-wider text-floodlight" style={{ opacity: 0 }}>{text.yes}</div>
+        <div ref={noRef} className="pointer-events-none absolute right-5 top-16 rotate-12 rounded-xl border-[3px] border-text bg-void/55 px-3 py-1 font-display text-2xl font-bold uppercase tracking-wider text-text" style={{ opacity: 0 }}>{text.no}</div>
         <div ref={upRef} className="pointer-events-none absolute bottom-14 left-1/2 -translate-x-1/2 rounded-xl border-[3px] border-muted-text bg-void/55 px-3 py-1 font-display text-xl font-bold uppercase tracking-wider" style={{ opacity: 0 }}>{copy.cantTell}</div>
       </div>
       <div className="flex flex-col gap-2 px-[18px] pb-[18px] pt-4">
@@ -472,13 +490,13 @@ function Intro({ copy, youCount, goalCount, onStart, onLater }: {
 
 /* ----------------------------------------------------------------- done */
 
-function Done({ copy, results, best, total, failed, onClips, onBack }: {
-  copy: CheckStrings; results: Result[]; best: number; total: number; failed: boolean; onClips: () => void; onBack: () => void;
+function Done({ copy, results, best, total, failed, completed, onClips, onBack }: {
+  copy: CheckStrings; results: DeckResult[]; best: number; total: number; failed: boolean; completed: boolean; onClips: () => void; onBack: () => void;
 }) {
-  const kept = results.filter((r) => r.card.kind === "you" && r.verdict === "yes").length;
-  const sentBack = results.filter((r) => r.card.kind === "you" && r.verdict === "no").length;
-  const goals = results.filter((r) => r.card.kind === "goal" && r.verdict === "yes").length;
-  const answered = results.filter((r) => r.verdict !== "skip").length;
+  // clips only as the server made them: a kept moment on a claim that does
+  // not count yet is "kept", and becomes a clip once the claim counts
+  const { clips, kept, sentBack, goals, answered } = deckTally(results);
+  const pending = !completed && clips === 0;
   // Closed before the last card: say what is left, not "Deck cleared".
   const left = Math.max(0, total - results.length);
   const confetti = useMemo(() => Array.from({ length: 22 }, (_, k) => ({
@@ -487,9 +505,11 @@ function Done({ copy, results, best, total, failed, onClips, onBack }: {
     anim: `deck-fall ${2.4 + (k % 5) * 0.35}s ${(k % 7) * 0.12}s ease-in both`,
   })), []);
   const tiles = [
-    { value: kept, label: copy.kept, cls: "text-floodlight" },
-    { value: sentBack, label: copy.sentBack, cls: "text-text" },
-    { value: goals, label: copy.goalsConfirmed, cls: "text-turf" },
+    pending && kept > 0
+      ? { value: kept, label: copy.keptPending(kept), cls: "text-floodlight" }
+      : { value: clips, label: copy.kept(clips), cls: "text-floodlight" },
+    { value: sentBack, label: copy.sentBack(sentBack), cls: "text-text" },
+    { value: goals, label: copy.goalsConfirmed(goals), cls: "text-turf" },
     { value: best, label: copy.bestStreak, cls: "text-[#A98CFF]" },
   ];
   return (
@@ -505,7 +525,7 @@ function Done({ copy, results, best, total, failed, onClips, onBack }: {
         <span className="flex h-[72px] w-[72px] items-center justify-center rounded-[20px] bg-floodlight/15 text-floodlight [animation:deck-pop_.5s_ease-out_both]"><Trophy className="h-9 w-9" /></span>
         <span className="font-display text-[11px] font-bold uppercase tracking-[0.3em] text-floodlight rtl:text-xs rtl:tracking-normal">{answered === total ? copy.badgeAll : copy.badgeSome}</span>
         <h2 className="font-display text-[30px] font-bold leading-[1.05]">{left > 0 ? copy.pausedTitle(left) : copy.doneTitle}</h2>
-        <p className="text-sm leading-6 text-muted-text">{left > 0 ? copy.pausedDesc : copy.doneDesc}</p>
+        <p className="text-sm leading-6 text-muted-text">{left > 0 ? copy.pausedDesc : completed ? copy.doneDesc : copy.doneDescPending}</p>
       </div>
       <div className="grid grid-cols-2 gap-2">
         {tiles.map((tile) => (
