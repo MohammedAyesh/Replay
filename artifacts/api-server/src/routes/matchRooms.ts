@@ -76,6 +76,7 @@ import { REEL, reelCards, reelWindow, type ReelPlay, type ReelRecording } from "
 import { reelClip, reelClipOnBunny, storedReelClip } from "../lib/goalReelClip";
 import { momentReelCards, type MomentInput } from "../lib/momentReel";
 import { parseRecordingDuration } from "./userClips";
+import { MOMENT_TILES, TILE_RECIPE, TILE_SECONDS, momentPiece, momentTiles, pieceAt, tileFocus, tileInPiece, tileWindow, type MomentPiece } from "../lib/momentTiles";
 import { resyncChainClaimsForRecording } from "./claimChain";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, invalidateMatchStatsCacheForRecording, playerMatchForm } from "../lib/matchStatsCache";
@@ -1001,6 +1002,206 @@ router.get("/m/:code/moments/reel/clip/file", async (req, res): Promise<void> =>
   } catch (error) {
     logger.warn({ code: ctx.room.code, recordingId, momentId, err: error }, "moment reel clip file failed");
     res.status(502).json({ error: "Could not cut the clip" });
+  }
+});
+
+/* ------------------------------------------------- moment popup (2026-11-01) */
+
+/**
+ * Who may play a match's moments in place: the same people the match page
+ * hands the share link to (players, the captain, the field's owner, an admin),
+ * while the share is live. See lib/momentTiles.ts.
+ */
+async function momentFootageAccess(req: Request, res: Response): Promise<RoomContext | null> {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return null;
+  const { request, room } = ctx;
+  const shareActive = (request.status === "ready" || request.status === "partial")
+    && Boolean(request.shareToken) && !request.shareRevoked
+    && Boolean(request.shareExpiresAt) && request.shareExpiresAt!.getTime() > Date.now();
+  if (!shareActive) {
+    res.status(404).json({ error: "This match's footage isn't available" });
+    return null;
+  }
+  const viewer = await optionalUser(req);
+  if (!viewer || viewer.isGuest) {
+    unauthenticatedResponse(res, req);
+    return null;
+  }
+  const me = await playerForUser(room.id, viewer.id);
+  const allowed = isPlaying(me) || room.captainUserId === viewer.id || viewer.isAdmin || await isFieldOwner(viewer.id, room.fieldId);
+  if (!allowed) {
+    res.status(403).json({ error: "Only players in this match can watch its footage" });
+    return null;
+  }
+  return ctx;
+}
+
+type MomentSource = { piece: MomentPiece; videoUrl: string; ball: ReelPlay["ball"]; manifest: ReelPlay["manifest"] };
+
+const momentSourceCache = new Map<string, { at: number; value: Promise<MomentSource[]> }>();
+const MOMENT_SOURCE_TTL_MS = 60_000;
+
+/**
+ * The booking's recordings as moment pieces, with what cutting and the ball
+ * path need. Held for a minute per match: a popup asks for a tile every few
+ * seconds, and the recordings behind a match do not change that fast.
+ */
+function momentSources(ctx: RoomContext): Promise<MomentSource[]> {
+  const key = `${ctx.room.code}:${ctx.request.startLocal}:${ctx.request.endLocal}`;
+  const hit = momentSourceCache.get(key);
+  if (hit && Date.now() - hit.at < MOMENT_SOURCE_TTL_MS) return hit.value;
+  const value = loadMomentSources(ctx);
+  momentSourceCache.set(key, { at: Date.now(), value });
+  value.catch(() => momentSourceCache.delete(key));
+  if (momentSourceCache.size > 40) momentSourceCache.delete(momentSourceCache.keys().next().value!);
+  return value;
+}
+
+async function loadMomentSources(ctx: RoomContext): Promise<MomentSource[]> {
+  const window = matchWindow(ctx.request);
+  const bookingSeconds = Number.isFinite(window.startMs) && Number.isFinite(window.endMs) ? (window.endMs - window.startMs) / 1000 : 0;
+  const links = await recordingsForRoom(ctx);
+  if (!links.length || !(bookingSeconds > 0)) return [];
+  const rows = await db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl })
+    .from(recordingsTable).where(inArray(recordingsTable.id, links.map((l) => l.recordingId)));
+  const urls = new Map(rows.map((r) => [r.id, r.videoUrl]));
+  const out: MomentSource[] = [];
+  for (const link of links) {
+    const videoUrl = urls.get(link.recordingId);
+    if (!videoUrl) continue;
+    const play = await loadRecordingPlay(link.recordingId);
+    if (!play) continue;
+    const piece = momentPiece({
+      recordingId: link.recordingId,
+      srcW: play.manifest.width,
+      srcH: play.manifest.height,
+      duration: play.manifest.duration,
+      recordingOffsetSec: link.recordingOffsetSec,
+      videoStartSeconds: play.manifest.videoStartSeconds ?? 0,
+      bookingSeconds,
+    });
+    if (piece) out.push({ piece, videoUrl, manifest: play.manifest, ball: play.sidecars.flatMap((sc) => sc?.ball ?? []) });
+  }
+  return out;
+}
+
+const momentFootageSchema = z.object({
+  /** the moments the tab shows, booking seconds */
+  at: z.array(z.number().finite()).max(MOMENT_TILES.maxMoments),
+});
+
+/**
+ * POST /m/:code/moments/footage {at} -- what the Moments tab needs to play its
+ * moments in place: each recording's share of the booking and how to map its
+ * clock, and, for the tiles around each moment, the ball path and the tile's
+ * MP4 on Bunny when it is already cut. The tiles each moment opens on are then
+ * cut ahead (once, ever), so a tap plays from Bunny's edge.
+ */
+router.post("/m/:code/moments/footage", async (req, res): Promise<void> => {
+  const ctx = await momentFootageAccess(req, res);
+  if (!ctx) return;
+  const body = momentFootageSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Invalid moments" });
+    return;
+  }
+  try {
+    const sources = await momentSources(ctx);
+    const byId = new Map(sources.map((s) => [s.piece.recordingId, s]));
+    const pieces = sources.map((s) => s.piece);
+    const reach = new Map<string, { source: MomentSource; k: number }>();
+    const core: Array<{ source: MomentSource; k: number }> = [];
+    const coreSeen = new Set<string>();
+    for (const at of body.data.at) {
+      const piece = pieceAt(pieces, at);
+      const source = piece ? byId.get(piece.recordingId) : undefined;
+      if (!piece || !source) continue;
+      const t = momentTiles(piece, at);
+      for (const k of t.reach) reach.set(`${piece.recordingId}:${k}`, { source, k });
+      for (const k of t.core) {
+        const id = `${piece.recordingId}:${k}`;
+        if (!coreSeen.has(id)) { coreSeen.add(id); core.push({ source, k }); }
+      }
+    }
+    const tiles: Record<string, { url: string | null; focus: ReturnType<typeof tileFocus> }> = {};
+    await Promise.all([...reach.entries()].map(async ([id, { source, k }]) => {
+      const w = tileWindow(k);
+      const stored = await storedReelClip(source.piece.recordingId, source.videoUrl, w.start, w.end, TILE_RECIPE);
+      tiles[id] = { url: stored?.url ?? null, focus: tileFocus(source.ball, source.manifest, k, source.manifest.videoStartSeconds ?? 0) };
+    }));
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.json({ tileSeconds: TILE_SECONDS, lead: MOMENT_TILES.lead, pieces, tiles });
+    // Cut each moment's opening tiles ahead, in the tab's order, behind any tile a page is waiting for.
+    for (const { source, k } of core) {
+      if (tiles[`${source.piece.recordingId}:${k}`]?.url) continue;
+      const w = tileWindow(k);
+      void reelClipOnBunny(source.piece.recordingId, source.videoUrl, w.start, w.end, { ahead: true, ...TILE_RECIPE }).catch(() => { /* the popup asks again */ });
+    }
+  } catch (error) {
+    logger.error({ code: ctx.room.code, err: error }, "moment footage failed");
+    res.status(500).json({ error: "Could not load the match footage" });
+  }
+});
+
+async function momentTileRequest(req: Request, res: Response): Promise<{ ctx: RoomContext; source: MomentSource; k: number } | null> {
+  const ctx = await momentFootageAccess(req, res);
+  if (!ctx) return null;
+  const recordingId = Number(req.query.recordingId);
+  const k = Number(req.query.k);
+  if (!Number.isSafeInteger(recordingId) || recordingId <= 0 || !Number.isSafeInteger(k) || k < 0) {
+    res.status(400).json({ error: "Invalid tile" });
+    return null;
+  }
+  const source = (await momentSources(ctx)).find((s) => s.piece.recordingId === recordingId);
+  if (!source || !tileInPiece(source.piece, k)) {
+    res.status(404).json({ error: "No footage there" });
+    return null;
+  }
+  return { ctx, source, k };
+}
+
+/**
+ * GET /m/:code/moments/tile?recordingId=&k= -- one tile: { url, offset, focus }.
+ * Cut now if it has not been (a page is waiting, so it goes first), stored on
+ * Bunny, and played from Bunny's edge. Without Bunny Storage (development) the
+ * url is .../tile/file, served from this server's disk.
+ */
+router.get("/m/:code/moments/tile", async (req, res): Promise<void> => {
+  const found = await momentTileRequest(req, res);
+  if (!found) return;
+  const { ctx, source, k } = found;
+  const w = tileWindow(k);
+  const focus = tileFocus(source.ball, source.manifest, k, source.manifest.videoStartSeconds ?? 0);
+  try {
+    const onBunny = await reelClipOnBunny(source.piece.recordingId, source.videoUrl, w.start, w.end, TILE_RECIPE);
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.json(onBunny
+      ? { url: onBunny.url, offset: onBunny.offset, focus }
+      : { url: `/api/m/${encodeURIComponent(ctx.room.code)}/moments/tile/file?recordingId=${source.piece.recordingId}&k=${k}`, offset: w.start, focus });
+  } catch (error) {
+    logger.warn({ code: ctx.room.code, recordingId: source.piece.recordingId, k, err: error }, "moment tile failed");
+    res.status(502).json({ error: "Could not cut the footage" });
+  }
+});
+
+/** A tile's MP4 from this server's disk: only where Bunny Storage is not set up. */
+router.get("/m/:code/moments/tile/file", async (req, res): Promise<void> => {
+  const found = await momentTileRequest(req, res);
+  if (!found) return;
+  const { ctx, source, k } = found;
+  const w = tileWindow(k);
+  try {
+    const clip = await reelClip(source.videoUrl, w.start, w.end, TILE_RECIPE);
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.setHeader("X-Clip-Offset", clip.offset.toFixed(3));
+    res.sendFile(clip.path, (error) => {
+      if (error && !res.headersSent) res.status(500).json({ error: "Could not send the footage" });
+    });
+  } catch (error) {
+    logger.warn({ code: ctx.room.code, recordingId: source.piece.recordingId, k, err: error }, "moment tile file failed");
+    res.status(502).json({ error: "Could not cut the footage" });
   }
 });
 

@@ -134,4 +134,17 @@ describe("goal reel clip: cut from a real HLS", () => {
     expect(again.path).toBe(clip.path);
     expect(referers.every((r) => r.startsWith("http"))).toBe(true);
   }, 60_000);
+
+  it("cuts a moment tile (lib/momentTiles.ts) with a keyframe every second, as a file of its own", async () => {
+    const card = await reelClip(`${base}/playlist.m3u8`, 0, 10);
+    const tile = await reelClip(`${base}/playlist.m3u8`, 0, 10, { gop: 20 });
+    expect(tile.path).not.toBe(card.path);
+    const keyframes = (file: string) => execFileSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "frame=key_frame,pts_time",
+      "-of", "csv=p=0", file]).toString().trim().split("\n").filter((line) => line.startsWith("1,")).map((line) => Number(line.split(",")[1]));
+    const tileKeys = keyframes(tile.path);
+    expect(tileKeys.length).toBeGreaterThanOrEqual(10);
+    expect(keyframes(card.path).length).toBeLessThan(tileKeys.length);
+    // never more than a second (20 frames) apart
+    for (let i = 1; i < tileKeys.length; i++) expect(tileKeys[i]! - tileKeys[i - 1]!).toBeLessThan(1.05);
+  }, 60_000);
 });
