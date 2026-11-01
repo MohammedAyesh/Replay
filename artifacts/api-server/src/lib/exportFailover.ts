@@ -53,6 +53,8 @@ export const BACKUP_MAX_RELAUNCHES = 2;
 export const ORPHAN_PENDING_GRACE_MS = 3 * 60_000;
 /** Method A still in flight after this long is hedged with Method B. */
 export const PRIMARY_HEDGE_AFTER_MS = 12 * 60_000;
+/** Do not hold a finished backup behind a drawn-branding primary for longer. */
+export const PRIMARY_BRANDING_WAIT_MAX_MS = 10 * 60_000;
 /** Method B unreachable for this long, with Method A already failed, is a real failure. */
 export const BACKUP_UNREACHABLE_GIVE_UP_MS = 3 * 60_000;
 
@@ -98,6 +100,17 @@ export function primaryRunningForMs(clipId: number): number | null {
   return at == null ? null : Date.now() - at;
 }
 
+export function shouldWaitForPrimaryBranding(
+  backupBrandingComplete: boolean,
+  primaryIsLive: boolean,
+  primaryElapsedMs: number | null,
+): boolean {
+  return !backupBrandingComplete
+    && primaryIsLive
+    && primaryElapsedMs != null
+    && primaryElapsedMs < PRIMARY_BRANDING_WAIT_MAX_MS;
+}
+
 /**
  * Drawn branding for a clip handed to vps1 (overlay PNG + end screen card),
  * registered by the clip routes. Kept as a hook so this module stays free of
@@ -107,7 +120,7 @@ export type BackupBrandingProvider = (
   clip: ClipRow,
   uploadedOverlayUrl: string | null,
   exportRevision?: string,
-) => Promise<{ overlayUrl: string | null; endScreen: BackupExportSpec["endScreen"] }>;
+) => Promise<{ overlayUrl: string | null; endScreen: BackupExportSpec["endScreen"]; complete: boolean }>;
 
 let brandingProvider: BackupBrandingProvider | null = null;
 export function setBackupBrandingProvider(provider: BackupBrandingProvider | null): void {
@@ -118,8 +131,8 @@ export async function prepareBackupBranding(
   clip: ClipRow,
   overlayUrl: string | null,
   exportRevision?: string,
-): Promise<{ overlayUrl: string | null; endScreen: BackupExportSpec["endScreen"] }> {
-  if (!brandingProvider) return { overlayUrl, endScreen: null };
+): Promise<{ overlayUrl: string | null; endScreen: BackupExportSpec["endScreen"]; complete: boolean }> {
+  if (!brandingProvider) return { overlayUrl, endScreen: null, complete: true };
   const provider = brandingProvider;
   try {
     // Do not submit a job until its branding is ready. In particular, never
@@ -127,7 +140,7 @@ export async function prepareBackupBranding(
     return await provider(clip, overlayUrl, exportRevision);
   } catch (err) {
     logger.warn({ err, clipId: clip.id }, "Could not prepare drawn branding for vps1 — using uploaded branding where available");
-    return { overlayUrl, endScreen: null };
+    return { overlayUrl, endScreen: null, complete: false };
   }
 }
 
@@ -163,6 +176,7 @@ export async function reconcileBackup(
   opts: {
     overlayUrl?: string | null;
     primaryActive?: boolean;
+    primaryRunningForMs?: number | null;
     cacheMs?: number;
     exportRevision?: string;
   } = {},
@@ -181,7 +195,12 @@ export async function reconcileBackup(
 
 async function reconcileUncached(
   clip: ClipRow,
-  opts: { overlayUrl?: string | null; primaryActive?: boolean; exportRevision?: string },
+  opts: {
+    overlayUrl?: string | null;
+    primaryActive?: boolean;
+    primaryRunningForMs?: number | null;
+    exportRevision?: string;
+  },
 ): Promise<BackupOutcome> {
   const branding = await prepareBackupBranding(clip, opts.overlayUrl ?? null, opts.exportRevision);
   const spec = backupSpecFor(clip, branding.overlayUrl, opts.exportRevision, branding.endScreen);
@@ -207,11 +226,23 @@ async function reconcileUncached(
           "Ignoring an invalid vps1 Bunny Storage URL; keeping the vps1 export reference",
         );
       }
-      // If Method A is still rendering locally, its branded output remains
-      // authoritative. Leave the row pending so Method A can publish; if it
-      // fails, the next sweep can claim the already-finished backup export.
-      if (opts.primaryActive) {
-        logger.info({ clipId: clip.id, job: status.job }, "Backup export is ready; waiting for the active primary render");
+      // A backup job receives the exact prepared assets. Its ready result is
+      // authoritative when that plan is complete; only wait for a live primary
+      // when vps1 could not include a planned drawn asset, and never >10 minutes.
+      if (shouldWaitForPrimaryBranding(
+        branding.complete,
+        opts.primaryActive === true,
+        opts.primaryRunningForMs ?? null,
+      )) {
+        logger.info(
+          {
+            clipId: clip.id,
+            job: status.job,
+            primaryRunningForMs: opts.primaryRunningForMs,
+            brandingComplete: branding.complete,
+          },
+          "Backup export is ready; waiting for the active primary render",
+        );
         return { state: "running", progress: 100, stage: "waiting_for_primary" };
       }
       // Never overwrite a finished Method A export; both are valid, first wins.
@@ -287,25 +318,27 @@ async function reconcileUncached(
  * Method B and moves them to `done` when it finishes. Also hedges a local
  * Method A render that has been running implausibly long.
  */
-export function startExportFailoverSweep(deps: {
+export async function runExportFailoverSweepOnce(deps: {
   isPrimaryInFlight: (clipId: number) => boolean;
   resolveOverlayUrl: (clip: ClipRow) => Promise<string | null>;
   fallbackOverflowToLocal: (clip: ClipRow) => Promise<void>;
   resumeLocalFallback: (clip: ClipRow) => Promise<void>;
   intervalMs?: number;
-}): () => void {
-  if (process.env.NODE_ENV === "test") return () => {};
-  const tick = async () => {
-    try {
+  clipIds?: number[];
+}): Promise<void> {
+  try {
       const rows = await db
         .select()
         .from(userClipsTable)
-        .where(inArray(userClipsTable.exportStatus, [
-          "pending",
-          PENDING_VPS1_OVERFLOW,
-          PENDING_LOCAL_FALLBACK,
-          PENDING_VPS1_AFTER_PRIMARY,
-        ]))
+        .where(and(
+          inArray(userClipsTable.exportStatus, [
+            "pending",
+            PENDING_VPS1_OVERFLOW,
+            PENDING_LOCAL_FALLBACK,
+            PENDING_VPS1_AFTER_PRIMARY,
+          ]),
+          ...(deps.clipIds ? [inArray(userClipsTable.id, deps.clipIds)] : []),
+        ))
         .limit(100);
       const now = Date.now();
       const seen = new Set<number>();
@@ -314,12 +347,14 @@ export function startExportFailoverSweep(deps: {
         if (clip.videoId.startsWith("live:")) continue;
         const primary = deps.isPrimaryInFlight(clip.id);
         const runningFor = primaryRunningForMs(clip.id);
+        const primaryRenderActive = primary && runningFor != null;
 
         if (clip.exportStatus === PENDING_VPS1_OVERFLOW) {
           const overlayUrl = await deps.resolveOverlayUrl(clip).catch(() => null);
           const outcome = await reconcileBackup(clip, {
             overlayUrl,
-            primaryActive: true,
+            primaryActive: primaryRenderActive,
+            primaryRunningForMs: runningFor,
             cacheMs: 0,
           });
           if (
@@ -385,7 +420,12 @@ export function startExportFailoverSweep(deps: {
           if (now - first < ORPHAN_PENDING_GRACE_MS) continue;
         }
         const overlayUrl = await deps.resolveOverlayUrl(clip).catch(() => null);
-        const outcome = await reconcileBackup(clip, { overlayUrl, primaryActive: primary, cacheMs: 0 });
+        const outcome = await reconcileBackup(clip, {
+          overlayUrl,
+          primaryActive: primaryRenderActive,
+          primaryRunningForMs: runningFor,
+          cacheMs: 0,
+        });
         if (outcome.state === "unavailable" && !primary && now - outcome.since > BACKUP_UNREACHABLE_GIVE_UP_MS * 5) {
           // Both methods are out: nobody is rendering and vps1 has been
           // unreachable for 15+ minutes. Stop pretending.
@@ -397,10 +437,20 @@ export function startExportFailoverSweep(deps: {
         }
       }
       for (const id of orphanSeenAt.keys()) if (!seen.has(id)) orphanSeenAt.delete(id);
-    } catch (err) {
-      logger.error({ err }, "Export failover sweep failed");
-    }
-  };
+  } catch (err) {
+    logger.error({ err }, "Export failover sweep failed");
+  }
+}
+
+export function startExportFailoverSweep(deps: {
+  isPrimaryInFlight: (clipId: number) => boolean;
+  resolveOverlayUrl: (clip: ClipRow) => Promise<string | null>;
+  fallbackOverflowToLocal: (clip: ClipRow) => Promise<void>;
+  resumeLocalFallback: (clip: ClipRow) => Promise<void>;
+  intervalMs?: number;
+}): () => void {
+  if (process.env.NODE_ENV === "test") return () => {};
+  const tick = () => { void runExportFailoverSweepOnce(deps); };
   const handle = setInterval(() => { void tick(); }, deps.intervalMs ?? 30_000);
   handle.unref?.();
   // First pass shortly after boot: this is exactly when rows orphaned by a

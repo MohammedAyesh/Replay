@@ -21,6 +21,7 @@ import http from "http";
 import crypto from "crypto";
 import { db, usersTable, userClipsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
+import { runExportFailoverSweepOnce } from "../lib/exportFailover";
 
 const exportMocks = vi.hoisted(() => ({
   primaryEnabled: false,
@@ -255,6 +256,25 @@ async function waitForBackupJob(id: number): Promise<void> {
 }
 
 describe("export failover to the backup renderer", () => {
+  it("the restart sweep settles a ready overflow export with no live primary", async () => {
+    const id = await clip("pending", "ready");
+    await db.update(userClipsTable)
+      .set({ exportStatus: "pending_vps1_overflow" })
+      .where(eq(userClipsTable.id, id));
+
+    await runExportFailoverSweepOnce({
+      isPrimaryInFlight: () => false,
+      resolveOverlayUrl: async () => null,
+      fallbackOverflowToLocal: async () => {},
+      resumeLocalFallback: async () => {},
+      clipIds: [id],
+    });
+
+    const row = await rowOf(id);
+    expect(row.exportStatus).toBe("done");
+    expect(row.exportedUrl).toBe(`vps1-export:${jobFor(id)}`);
+  });
+
   it("finishes a clip whose primary render failed (the 2026-09-29 incident) on vps1", async () => {
     const id = await clip("error", "ready");
     const res = await status(id);
@@ -346,6 +366,34 @@ describe("Method A overflow to vps1", () => {
     expect((await rowOf(id)).exportedUrl).toBe(`https://storage.test/clips/${id}.mp4`);
   });
 
+  it("lets the primary publish if the row moved to the post-primary internal state", async () => {
+    exportMocks.primaryEnabled = true;
+    const gate = deferred<void>();
+    exportMocks.renderClip.mockImplementationOnce(async () => {
+      await gate.promise;
+      return "/tmp/test-primary-export.mp4";
+    });
+    const id = await clip(null);
+
+    try {
+      const response = await request(app).post(`/api/user-clips/${id}/export`);
+      expect(response.body.status).toBe("pending");
+      for (let i = 0; i < 200 && exportMocks.renderClip.mock.calls.length === 0; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(exportMocks.renderClip).toHaveBeenCalled();
+      await db.update(userClipsTable)
+        .set({ exportStatus: "pending_vps1_after_primary" })
+        .where(eq(userClipsTable.id, id));
+
+      gate.resolve();
+      await waitForExportStatus(id, "done");
+      expect((await rowOf(id)).exportedUrl).toBe(`https://storage.test/clips/${id}.mp4`);
+    } finally {
+      gate.resolve();
+    }
+  });
+
   it("hands overflow to vps1 and keeps duplicate requests from starting locally", async () => {
     exportMocks.primaryEnabled = true;
     const gate = deferred<void>();
@@ -407,6 +455,8 @@ describe("Method A overflow to vps1", () => {
       const endScreen = body.endScreen as Record<string, unknown>;
       expect(endScreen).toMatchObject({ seconds: 3, blur: 22, dim: 0.5, kind: "signOff" });
       expect(String(endScreen.cardUrl)).toMatch(/\/branding\/endscreens\/[0-9a-f]{40}\.(webm|mov)$/);
+      jobs.get(jobFor(id))!.status = "ready";
+      jobs.get(jobFor(id))!.progress = 100;
       // The card was drawn once, however often the failover polled.
       const cardUploads = exportMocks.uploadBufferToBunnyStorage.mock.calls.filter(([, p]) => String(p).includes("endscreens/"));
       await status(id);
@@ -415,6 +465,8 @@ describe("Method A overflow to vps1", () => {
         .toHaveLength(cardUploads.length);
       expect(cardUploads).toHaveLength(1);
       expect(exportMocks.renderClip).not.toHaveBeenCalled();
+      await waitForExportStatus(id, "done");
+      expect((await rowOf(id)).exportedUrl).toBe(`vps1-export:${jobFor(id)}`);
     } finally {
       gate.resolve();
       await localBlocker;

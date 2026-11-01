@@ -20,6 +20,7 @@ import {
   backupSpecFor,
   prepareBackupBranding,
   reconcileBackup,
+  shouldWaitForPrimaryBranding,
   setBackupBrandingProvider,
 } from "./exportFailover";
 import {
@@ -119,7 +120,7 @@ describe("branded backup handoff", () => {
 
   it("waits for slow branding preparation instead of timing out and dropping the overlay", async () => {
     vi.useFakeTimers();
-    let finish!: (value: { overlayUrl: string; endScreen: null }) => void;
+    let finish!: (value: { overlayUrl: string; endScreen: null; complete: boolean }) => void;
     setBackupBrandingProvider(() => new Promise((resolve) => { finish = resolve; }));
     const pending = prepareBackupBranding({ id: 811 } as never, null);
     let settled = false;
@@ -127,14 +128,15 @@ describe("branded backup handoff", () => {
 
     await vi.advanceTimersByTimeAsync(26_000);
     expect(settled).toBe(false);
-    finish({ overlayUrl: "https://storage.test/branding/drawn/overlay.png", endScreen: null });
+    finish({ overlayUrl: "https://storage.test/branding/drawn/overlay.png", endScreen: null, complete: true });
     await expect(pending).resolves.toMatchObject({
       overlayUrl: "https://storage.test/branding/drawn/overlay.png",
       endScreen: null,
+      complete: true,
     });
   });
 
-  it("sends the overlay but leaves the row pending if vps1 finishes during the branded primary render", async () => {
+  it("waits only when planned backup branding is incomplete and a live primary is under ten minutes", async () => {
     const env = { ...process.env };
     const originalFetch = globalThis.fetch;
     const clipId = 812;
@@ -152,19 +154,28 @@ describe("branded backup handoff", () => {
     setBackupBrandingProvider(async () => ({
       overlayUrl: "https://storage.test/branding/drawn/overlay.png",
       endScreen: null,
+      complete: false,
     }));
 
     try {
       const outcome = await reconcileBackup({
         id: clipId, videoId: "video", startTime: "0", endTime: "1", cropPath: [],
         aspectRatio: "16:9", title: "Goal",
-      } as never, { primaryActive: true, cacheMs: 0 });
+      } as never, { primaryActive: true, primaryRunningForMs: 1_000, cacheMs: 0 });
       expect(submission.body?.overlayUrl).toBe("https://storage.test/branding/drawn/overlay.png");
       expect(outcome).toMatchObject({ state: "running", stage: "waiting_for_primary" });
     } finally {
       globalThis.fetch = originalFetch;
       process.env = env;
     }
+  });
+
+  it("never waits for missing branding after the live primary deadline or after restart", () => {
+    expect(shouldWaitForPrimaryBranding(true, true, 1_000)).toBe(false);
+    expect(shouldWaitForPrimaryBranding(false, true, 1_000)).toBe(true);
+    expect(shouldWaitForPrimaryBranding(false, true, 10 * 60_000)).toBe(false);
+    expect(shouldWaitForPrimaryBranding(false, false, null)).toBe(false);
+    expect(shouldWaitForPrimaryBranding(false, true, null)).toBe(false);
   });
 });
 

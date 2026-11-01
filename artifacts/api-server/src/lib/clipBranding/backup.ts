@@ -39,6 +39,8 @@ export type BackupEndScreen = {
 export type BackupBranding = {
   overlayUrl: string | null;
   endScreen: BackupEndScreen | null;
+  /** True only when every drawn brand asset in the plan was uploaded for vps1. */
+  complete: boolean;
 };
 
 const CACHE_TTL_MS = 30 * 60_000;
@@ -68,11 +70,14 @@ export async function prepareBackupBrandingAssets(
     uploadAsset: typeof uploadContentAddressed;
   } = { encodeCard, uploadAsset: uploadContentAddressed },
 ): Promise<BackupBranding> {
-  const result: BackupBranding = { overlayUrl: uploadedOverlayUrl, endScreen: null };
+  const result: BackupBranding = { overlayUrl: uploadedOverlayUrl, endScreen: null, complete: true };
+  let overlayComplete = !plan.overlayPath;
+  let endScreenComplete = !plan.endScreen;
   if (plan.overlayPath) {
     try {
       const png = await fs.promises.readFile(plan.overlayPath);
       result.overlayUrl = await deps.uploadAsset(png, "drawn", "png", "image/png");
+      overlayComplete = true;
     } catch (err) {
       logger.warn({ err, clipId }, "Could not hand the drawn overlay to vps1 — using the uploaded one");
     }
@@ -93,6 +98,7 @@ export async function prepareBackupBrandingAssets(
         dim: plan.endScreen.dim,
         kind: plan.endScreen.spec.kind,
       };
+      endScreenComplete = true;
     } catch (err) {
       logger.warn(
         { err, clipId, overlayUrl: result.overlayUrl },
@@ -100,6 +106,7 @@ export async function prepareBackupBrandingAssets(
       );
     }
   }
+  result.complete = overlayComplete && endScreenComplete;
   return result;
 }
 
@@ -155,12 +162,12 @@ async function compute(
   fieldId: number | null,
   uploadedOverlayUrl: string | null,
 ): Promise<BackupBranding> {
-  const plain: BackupBranding = { overlayUrl: uploadedOverlayUrl, endScreen: null };
+  const plain: BackupBranding = { overlayUrl: uploadedOverlayUrl, endScreen: null, complete: true };
   const ctx: SettingsContext = { academyId: clip.academyId, fieldId, userId: clip.userId };
   if (!(await clipWantsDrawnBranding(ctx))) return plain;
   if (!isBunnyStorageConfigured()) {
     logger.warn({ clipId: clip.id }, "Drawn branding for vps1 needs Bunny Storage — handing over the uploaded branding only");
-    return plain;
+    return { ...plain, complete: false };
   }
 
   const plan = await planClipBranding(clip, fieldId, portrait, ctx);
@@ -198,7 +205,7 @@ export function backupBrandingFor(
   const value = compute(clip, portrait, fieldId, uploadedOverlayUrl).catch((err) => {
     logger.error({ err, clipId: clip.id }, "Could not prepare drawn branding for vps1");
     cache.delete(key);
-    return { overlayUrl: uploadedOverlayUrl, endScreen: null } as BackupBranding;
+    return { overlayUrl: uploadedOverlayUrl, endScreen: null, complete: false } as BackupBranding;
   });
   cache.set(key, { at: now, value });
   return value;

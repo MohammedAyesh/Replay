@@ -43,6 +43,7 @@ describe("backup renderer branding assets", () => {
     expect(result).toMatchObject({
       overlayUrl: "https://storage.test/branding/drawn/overlay.png",
       endScreen: null,
+      complete: false,
     });
     expect(encodeCard).toHaveBeenCalledTimes(1);
   });

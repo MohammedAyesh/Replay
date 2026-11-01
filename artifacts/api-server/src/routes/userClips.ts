@@ -90,6 +90,7 @@ import {
   BACKUP_UNREACHABLE_GIVE_UP_MS,
   notePrimaryFinished,
   notePrimaryStarted,
+  primaryRunningForMs,
   reconcileBackup,
   startExportFailoverSweep,
   setBackupBrandingProvider,
@@ -652,7 +653,9 @@ async function tryOverflowHandoff(
       { ...clip, exportStatus: PENDING_VPS1_OVERFLOW },
       {
         overlayUrl: await overlayUrlForClip(clip),
-        primaryActive: true,
+        // Immediate admission failed, so this clip has no local primary render.
+        primaryActive: false,
+        primaryRunningForMs: null,
         cacheMs: 0,
         exportRevision: options.exportRevision,
       },
@@ -766,6 +769,12 @@ async function runBackgroundExport(
     let overlayUrlForBackup: string | null = null;
     notePrimaryStarted(clipId);
     try {
+      const [current] = await db.select({ exportStatus: userClipsTable.exportStatus })
+        .from(userClipsTable).where(eq(userClipsTable.id, clipId));
+      if (current?.exportStatus === "done") {
+        logger.info({ clipId }, "Skipping primary render because another renderer already published the clip");
+        return;
+      }
       logger.info({ clipId, startTime, endTime }, "Starting background clip export");
 
       const {
@@ -928,6 +937,13 @@ async function runBackgroundExport(
         tmpPath = await renderClip(renderOptions);
       }
 
+      const [beforeUpload] = await db.select({ exportStatus: userClipsTable.exportStatus })
+        .from(userClipsTable).where(eq(userClipsTable.id, clipId));
+      if (beforeUpload?.exportStatus === "done") {
+        logger.info({ clipId }, "Dropping primary render because another renderer published first");
+        return;
+      }
+
       exportProgress.set(clipId, "uploading");
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId, options.exportRevision);
       const [published] = await db
@@ -935,9 +951,18 @@ async function runBackgroundExport(
         .set({ exportStatus: "done", exportedUrl })
         .where(and(
           eq(userClipsTable.id, clipId),
-          inArray(userClipsTable.exportStatus, ["pending", PENDING_VPS1_OVERFLOW, PENDING_LOCAL_FALLBACK]),
+          inArray(userClipsTable.exportStatus, [
+            "pending",
+            PENDING_VPS1_OVERFLOW,
+            PENDING_LOCAL_FALLBACK,
+            PENDING_VPS1_AFTER_PRIMARY,
+          ]),
         ))
         .returning({ id: userClipsTable.id });
+      if (!published) {
+        logger.info({ clipId, exportedUrl }, "Primary render finished after another renderer settled the clip");
+        return;
+      }
       // A re-render (new end screen, admin re-clip) supersedes this server's
       // previous file; remove it. vps1's own copies (clips/c<id>-…) are left
       // to vps1, which keeps exports forever.
@@ -2225,6 +2250,7 @@ async function exportStatusFor(
   reason?: string;
 }> {
   const primaryActive = inFlight.has(clip.id);
+  const primaryElapsedMs = primaryRunningForMs(clip.id);
   const base = {
     url: null,
     progress: null,
@@ -2291,7 +2317,8 @@ async function exportStatusFor(
     const isOverflow = clip.exportStatus === PENDING_VPS1_OVERFLOW;
     const outcome = await reconcileBackup(clip, {
       overlayUrl: await overlayUrlForClip(clip),
-      primaryActive: isOverflow,
+      primaryActive: isOverflow && primaryActive && primaryElapsedMs != null,
+      primaryRunningForMs: primaryElapsedMs,
       cacheMs: 0,
     });
     switch (outcome.state) {
