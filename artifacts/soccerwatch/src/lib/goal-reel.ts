@@ -27,6 +27,8 @@ export type ReelCard = {
   ownGoal: boolean;
   scorer: string | null;
   focus: FocusPoint[];
+  /** the card's MP4 on Bunny's CDN when it is already there; else ask reelClipUrl */
+  clip?: { url: string; offset: number } | null;
 };
 
 export type GoalReel = { recordings: ReelRecording[]; cards: ReelCard[]; open: number };
@@ -108,8 +110,38 @@ export const REEL_AHEAD = 4;
 /** downloads at once; the card on screen always goes first */
 const PARALLEL = 2;
 
+/** Where a card's MP4 is: on the card already, or from the API (which cuts it once and stores it on Bunny). */
+async function clipLocation(code: string, card: ReelCard, signal: AbortSignal | undefined): Promise<{ url: string; offset: number }> {
+  if (card.clip?.url) return card.clip;
+  const response = await fetch(reelClipUrl(code, card), { credentials: "include", signal });
+  if (!response.ok) throw new Error(`clip ${response.status}`);
+  return response.json() as Promise<{ url: string; offset: number }>;
+}
+
+/** A card's file fetched before the reel opened (the first card, while the button is on screen). */
+const early = new Map<string, Promise<{ blob: Blob; offset: number }>>();
+
+async function downloadClip(code: string, card: ReelCard, signal?: AbortSignal): Promise<{ blob: Blob; offset: number }> {
+  const ctl = signal ?? new AbortController().signal;
+  const where = await clipLocation(code, card, ctl);
+  // Bunny's edge (cross-origin, no cookies); in development the API itself
+  const sameOrigin = where.url.startsWith("/");
+  const response = await fetch(where.url, { credentials: sameOrigin ? "include" : "omit", signal: ctl });
+  if (!response.ok) throw new Error(`clip file ${response.status}`);
+  const blob = await response.blob();
+  return { blob: blob.type ? blob : new Blob([blob], { type: "video/mp4" }), offset: where.offset };
+}
+
+/** Fetch the first card's file while the button is on screen, so the reel opens playing (~1-2 MB, from Bunny). */
+export function prefetchFirstClip(code: string, card: ReelCard | undefined): void {
+  if (!card || early.has(card.id)) return;
+  const job = downloadClip(code, card);
+  early.set(card.id, job);
+  job.catch(() => early.delete(card.id));
+}
+
 /**
- * Each card's MP4, downloaded into memory ahead of time: the card on screen
+ * Each card's MP4, downloaded into memory ahead of time, from Bunny's CDN: the card on screen
  * first, then the next REEL_AHEAD, two at a time. A file is kept while its
  * card is within reach (one back for Back), then released. A failed download
  * is tried once more.
@@ -144,11 +176,11 @@ export function useReelClips(code: string, cards: readonly ReelCard[] | null, in
       setClips((s) => (s[card.id]?.status === "loading" ? s : { ...s, [card.id]: { status: "loading" } }));
       void (async () => {
         try {
-          const response = await fetch(reelClipUrl(code, card), { credentials: "include", signal: ctl.signal });
-          if (!response.ok) throw new Error(`clip ${response.status}`);
-          const offset = Number(response.headers.get("x-clip-offset") ?? "0") || 0;
-          const blob = await response.blob();
-          const url = URL.createObjectURL(blob.type ? blob : new Blob([blob], { type: "video/mp4" }));
+          const prefetched = early.get(card.id);
+          early.delete(card.id);
+          const { blob, offset } = prefetched ? await prefetched.catch(() => downloadClip(code, card, ctl.signal)) : await downloadClip(code, card, ctl.signal);
+          if (ctl.signal.aborted) return;
+          const url = URL.createObjectURL(blob);
           urls.current.set(card.id, url);
           setClips((s) => ({ ...s, [card.id]: { status: "ready", url, offset } }));
         } catch {

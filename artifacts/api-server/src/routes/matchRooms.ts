@@ -73,7 +73,7 @@ import { setGoalVote } from "../lib/goalReview";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { browserVideoUrl } from "../lib/checkDeck";
 import { REEL, reelCards, reelWindow, type ReelPlay, type ReelRecording } from "../lib/goalReel";
-import { reelClip } from "../lib/goalReelClip";
+import { reelClip, reelClipOnBunny, storedReelClip } from "../lib/goalReelClip";
 import { resyncChainClaimsForRecording } from "./claimChain";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, invalidateMatchStatsCacheForRecording, playerMatchForm } from "../lib/matchStatsCache";
@@ -760,17 +760,26 @@ router.get("/m/:code/goals/reel", async (req, res): Promise<void> => {
       recordings.push({ recordingId: row.id, videoUrl: browserVideoUrl(row.videoUrl), srcW: play.manifest.width, srcH: play.manifest.height });
     }
     const cards = reelCards(replay.review, plays);
-    res.json({ recordings, cards, open: replay.review.filter((g) => g.status === "open").length });
-    // The page fetches this list as soon as the button shows, so cut every
-    // card now, in reel order: the first ones are on disk by the time the reel
-    // opens, and the rest stay ahead of a quick thumb (one tap a second
-    // outran on-demand cuts on 1 Nov). These queue behind any card a page is
-    // waiting for (goalReelClip.ts); a cut file is kept for everyone.
     const raw = new Map(rows.map((row) => [row.id, row.videoUrl]));
-    for (const card of cards) {
+    // Cards already on Bunny carry their address, so the page goes straight to the CDN.
+    const stored = await Promise.all(cards.map((card) => {
       const videoUrl = raw.get(card.recordingId);
-      if (videoUrl) void reelClip(videoUrl, card.start, card.end, { ahead: true }).catch(() => { /* the page asks again */ });
-    }
+      return videoUrl ? storedReelClip(card.recordingId, videoUrl, card.start, card.end) : Promise.resolve(null);
+    }));
+    res.json({
+      recordings,
+      cards: cards.map((card, k) => ({ ...card, clip: stored[k] })),
+      open: replay.review.filter((g) => g.status === "open").length,
+    });
+    // The page fetches this list as soon as the button shows, so cut every
+    // card that is not on Bunny yet, in reel order: the first ones are there by
+    // the time the reel opens, and the rest stay ahead of a quick thumb (one
+    // tap a second outran on-demand cuts on 1 Nov). These queue behind any
+    // card a page is waiting for (goalReelClip.ts). Each is cut once, ever.
+    cards.forEach((card, k) => {
+      const videoUrl = raw.get(card.recordingId);
+      if (videoUrl && !stored[k]) void reelClipOnBunny(card.recordingId, videoUrl, card.start, card.end, { ahead: true }).catch(() => { /* the page asks again */ });
+    });
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "goal reel failed");
     res.status(500).json({ error: "Could not build the reel" });
@@ -778,47 +787,76 @@ router.get("/m/:code/goals/reel", async (req, res): Promise<void> => {
 });
 
 /**
- * GET /m/:code/goals/reel/clip?recordingId=&key= -- one reel card as a small
- * MP4 (lib/goalReelClip.ts): the HLS segments that cover it, remuxed on the
- * server, so a phone downloads one file per card instead of streaming
- * playlists and segments through the proxy. X-Clip-Offset says where the file
- * starts on the video's clock.
+ * GET /m/:code/goals/reel/clip?recordingId=&key= -- where one reel card's MP4
+ * is: { url, offset }. The card is cut once on this server and stored on Bunny
+ * (lib/goalReelClip.ts); the url is Bunny's CDN, so the phone downloads the
+ * video from Bunny's edge, never through this server. `offset` is where the
+ * file starts on the video's clock. Without Bunny Storage (development) the url
+ * is GET .../clip/file, served from this server's disk.
  */
-router.get("/m/:code/goals/reel/clip", async (req, res): Promise<void> => {
+async function reelClipRequest(req: Request, res: Response): Promise<{ ctx: RoomContext; recordingId: number; key: number; videoUrl: string; win: { start: number; end: number } } | null> {
   const ctx = await loadOr404(req, res);
-  if (!ctx) return;
+  if (!ctx) return null;
   const user = await requirePlayer(req, res);
-  if (!user) return;
+  if (!user) return null;
   if (!(await canConfirmGoals(user, ctx))) {
     res.status(403).json({ error: "Only players in this match can confirm goals" });
-    return;
+    return null;
   }
   const recordingId = Number(req.query.recordingId);
   const key = Number(req.query.key);
   if (!Number.isSafeInteger(recordingId) || recordingId <= 0 || !Number.isSafeInteger(key) || key < 0) {
     res.status(400).json({ error: "Invalid clip" });
-    return;
+    return null;
   }
   const linked = await recordingsForRoom(ctx);
   if (!linked.some((link) => link.recordingId === recordingId)) {
     res.status(404).json({ error: "That recording is not this match's" });
-    return;
+    return null;
   }
+  const [row] = await db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable).where(eq(recordingsTable.id, recordingId));
+  const play = await loadRecordingPlay(recordingId);
+  if (!row?.videoUrl || !play) {
+    res.status(404).json({ error: "No footage" });
+    return null;
+  }
+  // the key is the chance's tracking time x 10
+  const t = key / 10;
+  if (play.manifest.duration > 0 && t > play.manifest.duration + 60) {
+    res.status(404).json({ error: "No footage at that time" });
+    return null;
+  }
+  return { ctx, recordingId, key, videoUrl: row.videoUrl, win: reelWindow(t, play.manifest.videoStartSeconds ?? 0) };
+}
+
+router.get("/m/:code/goals/reel/clip", async (req, res): Promise<void> => {
+  const found = await reelClipRequest(req, res);
+  if (!found) return;
+  const { ctx, recordingId, key, videoUrl, win } = found;
   try {
-    const [row] = await db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable).where(eq(recordingsTable.id, recordingId));
-    const play = await loadRecordingPlay(recordingId);
-    if (!row?.videoUrl || !play) {
-      res.status(404).json({ error: "No footage" });
+    const onBunny = await reelClipOnBunny(recordingId, videoUrl, win.start, win.end);
+    if (onBunny) {
+      res.setHeader("Cache-Control", "private, max-age=3600");
+      res.json(onBunny);
       return;
     }
-    // the key is the chance's tracking time x 10
-    const t = key / 10;
-    if (play.manifest.duration > 0 && t > play.manifest.duration + 60) {
-      res.status(404).json({ error: "No footage at that time" });
-      return;
-    }
-    const win = reelWindow(t, play.manifest.videoStartSeconds ?? 0);
-    const clip = await reelClip(row.videoUrl, win.start, win.end);
+    res.json({
+      url: `/api/m/${encodeURIComponent(ctx.room.code)}/goals/reel/clip/file?recordingId=${recordingId}&key=${key}`,
+      offset: win.start,
+    });
+  } catch (error) {
+    logger.warn({ code: ctx.room.code, recordingId, key, err: error }, "goal reel clip failed");
+    res.status(502).json({ error: "Could not cut the clip" });
+  }
+});
+
+/** The card's MP4 from this server's disk: only where Bunny Storage is not set up. */
+router.get("/m/:code/goals/reel/clip/file", async (req, res): Promise<void> => {
+  const found = await reelClipRequest(req, res);
+  if (!found) return;
+  const { ctx, recordingId, key, videoUrl, win } = found;
+  try {
+    const clip = await reelClip(videoUrl, win.start, win.end);
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Cache-Control", "private, max-age=86400");
     res.setHeader("X-Clip-Offset", clip.offset.toFixed(3));
@@ -826,7 +864,7 @@ router.get("/m/:code/goals/reel/clip", async (req, res): Promise<void> => {
       if (error && !res.headersSent) res.status(500).json({ error: "Could not send the clip" });
     });
   } catch (error) {
-    logger.warn({ code: ctx.room.code, recordingId, key, err: error }, "goal reel clip failed");
+    logger.warn({ code: ctx.room.code, recordingId, key, err: error }, "goal reel clip file failed");
     res.status(502).json({ error: "Could not cut the clip" });
   }
 });
