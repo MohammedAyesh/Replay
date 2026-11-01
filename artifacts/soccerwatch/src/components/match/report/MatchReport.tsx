@@ -26,7 +26,7 @@ import { findPath } from "@/lib/find-nav";
 import { GameBar, Num, Section, visibleColour } from "./ReportParts";
 import { GoalReviewBox } from "@/components/match/GoalReview";
 import { MomentReelButton } from "@/components/match/MomentReel";
-import { CompactLayout, GoalsToCheck, MatchReelRow, SheetLayout } from "./CompactReport";
+import { CompactLayout, MatchReelRow, SheetLayout } from "./CompactReport";
 import { SofaLayout } from "./SofaReport";
 import { ReportHeader } from "./ReportHeader";
 import { ReportScoreRows } from "./ReportScoreRows";
@@ -121,7 +121,6 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
   // Which layout: the admin setting (Match stats → Match report layout), or
   // ?view= on the link. The short layouts are only for someone who has found
   // himself; everyone else, and anything still loading, gets the full report.
-  const layoutCopy = useReportLayoutCopy();
   const search = useSearch();
   const settingsQuery = useClientSettings(room.field.id);
   const viewOverride = new URLSearchParams(search).get("view");
@@ -141,23 +140,8 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
   }
   if (shortLayout && me && stats) {
     const layoutProps = { room, copy, r, now, colors, names, replay, stats, me, players: players ?? [], durationSeconds, onShare };
-    const rest = (
+    const footer = (
       <>
-        {shortLayout === "sofa" && <GoalsToCheck room={room} copy={copy} r={r} colors={colors} names={names} replay={replay} L={layoutCopy} />}
-        <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
-        <MomentReelButton room={room} className="mt-3" />
-        <FlaggedMoments room={room} copy={copy} r={r} />
-        {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}
-        {slots.booking && <div className="pt-4">{slots.booking}</div>}
-        {slots.rsvp && <div className="pt-4">{slots.rsvp}</div>}
-        <ClipsBlock room={room} r={r} />
-        <VoteBlock room={room} copy={copy} r={r} now={now} meId={room.me?.id ?? null} />
-        <SquadBlock room={room} copy={copy} r={r} colors={colors} claimedIds={claimedIds} findRecordingId={findRecordingId} />
-        <div className="flex flex-col">
-          {slots.teams && <Disclosure title={r.teamsAndSwitches} icon={<Users />} tone="turf" testId="report-teams">{slots.teams}</Disclosure>}
-          {slots.invite && <Disclosure title={r.inviteSomeone} icon={<UserPlus />} tone="turf" testId="report-invite">{slots.invite}</Disclosure>}
-          {slots.captainTools && <Disclosure title={r.captainTools} icon={<Shield />} tone="lime" testId="report-captain-tools">{slots.captainTools}</Disclosure>}
-        </div>
         <footer className="flex flex-col gap-2 pt-6">
           <p className="text-[11px] leading-5 text-muted-text">{r.precision}</p>
           <button type="button" onClick={() => setMethods(true)} className="flex min-h-11 items-center gap-2 self-start text-xs font-semibold text-turf"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-turf/15"><Clock3 className="h-4 w-4" /></span>{r.howWeMeasure}</button>
@@ -165,10 +149,44 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
         <MethodsSheet open={methods} onClose={() => setMethods(false)} r={r} />
       </>
     );
+    const squad = (
+      <>
+        <VoteBlock room={room} copy={copy} r={r} now={now} meId={room.me?.id ?? null} />
+        <SquadBlock room={room} copy={copy} r={r} colors={colors} claimedIds={claimedIds} findRecordingId={findRecordingId} />
+        <div className="flex flex-col">
+          {slots.teams && <Disclosure title={r.teamsAndSwitches} icon={<Users />} tone="turf" testId="report-teams">{slots.teams}</Disclosure>}
+          {slots.invite && <Disclosure title={r.inviteSomeone} icon={<UserPlus />} tone="turf" testId="report-invite">{slots.invite}</Disclosure>}
+          {slots.captainTools && <Disclosure title={r.captainTools} icon={<Shield />} tone="lime" testId="report-captain-tools">{slots.captainTools}</Disclosure>}
+        </div>
+      </>
+    );
+    // The sofa layout's Overview is the player's own match at a glance (2026-11-01, Mohammed): his
+    // card, his moments, the top stats and best on the pitch, then the accuracy note. Goals, the
+    // goal reel and flags live on Moments; man of the match, who played and the squad's tools move
+    // to the end of Players; clips, the free-match card and the booking line are left out here.
+    if (shortLayout === "sofa") {
+      return (
+        <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
+          <SofaLayout {...layoutProps} overviewExtras={footer} playersExtras={squad} />
+        </div>
+      );
+    }
+    const rest = (
+      <>
+        <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
+        <MomentReelButton room={room} className="mt-3" />
+        <FlaggedMoments room={room} copy={copy} r={r} />
+        {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}
+        {slots.booking && <div className="pt-4">{slots.booking}</div>}
+        {slots.rsvp && <div className="pt-4">{slots.rsvp}</div>}
+        <ClipsBlock room={room} r={r} />
+        {squad}
+        {footer}
+      </>
+    );
     return (
       <div className="mx-auto flex w-full max-w-xl flex-col px-4 pb-16" data-testid="match-report">
-        {shortLayout === "sofa" ? <SofaLayout {...layoutProps} overviewExtras={rest} />
-          : <>{shortLayout === "compact" ? <CompactLayout {...layoutProps} /> : <SheetLayout {...layoutProps} />}{rest}</>}
+        {shortLayout === "compact" ? <CompactLayout {...layoutProps} /> : <SheetLayout {...layoutProps} />}{rest}
       </div>
     );
   }

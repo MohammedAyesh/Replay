@@ -190,7 +190,7 @@ const en = {
   teamsAndSwitches: "Teams and switches",
   inviteSomeone: "Add someone who played",
 
-  precision: "Distance within 5%, top speed within 1–2 km/h, touches within 10–15%. One camera, nothing to wear.",
+  precision: "Distance within 5%, top speed within 1–2 km/h, touches within 10–15%.",
   howWeMeasure: "How we measure",
   methodsTitle: "How we measure",
   methodsIntro: "Everything comes from one fixed camera. Nobody wears anything. So every number can be a little off, and we never rank players who are closer than that.",
@@ -405,7 +405,7 @@ const ar: ReportStrings = {
   teamsAndSwitches: "الفرق والتبديلات",
   inviteSomeone: "ضيف حدا لعب معنا",
 
-  precision: "المسافة بفرق 5%، أعلى سرعة بفرق 1 لـ 2 كم/س، اللمسات بفرق 10 لـ 15%. كاميرا وحدة، وما في إشي بتلبسه.",
+  precision: "المسافة بفرق 5%، أعلى سرعة بفرق 1 لـ 2 كم/س، اللمسات بفرق 10 لـ 15%.",
   howWeMeasure: "كيف بنقيس",
   methodsTitle: "كيف بنقيس",
   methodsIntro: "كل إشي جاي من كاميرا وحدة ثابتة، وما حدا لابس أي جهاز. فكل رقم ممكن يكون فيه غلط صغير، وما بنرتّب اللاعبين اللي الفرق بينهم أقل من هيك.",
