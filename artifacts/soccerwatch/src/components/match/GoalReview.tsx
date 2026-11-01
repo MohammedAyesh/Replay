@@ -119,13 +119,15 @@ export function useGoalVoting(code: string) {
  * The open chances ("Was it a goal?") and the ones set aside. The confirmed
  * goals are listed by whoever shows the goals; this box is only for answering.
  */
-export function GoalReviewBox({ room, copy, colors, names, replay, className }: {
+export function GoalReviewBox({ room, copy, colors, names, replay, className, hideHeader = false }: {
   room: MatchRoom;
   copy: Copy;
   colors: Record<TeamSide, string>;
   names: Record<TeamSide, string>;
   replay: MatchReplay | undefined;
   className?: string;
+  /** inside a sheet that already carries the title and note */
+  hideHeader?: boolean;
 }) {
   const { vote, pending, error } = useGoalVoting(room.code);
   const [showAll, setShowAll] = useState(false);
@@ -144,8 +146,12 @@ export function GoalReviewBox({ room, copy, colors, names, replay, className }: 
     <div className={className}>
       {open.length > 0 && (
         <div className="rounded-2xl border border-white/10 bg-white/[.03] p-3" data-testid="goal-review">
-          <p className="text-sm font-bold">{copy.gvAskTitle}</p>
-          <p className="mt-1 text-[11px] leading-4 text-muted-text">{copy.gvAskNote}</p>
+          {!hideHeader && (
+            <>
+              <p className="text-sm font-bold">{copy.gvAskTitle}</p>
+              <p className="mt-1 text-[11px] leading-4 text-muted-text">{copy.gvAskNote}</p>
+            </>
+          )}
           {/* the quick way: every open chance played one after another */}
           {canVote && <GoalReelButton room={room} names={names} colors={colors} openCount={open.length} className="mt-3" />}
           <ul className="mt-3 flex flex-col gap-2">{openShown.map(row)}</ul>

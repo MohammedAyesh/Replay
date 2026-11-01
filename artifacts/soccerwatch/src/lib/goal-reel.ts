@@ -104,7 +104,7 @@ export const reelClipUrl = (code: string, card: Pick<ReelCard, "recordingId" | "
   `${apiBase}/m/${encodeURIComponent(code)}/goals/reel/clip?recordingId=${card.recordingId}&key=${card.key}`;
 
 /** cards fetched ahead of the one on screen */
-export const REEL_AHEAD = 3;
+export const REEL_AHEAD = 4;
 /** downloads at once; the card on screen always goes first */
 const PARALLEL = 2;
 
