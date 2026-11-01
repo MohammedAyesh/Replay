@@ -131,8 +131,17 @@ async function downloadClip<C extends ClipCard>(route: ClipRoute<C>, card: C, si
   const where = await clipLocation(route, card, ctl);
   // Bunny's edge (cross-origin, no cookies); in development the API itself
   const sameOrigin = where.url.startsWith("/");
-  const response = await fetch(where.url, { credentials: sameOrigin ? "include" : "omit", signal: ctl });
-  if (!response.ok) throw new Error(`clip file ${response.status}`);
+  // The edge sometimes answers a first pull with 503 (seen on replayjo.com,
+  // 1 Nov: three cards, all fine a moment later), so a 5xx is tried again
+  // after a short pause before the card counts as failed.
+  let response: Response | null = null;
+  for (const pause of [0, 600, 1500]) {
+    if (pause) await new Promise((r) => setTimeout(r, pause));
+    if (ctl.aborted) throw new Error("aborted");
+    response = await fetch(where.url, { credentials: sameOrigin ? "include" : "omit", signal: ctl });
+    if (response.status < 500) break;
+  }
+  if (!response?.ok) throw new Error(`clip file ${response?.status}`);
   const blob = await response.blob();
   return { blob: blob.type ? blob : new Blob([blob], { type: "video/mp4" }), offset: where.offset };
 }
