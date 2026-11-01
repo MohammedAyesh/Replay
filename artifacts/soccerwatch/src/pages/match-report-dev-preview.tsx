@@ -31,7 +31,7 @@ const fixture = (ready: boolean): MatchRoom => ({
   clips: { mine: 0, match: 0 }, prices: { bookingFils: 0 }, booking: null,
 });
 
-/** ?goals=1: three chances nobody has decided, so "Was it a goal?" and its reel show */
+/** ?moments=1: signed in as a player, so "Your moments" asks the API for his moments. ?goals=1: three chances nobody has decided, so "Was it a goal?" and its reel show */
 const chance = (key: number, atSeconds: number, source: "goal" | "shot" | "event"): MatchReplay["goals"][number] => ({
   atSeconds, side: key % 2 ? "A" : "B", scorer: null, recordingId: 1, gameIndex: null, t: atSeconds - 30,
   status: "open", source, key, ownGoal: false, confirmedBy: [], rejectedBy: [], myVote: null,
@@ -54,7 +54,7 @@ export default function MatchReportDevPreview() {
     <main dir={locale === "ar" ? "rtl" : "ltr"} className="min-h-0 flex-1 overflow-y-auto bg-void text-text">
       {!import.meta.env.DEV ? <p>Not found</p> : (
         <MatchReport
-          room={fixture(ready)} copy={copy} now={Date.now()} colors={{ A: "#2FD8C4", B: "#7B5CFF", C: "#2FD8C4" }}
+          room={search.get("moments") === "1" ? { ...fixture(ready), signedIn: true, me: fixture(ready).players[0] } : fixture(ready)} copy={copy} now={Date.now()} colors={{ A: "#2FD8C4", B: "#7B5CFF", C: "#2FD8C4" }}
           names={{ A: copy.teamA, B: copy.teamB, C: copy.teamC }}
           replay={search.get("goals") === "1" ? goalsReplay : { recordings: [], findRecordingId: null, goals: [], shots: null, suggested: null }}
           onShare={() => {}} inviteText="Replay match: https://example.test/m/W5DEMO"

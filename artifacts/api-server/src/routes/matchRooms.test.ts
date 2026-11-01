@@ -358,6 +358,13 @@ describe("a match from invite to vote", () => {
     const stray = await request(app).post(`/api/m/${room.code}/goals/votes`).set(as("ali")).send({ votes: [{ recordingId: 999999, key: 10, verdict: "goal" }] });
     expect(stray.status).toBe(200);
     expect(stray.body).toEqual({ saved: [], skipped: ["999999:10"] });
+    // "Your moments" reel: his own moments only, signed in.
+    expect((await request(app).get(`/api/m/${room.code}/moments/reel`)).status).toBe(401);
+    const moments = await request(app).get(`/api/m/${room.code}/moments/reel`).set(as("ali"));
+    expect(moments.status).toBe(200);
+    expect(moments.body.cards).toEqual([]);
+    expect((await request(app).get(`/api/m/${room.code}/moments/reel/clip?recordingId=1&momentId=x`).set(as("ali"))).status).toBe(404);
+    expect((await request(app).get(`/api/m/${room.code}/moments/reel/clip?recordingId=1`).set(as("ali"))).status).toBe(400);
 
     // The story renderer's context for a clip cut from this match.
     await request(app).post(`/api/m/${room.code}/teams/auto`).set(as("omar")).send({});

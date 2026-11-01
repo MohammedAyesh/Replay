@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { findPath } from "@/lib/find-nav";
 import { GameBar, Num, Section, visibleColour } from "./ReportParts";
 import { GoalReviewBox } from "@/components/match/GoalReview";
+import { MomentReelButton } from "@/components/match/MomentReel";
 import { CompactLayout, GoalsToCheck, MatchReelRow, SheetLayout } from "./CompactReport";
 import { SofaLayout } from "./SofaReport";
 import { ReportHeader } from "./ReportHeader";
@@ -144,6 +145,7 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
       <>
         {shortLayout === "sofa" && <GoalsToCheck room={room} copy={copy} r={r} colors={colors} names={names} replay={replay} L={layoutCopy} />}
         <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
+        <MomentReelButton room={room} className="mt-3" />
         <FlaggedMoments room={room} copy={copy} r={r} />
         {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}
         {slots.booking && <div className="pt-4">{slots.booking}</div>}
@@ -182,6 +184,8 @@ export function MatchReport({ room, copy, now, colors, names, replay, onShare, i
       <GoalList room={room} r={r} colors={colors} replay={replay} meId={meId} names={names} />
       {/* "Was it a goal?": after the whistle the scoreboard is gone, so the players answer here */}
       {replay?.canVoteGoals && <GoalReviewBox room={room} copy={copy} colors={colors} names={names} replay={replay} className="pt-4" />}
+      {/* his own moments: keep each in My Clips or not */}
+      <MomentReelButton room={room} className="mt-4" />
       <FlaggedMoments room={room} copy={copy} r={r} />
 
       {slots.freeMatch && <div className="pt-4">{slots.freeMatch}</div>}

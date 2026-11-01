@@ -1,9 +1,12 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { focusAt } from "@/components/check-deck/DeckVideo";
-import type { ReelCard } from "@/lib/goal-reel";
+import type { FocusPoint } from "@/lib/check-deck";
+
+/** what a reel card needs to play: its id, its stretch (video seconds) and who or what to follow */
+export type PlayableCard = { id: string; start: number; end: number; focus: FocusPoint[] };
 
 /**
- * One goal-reel card playing from its own small MP4, already downloaded into
+ * One reel card (a goal chance, or one of his own moments) playing from its own small MP4, already downloaded into
  * the phone's memory (lib/goal-reel.ts useReelClips). It loops the card's few
  * seconds and follows the ball across the panorama.
  *
@@ -21,7 +24,7 @@ export type ReelVideoState = "loading" | "ready" | "failed";
 export const ReelVideo = memo(function ReelVideo({
   card, src, offset, srcAspect, active, ringColor, tag, fieldViewLabel, onState,
 }: {
-  card: ReelCard;
+  card: PlayableCard;
   /** the card's MP4 (a blob URL), or null while it downloads */
   src: string | null;
   /** where the file starts on the video's clock, seconds */

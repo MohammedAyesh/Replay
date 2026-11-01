@@ -74,6 +74,8 @@ import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { browserVideoUrl } from "../lib/checkDeck";
 import { REEL, reelCards, reelWindow, type ReelPlay, type ReelRecording } from "../lib/goalReel";
 import { reelClip, reelClipOnBunny, storedReelClip } from "../lib/goalReelClip";
+import { momentReelCards, type MomentInput } from "../lib/momentReel";
+import { parseRecordingDuration } from "./userClips";
 import { resyncChainClaimsForRecording } from "./claimChain";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, invalidateMatchStatsCacheForRecording, playerMatchForm } from "../lib/matchStatsCache";
@@ -865,6 +867,139 @@ router.get("/m/:code/goals/reel/clip/file", async (req, res): Promise<void> => {
     });
   } catch (error) {
     logger.warn({ code: ctx.room.code, recordingId, key, err: error }, "goal reel clip file failed");
+    res.status(502).json({ error: "Could not cut the clip" });
+  }
+});
+
+/**
+ * "Your moments" as a reel (2026-11-01, lib/momentReel.ts): the viewer's own
+ * moments in this match that are clips in his My Clips, for him to keep or
+ * drop one after another. Dropping is DELETE /user-clips/:id, as in My Clips.
+ */
+async function momentReelFor(ctx: RoomContext, userId: number) {
+  const links = await recordingsForRoom(ctx);
+  const ids = links.map((l) => l.recordingId);
+  if (!ids.length) return { cards: [], videoUrls: new Map<number, string>(), recordings: [] };
+  const [progress, recordings] = await Promise.all([
+    db.select({ recordingId: claimMatchProgressTable.recordingId, earnedClips: claimMatchProgressTable.earnedClips })
+      .from(claimMatchProgressTable)
+      .where(and(eq(claimMatchProgressTable.userId, userId), inArray(claimMatchProgressTable.recordingId, ids))),
+    db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl, duration: recordingsTable.duration })
+      .from(recordingsTable).where(inArray(recordingsTable.id, ids)),
+  ]);
+  const clipIds = progress.flatMap((p) => (p.earnedClips ?? []).map((m) => m.userClipId).filter((id): id is number => Number.isSafeInteger(id)));
+  const clips = clipIds.length
+    ? await db.select({
+      id: userClipsTable.id, startTime: userClipsTable.startTime, endTime: userClipsTable.endTime,
+      cropPath: userClipsTable.cropPath, isHidden: userClipsTable.isHidden,
+    }).from(userClipsTable).where(and(eq(userClipsTable.userId, userId), inArray(userClipsTable.id, clipIds)))
+    : [];
+  const clipById = new Map(clips.map((c) => [c.id, c]));
+  const recById = new Map(recordings.map((r) => [r.id, r]));
+  const inputs: MomentInput[] = [];
+  for (const p of progress) {
+    const link = links.find((l) => l.recordingId === p.recordingId);
+    const rec = recById.get(p.recordingId);
+    if (!link || !rec?.videoUrl) continue;
+    for (const moment of p.earnedClips ?? []) {
+      const clip = moment.userClipId ? clipById.get(moment.userClipId) : undefined;
+      inputs.push({
+        recordingId: p.recordingId,
+        recordingOffsetSec: link.recordingOffsetSec,
+        videoStartSeconds: link.manifest.videoStartSeconds ?? 0,
+        recordingDuration: parseRecordingDuration(rec.duration) || link.manifest.duration || 0,
+        moment,
+        clip: clip ? { id: clip.id, startTime: Number(clip.startTime), endTime: Number(clip.endTime), cropPath: clip.cropPath ?? [], isHidden: clip.isHidden } : null,
+      });
+    }
+  }
+  return {
+    cards: momentReelCards(inputs),
+    videoUrls: new Map(recordings.filter((r) => r.videoUrl).map((r) => [r.id, r.videoUrl as string])),
+    recordings: links.filter((l) => recById.has(l.recordingId)).map((l) => ({ recordingId: l.recordingId, srcW: l.manifest.width, srcH: l.manifest.height })),
+  };
+}
+
+router.get("/m/:code/moments/reel", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  try {
+    const { cards, videoUrls, recordings } = await momentReelFor(ctx, user.id);
+    const stored = await Promise.all(cards.map((card) => {
+      const videoUrl = videoUrls.get(card.recordingId);
+      return videoUrl ? storedReelClip(card.recordingId, videoUrl, card.start, card.end) : Promise.resolve(null);
+    }));
+    res.json({ recordings, cards: cards.map((card, k) => ({ ...card, clip: stored[k] })) });
+    // cut the rest now, in order, so they are on Bunny before he gets to them
+    cards.forEach((card, k) => {
+      const videoUrl = videoUrls.get(card.recordingId);
+      if (videoUrl && !stored[k]) void reelClipOnBunny(card.recordingId, videoUrl, card.start, card.end, { ahead: true }).catch(() => { /* the page asks again */ });
+    });
+  } catch (error) {
+    logger.error({ code: ctx.room.code, err: error }, "moment reel failed");
+    res.status(500).json({ error: "Could not build your moments" });
+  }
+});
+
+/** GET /m/:code/moments/reel/clip?recordingId=&momentId= -- { url, offset } of one of his moment cards, on Bunny's CDN. */
+router.get("/m/:code/moments/reel/clip", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  const recordingId = Number(req.query.recordingId);
+  const momentId = typeof req.query.momentId === "string" ? req.query.momentId : "";
+  if (!Number.isSafeInteger(recordingId) || !momentId || momentId.length > 200) {
+    res.status(400).json({ error: "Invalid clip" });
+    return;
+  }
+  try {
+    const { cards, videoUrls } = await momentReelFor(ctx, user.id);
+    const card = cards.find((c) => c.recordingId === recordingId && c.momentId === momentId);
+    const videoUrl = videoUrls.get(recordingId);
+    if (!card || !videoUrl) {
+      res.status(404).json({ error: "That moment is not yours in this match" });
+      return;
+    }
+    const onBunny = await reelClipOnBunny(recordingId, videoUrl, card.start, card.end);
+    if (!onBunny) {
+      // development, without Bunny Storage: the cut comes from this server's disk
+      res.json({ url: `/api/m/${encodeURIComponent(ctx.room.code)}/moments/reel/clip/file?recordingId=${recordingId}&momentId=${encodeURIComponent(momentId)}`, offset: card.start });
+      return;
+    }
+    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.json(onBunny);
+  } catch (error) {
+    logger.warn({ code: ctx.room.code, recordingId, momentId, err: error }, "moment reel clip failed");
+    res.status(502).json({ error: "Could not cut the clip" });
+  }
+});
+
+router.get("/m/:code/moments/reel/clip/file", async (req, res): Promise<void> => {
+  const ctx = await loadOr404(req, res);
+  if (!ctx) return;
+  const user = await requirePlayer(req, res);
+  if (!user) return;
+  const recordingId = Number(req.query.recordingId);
+  const momentId = typeof req.query.momentId === "string" ? req.query.momentId : "";
+  try {
+    const { cards, videoUrls } = await momentReelFor(ctx, user.id);
+    const card = cards.find((c) => c.recordingId === recordingId && c.momentId === momentId);
+    const videoUrl = videoUrls.get(recordingId);
+    if (!card || !videoUrl) {
+      res.status(404).json({ error: "That moment is not yours in this match" });
+      return;
+    }
+    const clip = await reelClip(videoUrl, card.start, card.end);
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.sendFile(clip.path, (error) => {
+      if (error && !res.headersSent) res.status(500).json({ error: "Could not send the clip" });
+    });
+  } catch (error) {
+    logger.warn({ code: ctx.room.code, recordingId, momentId, err: error }, "moment reel clip file failed");
     res.status(502).json({ error: "Could not cut the clip" });
   }
 });
