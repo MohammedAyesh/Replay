@@ -22,7 +22,7 @@ const EASE = 0.18;
 export type ReelVideoState = "loading" | "ready" | "failed";
 
 export const ReelVideo = memo(function ReelVideo({
-  card, src, offset, srcAspect, active, ringColor, tag, fieldViewLabel, onState,
+  card, src, offset, srcAspect, active, ringColor, tag, fieldViewLabel, onState, showRing = true,
 }: {
   card: PlayableCard;
   /** the card's MP4 (a blob URL), or null while it downloads */
@@ -35,6 +35,8 @@ export const ReelVideo = memo(function ReelVideo({
   tag: string;
   fieldViewLabel: string;
   onState?: (id: string, state: ReelVideoState) => void;
+  /** draw the ring and tag at the focus point; off when the focus only says roughly where (his clip's frame) */
+  showRing?: boolean;
 }) {
   const boxRef = useRef<HTMLDivElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -161,7 +163,7 @@ export const ReelVideo = memo(function ReelVideo({
           <div className="absolute inset-0 animate-pulse bg-white/[.03]" />
         </div>
       )}
-      <div ref={ringRef} className="pointer-events-none absolute left-0 top-0 rounded-full border-[2.5px]" style={{ borderColor: ringColor, opacity: shown ? 1 : 0 }}>
+      <div ref={ringRef} className="pointer-events-none absolute left-0 top-0 rounded-full border-[2.5px]" style={{ borderColor: ringColor, opacity: shown && showRing ? 1 : 0 }}>
         <div className="absolute inset-0 animate-ping rounded-full border-2" style={{ borderColor: ringColor, animationDuration: "1.4s" }} />
       </div>
       <div className="pointer-events-none absolute right-3 top-3 h-9 w-32 overflow-hidden rounded-md border border-white/30 bg-black/55" dir="ltr">
@@ -173,7 +175,7 @@ export const ReelVideo = memo(function ReelVideo({
         <div ref={barRef} className="h-full origin-left bg-floodlight" style={{ transform: "scaleX(0)" }} />
       </div>
       <span ref={tagRef} className="pointer-events-none absolute left-0 top-0 rounded-md px-2 py-px font-display text-[13px] font-bold text-void"
-        style={{ background: ringColor, opacity: shown ? 1 : 0 }}>
+        style={{ background: ringColor, opacity: shown && showRing ? 1 : 0 }}>
         {tag}
       </span>
     </div>

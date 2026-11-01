@@ -346,7 +346,9 @@ function CardView({ card, depth, copy, clip, srcAspect, active, videoState, onVi
       <div className="relative min-h-0 flex-1">
         {clip && (
           <ReelVideo card={card} src={clip.status === "ready" ? clip.url : null} offset={clip.status === "ready" ? clip.offset : 0}
-            srcAspect={srcAspect} active={active} onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView} />
+            srcAspect={srcAspect} active={active} onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView}
+            // his clip's frame says where he is across the pitch, not how high: pan to him, no ring
+            showRing={false} />
         )}
         <div className="pointer-events-none absolute left-3 right-40 top-3 flex flex-wrap gap-1.5" dir="ltr">
           <span className="rounded-md bg-black/60 px-2 py-0.5 font-display text-xs font-bold text-white">{card.minute}′</span>
