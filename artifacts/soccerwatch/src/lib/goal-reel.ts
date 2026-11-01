@@ -110,10 +110,15 @@ export const REEL_AHEAD = 6;
 /** downloads at once (a card is ~0.45 MB from Bunny); the card on screen always goes first */
 const PARALLEL = 3;
 
+/** Any reel's card, as the downloader needs it: its id and, when it is already on Bunny, where. */
+export type ClipCard = { id: string; clip?: { url: string; offset: number } | null };
+/** The API route that cuts a card (once, onto Bunny) and says where it is. */
+export type ClipRoute<C extends ClipCard> = (card: C) => string;
+
 /** Where a card's MP4 is: on the card already, or from the API (which cuts it once and stores it on Bunny). */
-async function clipLocation(code: string, card: ReelCard, signal: AbortSignal | undefined): Promise<{ url: string; offset: number }> {
+async function clipLocation<C extends ClipCard>(route: ClipRoute<C>, card: C, signal: AbortSignal | undefined): Promise<{ url: string; offset: number }> {
   if (card.clip?.url) return card.clip;
-  const response = await fetch(reelClipUrl(code, card), { credentials: "include", signal });
+  const response = await fetch(route(card), { credentials: "include", signal });
   if (!response.ok) throw new Error(`clip ${response.status}`);
   return response.json() as Promise<{ url: string; offset: number }>;
 }
@@ -121,9 +126,9 @@ async function clipLocation(code: string, card: ReelCard, signal: AbortSignal | 
 /** A card's file fetched before the reel opened (the first card, while the button is on screen). */
 const early = new Map<string, Promise<{ blob: Blob; offset: number }>>();
 
-async function downloadClip(code: string, card: ReelCard, signal?: AbortSignal): Promise<{ blob: Blob; offset: number }> {
+async function downloadClip<C extends ClipCard>(route: ClipRoute<C>, card: C, signal?: AbortSignal): Promise<{ blob: Blob; offset: number }> {
   const ctl = signal ?? new AbortController().signal;
-  const where = await clipLocation(code, card, ctl);
+  const where = await clipLocation(route, card, ctl);
   // Bunny's edge (cross-origin, no cookies); in development the API itself
   const sameOrigin = where.url.startsWith("/");
   const response = await fetch(where.url, { credentials: sameOrigin ? "include" : "omit", signal: ctl });
@@ -133,9 +138,9 @@ async function downloadClip(code: string, card: ReelCard, signal?: AbortSignal):
 }
 
 /** Fetch the first card's file while the button is on screen, so the reel opens playing (~1-2 MB, from Bunny). */
-export function prefetchFirstClip(code: string, card: ReelCard | undefined): void {
+export function prefetchFirstClip<C extends ClipCard>(route: ClipRoute<C>, card: C | undefined): void {
   if (!card || early.has(card.id)) return;
-  const job = downloadClip(code, card);
+  const job = downloadClip(route, card);
   early.set(card.id, job);
   job.catch(() => early.delete(card.id));
 }
@@ -146,7 +151,7 @@ export function prefetchFirstClip(code: string, card: ReelCard | undefined): voi
  * card is within reach (one back for Back), then released. A failed download
  * is tried once more.
  */
-export function useReelClips(code: string, cards: readonly ReelCard[] | null, index: number) {
+export function useReelClips<C extends ClipCard>(route: ClipRoute<C>, cards: readonly C[] | null, index: number) {
   const [clips, setClips] = useState<Record<string, ReelClipState>>({});
   const urls = useRef(new Map<string, string>());
   const inFlight = useRef(new Map<string, AbortController>());
@@ -178,7 +183,7 @@ export function useReelClips(code: string, cards: readonly ReelCard[] | null, in
         try {
           const prefetched = early.get(card.id);
           early.delete(card.id);
-          const { blob, offset } = prefetched ? await prefetched.catch(() => downloadClip(code, card, ctl.signal)) : await downloadClip(code, card, ctl.signal);
+          const { blob, offset } = prefetched ? await prefetched.catch(() => downloadClip(route, card, ctl.signal)) : await downloadClip(route, card, ctl.signal);
           if (ctl.signal.aborted) return;
           const url = URL.createObjectURL(blob);
           urls.current.set(card.id, url);
@@ -192,7 +197,9 @@ export function useReelClips(code: string, cards: readonly ReelCard[] | null, in
         }
       })();
     }
-  }, [code, cards, index, nonce]);
+    // the route is a function of the match only; cards and index drive the downloads
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cards, index, nonce]);
 
   // everything goes when the reel closes
   useEffect(() => () => {
