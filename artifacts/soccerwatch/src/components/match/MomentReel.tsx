@@ -31,7 +31,14 @@ const SWIPE = 96;
 const FLY_MS = 220;
 
 /** The entry row: shows only when he has moments in this match he has not decided. */
-export function MomentReelButton({ room, className }: { room: MatchRoom; className?: string }) {
+export function MomentReelButton({ room, className, variant = "row", label }: {
+  room: MatchRoom;
+  className?: string;
+  /** "link": a small text link (the sofa Overview's "Your moments" strip, 2026-11-01) */
+  variant?: "row" | "link";
+  /** the link's words; the count is added after them */
+  label?: string;
+}) {
   const copy = useMomentReelCopy();
   const [open, setOpen] = useState(false);
   // his moments come from his own claim, so being signed in is enough (he may not be on the squad list)
@@ -43,6 +50,18 @@ export function MomentReelButton({ room, className }: { room: MatchRoom; classNa
   // the first moment downloads while the button is on screen, so the reel opens playing
   useEffect(() => { prefetchFirstClip(route, first); }, [route, first]);
   if (!enabled || !cards.length) return null;
+  if (variant === "link") {
+    return (
+      <>
+        <button type="button" onClick={() => setOpen(true)} className={cn("flex min-h-11 shrink-0 items-center gap-1 text-[13px] font-bold text-turf", className)} data-testid="link-moment-reel">
+          <span>{label ?? copy.title}</span>
+          <span dir="ltr" className="tabular-nums">({cards.length})</span>
+          <span aria-hidden="true" className="inline-block rtl:rotate-180">›</span>
+        </button>
+        {open && <MomentReel room={room} startCards={cards} onClose={() => setOpen(false)} />}
+      </>
+    );
+  }
   return (
     <>
       <button

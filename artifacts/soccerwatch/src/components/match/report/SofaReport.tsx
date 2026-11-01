@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { usePageBack } from "@/lib/use-page-back";
 import { ArrowLeft, Check, ChevronLeft, Crosshair, Flag, Footprints, Goal, HelpCircle, Play, Share2, X, Zap } from "lucide-react";
@@ -7,6 +7,8 @@ import { PlayerAvatar } from "@/components/match/bits";
 import { reviewOf, useGoalVoting } from "@/components/match/GoalReview";
 import { GoalReelButton } from "@/components/match/GoalReel";
 import { MomentReelButton } from "@/components/match/MomentReel";
+import { MomentPlayer, type PlayableMoment } from "@/components/match/MomentPlayer";
+import { pieceAt, prefetchMoment, useMomentFootage } from "@/lib/moment-footage";
 import type { MatchStrings } from "@/i18n/match-strings";
 import type { ReportStrings } from "@/i18n/report-strings";
 import { useReportLayoutCopy, type LayoutStrings } from "@/i18n/report-layout-strings";
@@ -38,8 +40,10 @@ export type SofaProps = {
   players: PlayerStats[];
   durationSeconds: number;
   onShare: () => void;
-  /** the rest of the report (goals, clips, vote, squad, tools), shown under Overview */
+  /** shown at the end of Overview (the accuracy note) */
   overviewExtras?: ReactNode;
+  /** shown at the end of Players (man of the match, who played, the squad's tools) */
+  playersExtras?: ReactNode;
 };
 
 type Tab = "overview" | "moments" | "players" | "player";
@@ -214,9 +218,10 @@ function TwoSidedRow({ label, a, b, format, colors, bar = false }: { label: stri
   );
 }
 
-function Overview({ room, copy, r, S, L, colors, names, stats, me, players, ratings, onOpenMe, extras }: {
+function Overview({ room, copy, r, S, L, colors, names, replay, stats, me, players, ratings, durationSeconds, onOpenMe, extras }: {
   room: MatchRoom; copy: Copy; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
-  stats: Stats; me: PlayerStats; players: PlayerStats[]; ratings: Map<number, number>; onOpenMe: () => void; extras?: ReactNode;
+  replay: MatchReplay | undefined; stats: Stats; me: PlayerStats; players: PlayerStats[]; ratings: Map<number, number>;
+  durationSeconds: number; onOpenMe: () => void; extras?: ReactNode;
 }) {
   const claimed = players.filter((player) => player.claimed);
   const team = stats.team;
@@ -259,6 +264,8 @@ function Overview({ room, copy, r, S, L, colors, names, stats, me, players, rati
         <RatingChip rating={ratings.get(me.playerId) ?? null} />
       </button>
 
+      <YourMomentsStrip room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={names} replay={replay} me={me} durationSeconds={durationSeconds} />
+
       {two && team ? (
         <section className="rounded-[14px] bg-surface px-3.5 pb-2.5 pt-1">
           <div className="flex items-center justify-between pb-1.5 pt-2.5">
@@ -279,15 +286,17 @@ function Overview({ room, copy, r, S, L, colors, names, stats, me, players, rati
         <TwoSidesSection room={room} r={r} copy={copy} whole={team} players={players} />
       )}
 
+      {/* Best on the pitch: one card per award, side by side (2026-11-01, Mohammed: "should be horizontal") */}
       {best.length > 0 && (
-        <section className="rounded-[14px] bg-surface px-3.5 pb-1.5 pt-1">
-          <h2 className="pb-1.5 pt-2.5 text-[15px] font-bold">{S.bestOnPitch}</h2>
-          <ul>
+        <section className="flex flex-col gap-2" data-testid="sofa-best-on-pitch">
+          <h2 className="pt-1 text-[15px] font-bold">{S.bestOnPitch}</h2>
+          <ul className="no-scrollbar -mx-4 flex snap-x scroll-px-4 gap-2.5 overflow-x-auto px-4 pb-1">
             {best.map((row) => (
-              <li key={row.metric} className="flex min-h-12 items-center gap-2.5 border-t border-line py-1.5">
-                <PlayerAvatar name={row.info?.name ?? row.who} initials={row.info?.initials} avatarUrl={row.info?.avatarUrl} size={30} ring={row.mine ? "#D4FF4F" : undefined} />
-                <span className="min-w-0 flex-1 text-sm">{row.label}</span>
-                <span className={cn("shrink-0 text-sm font-bold", row.mine && "text-floodlight")}><bdi>{row.who}</bdi> · <StatLine parts={[row.value]} /></span>
+              <li key={row.metric} className={cn("flex w-[138px] shrink-0 snap-start flex-col gap-2 rounded-[14px] bg-surface p-3", row.mine && "ring-1 ring-floodlight/40")}>
+                <PlayerAvatar name={row.info?.name ?? row.who} initials={row.info?.initials} avatarUrl={row.info?.avatarUrl} size={40} ring={row.mine ? "#D4FF4F" : undefined} />
+                <span className="text-xs leading-snug text-muted-text">{row.label}</span>
+                <StatLine parts={[row.value]} className="text-base font-bold leading-tight" />
+                <span className={cn("truncate text-xs font-bold", row.mine && "text-floodlight")}><bdi>{row.who}</bdi></span>
               </li>
             ))}
           </ul>
@@ -322,9 +331,11 @@ function sortLabel(player: PlayerStats, sort: Sort, L: L): string {
   }
 }
 
-function PlayersTab({ room, r, S, L, colors, names, me, players, ratings, findRecordingId, onOpen }: {
+function PlayersTab({ room, r, S, L, colors, names, me, players, ratings, findRecordingId, onOpen, extras }: {
   room: MatchRoom; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
   me: PlayerStats; players: PlayerStats[]; ratings: Map<number, number>; findRecordingId: number | null; onOpen: (id: number) => void;
+  /** the squad's tools under the ratings: man of the match, who played, teams, add someone, captain tools */
+  extras?: ReactNode;
 }) {
   const [sort, setSort] = useState<Sort>("rating");
   const claimed = players.filter((player) => player.claimed);
@@ -399,6 +410,7 @@ function PlayersTab({ room, r, S, L, colors, names, me, players, ratings, findRe
         </section>
       )}
       {ratings.size > 0 && <p className="text-[11px] text-muted-text">{S.ratingNote}</p>}
+      {extras && <div className="flex flex-col pt-2" data-testid="sofa-players-extras">{extras}</div>}
     </div>
   );
 }
@@ -575,11 +587,8 @@ function TimelineDivider({ children }: { children: ReactNode }) {
 
 type Verdict = "goal" | "not_goal";
 
-function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, onVote, pending, columns }: {
-  event: TimelineEvent; room: MatchRoom; copy: Copy; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
-  canVote: boolean; onVote: (row: NonNullable<TimelineEvent["row"]>, verdict: Verdict) => void; pending: boolean; columns: 1 | 2;
-}) {
-  const href = watchHref(room, event.at);
+/** A timeline moment's icon, title and second line: the card and the popup say the same. */
+function momentText(event: TimelineEvent, copy: Copy, r: R, S: S, L: L, names: Record<TeamSide, string>): { icon: ReactNode; title: ReactNode; sub: ReactNode } {
   const teamName = event.team ? names[event.team] : null;
   let icon: ReactNode;
   let title: ReactNode;
@@ -628,6 +637,19 @@ function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, onVote
       sub = event.flag?.byName ? <bdi>{S.byName(event.flag.byName)}</bdi> : null;
       break;
   }
+  return { icon, title, sub };
+}
+
+function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, onVote, pending, columns, onPlay, onWarm }: {
+  event: TimelineEvent; room: MatchRoom; copy: Copy; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
+  canVote: boolean; onVote: (row: NonNullable<TimelineEvent["row"]>, verdict: Verdict) => void; pending: boolean; columns: 1 | 2;
+  /** play the moment in the popup; null: the watch page, as before */
+  onPlay: (() => void) | null;
+  /** a finger or the pointer is on the card: start fetching its footage */
+  onWarm: () => void;
+}) {
+  const href = watchHref(room, event.at);
+  const { icon, title, sub } = momentText(event, copy, r, S, L, names);
   const row = event.row;
   const votable = event.kind === "likely" && canVote && row !== null && row.key !== undefined;
   const dashed = event.kind === "likely" || event.kind === "chance";
@@ -655,7 +677,9 @@ function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, onVote
   if (votable && row) {
     return (
       <div className={cls} style={style} dir={dir} data-testid={`moment-${event.kind}`}>
-        {href ? <Link href={href} className="block">{body}</Link> : body}
+        {href && onPlay
+          ? <button type="button" onClick={onPlay} onPointerDown={onWarm} onPointerEnter={onWarm} className="block w-full text-start">{body}</button>
+          : href ? <Link href={href} className="block">{body}</Link> : body}
         <span className={cn("flex gap-1.5", columns === 2 && "flex-col")}>
           <button type="button" disabled={pending} onClick={() => onVote(row, "goal")} className="inline-flex min-h-11 flex-1 items-center justify-center gap-1 rounded-full border border-turf/50 px-2 text-xs font-bold text-turf disabled:opacity-50">
             <Check className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />{copy.gvYes}
@@ -667,9 +691,109 @@ function MomentCard({ event, room, copy, r, S, L, colors, names, canVote, onVote
       </div>
     );
   }
+  if (href && onPlay) {
+    return (
+      <button type="button" onClick={onPlay} onPointerDown={onWarm} onPointerEnter={onWarm} className={cn(cls, "w-full")} style={style} dir={dir} data-testid={`moment-${event.kind}`}>
+        {body}
+      </button>
+    );
+  }
   return href
     ? <Link href={href} className={cls} style={style} dir={dir} data-testid={`moment-${event.kind}`}>{body}</Link>
     : <div className={cls} style={style} dir={dir} data-testid={`moment-${event.kind}`}>{body}</div>;
+}
+
+/**
+ * The viewer's own moments as a strip on Overview (2026-11-01): his fastest
+ * run, dribbles won, shots and goals, side by side. A tap plays the moment in
+ * the popup with -5 / +5 (MomentPlayer), as on the Moments tab; "Keep or drop"
+ * opens the reel that saves each one to My Clips or lets it go.
+ */
+function YourMomentsStrip({ room, copy, r, S, L, colors, names, replay, me, durationSeconds }: {
+  room: MatchRoom; copy: Copy; r: R; S: S; L: L; colors: Record<TeamSide, string>; names: Record<TeamSide, string>;
+  replay: MatchReplay | undefined; me: PlayerStats; durationSeconds: number;
+}) {
+  const timeline = useMemo(() => buildTimeline({
+    review: reviewOf(replay),
+    teamCount: room.teamCount,
+    gameCount: room.games.length,
+    roomScore: room.score,
+    durationSeconds,
+    me: room.me ? { playerId: me.playerId, team: me.team, topSpeedKmh: me.topSpeedKmh, report: me.report ?? null } : null,
+    marks: room.marks,
+  }), [replay, room.teamCount, room.games.length, room.score, room.me, room.marks, me, durationSeconds]);
+  const mine = useMemo(() => filterTimeline(timeline.events, "mine"), [timeline.events]);
+  const canPlay = Boolean(room.footage.shareToken);
+  const ats = useMemo(() => mine.map((e) => e.at), [mine]);
+  const footageQuery = useMomentFootage(room.code, ats, canPlay && mine.length > 0);
+  const footage = footageQuery.data;
+  const list = useMemo(() => (footage ? mine.filter((e) => pieceAt(footage.pieces, e.at)) : mine), [footage, mine]);
+  const playable = useMemo(() => list.map((event) => toPlayable(event, room, copy, r, S, L, names, colors)), [list, room, copy, r, S, L, names, colors]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const firstAts = mine.slice(0, 2).map((e) => e.at).join(",");
+  useEffect(() => {
+    for (const at of firstAts ? firstAts.split(",") : []) prefetchMoment(room.code, footage, Number(at));
+  }, [room.code, footage, firstAts]);
+  // Nothing of his own on the timeline: the keep-or-drop row on its own, as before.
+  if (!mine.length) return <MomentReelButton room={room} />;
+  const playsHere = (event: TimelineEvent) => canPlay && !footageQuery.isError && (!footage || Boolean(pieceAt(footage.pieces, event.at)));
+  const openIndex = openId ? playable.findIndex((m) => m.id === openId) : -1;
+  return (
+    <section className="flex flex-col gap-2 rounded-[14px] bg-surface pb-3 pt-1" data-testid="sofa-your-moments">
+      <div className="flex items-center justify-between gap-3 px-3.5">
+        <h2 className="text-[15px] font-bold">{S.yourMomentsTitle} <Num className="font-normal text-muted-text">{`· ${mine.length}`}</Num></h2>
+        <MomentReelButton room={room} variant="link" label={S.keepOrDrop} />
+      </div>
+      <ul className="no-scrollbar flex snap-x scroll-px-3.5 gap-2.5 overflow-x-auto px-3.5">
+        {mine.map((event) => {
+          const { icon, title, sub } = momentText(event, copy, r, S, L, names);
+          const href = watchHref(room, event.at);
+          const body = (
+            <>
+              <span className="relative flex h-[88px] w-full items-center justify-center rounded-xl border border-floodlight/40 bg-[#1A2118] text-floodlight [&_svg]:h-7 [&_svg]:w-7">
+                {icon}
+                <span className="absolute start-1.5 top-1.5 rounded-md bg-void/80 px-1.5 py-px text-[11px] font-bold text-text">
+                  {event.phase === "before" ? S.before : event.phase === "after" ? S.after : <Num>{`${event.minute}′`}</Num>}
+                </span>
+                <span className="absolute bottom-1.5 end-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-floodlight text-void [&_svg]:h-3 [&_svg]:w-3">
+                  <Play className="ms-px fill-current" aria-hidden="true" />
+                </span>
+              </span>
+              <b className="block truncate text-[13px]">{typeof title === "string" ? <bdi>{title}</bdi> : title}</b>
+              {sub && <span className="-mt-1 block truncate text-xs text-muted-text">{sub}</span>}
+            </>
+          );
+          const cls = "flex w-[148px] shrink-0 snap-start flex-col gap-1.5 text-start";
+          return (
+            <li key={event.id}>
+              {playsHere(event) ? (
+                <button type="button" className={cls} onClick={() => setOpenId(event.id)}
+                  onPointerDown={() => prefetchMoment(room.code, footage, event.at, true)} onPointerEnter={() => prefetchMoment(room.code, footage, event.at, true)}
+                  data-testid={`your-moment-${event.kind}`}>
+                  {body}
+                </button>
+              ) : href ? (
+                <Link href={href} className={cls} data-testid={`your-moment-${event.kind}`}>{body}</Link>
+              ) : (
+                <div className={cls}>{body}</div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {openId && openIndex >= 0 && (
+        <MomentPlayer
+          code={room.code}
+          footage={footage ?? null}
+          failed={footageQuery.isError}
+          moments={playable}
+          index={openIndex}
+          onIndex={(index) => setOpenId(playable[index]?.id ?? null)}
+          onClose={() => setOpenId(null)}
+        />
+      )}
+    </section>
+  );
 }
 
 function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSeconds }: {
@@ -696,6 +820,29 @@ function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSe
   // "All" can be empty when there are only plain chances: open the first chip with something.
   const active = chosen === "all" && filters[0]?.count === 0 ? filters.find((f) => f.count > 0)?.id ?? "all" : chosen;
   const shown = filterTimeline(timeline.events, active);
+
+  // A moment plays in a popup with -5 / +5 rather than opening the watch page
+  // (2026-11-01). The footage of every moment on the tab is described as the
+  // tab opens and its first seconds cut ahead on the server, so a tap plays.
+  const canPlay = Boolean(room.footage.shareToken);
+  const ats = useMemo(() => timeline.events.map((e) => e.at), [timeline.events]);
+  const footageQuery = useMomentFootage(room.code, ats, canPlay);
+  const footage = footageQuery.data;
+  const [playing, setPlaying] = useState<{ list: TimelineEvent[]; index: number; id?: string } | null>(null);
+  const playable = useMemo(() => playing?.list.map((event) => toPlayable(event, room, copy, r, S, L, names, colors)) ?? [], [playing, room, copy, r, S, L, names, colors]);
+  // the first moments on the tab are on the phone before a thumb reaches them
+  const firstAts = shown.slice(0, 3).map((event) => event.at).join(",");
+  useEffect(() => {
+    for (const at of firstAts ? firstAts.split(",") : []) prefetchMoment(room.code, footage, Number(at));
+  }, [room.code, footage, firstAts]);
+  // The popup plays when the footage is described (or still being described).
+  // If that failed, or the moment has no analysed recording under it (a flag on
+  // a match never analysed), the watch page, as before.
+  const onPlayFor = (event: TimelineEvent): (() => void) | null => (
+    canPlay && !footageQuery.isError && (!footage || pieceAt(footage.pieces, event.at))
+      ? () => setPlaying({ list: footage ? shown.filter((e) => pieceAt(footage.pieces, e.at)) : shown, index: 0, id: event.id })
+      : null
+  );
   const two = timeline.columns === 2;
   const canVote = Boolean(replay?.canVoteGoals);
   const label: Record<TimelineFilter, string> = { all: S.filterAll, goals: S.filterGoals, chances: S.filterChances, mine: S.filterMine };
@@ -724,7 +871,10 @@ function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSe
       event.mine ? "bg-floodlight text-void" : event.kind === "likely" || event.kind === "chance" ? "border border-dashed border-[#5B6680] bg-void text-muted-text" : "border border-line bg-surface",
     )}>{event.phase === "before" ? S.before : event.phase === "after" ? S.after : <Num>{`${event.minute}′`}</Num>}</span>
   );
-  const card = (event: TimelineEvent) => <MomentCard event={event} room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={names} canVote={canVote} onVote={onVote} pending={pending} columns={timeline.columns} />;
+  const card = (event: TimelineEvent) => (
+    <MomentCard event={event} room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={names} canVote={canVote} onVote={onVote} pending={pending} columns={timeline.columns}
+      onPlay={onPlayFor(event)} onWarm={() => prefetchMoment(room.code, footage, event.at, true)} />
+  );
   const item = (event: TimelineEvent) => (
     <li key={event.id} className={cn("relative grid items-center gap-1.5", two ? "grid-cols-[minmax(0,1fr)_44px_minmax(0,1fr)]" : "grid-cols-[44px_minmax(0,1fr)]")}>
       {two ? (
@@ -792,13 +942,42 @@ function MomentsTab({ room, copy, r, S, L, colors, names, replay, me, durationSe
       </div>
       {error && <p className="text-xs font-semibold text-live">{copy.gvVoteError}</p>}
       {room.me && <MatchReelRow room={room} L={L} r={r} />}
+      {playing && playable.length > 0 && (
+        <MomentPlayer
+          code={room.code}
+          footage={footage ?? null}
+          failed={footageQuery.isError}
+          moments={playable}
+          index={playing.id ? Math.max(0, playing.list.findIndex((e) => e.id === playing.id)) : Math.min(playing.index, playable.length - 1)}
+          onIndex={(index) => setPlaying((p) => (p ? { ...p, index, id: undefined } : p))}
+          onClose={() => setPlaying(null)}
+        />
+      )}
     </div>
   );
 }
 
+/** A timeline moment as the popup shows it. */
+function toPlayable(event: TimelineEvent, room: MatchRoom, copy: Copy, r: R, S: S, L: L, names: Record<TeamSide, string>, colors: Record<TeamSide, string>): PlayableMoment {
+  const { icon, title, sub } = momentText(event, copy, r, S, L, names);
+  const accent = event.mine
+    ? "#D4FF4F"
+    : event.team ? visibleColour(colors[event.team], event.team === "A" ? "#F2F4F8" : "#FF6B1A") : "#C9D1E0";
+  return {
+    id: event.id,
+    at: event.at,
+    title: typeof title === "string" ? <bdi>{title}</bdi> : title,
+    sub,
+    icon,
+    accent,
+    minute: event.phase === "before" ? S.before : event.phase === "after" ? S.after : <Num>{`${event.minute}′`}</Num>,
+    href: watchHref(room, event.at),
+  };
+}
+
 /* ------------------------------------------------------------------ the layout */
 
-export function SofaLayout({ room, copy, r, colors, names, replay, stats, me, players, durationSeconds, onShare, overviewExtras }: SofaProps) {
+export function SofaLayout({ room, copy, r, colors, names, replay, stats, me, players, durationSeconds, onShare, overviewExtras, playersExtras }: SofaProps) {
   const L = useReportLayoutCopy();
   const S = L.sofa;
   const [tab, setTab] = useState<Tab>("overview");
@@ -816,9 +995,9 @@ export function SofaLayout({ room, copy, r, colors, names, replay, stats, me, pl
   return (
     <div className="flex flex-col" data-testid="report-layout-sofa">
       <SofaHeader room={room} copy={copy} S={S} colors={colors} names={teamNames} replay={replay} onShare={onShare} tab={tab === "player" && selected !== null ? "players" : tab} setTab={(next) => { setTab(next); setSelected(null); }} />
-      {tab === "overview" && <Overview room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={teamNames} stats={stats} me={me} players={players} ratings={ratings} onOpenMe={() => open(me.playerId)} extras={overviewExtras} />}
+      {tab === "overview" && <Overview room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={teamNames} replay={replay} stats={stats} me={me} players={players} ratings={ratings} durationSeconds={durationSeconds} onOpenMe={() => open(me.playerId)} extras={overviewExtras} />}
       {tab === "moments" && <MomentsTab room={room} copy={copy} r={r} S={S} L={L} colors={colors} names={teamNames} replay={replay} me={me} durationSeconds={durationSeconds} />}
-      {tab === "players" && <PlayersTab room={room} r={r} S={S} L={L} colors={colors} names={teamNames} me={me} players={players} ratings={ratings} findRecordingId={findRecordingId} onOpen={open} />}
+      {tab === "players" && <PlayersTab room={room} r={r} S={S} L={L} colors={colors} names={teamNames} me={me} players={players} ratings={ratings} findRecordingId={findRecordingId} onOpen={open} extras={playersExtras} />}
       {tab === "player" && <PlayerPage room={room} S={S} r={r} me={me} player={shown} players={players} ratings={ratings} stats={stats} durationSeconds={durationSeconds} onBack={selected !== null ? () => setTab("players") : null} />}
     </div>
   );

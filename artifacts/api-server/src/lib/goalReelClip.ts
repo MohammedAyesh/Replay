@@ -47,6 +47,14 @@ const MAX_PARALLEL_CUTS = 3;
 const OUT_WIDTH = 1920;
 /** bump to stop serving files cut by an older recipe */
 const RECIPE = "v2-1920-crf27";
+/**
+ * A clip may ask for a keyframe every `gop` frames (the moment popup's tiles,
+ * lib/momentTiles.ts: a -5 s step lands anywhere in a tile, and with one
+ * keyframe per tile the phone decodes up to ten seconds to get there). It is
+ * part of the recipe, so a tile and a goal-reel card are never the same file.
+ */
+export type ClipRecipe = { gop?: number };
+const recipeOf = (r: ClipRecipe | undefined) => (r?.gop ? `${RECIPE}-g${r.gop}` : RECIPE);
 const FETCH_TIMEOUT_MS = 20_000;
 
 export type MediaSegment = { url: string; start: number; duration: number };
@@ -169,8 +177,8 @@ export type ReelClip = { path: string; offset: number };
 const inFlight = new Map<string, Promise<ReelClip>>();
 
 /** One card as an MP4 on disk: the segments covering [from, to] (video seconds), remuxed. */
-export function reelClip(videoUrl: string, from: number, to: number, opts: { ahead?: boolean } = {}): Promise<ReelClip> {
-  const id = createHash("sha1").update(`${RECIPE}|${videoUrl}|${from.toFixed(1)}|${to.toFixed(1)}`).digest("hex").slice(0, 20);
+export function reelClip(videoUrl: string, from: number, to: number, opts: { ahead?: boolean } & ClipRecipe = {}): Promise<ReelClip> {
+  const id = createHash("sha1").update(`${recipeOf(opts)}|${videoUrl}|${from.toFixed(1)}|${to.toFixed(1)}`).digest("hex").slice(0, 20);
   const existing = inFlight.get(id);
   if (existing) {
     if (!opts.ahead) promote(id);
@@ -210,6 +218,7 @@ export function reelClip(videoUrl: string, from: number, to: number, opts: { ahe
           "-vf", `scale=${OUT_WIDTH}:-2`,
           "-c:v", "libx264", "-preset", "veryfast", "-crf", "27",
           "-maxrate", "3M", "-bufsize", "6M",
+          ...(opts.gop ? ["-g", String(opts.gop), "-keyint_min", String(opts.gop), "-sc_threshold", "0"] : []),
           "-pix_fmt", "yuv420p", "-profile:v", "high",
           "-movflags", "+faststart",
           "-f", "mp4", tmp,
@@ -244,9 +253,9 @@ export type StoredReelClip = { url: string; offset: number };
 const listed = new Map<number, { at: number; names: Promise<Set<string>> }>();
 const LIST_TTL_MS = 5 * 60_000;
 
-function storedName(recordingId: number, videoUrl: string, from: number, to: number): string {
+function storedName(recordingId: number, videoUrl: string, from: number, to: number, recipe?: ClipRecipe): string {
   const secret = BUNNY_STORAGE_API_KEY || "replay-goal-reel";
-  return `${createHmac("sha256", secret).update(`${RECIPE}|${recordingId}|${videoUrl}|${from.toFixed(1)}|${to.toFixed(1)}`).digest("hex").slice(0, 32)}.mp4`;
+  return `${createHmac("sha256", secret).update(`${recipeOf(recipe)}|${recordingId}|${videoUrl}|${from.toFixed(1)}|${to.toFixed(1)}`).digest("hex").slice(0, 32)}.mp4`;
 }
 
 const reelDir = (recordingId: number) => `reel/${recordingId}`;
@@ -287,9 +296,9 @@ function storedNames(recordingId: number): Promise<Set<string>> {
 }
 
 /** Already on Bunny? Then its address, without cutting anything. */
-export async function storedReelClip(recordingId: number, videoUrl: string, from: number, to: number): Promise<StoredReelClip | null> {
+export async function storedReelClip(recordingId: number, videoUrl: string, from: number, to: number, recipe?: ClipRecipe): Promise<StoredReelClip | null> {
   if (!isBunnyStorageConfigured()) return null;
-  const name = storedName(recordingId, videoUrl, from, to);
+  const name = storedName(recordingId, videoUrl, from, to, recipe);
   try {
     return (await storedNames(recordingId)).has(name) ? { url: cdnUrl(`${reelDir(recordingId)}/${name}`), offset: from } : null;
   } catch {
@@ -304,17 +313,17 @@ const uploading = new Map<string, Promise<StoredReelClip>>();
  * Storage is not configured (development), where the API serves the file.
  */
 export async function reelClipOnBunny(
-  recordingId: number, videoUrl: string, from: number, to: number, opts: { ahead?: boolean } = {},
+  recordingId: number, videoUrl: string, from: number, to: number, opts: { ahead?: boolean } & ClipRecipe = {},
 ): Promise<StoredReelClip | null> {
   if (!isBunnyStorageConfigured()) return null;
-  const known = await storedReelClip(recordingId, videoUrl, from, to);
+  const known = await storedReelClip(recordingId, videoUrl, from, to, opts);
   if (known) return known;
-  const name = storedName(recordingId, videoUrl, from, to);
+  const name = storedName(recordingId, videoUrl, from, to, opts);
   const remotePath = `${reelDir(recordingId)}/${name}`;
   const running = uploading.get(remotePath);
   if (running) {
     // a page now waits for a card queued ahead: its cut goes first
-    if (!opts.ahead) void reelClip(videoUrl, from, to).catch(() => {});
+    if (!opts.ahead) void reelClip(videoUrl, from, to, { gop: opts.gop }).catch(() => {});
     return running;
   }
   const job = (async () => {
