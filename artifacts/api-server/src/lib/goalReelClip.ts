@@ -21,12 +21,20 @@
  * The file starts exactly at the card's start; the route tells the page that
  * offset (video seconds) all the same, so the page never assumes it.
  */
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseMasterPlaylist } from "./exportSource";
+import {
+  BUNNY_STORAGE_API_KEY,
+  BUNNY_STORAGE_CDN_URL,
+  BUNNY_STORAGE_HOSTNAME,
+  BUNNY_STORAGE_ZONE,
+  isBunnyStorageConfigured,
+  uploadFileToBunnyStoragePath,
+} from "./bunny";
 import { logger } from "./logger";
 
 /** the lightest rung worth showing: below this a far-side player is a smudge, px (as the deck) */
@@ -218,5 +226,90 @@ export function reelClip(videoUrl: string, from: number, to: number, opts: { ahe
   })();
   inFlight.set(id, job);
   job.finally(() => inFlight.delete(id)).catch(() => {});
+  return job;
+}
+
+/* ---------------------------------------------------- stored on Bunny (1 Nov) */
+
+/**
+ * Cards live on Bunny Storage and play from its pull zone (replayjo.b-cdn.net:
+ * public, CORS-readable, Range-capable, checked from replayjo.com on 1 Nov).
+ * Our server cuts a card once, ever; every phone after that downloads it from
+ * Bunny's edge, never through this server (~15 Mbit/s from Replit against
+ * ~20-45 from the edge, measured the same day). The object name is an HMAC of
+ * the card, so a card's address cannot be guessed from the match.
+ */
+export type StoredReelClip = { url: string; offset: number };
+
+const listed = new Map<number, { at: number; names: Promise<Set<string>> }>();
+const LIST_TTL_MS = 5 * 60_000;
+
+function storedName(recordingId: number, videoUrl: string, from: number, to: number): string {
+  const secret = BUNNY_STORAGE_API_KEY || "replay-goal-reel";
+  return `${createHmac("sha256", secret).update(`${RECIPE}|${recordingId}|${videoUrl}|${from.toFixed(1)}|${to.toFixed(1)}`).digest("hex").slice(0, 32)}.mp4`;
+}
+
+const reelDir = (recordingId: number) => `reel/${recordingId}`;
+const cdnUrl = (remotePath: string) => `${BUNNY_STORAGE_CDN_URL.replace(/\/$/, "")}/${remotePath}`;
+
+/** The card files already stored for a recording (one Storage listing, cached). */
+function storedNames(recordingId: number): Promise<Set<string>> {
+  const hit = listed.get(recordingId);
+  if (hit && Date.now() - hit.at < LIST_TTL_MS) return hit.names;
+  const names = (async () => {
+    const response = await fetch(`https://${BUNNY_STORAGE_HOSTNAME}/${BUNNY_STORAGE_ZONE}/${reelDir(recordingId)}/`, {
+      headers: { AccessKey: BUNNY_STORAGE_API_KEY, Accept: "application/json" },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (response.status === 404) return new Set<string>();
+    if (!response.ok) throw new Error(`storage listing ${response.status}`);
+    const rows = (await response.json()) as Array<{ ObjectName?: string; IsDirectory?: boolean }>;
+    return new Set(rows.filter((r) => !r.IsDirectory && r.ObjectName).map((r) => r.ObjectName!));
+  })();
+  listed.set(recordingId, { at: Date.now(), names });
+  names.catch(() => listed.delete(recordingId));
+  return names;
+}
+
+/** Already on Bunny? Then its address, without cutting anything. */
+export async function storedReelClip(recordingId: number, videoUrl: string, from: number, to: number): Promise<StoredReelClip | null> {
+  if (!isBunnyStorageConfigured()) return null;
+  const name = storedName(recordingId, videoUrl, from, to);
+  try {
+    return (await storedNames(recordingId)).has(name) ? { url: cdnUrl(`${reelDir(recordingId)}/${name}`), offset: from } : null;
+  } catch {
+    return null;
+  }
+}
+
+const uploading = new Map<string, Promise<StoredReelClip>>();
+
+/**
+ * The card on Bunny: cut it here (reelClip) and upload it, once. Null when
+ * Storage is not configured (development), where the API serves the file.
+ */
+export async function reelClipOnBunny(
+  recordingId: number, videoUrl: string, from: number, to: number, opts: { ahead?: boolean } = {},
+): Promise<StoredReelClip | null> {
+  if (!isBunnyStorageConfigured()) return null;
+  const known = await storedReelClip(recordingId, videoUrl, from, to);
+  if (known) return known;
+  const name = storedName(recordingId, videoUrl, from, to);
+  const remotePath = `${reelDir(recordingId)}/${name}`;
+  const running = uploading.get(remotePath);
+  if (running) {
+    // a page now waits for a card queued ahead: its cut goes first
+    if (!opts.ahead) void reelClip(videoUrl, from, to).catch(() => {});
+    return running;
+  }
+  const job = (async () => {
+    const clip = await reelClip(videoUrl, from, to, opts);
+    await uploadFileToBunnyStoragePath(clip.path, remotePath);
+    (await storedNames(recordingId).catch(() => new Set<string>())).add(name);
+    await fs.promises.rm(clip.path, { force: true });
+    return { url: cdnUrl(remotePath), offset: clip.offset };
+  })();
+  uploading.set(remotePath, job);
+  job.finally(() => uploading.delete(remotePath)).catch(() => {});
   return job;
 }

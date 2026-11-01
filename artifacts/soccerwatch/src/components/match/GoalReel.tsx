@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, CircleAlert, Loader2, Play, Trophy, Undo2, X } from "lucide-react";
 import { ReelVideo, type ReelVideoState } from "@/components/match/ReelVideo";
-import { createVoteSaver, useGoalReel, useReelClips, type ReelCard, type ReelClipState } from "@/lib/goal-reel";
+import { createVoteSaver, prefetchFirstClip, useGoalReel, useReelClips, type ReelCard, type ReelClipState } from "@/lib/goal-reel";
 import { matchKey, type MatchRoom, type TeamSide } from "@/lib/match-api";
 import { useGoalReelCopy, type GoalReelStrings } from "@/i18n/goal-reel-strings";
 import { cn } from "@/lib/utils";
@@ -44,8 +44,10 @@ export function GoalReelButton({ room, names, colors, openCount, className, vari
 }) {
   const copy = useGoalReelCopy();
   const [open, setOpen] = useState(false);
-  // prefetch: by the time the thumb lands the cards are here
-  useGoalReel(room.code, openCount > 0);
+  // prefetch: by the time the thumb lands the cards are here, and the first one's video too
+  const reel = useGoalReel(room.code, openCount > 0);
+  const first = reel.data?.cards[0];
+  useEffect(() => { prefetchFirstClip(room.code, first); }, [room.code, first]);
   if (openCount <= 0) return null;
   return (
     <>
