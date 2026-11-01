@@ -74,7 +74,8 @@ describe("goal reel clip: cut from a real HLS", () => {
   it("stores a card on Bunny once and hands out the CDN address after that", async () => {
     vi.stubEnv("BUNNY_STORAGE_ZONE", "zone");
     vi.stubEnv("BUNNY_STORAGE_API_KEY", "key");
-    vi.stubEnv("BUNNY_STORAGE_CDN_URL", "https://cdn.example/");
+    // as on production: the authenticated origin, which a phone cannot open
+    vi.stubEnv("BUNNY_STORAGE_CDN_URL", "https://storage.example/zone");
     vi.stubEnv("BUNNY_STORAGE_HOSTNAME", "storage.example");
     vi.resetModules();
     const realFetch = globalThis.fetch;
@@ -98,7 +99,7 @@ describe("goal reel clip: cut from a real HLS", () => {
     try {
       const mod = await import("./goalReelClip");
       const first = await mod.reelClipOnBunny(77, `${base}/playlist.m3u8`, 9, 15);
-      expect(first?.url).toMatch(/^https:\/\/cdn\.example\/reel\/77\/[0-9a-f]{32}\.mp4$/);
+      expect(first?.url).toMatch(/^https:\/\/replayjo\.b-cdn\.net\/reel\/77\/[0-9a-f]{32}\.mp4$/);
       expect(first?.offset).toBe(9);
       expect([...stored.values()][0]).toBeGreaterThan(10_000);
       // the same card again: no second cut, no second upload
