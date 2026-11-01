@@ -68,3 +68,4 @@
 - [Bunny export proxy cancellation](bunny-export-proxy-cancellation.md) — keep Storage credentials server-side and tie client disconnects to an abortable upstream HTTP stream.
 - [Teammate identity confirmation](teammate-identity-confirmation.md) — a friend must confirm through their own `/find` claim; the requester never binds another account's identity.
 - [Match-window detector ambiguity](match-window-detector-ambiguity.md) — phase labels can show multiple games occurred, but cannot identify which one was booked; fail closed without booking context.
+- [Git write guard](git-write-guard.md) — retry an explicitly authorized fetch or merge with `DANGEROUSLY_ALLOW_GIT=1` when the workspace blocks `.git` metadata writes.
