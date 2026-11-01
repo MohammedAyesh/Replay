@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Crown, Shield, UserPlus, Users } from "lucide-react";
 import { GoalReviewBox } from "@/components/match/GoalReview";
+import { MomentReelButton } from "@/components/match/MomentReel";
 import { formatDay } from "@/components/match/bits";
 import type { MatchStrings } from "@/i18n/match-strings";
 import { useReportCopy, type ReportStrings } from "@/i18n/report-strings";
@@ -138,6 +139,7 @@ export function WaitingReport({ room, copy, now, colors, names, replay, onShare,
       <VoteSheet room={room} copy={copy} r={r} open={voteOpen} onOpenChange={setVoteOpen} />
 
       {replay?.canVoteGoals && <GoalReviewBox room={room} copy={copy} colors={colors} names={names} replay={replay} className="pt-4" />}
+      <MomentReelButton room={room} className="mt-4" />
 
       <div className="mt-4 flex flex-col">
         <Disclosure title={r.squad} icon={<Users />} tone="turf">

@@ -34,7 +34,8 @@ const FLY_MS = 220;
 export function MomentReelButton({ room, className }: { room: MatchRoom; className?: string }) {
   const copy = useMomentReelCopy();
   const [open, setOpen] = useState(false);
-  const enabled = Boolean(room.signedIn && room.me);
+  // his moments come from his own claim, so being signed in is enough (he may not be on the squad list)
+  const enabled = Boolean(room.signedIn);
   const reel = useMomentReel(room.code, enabled);
   const cards = useMemo(() => undecided(room.code, reel.data?.cards), [room.code, reel.data, open]);
   const route = useCallback((card: MomentReelCard) => momentClipUrl(room.code, card), [room.code]);
