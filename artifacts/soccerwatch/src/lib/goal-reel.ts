@@ -106,9 +106,9 @@ export const reelClipUrl = (code: string, card: Pick<ReelCard, "recordingId" | "
   `${apiBase}/m/${encodeURIComponent(code)}/goals/reel/clip?recordingId=${card.recordingId}&key=${card.key}`;
 
 /** cards fetched ahead of the one on screen */
-export const REEL_AHEAD = 4;
-/** downloads at once; the card on screen always goes first */
-const PARALLEL = 2;
+export const REEL_AHEAD = 6;
+/** downloads at once (a card is ~0.45 MB from Bunny); the card on screen always goes first */
+const PARALLEL = 3;
 
 /** Where a card's MP4 is: on the card already, or from the API (which cuts it once and stores it on Bunny). */
 async function clipLocation(code: string, card: ReelCard, signal: AbortSignal | undefined): Promise<{ url: string; offset: number }> {
@@ -142,7 +142,7 @@ export function prefetchFirstClip(code: string, card: ReelCard | undefined): voi
 
 /**
  * Each card's MP4, downloaded into memory ahead of time, from Bunny's CDN: the card on screen
- * first, then the next REEL_AHEAD, two at a time. A file is kept while its
+ * first, then the next REEL_AHEAD, three at a time. A file is kept while its
  * card is within reach (one back for Back), then released. A failed download
  * is tried once more.
  */
