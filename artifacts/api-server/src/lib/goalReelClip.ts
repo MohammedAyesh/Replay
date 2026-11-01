@@ -250,7 +250,22 @@ function storedName(recordingId: number, videoUrl: string, from: number, to: num
 }
 
 const reelDir = (recordingId: number) => `reel/${recordingId}`;
-const cdnUrl = (remotePath: string) => `${BUNNY_STORAGE_CDN_URL.replace(/\/$/, "")}/${remotePath}`;
+/**
+ * The storage zone's public pull zone. Not BUNNY_STORAGE_CDN_URL: on
+ * production that is storage.bunnycdn.com, the authenticated origin, which
+ * answers a phone with 401 (found live on 1 Nov; routes/clipIntro.ts says the
+ * same). galaxyfield's pull zone is replayjo.b-cdn.net.
+ */
+export function reelCdnBase(): string {
+  const set = (process.env.BUNNY_REEL_CDN_URL ?? "").trim();
+  if (set) return set.replace(/\/$/, "");
+  const storageCdn = BUNNY_STORAGE_CDN_URL.trim();
+  try {
+    if (storageCdn && new URL(storageCdn).hostname.endsWith(".b-cdn.net")) return storageCdn.replace(/\/$/, "");
+  } catch { /* not a URL */ }
+  return "https://replayjo.b-cdn.net";
+}
+const cdnUrl = (remotePath: string) => `${reelCdnBase()}/${remotePath}`;
 
 /** The card files already stored for a recording (one Storage listing, cached). */
 function storedNames(recordingId: number): Promise<Set<string>> {
