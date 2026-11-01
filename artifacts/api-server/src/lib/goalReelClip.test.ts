@@ -71,15 +71,16 @@ describe("goal reel clip: cut from a real HLS", () => {
   }, 60_000);
   afterAll(() => { server?.close(); if (dir) fs.rmSync(dir, { recursive: true, force: true }); });
 
-  it("remuxes the covering segments of the 720 rung into a playable MP4 that starts at the first segment", async () => {
+  it("encodes exactly the card from the 720 rung into a 1920-wide MP4", async () => {
     const clip = await reelClip(`${base}/playlist.m3u8`, 5, 11);
-    expect(clip.offset).toBe(4);
+    expect(clip.offset).toBe(5);
     const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", clip.path]).toString());
     expect(probe.streams).toHaveLength(1);
-    expect(probe.streams[0].height).toBe(720);
-    // from 4 s (the segment start) to 11 s (the card's end)
-    expect(Number(probe.format.duration)).toBeGreaterThan(6.5);
-    expect(Number(probe.format.duration)).toBeLessThan(7.5);
+    expect(probe.streams[0].width).toBe(1920);
+    expect(probe.streams[0].codec_name).toBe("h264");
+    // exactly the card: 5 s to 11 s
+    expect(Number(probe.format.duration)).toBeGreaterThan(5.8);
+    expect(Number(probe.format.duration)).toBeLessThan(6.2);
     expect(Number(probe.format.start_time)).toBeLessThan(0.1);
     // the second ask is the file already on disk
     const again = await reelClip(`${base}/playlist.m3u8`, 5, 11);

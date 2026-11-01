@@ -761,12 +761,15 @@ router.get("/m/:code/goals/reel", async (req, res): Promise<void> => {
     }
     const cards = reelCards(replay.review, plays);
     res.json({ recordings, cards, open: replay.review.filter((g) => g.status === "open").length });
-    // The page fetches this list as soon as the button shows, so cut the first
-    // cards now: by the time the reel opens their files are on disk.
+    // The page fetches this list as soon as the button shows, so cut every
+    // card now, in reel order: the first ones are on disk by the time the reel
+    // opens, and the rest stay ahead of a quick thumb (one tap a second
+    // outran on-demand cuts on 1 Nov). These queue behind any card a page is
+    // waiting for (goalReelClip.ts); a cut file is kept for everyone.
     const raw = new Map(rows.map((row) => [row.id, row.videoUrl]));
-    for (const card of cards.slice(0, 3)) {
+    for (const card of cards) {
       const videoUrl = raw.get(card.recordingId);
-      if (videoUrl) void reelClip(videoUrl, card.start, card.end).catch(() => { /* the page asks again */ });
+      if (videoUrl) void reelClip(videoUrl, card.start, card.end, { ahead: true }).catch(() => { /* the page asks again */ });
     }
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "goal reel failed");

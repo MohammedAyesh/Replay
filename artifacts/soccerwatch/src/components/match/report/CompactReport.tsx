@@ -131,7 +131,7 @@ export function GoalsToCheck({ room, copy, r, colors, names, replay, L }: { room
           data-testid="button-goals-to-check"
         >
           <span className="h-2 w-2 shrink-0 rounded-full bg-live" aria-hidden="true" />
-          <span className="flex-1">{likely ? L.goalsToCheck(likely) : L.chancesToCheck(chances.length)}</span>
+          <span className="flex-1">{likely ? L.goalsToCheck(likely) : reelCopy.asList(chances.length)}</span>
           <span className="text-turf">{reelCopy.list}</span>
           <ChevronRight className="h-4 w-4 rtl:rotate-180" />
         </button>
@@ -140,9 +140,9 @@ export function GoalsToCheck({ room, copy, r, colors, names, replay, L }: { room
         <SheetContent side="bottom" dir={L.locale === "ar" ? "rtl" : "ltr"} closeLabel={r.close} className="flex max-h-[88dvh] flex-col overflow-y-auto rounded-t-3xl border-line bg-void px-5 pb-8 pt-5 text-text">
           <SheetHeader className="pe-8 text-start">
             <SheetTitle className="font-display text-2xl font-bold">{copy.gvAskTitle}</SheetTitle>
-            <SheetDescription className="sr-only">{copy.gvAskNote}</SheetDescription>
+            <SheetDescription className="text-xs leading-5 text-muted-text">{copy.gvAskNote}</SheetDescription>
           </SheetHeader>
-          <GoalReviewBox room={room} copy={copy} colors={colors} names={names} replay={replay} className="pt-3" />
+          <GoalReviewBox room={room} copy={copy} colors={colors} names={names} replay={replay} className="pt-3" hideHeader />
         </SheetContent>
       </Sheet>
     </>

@@ -9,16 +9,17 @@
  * behind never got ahead. A card is now one short MP4:
  *
  *   - the server reads the variant playlist once per recording (cached), picks
- *     the segments that cover the card, fetches them from Bunny (server to
- *     CDN, fast) and remuxes them, no re-encode, into a faststart MP4 of the
- *     video track only (~3-5 MB on the 2560x720 rung);
+ *     the segments that cover the card, fetches them from Bunny and encodes
+ *     exactly the card's seconds, video only, at 1920x540 into a faststart MP4
+ *     (~1-2 MB). The first version copied whole segments without encoding:
+ *     ~5 MB a card, 3-4 s of it before the card, and 2.7 s to download even
+ *     when cached (measured on replayjo.com, 1 Nov);
  *   - the phone downloads that one file into memory ahead of time and plays it
  *     from there, so the next card is already on the phone when it comes up;
  *   - files are kept on disk and shared by everyone in the match.
  *
- * A segment starts on a keyframe, so the file starts at the first covering
- * segment's start and nothing is re-encoded; the route tells the page that
- * offset (video seconds) so it can seek to the card's own start.
+ * The file starts exactly at the card's start; the route tells the page that
+ * offset (video seconds) all the same, so the page never assumes it.
  */
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -34,6 +35,10 @@ const PLAYLIST_TTL_MS = 30 * 60_000;
 const CACHE_DIR = path.join(os.tmpdir(), "goal-reel-clips");
 const CACHE_MAX_BYTES = 600 * 1024 * 1024;
 const MAX_PARALLEL_CUTS = 3;
+/** the encoded card: wide enough for a phone that follows the ball across the panorama */
+const OUT_WIDTH = 1920;
+/** bump to stop serving files cut by an older recipe */
+const RECIPE = "v2-1920-crf27";
 const FETCH_TIMEOUT_MS = 20_000;
 
 export type MediaSegment = { url: string; start: number; duration: number };
@@ -118,11 +123,22 @@ function runFfmpeg(args: string[], timeoutMs = 60_000): Promise<void> {
 }
 
 let running = 0;
-const waiting: Array<() => void> = [];
-async function slot<T>(work: () => Promise<T>): Promise<T> {
-  if (running >= MAX_PARALLEL_CUTS) await new Promise<void>((r) => waiting.push(r));
+/** a card a page is waiting for goes before a card cut ahead of time */
+type Waiter = { id: string; go: () => void };
+const waitingNow: Waiter[] = [];
+const waitingLater: Waiter[] = [];
+const urgent = new Set<string>();
+async function slot<T>(id: string, work: () => Promise<T>, ahead: boolean): Promise<T> {
+  const later = ahead && !urgent.has(id);
+  if (running >= MAX_PARALLEL_CUTS) await new Promise<void>((go) => (later ? waitingLater : waitingNow).push({ id, go }));
   running++;
-  try { return await work(); } finally { running--; waiting.shift()?.(); }
+  try { return await work(); } finally { running--; urgent.delete(id); (waitingNow.shift() ?? waitingLater.shift())?.go(); }
+}
+/** a page now waits for a card that was queued to be cut ahead: move it to the front */
+function promote(id: string): void {
+  urgent.add(id);
+  const k = waitingLater.findIndex((w) => w.id === id);
+  if (k >= 0) waitingNow.push(...waitingLater.splice(k, 1));
 }
 
 async function pruneCache(): Promise<void> {
@@ -145,22 +161,27 @@ export type ReelClip = { path: string; offset: number };
 const inFlight = new Map<string, Promise<ReelClip>>();
 
 /** One card as an MP4 on disk: the segments covering [from, to] (video seconds), remuxed. */
-export function reelClip(videoUrl: string, from: number, to: number): Promise<ReelClip> {
-  const id = createHash("sha1").update(`${videoUrl}|${from.toFixed(1)}|${to.toFixed(1)}`).digest("hex").slice(0, 20);
+export function reelClip(videoUrl: string, from: number, to: number, opts: { ahead?: boolean } = {}): Promise<ReelClip> {
+  const id = createHash("sha1").update(`${RECIPE}|${videoUrl}|${from.toFixed(1)}|${to.toFixed(1)}`).digest("hex").slice(0, 20);
   const existing = inFlight.get(id);
-  if (existing) return existing;
+  if (existing) {
+    if (!opts.ahead) promote(id);
+    return existing;
+  }
   const job = (async (): Promise<ReelClip> => {
     const playlist = await mediaPlaylistFor(videoUrl);
-    const { segments, offset } = segmentsFor(playlist, from, to);
+    const { segments, offset: firstSegment } = segmentsFor(playlist, from, to);
     if (!segments.length) throw new Error("no footage at that time");
-    const out = path.join(CACHE_DIR, `${id}_${offset.toFixed(3)}.mp4`);
+    // the file starts at the card's own start (or the first footage there is)
+    const offset = Math.max(from, firstSegment);
+    const out = path.join(CACHE_DIR, `${id}.mp4`);
     await fs.promises.mkdir(CACHE_DIR, { recursive: true });
     try {
       const now = new Date();
       await fs.promises.utimes(out, now, now);
       return { path: out, offset };
     } catch { /* not cached yet */ }
-    return slot(async () => {
+    return slot(id, async () => {
       const started = Date.now();
       const parts = await Promise.all([
         ...(playlist.init ? [fetchBytes(playlist.init)] : []),
@@ -172,12 +193,16 @@ export function reelClip(videoUrl: string, from: number, to: number): Promise<Re
       try {
         await runFfmpeg([
           "-nostdin", "-loglevel", "error", "-y",
+          "-threads", "2",
           "-i", joined,
-          // only as far as the card needs; the front starts on the segment's keyframe
-          "-t", String(Math.max(1, to - offset)),
+          // exactly the card: decoding runs from the segment's keyframe, the file starts at `offset`
+          "-ss", (offset - firstSegment).toFixed(3),
+          "-t", Math.max(1, to - offset).toFixed(3),
           "-map", "0:v:0", "-an",
-          "-c", "copy",
-          "-avoid_negative_ts", "make_zero",
+          "-vf", `scale=${OUT_WIDTH}:-2`,
+          "-c:v", "libx264", "-preset", "veryfast", "-crf", "27",
+          "-maxrate", "3M", "-bufsize", "6M",
+          "-pix_fmt", "yuv420p", "-profile:v", "high",
           "-movflags", "+faststart",
           "-f", "mp4", tmp,
         ]);
@@ -189,7 +214,7 @@ export function reelClip(videoUrl: string, from: number, to: number): Promise<Re
       logger.info({ segments: segments.length, ms: Date.now() - started }, "goal reel clip cut");
       void pruneCache();
       return { path: out, offset };
-    });
+    }, opts.ahead === true);
   })();
   inFlight.set(id, job);
   job.finally(() => inFlight.delete(id)).catch(() => {});
