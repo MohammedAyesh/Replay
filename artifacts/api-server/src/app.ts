@@ -101,6 +101,8 @@ app.use(cookieParser(COOKIE_SECRET));
 // WAHA signs its webhooks over the exact request bytes, so that one route gets
 // the raw body. express.raw marks the body parsed, and express.json skips it.
 app.use("/api/whatsapp/webhook", express.raw({ type: "*/*", limit: "5mb" }));
+// Meta signs lead webhooks the same way (X-Hub-Signature-256 over the raw body).
+app.use("/api/meta/webhook", express.raw({ type: "*/*", limit: "2mb" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 
