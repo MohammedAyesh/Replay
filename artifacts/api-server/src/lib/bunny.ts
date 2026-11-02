@@ -235,6 +235,38 @@ export function getBunnyExportUrl(clipId: number, revision?: string): string {
   return `${base}/${getBunnyExportPath(clipId, revision)}`;
 }
 
+/**
+ * The storage zone's public pull zone. Not BUNNY_STORAGE_CDN_URL: on
+ * production that is storage.bunnycdn.com, the authenticated origin, which
+ * answers a phone with 401 (found live on 1 Nov; routes/clipIntro.ts says the
+ * same). galaxyfield's pull zone is replayjo.b-cdn.net.
+ */
+export function storagePullZoneBase(): string {
+  const set = (process.env.BUNNY_REEL_CDN_URL ?? "").trim();
+  if (set) return set.replace(/\/$/, "");
+  const storageCdn = BUNNY_STORAGE_CDN_URL.trim();
+  try {
+    if (storageCdn && new URL(storageCdn).hostname.endsWith(".b-cdn.net")) return storageCdn.replace(/\/$/, "");
+  } catch { /* not a URL */ }
+  return "https://replayjo.b-cdn.net";
+}
+
+/**
+ * The pull-zone URL a browser can play a saved clip from, or null when the
+ * export is not a plain Storage object (a vps1 job ref, or a foreign URL).
+ *
+ * Measured from Amman on 2 Nov for a 10 MB clip: the Replit relay took 3-8 s
+ * to its first byte and answered 2 MB at a time; this URL answered the whole
+ * file in 0.12 s warm and 0.25-0.9 s to first byte cold. The path already
+ * carries an unguessable token (see exportPathToken), the same protection the
+ * reel cards on this pull zone rely on.
+ */
+export function getClipExportCdnUrl(clipId: number, exportedUrl: string | null | undefined): string | null {
+  if (!exportedUrl) return null;
+  const path = getPortfolioClipStoragePath(clipId, exportedUrl);
+  return path ? `${storagePullZoneBase()}/${path}` : null;
+}
+
 /** Extracts and validates the storage-zone-relative path for one clip export. */
 export function getPortfolioClipStoragePath(clipId: number, exportedUrl: string): string | null {
   if (!isBunnyStorageUrl(exportedUrl)) return null;

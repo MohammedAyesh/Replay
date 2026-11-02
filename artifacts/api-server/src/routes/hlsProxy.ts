@@ -328,6 +328,34 @@ function cacheManifest(key: string, body: string): void {
 }
 
 /**
+ * Pages whose browsers Bunny Stream accepts as a Referer, so they may fetch
+ * segments from the CDN themselves. Measured on 2 Nov from replayjo.com: one
+ * 3.6 MB segment took 1.5 s direct and 3.2 s through /hls-proxy/segment. A
+ * preview host (*.replit.dev) is not on the library's list, so it keeps the
+ * fully proxied playlist.
+ */
+const DIRECT_SEGMENT_PAGE_HOSTS = new Set(
+  (process.env.HLS_DIRECT_SEGMENT_PAGE_HOSTS ?? "replayjo.com,www.replayjo.com")
+    .split(",").map((h) => h.trim().toLowerCase()).filter(Boolean),
+);
+
+/**
+ * `direct=1` asks for segment lines that point at Bunny instead of this proxy.
+ * Granted only when the page asking is one Bunny accepts. The playlist itself
+ * still comes through here, so the media check above still gates who gets it.
+ */
+export function wantsDirectSegments(query: unknown, referer: string | undefined, origin: string | undefined): boolean {
+  if ((query as Record<string, unknown> | undefined)?.direct !== "1") return false;
+  const page = origin || referer;
+  if (!page) return false;
+  try {
+    return DIRECT_SEGMENT_PAGE_HOSTS.has(new URL(page).hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/**
  * GET /api/hls-proxy/manifest?url=<encoded>
  * Fetches the HLS manifest and rewrites all segment/sub-manifest URLs so they
  * also route through this proxy.
@@ -343,7 +371,9 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
     return;
   }
 
-  const cached = cachedManifest(raw);
+  const direct = wantsDirectSegments(req.query, req.header("referer") ?? undefined, req.header("origin") ?? undefined);
+  const cacheKey = direct ? `direct:${raw}` : raw;
+  const cached = cachedManifest(cacheKey);
   if (cached !== null) {
     res.set("Content-Type", "application/vnd.apple.mpegurl");
     res.set("Cache-Control", "no-store");
@@ -384,13 +414,14 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
         if (!isBunnyUrl(absolute)) return line; // don't proxy unknown hosts
 
         if (absolute.endsWith(".m3u8") || absolute.includes(".m3u8?")) {
-          return `/api/hls-proxy/manifest?url=${encodeURIComponent(absolute)}`;
+          return `/api/hls-proxy/manifest?url=${encodeURIComponent(absolute)}${direct ? "&direct=1" : ""}`;
         }
+        if (direct) return absolute;
         return `/api/hls-proxy/segment?url=${encodeURIComponent(absolute)}`;
       })
       .join("\n");
 
-    cacheManifest(raw, rewritten);
+    cacheManifest(cacheKey, rewritten);
     res.set("Content-Type", "application/vnd.apple.mpegurl");
     res.set("Cache-Control", "no-store");
     res.set("Access-Control-Allow-Origin", "*");

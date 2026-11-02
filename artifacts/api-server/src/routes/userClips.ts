@@ -50,6 +50,7 @@ import {
   uploadToBunnyStorage,
   deleteBunnyStoragePath,
   getPortfolioClipStoragePath,
+  getClipExportCdnUrl,
   BUNNY_STORAGE_API_KEY,
   BUNNY_CDN_HOSTNAME,
 } from "../lib/bunny";
@@ -2683,18 +2684,35 @@ router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
   const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const clipId = parseInt(rawId, 10);
   if (isNaN(clipId)) { res.status(400).json({ error: "Invalid clip id" }); return; }
-  const [clip] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId));
-  const [viewer] = await db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, userId)).limit(1);
-  const highlightAccess = clip && await db.select({ id: weeklyHighlightsTable.id })
-    .from(highlightClipsTable).innerJoin(weeklyHighlightsTable, eq(weeklyHighlightsTable.id, highlightClipsTable.highlightId))
-    .where(and(eq(highlightClipsTable.clipId, clipId), eq(weeklyHighlightsTable.status, "published"),
-      or(isNull(weeklyHighlightsTable.userId), eq(weeklyHighlightsTable.userId, userId)))).limit(1);
+  // The three lookups are independent: run them together.
+  const [[clip], [viewer], highlightAccess] = await Promise.all([
+    db.select().from(userClipsTable).where(eq(userClipsTable.id, clipId)),
+    db.select({ isAdmin: usersTable.isAdmin }).from(usersTable).where(eq(usersTable.id, userId)).limit(1),
+    db.select({ id: weeklyHighlightsTable.id })
+      .from(highlightClipsTable).innerJoin(weeklyHighlightsTable, eq(weeklyHighlightsTable.id, highlightClipsTable.highlightId))
+      .where(and(eq(highlightClipsTable.clipId, clipId), eq(weeklyHighlightsTable.status, "published"),
+        or(isNull(weeklyHighlightsTable.userId), eq(weeklyHighlightsTable.userId, userId)))).limit(1),
+  ]);
   if (clip && clip.userId !== userId && !viewer?.isAdmin && !highlightAccess?.length) {
     res.status(404).json({ error: "Export not available" });
     return;
   }
   if (!clip || isSoftDeletedClip(clip) || !clip.exportedUrl) {
     res.status(404).json({ error: "Export not available" });
+    return;
+  }
+  // A finished export plays straight from Bunny's pull zone: the browser is
+  // sent there once and fetches every range itself, instead of this host
+  // relaying the file 2 MB at a time. `?relay=1` keeps the old path, which a
+  // player uses as its fallback if the CDN copy will not play. Anything not
+  // plainly finished (expired, mid re-clip, a vps1 job ref) still takes the
+  // probing relay below, which also settles the row.
+  const cdnUrl = clip.exportStatus === "done" && req.query.relay !== "1"
+    ? getClipExportCdnUrl(clip.id, clip.exportedUrl)
+    : null;
+  if (cdnUrl) {
+    res.set("Cache-Control", "private, max-age=300");
+    res.redirect(302, cdnUrl);
     return;
   }
   const probe = await probeExportObject(clip.exportedUrl);

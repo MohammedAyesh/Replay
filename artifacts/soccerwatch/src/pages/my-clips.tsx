@@ -278,6 +278,15 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     video.pause();
     video.src = serverExportPlaybackUrl;
     video.load();
+    // The route redirects to Bunny's CDN. If that copy will not play, retry
+    // once through the server relay.
+    const relay = () => {
+      if (video.src.includes("relay=1")) return;
+      started = false;
+      video.src = `${serverExportPlaybackUrl}?relay=1`;
+      video.load();
+    };
+    video.addEventListener("error", relay);
     let started = false;
     const start = () => {
       if (started || !(video.duration > 0 && Number.isFinite(video.duration))) return;
@@ -288,6 +297,7 @@ function UserClipPlayer({ clip, onClose, onDownloaded }: { clip: UserClip; onClo
     video.addEventListener("loadedmetadata", start);
     video.addEventListener("durationchange", start);
     return () => {
+      video.removeEventListener("error", relay);
       video.removeEventListener("loadedmetadata", start);
       video.removeEventListener("durationchange", start);
       video.pause();

@@ -404,6 +404,28 @@ describe("GET /user-clips/:id/playback", () => {
     r.on("end", () => cb(null, Buffer.concat(chunks)));
   };
 
+  it("sends a finished Storage export straight to the pull zone, and `?relay=1` keeps the relay", async () => {
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const clipId = await insertClip(ownerId, null);
+    const zone = (process.env.BUNNY_STORAGE_ZONE ?? "").replace(/^\/+|\/+$/g, "");
+    const storageUrl = `https://${process.env.BUNNY_STORAGE_HOSTNAME ?? "storage.bunnycdn.com"}/${zone ? `${zone}/` : ""}clips/c${clipId}-0123abcd.mp4`;
+    await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: storageUrl }).where(eq(userClipsTable.id, clipId));
+
+    const res = await request(app).get(`/api/user-clips/${clipId}/playback`).redirects(0);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(new RegExp(`^https://[^/]+\\.b-cdn\\.net/clips/c${clipId}-0123abcd\\.mp4$`));
+
+    // Someone else's clip is still refused before any redirect.
+    mockedGetLocalUserId.mockResolvedValue(ownerId + 100000);
+    const other = await request(app).get(`/api/user-clips/${clipId}/playback`).redirects(0);
+    expect(other.status).toBe(404);
+
+    // The fallback skips the redirect and goes through the probing relay.
+    mockedGetLocalUserId.mockResolvedValue(ownerId);
+    const relayed = await request(app).get(`/api/user-clips/${clipId}/playback?relay=1`).redirects(0);
+    expect(relayed.status).not.toBe(302);
+  });
+
   it("answers a no-Range or `bytes=0-` request with only a bounded first window, not the whole file", async () => {
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const clipId = await insertClip(ownerId, `${originUrl}/big.mp4`);
