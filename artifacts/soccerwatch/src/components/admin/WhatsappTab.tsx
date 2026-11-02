@@ -23,7 +23,7 @@ export default function WhatsappTab() {
       </div>
 
       {query.isLoading ? <div className="h-32 animate-pulse rounded-2xl bg-raised" /> : !data ? (
-        <p className="text-sm text-red-400">Could not load WhatsApp status.</p>
+        <p className="text-sm text-red-400">Could not load WhatsApp status{query.error ? `: ${(query.error as Error).message}` : "."}</p>
       ) : (
         <>
           <section className="rounded-2xl border border-line bg-surface p-4 text-sm">
