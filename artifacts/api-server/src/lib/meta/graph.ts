@@ -37,14 +37,20 @@ export async function graphPost<T>(path: string, params: Record<string, string> 
 }
 
 /** Every page of a list edge, up to a sane cap. */
-export async function graphAll<T>(path: string, params: Record<string, string> = {}, maxPages = 20): Promise<T[]> {
+export async function graphAll<T>(path: string, params: Record<string, string> = {}, maxPages = 20, token?: string): Promise<T[]> {
   const config = metaConfig();
   const out: T[] = [];
-  let page = await graphGet<{ data: T[]; paging?: { next?: string } }>(path, params, { config });
+  let page = await graphGet<{ data: T[]; paging?: { next?: string } }>(path, params, { config, token });
   out.push(...(page.data ?? []));
   for (let n = 1; n < maxPages && page.paging?.next; n += 1) {
     page = await parse<{ data: T[]; paging?: { next?: string } }>(await fetch(page.paging.next, { signal: AbortSignal.timeout(20_000) }));
     out.push(...(page.data ?? []));
   }
   return out;
+}
+
+export async function graphDelete(path: string, options: { token?: string } = {}): Promise<void> {
+  const config = metaConfig();
+  const url = `https://graph.facebook.com/${config.graphVersion}/${path.replace(/^\//, "")}?${withAuth({}, config, options.token)}`;
+  await parse(await fetch(url, { method: "DELETE", signal: AbortSignal.timeout(20_000) }));
 }

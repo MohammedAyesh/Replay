@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, jsonb, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, jsonb, pgTable, real, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
 import { academiesTable } from "./academies";
 import { academyContactsTable } from "./academyWhatsapp";
+import { usersTable } from "./users";
 
 /**
  * Campaigns in Replay's Meta ad account, synced from the Marketing API. An admin
@@ -10,6 +11,8 @@ import { academyContactsTable } from "./academyWhatsapp";
 export const metaAdCampaignsTable = pgTable("meta_ad_campaigns", {
   id: text("id").primaryKey(),
   academyId: integer("academy_id").references(() => academiesTable.id, { onDelete: "set null" }),
+  /** Null for Replay's own ad account; the academy's ad account in "own" mode. */
+  adAccountId: text("ad_account_id"),
   name: text("name").notNull(),
   status: text("status"),
   objective: text("objective"),
@@ -68,3 +71,78 @@ export const metaAdLeadsTable = pgTable("meta_ad_leads", {
 
 export type MetaAdCampaign = typeof metaAdCampaignsTable.$inferSelect;
 export type MetaAdLead = typeof metaAdLeadsTable.$inferSelect;
+
+/**
+ * How an academy's ads reach Meta:
+ *   - "replay": the academy shared its Facebook Page with Replay's business; ads run from
+ *     Replay's ad account (Replay pays and bills the academy) and wait for Replay's approval;
+ *   - "own": the owner connected his own business with Facebook Login for Business; ads run
+ *     from his ad account with his token (stored encrypted) and Meta bills him.
+ */
+export const academyMetaConnectionsTable = pgTable("academy_meta_connections", {
+  academyId: integer("academy_id").primaryKey().references(() => academiesTable.id, { onDelete: "cascade" }),
+  mode: text("mode").notNull().default("replay"),
+  pageId: text("page_id"),
+  pageName: text("page_name"),
+  whatsappNumber: text("whatsapp_number"),
+  adAccountId: text("ad_account_id"),
+  adAccountName: text("ad_account_name"),
+  currency: text("currency"),
+  clientBusinessId: text("client_business_id"),
+  /** Own mode: the business integration system user token, AES-256-GCM. */
+  tokenEnc: text("token_enc"),
+  leadsSubscribed: boolean("leads_subscribed").notNull().default(false),
+  status: text("status").notNull().default("pending"),
+  error: text("error"),
+  connectedAt: timestamp("connected_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("academy_meta_connections_page_idx").on(table.pageId),
+  check("academy_meta_connections_mode_check", sql`${table.mode} in ('replay', 'own')`),
+  check("academy_meta_connections_status_check", sql`${table.status} in ('pending', 'connected', 'error')`),
+]);
+
+/** An ad an academy builds in Replay, and the Meta objects it became. */
+export const academyAdRequestsTable = pgTable("academy_ad_requests", {
+  id: serial("id").primaryKey(),
+  academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
+  mode: text("mode").notNull(),
+  goal: text("goal").notNull(),
+  name: text("name").notNull(),
+  status: text("status").notNull().default("draft"),
+  dailyBudget: integer("daily_budget").notNull(),
+  currency: text("currency").notNull(),
+  startAt: timestamp("start_at", { withTimezone: true }),
+  endAt: timestamp("end_at", { withTimezone: true }),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
+  radiusKm: integer("radius_km").notNull().default(10),
+  ageMin: integer("age_min").notNull().default(25),
+  ageMax: integer("age_max").notNull().default(55),
+  headline: text("headline").notNull(),
+  primaryText: text("primary_text").notNull(),
+  locale: text("locale").notNull().default("ar"),
+  imageData: text("image_data"),
+  extraQuestion: text("extra_question"),
+  metaCampaignId: text("meta_campaign_id"),
+  metaAdsetId: text("meta_adset_id"),
+  metaAdId: text("meta_ad_id"),
+  metaFormId: text("meta_form_id"),
+  error: text("error"),
+  createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  reviewedBy: integer("reviewed_by").references(() => usersTable.id, { onDelete: "set null" }),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }),
+  launchedAt: timestamp("launched_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("academy_ad_requests_academy_idx").on(table.academyId),
+  index("academy_ad_requests_status_idx").on(table.status),
+  check("academy_ad_requests_mode_check", sql`${table.mode} in ('replay', 'own')`),
+  check("academy_ad_requests_goal_check", sql`${table.goal} in ('whatsapp', 'lead_form')`),
+  check("academy_ad_requests_status_check", sql`${table.status} in ('draft', 'pending_approval', 'launching', 'active', 'paused', 'rejected', 'failed')`),
+]);
+
+export type AcademyMetaConnection = typeof academyMetaConnectionsTable.$inferSelect;
+export type AcademyAdRequest = typeof academyAdRequestsTable.$inferSelect;

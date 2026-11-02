@@ -1,5 +1,6 @@
-import { eq, sql } from "drizzle-orm";
-import { db, metaAdCampaignsTable, metaAdsTable } from "@workspace/db";
+import { and, eq, sql } from "drizzle-orm";
+import { academyMetaConnectionsTable, db, metaAdCampaignsTable, metaAdsTable } from "@workspace/db";
+import { decryptToken } from "./crypto";
 import { logger } from "../logger";
 import { metaAdsConfigured, metaConfig } from "./config";
 import { graphAll, graphGet } from "./graph";
@@ -44,22 +45,22 @@ export function numbersFromInsight(row: InsightRow | undefined, currency: string
 
 export type SyncSummary = { campaigns: number; ads: number; account: string | null; currency: string | null };
 
-/** Campaigns, ads and their numbers from Replay's ad account. Keeps each campaign's academy. */
-export async function syncMetaAds(): Promise<SyncSummary> {
-  const config = metaConfig();
-  if (!metaAdsConfigured(config)) throw new Error("Meta is not connected");
-  const act = config.adAccountId!;
-  const account = await graphGet<{ name?: string; currency?: string }>(act, { fields: "name,currency" });
+/**
+ * One ad account's campaigns, ads and numbers. Replay's account keeps each campaign's academy
+ * (an admin picks it); an academy's own account files every campaign under that academy.
+ */
+async function syncAccount(act: string, token: string | undefined, academyId: number | null): Promise<SyncSummary> {
+  const account = await graphGet<{ name?: string; currency?: string }>(act, { fields: "name,currency" }, { token });
   const currency = account.currency ?? null;
   const [campaigns, ads, lifetime, recent] = await Promise.all([
     graphAll<{ id: string; name: string; effective_status?: string; objective?: string; start_time?: string }>(
-      `${act}/campaigns`, { fields: "id,name,effective_status,objective,start_time", limit: "200" },
+      `${act}/campaigns`, { fields: "id,name,effective_status,objective,start_time", limit: "200" }, 20, token,
     ),
     graphAll<{ id: string; name?: string; campaign_id: string; effective_status?: string }>(
-      `${act}/ads`, { fields: "id,name,campaign_id,effective_status", limit: "500" },
+      `${act}/ads`, { fields: "id,name,campaign_id,effective_status", limit: "500" }, 20, token,
     ),
-    graphAll<InsightRow>(`${act}/insights`, { level: "campaign", date_preset: "maximum", fields: "campaign_id,spend,impressions,reach,clicks,actions", limit: "500" }),
-    graphAll<InsightRow>(`${act}/insights`, { level: "campaign", date_preset: "last_30d", fields: "campaign_id,spend,impressions,reach,clicks,actions", limit: "500" }),
+    graphAll<InsightRow>(`${act}/insights`, { level: "campaign", date_preset: "maximum", fields: "campaign_id,spend,impressions,reach,clicks,actions", limit: "500" }, 20, token),
+    graphAll<InsightRow>(`${act}/insights`, { level: "campaign", date_preset: "last_30d", fields: "campaign_id,spend,impressions,reach,clicks,actions", limit: "500" }, 20, token),
   ]);
   const now = new Date();
   for (const c of campaigns) {
@@ -72,6 +73,7 @@ export async function syncMetaAds(): Promise<SyncSummary> {
       insights30d: numbersFromInsight(recent.find((r) => r.campaign_id === c.id), currency) as never,
       syncedAt: now,
       updatedAt: now,
+      ...(academyId !== null ? { academyId, adAccountId: act } : {}),
     };
     await db.insert(metaAdCampaignsTable).values({ id: c.id, ...values })
       .onConflictDoUpdate({ target: metaAdCampaignsTable.id, set: values });
@@ -83,6 +85,28 @@ export async function syncMetaAds(): Promise<SyncSummary> {
     await db.insert(metaAdsTable).values({ id: ad.id, ...values }).onConflictDoUpdate({ target: metaAdsTable.id, set: values });
   }
   return { campaigns: campaigns.length, ads: ads.length, account: account.name ?? null, currency };
+}
+
+/** Replay's ad account, then every academy that connected its own. */
+export async function syncMetaAds(): Promise<SyncSummary> {
+  const config = metaConfig();
+  if (!metaAdsConfigured(config)) throw new Error("Meta is not connected");
+  const summary = await syncAccount(config.adAccountId!, undefined, null);
+  const own = await db.select().from(academyMetaConnectionsTable).where(and(
+    eq(academyMetaConnectionsTable.mode, "own"),
+    eq(academyMetaConnectionsTable.status, "connected"),
+  ));
+  for (const connection of own) {
+    if (!connection.adAccountId || !connection.tokenEnc) continue;
+    try {
+      await syncAccount(connection.adAccountId, decryptToken(connection.tokenEnc), connection.academyId);
+    } catch (error) {
+      logger.warn({ academyId: connection.academyId, error: (error as Error).message }, "Syncing an academy's own ad account failed");
+      await db.update(academyMetaConnectionsTable).set({ error: (error as Error).message.slice(0, 300), updatedAt: new Date() })
+        .where(eq(academyMetaConnectionsTable.academyId, connection.academyId));
+    }
+  }
+  return summary;
 }
 
 export async function lastMetaSync(): Promise<Date | null> {
