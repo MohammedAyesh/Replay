@@ -79,6 +79,7 @@ export * from './academyJoinRegistrationInput';
 export * from './academyJoinRegistrationInputLocale';
 export * from './academyJoinSubmissionResult';
 export * from './academyLiveSessionStatus';
+export * from './academyLiveSessionStatusSessionType';
 export * from './academyLiveSessionStatusStatus';
 export * from './academyLiveSessionStatusVariant';
 export * from './academyMemberAssignment';

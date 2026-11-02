@@ -1290,6 +1290,8 @@ export const GetClaimMatchRosterResponse = zod.object({
 /**
  * @summary List the current player's earned match moments
  */
+
+
 export const ListClaimMatchClipsResponseItem = zod.object({
   "recordingId": zod.number(),
   "recordingLabel": zod.string().describe('Human-readable match label.'),
@@ -3123,13 +3125,15 @@ export const GetAcademyConsoleSessionLiveStatusParams = zod.object({
 
 export const GetAcademyConsoleSessionLiveStatusResponse = zod.object({
   "status": zod.enum(['upcoming', 'live', 'not_live', 'ended', 'no_booking']),
+  "sessionType": zod.enum(['training', 'match']),
   "windowStartsAt": zod.coerce.date().nullable(),
   "windowEndsAt": zod.coerce.date().nullable(),
   "camera": zod.string().nullable(),
   "variant": zod.enum(['hls']),
-  "playlistPath": zod.string().nullable(),
+  "playlistPath": zod.string().nullable().describe('Bunny playlist of the session\'s live feed (full pitch).'),
+  "panPlaylistPath": zod.string().nullable().describe('Bunny playlist of the ball-follow view. Matches only, while vps1 produces it.'),
   "message": zod.string(),
-  "panAvailable": zod.literal(false)
+  "panAvailable": zod.boolean()
 })
 
 
@@ -3145,13 +3149,15 @@ export const GetAcademyFamilySessionLiveStatusParams = zod.object({
 
 export const GetAcademyFamilySessionLiveStatusResponse = zod.object({
   "status": zod.enum(['upcoming', 'live', 'not_live', 'ended', 'no_booking']),
+  "sessionType": zod.enum(['training', 'match']),
   "windowStartsAt": zod.coerce.date().nullable(),
   "windowEndsAt": zod.coerce.date().nullable(),
   "camera": zod.string().nullable(),
   "variant": zod.enum(['hls']),
-  "playlistPath": zod.string().nullable(),
+  "playlistPath": zod.string().nullable().describe('Bunny playlist of the session\'s live feed (full pitch).'),
+  "panPlaylistPath": zod.string().nullable().describe('Bunny playlist of the ball-follow view. Matches only, while vps1 produces it.'),
   "message": zod.string(),
-  "panAvailable": zod.literal(false)
+  "panAvailable": zod.boolean()
 })
 
 

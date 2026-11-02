@@ -5,11 +5,13 @@
  * SoccerWatch API
  * OpenAPI spec version: 0.1.0
  */
+import type { AcademyLiveSessionStatusSessionType } from './academyLiveSessionStatusSessionType';
 import type { AcademyLiveSessionStatusStatus } from './academyLiveSessionStatusStatus';
 import type { AcademyLiveSessionStatusVariant } from './academyLiveSessionStatusVariant';
 
 export interface AcademyLiveSessionStatus {
   status: AcademyLiveSessionStatusStatus;
+  sessionType: AcademyLiveSessionStatusSessionType;
   /** @nullable */
   windowStartsAt: Date | null;
   /** @nullable */
@@ -17,8 +19,16 @@ export interface AcademyLiveSessionStatus {
   /** @nullable */
   camera: string | null;
   variant: AcademyLiveSessionStatusVariant;
-  /** @nullable */
+  /**
+     * Bunny playlist of the session's live feed (full pitch).
+     * @nullable
+     */
   playlistPath: string | null;
+  /**
+     * Bunny playlist of the ball-follow view. Matches only, while vps1 produces it.
+     * @nullable
+     */
+  panPlaylistPath: string | null;
   message: string;
-  panAvailable: false;
+  panAvailable: boolean;
 }

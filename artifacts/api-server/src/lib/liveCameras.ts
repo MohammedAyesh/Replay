@@ -38,3 +38,10 @@ export function varCdnUrl(value: unknown): string | null {
     ? value
     : null;
 }
+
+/** The booking's ball-follow copy on Bunny (vps1 replay-bunnyvarpan@<cam>), exact shape only. */
+export function varPanCdnUrl(value: unknown): string | null {
+  return typeof value === "string" && /^https:\/\/[a-z0-9.-]+\.b-cdn\.net\/var\/cam\d+\/[a-f0-9]{32}\/pan\/index\.m3u8$/i.test(value)
+    ? value
+    : null;
+}

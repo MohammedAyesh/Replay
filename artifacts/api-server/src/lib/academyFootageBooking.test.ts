@@ -44,9 +44,15 @@ function nextStart(): Date {
   return new Date(Math.ceil((Date.now() + (24 + slot * 6) * HOUR) / HOUR) * HOUR);
 }
 
-async function createSession(academyId: number, startsAt: Date, location = "Home pitch", endsAt = new Date(startsAt.getTime() + HOUR)) {
+async function createSession(
+  academyId: number,
+  startsAt: Date,
+  location = "Home pitch",
+  endsAt = new Date(startsAt.getTime() + HOUR),
+  type: "training" | "match" = "training",
+) {
   const [session] = await db.insert(academySessionsTable).values({
-    academyId, type: "training", startsAt, endsAt, location,
+    academyId, type, startsAt, endsAt, location,
   }).returning();
   return session;
 }
@@ -110,6 +116,19 @@ describe("academy session footage booking", () => {
     const [request] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, saved.footageRequestId!));
     expect(request).toMatchObject({ academyId: academyA, rateFils: 0, cameraId });
     expect(postedJobs()).toHaveLength(1);
+  });
+
+  it("asks vps1 for the ball-follow view for a match, and not for training", async () => {
+    const training = await createSession(academyA, nextStart());
+    await bookAcademySessionFootage(academyA, training.id, userId);
+    expect(String(postedJobs()[0]?.[0])).not.toContain("pan=1");
+
+    vi.mocked(controlFetch).mockClear();
+    const start = nextStart();
+    const match = await createSession(academyA, start, "Home pitch", new Date(start.getTime() + HOUR), "match");
+    await bookAcademySessionFootage(academyA, match.id, userId);
+    expect(postedJobs()).toHaveLength(1);
+    expect(String(postedJobs()[0]?.[0])).toMatch(/^\/record-hq\/.*&pan=1/);
   });
 
   it("refuses a slot an unpaid player booking holds and never starts a second camera job", async () => {

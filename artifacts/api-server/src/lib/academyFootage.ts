@@ -264,7 +264,8 @@ export async function bookAcademySessionFootage(
     await db.update(academySessionsTable)
       .set({ footageRequestId: created.id, footageNote: window.note })
       .where(eq(academySessionsTable.id, sessionId));
-    await startCameraJob(created, cameraId);
+    // Matches get the live ball-follow view for parents and coaches; training does not.
+    await startCameraJob(created, cameraId, { pan: session.type === "match" });
     const [started] = await db.select({
       status: footageRequestsTable.status,
       message: footageRequestsTable.message,

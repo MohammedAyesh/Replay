@@ -8,7 +8,7 @@ import { getLocalUserRecord } from "../lib/clerkUserBridge";
 import { requireAcademyConsoleUser } from "../lib/academyAccess";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { describeLive, parseLiveManifest } from "../lib/liveManifest";
-import { parseLiveCamera, parseVarControlCamera, varCdnUrl } from "../lib/liveCameras";
+import { parseLiveCamera, parseVarControlCamera, varCdnUrl, varPanCdnUrl } from "../lib/liveCameras";
 import { canViewPinnedAcademyRecording } from "../lib/publicFootage";
 import { liveSegmentNames, pipeLiveSegment, rewriteLivePlaylist } from "../lib/liveHlsProxy";
 import { controlFetch, controlResponse } from "./contabo";
@@ -18,6 +18,7 @@ const router: IRouter = Router();
 type Surface = "console" | "family";
 type SessionLive = {
   sessionId: number; academyId: number; squadId: number | null; cameraId: string | null;
+  type: "training" | "match";
   booking: { startLocal: string; endLocal: string; status: string } | null;
 };
 type Camera = { alias: string; control: string } | null;
@@ -38,6 +39,7 @@ async function sessionFor(academyId: number, sessionId: number): Promise<Session
     sessionId: academySessionsTable.id,
     academyId: academySessionsTable.academyId,
     squadId: academySessionsTable.squadId,
+    type: academySessionsTable.type,
     footageRequestId: academySessionsTable.footageRequestId,
     cameraId: fieldsTable.cameraId,
   }).from(academySessionsTable)
@@ -146,9 +148,12 @@ async function statusResponse(session: SessionLive, sessionId: number, base: str
     windowEndsAt: window?.end.toISOString() ?? null,
     camera: camera?.alias ?? null,
     variant: "hls" as const,
+    sessionType: session.type,
     playlistPath: null as string | null,
+    /** Ball-follow view on Bunny: matches only, while vps1's GPU is producing it. */
+    panPlaylistPath: null as string | null,
+    panAvailable: false,
     message: "No live footage booking is available for this session.",
-    panAvailable: false as const,
   };
   if (!window) return baseResponse;
   if (!camera) return { ...baseResponse, status: "not_live", message: "No camera is assigned to this academy." };
@@ -169,12 +174,16 @@ async function statusResponse(session: SessionLive, sessionId: number, base: str
     const hls = (windowResult.body && typeof windowResult.body === "object"
       ? (windowResult.body as { variants?: { hls?: { live?: unknown } } }).variants?.hls
       : undefined);
-    const cdnUrl = varCdnUrl((stateResult.body as { cdnUrl?: unknown } | null)?.cdnUrl);
+    const stateBody = stateResult.body as { cdnUrl?: unknown; panCdnUrl?: unknown } | null;
+    const cdnUrl = varCdnUrl(stateBody?.cdnUrl);
+    const panUrl = session.type === "match" ? varPanCdnUrl(stateBody?.panCdnUrl) : null;
     const live = hls?.live === true && cdnUrl !== null;
     return {
       ...baseResponse,
       status: live ? "live" : "not_live",
       playlistPath: live ? cdnUrl : null,
+      panPlaylistPath: live ? panUrl : null,
+      panAvailable: live && panUrl !== null,
       message: live ? "Live now" : "Waiting for the camera stream.",
     };
   } catch (error) {

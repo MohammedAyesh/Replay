@@ -156,6 +156,33 @@ describe("academy live session access and status", () => {
     vi.mocked(controlFetch).mockReset();
   });
 
+  it("hands out the ball-follow view for matches only", async () => {
+    await setBooking(-30 * 60_000, 30 * 60_000);
+    const cdnUrl = "https://replayjo.b-cdn.net/var/cam1/0123456789abcdef0123456789abcdef/index.m3u8";
+    const panCdnUrl = "https://replayjo.b-cdn.net/var/cam1/0123456789abcdef0123456789abcdef/pan/index.m3u8";
+    vi.mocked(controlFetch).mockImplementation(async (path: string) => (
+      String(path).endsWith("/window")
+        ? { ok: true, status: 200, body: { variants: { hls: { live: true, newestAgeSec: 2 } } } }
+        : { ok: true, status: 200, body: { cdnUrl, panCdnUrl } }
+    ) as never);
+    const training = (await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body;
+    expect(training.sessionType).toBe("training");
+    expect(training.panPlaylistPath).toBeNull();
+    expect(training.panAvailable).toBe(false);
+
+    await db.update(academySessionsTable).set({ type: "match" }).where(eq(academySessionsTable.id, sessionId));
+    try {
+      const match = (await request(app).get(familyStatus()).set(auth(guardianId)).expect(200)).body;
+      expect(match.sessionType).toBe("match");
+      expect(match.playlistPath).toBe(cdnUrl);
+      expect(match.panPlaylistPath).toBe(panCdnUrl);
+      expect(match.panAvailable).toBe(true);
+    } finally {
+      await db.update(academySessionsTable).set({ type: "training" }).where(eq(academySessionsTable.id, sessionId));
+      vi.mocked(controlFetch).mockReset();
+    }
+  });
+
   it("serves only segments the session's trimmed playlist lists", async () => {
     await setBooking(-30 * 60_000, 30 * 60_000);
     const [booking] = await db.select({ startLocal: footageRequestsTable.startLocal })

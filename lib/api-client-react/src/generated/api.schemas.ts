@@ -1798,6 +1798,14 @@ export const AcademyLiveSessionStatusStatus = {
   no_booking: 'no_booking',
 } as const;
 
+export type AcademyLiveSessionStatusSessionType = typeof AcademyLiveSessionStatusSessionType[keyof typeof AcademyLiveSessionStatusSessionType];
+
+
+export const AcademyLiveSessionStatusSessionType = {
+  training: 'training',
+  match: 'match',
+} as const;
+
 export type AcademyLiveSessionStatusVariant = typeof AcademyLiveSessionStatusVariant[keyof typeof AcademyLiveSessionStatusVariant];
 
 
@@ -1807,6 +1815,7 @@ export const AcademyLiveSessionStatusVariant = {
 
 export interface AcademyLiveSessionStatus {
   status: AcademyLiveSessionStatusStatus;
+  sessionType: AcademyLiveSessionStatusSessionType;
   /** @nullable */
   windowStartsAt: string | null;
   /** @nullable */
@@ -1814,10 +1823,18 @@ export interface AcademyLiveSessionStatus {
   /** @nullable */
   camera: string | null;
   variant: AcademyLiveSessionStatusVariant;
-  /** @nullable */
+  /**
+     * Bunny playlist of the session's live feed (full pitch).
+     * @nullable
+     */
   playlistPath: string | null;
+  /**
+     * Bunny playlist of the ball-follow view. Matches only, while vps1 produces it.
+     * @nullable
+     */
+  panPlaylistPath: string | null;
   message: string;
-  panAvailable: false;
+  panAvailable: boolean;
 }
 
 export type AcademySessionSummaryType = typeof AcademySessionSummaryType[keyof typeof AcademySessionSummaryType];

@@ -170,7 +170,12 @@ function localTimeEpoch(value: string): number {
   return parseLocalWallEpoch(value);
 }
 
-export async function startCameraJob(row: FootageRequest, cameraId: string): Promise<void> {
+/**
+ * `pan`: ask vps1 for the live ball-follow view with this booking's VAR window
+ * (academy matches). vps1 rents a GPU (~$0.25/h) from VAR open to VAR close and
+ * publishes the view privately to Bunny. Only meaningful for a future window.
+ */
+export async function startCameraJob(row: FootageRequest, cameraId: string, options: { pan?: boolean } = {}): Promise<void> {
   const endMs = localTimeEpoch(row.endLocal);
   const future = Number.isFinite(endMs) && endMs > ammanNowWallEpoch();
   const title = buildOwnerFootageTitle(cameraId, row.id, row.startLocal);
@@ -178,6 +183,7 @@ export async function startCameraJob(row: FootageRequest, cameraId: string): Pro
     const remoteStart = `${row.startLocal}:00`;
     const remoteEnd = `${row.endLocal}:00`;
     const live = row.academyId === null && future && await liveAnalysisEnabled(row.fieldId);
+    const pan = future && options.pan === true;
     // A past window the SD card doesn't record comes from the off-schedule FTP store.
     const source = future
       ? "sd"
@@ -185,7 +191,7 @@ export async function startCameraJob(row: FootageRequest, cameraId: string): Pro
     const result = await controlFetch(
       source === "ftp"
         ? gapPullPath(cameraId, remoteStart, remoteEnd, title)
-        : `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}`,
+        : `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}${pan ? "&pan=1" : ""}`,
       { method: "POST" },
       90_000,
     );

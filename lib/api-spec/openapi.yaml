@@ -7460,11 +7460,14 @@ components:
 
     AcademyLiveSessionStatus:
       type: object
-      required: [status, windowStartsAt, windowEndsAt, camera, variant, playlistPath, message, panAvailable]
+      required: [status, windowStartsAt, windowEndsAt, camera, variant, sessionType, playlistPath, panPlaylistPath, message, panAvailable]
       properties:
         status:
           type: string
           enum: [upcoming, live, not_live, ended, no_booking]
+        sessionType:
+          type: string
+          enum: [training, match]
         windowStartsAt:
           type: ["string", "null"]
           format: date-time
@@ -7478,11 +7481,14 @@ components:
           enum: [hls]
         playlistPath:
           type: ["string", "null"]
+          description: Bunny playlist of the session's live feed (full pitch).
+        panPlaylistPath:
+          type: ["string", "null"]
+          description: Bunny playlist of the ball-follow view. Matches only, while vps1 produces it.
         message:
           type: string
         panAvailable:
           type: boolean
-          enum: [false]
 
     AcademySessionSummary:
       type: object
