@@ -2597,7 +2597,7 @@ function sampleRosterParts<T>(items: T[], maximum: number): T[] {
   ));
 }
 
-async function rosterPlayersWithPhotos(
+export async function rosterPlayersWithPhotos(
   manifest: TrackingManifest,
   roster: MatchRoster,
 ) {

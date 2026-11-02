@@ -50,6 +50,7 @@ import academyJoinRouter from "./academyJoin";
 import academyFamilyRouter from "./academyFamily";
 import academyLiveSessionsRouter from "./academyLiveSessions";
 import academyWhatsappRouter from "./academyWhatsapp";
+import academyMatchesRouter from "./academyMatches";
 import demoBrandingRouter from "./demoBranding";
 import weeklyHighlightsRouter from "./weeklyHighlights";
 
@@ -85,6 +86,7 @@ router.use(academyConsoleRouter);
 router.use(academyConsoleSectionsRouter);
 router.use(academyFinanceRouter);
 router.use(academyWhatsappRouter);
+router.use(academyMatchesRouter);
 router.use(contaboRouter);
 router.use(liveRouter);
 router.use(hlsProxyRouter);
