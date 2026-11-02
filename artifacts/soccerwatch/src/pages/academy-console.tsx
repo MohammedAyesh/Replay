@@ -801,9 +801,12 @@ export default function AcademyConsole() {
 
   useEffect(() => {
     if (section === "dashboard") return;
+    // Decide only once the membership (and, for staff, their access) has loaded; deciding earlier
+    // bounced every owner-only deep link such as /academy/team to the dashboard.
+    if (!activeMembership || (!isOwner && myAccess.isLoading)) return;
     if (section === "team" ? !isOwner : !canSee(section)) setSection("dashboard");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOwner, section, myAccess.data]);
+  }, [activeMembership, isOwner, section, myAccess.data, myAccess.isLoading]);
 
   const navigate = (nextSection: ConsoleSection) => {
     setSection(nextSection);
