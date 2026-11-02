@@ -56,6 +56,7 @@ import SimpleDemo from "@/pages/demo/SimpleDemo";
 import AcademyConsole from "@/pages/academy-console";
 import AcademyJoinPage from "@/pages/academy-join";
 import AcademyFamilyPage from "@/pages/academy-family";
+import AcademyMatchPage from "@/pages/academy-match";
 import WeeklyHighlightPage from "@/pages/weekly-highlight";
 
 const MatchReportDevPreview = import.meta.env.DEV
@@ -527,7 +528,7 @@ function AppRouter() {
   const isPublicJoinRoute = location.split("?")[0].startsWith("/join/");
   const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/");
   const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute;
-  const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me";
+  const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me" || location.split(/[?#]/)[0].startsWith("/academy/me/match/");
   // "Is this you?" is a full-screen swipe deck: no app bars around it
   const isDeckRoute = /^\/find\/\d+\/check\/?$/.test(location.split(/[?#]/)[0]);
   const isReportPreviewRoute = import.meta.env.DEV && location.split(/[?#]/)[0] === "/__dev/match-report";
@@ -604,6 +605,7 @@ function AppRouter() {
         <Route path="/find-quick/:id" component={FindQuickRedirect} />
         <Route path="/claim/:id" component={ClaimChain} />
         <Route path="/account" component={Account} />
+        <Route path="/academy/me/match/:sessionId" component={AcademyMatchPage} />
         <Route path="/academy/me"><AcademyFamilyPage source="me" /></Route>
         <Route path="/academy/*?" component={AcademyConsole} />
         <Route path="/account/blocked" component={BlockedPlayers} />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useParams, useSearch } from "wouter";
+import { Link, useLocation, useParams, useSearch } from "wouter";
 import { AnimatePresence } from "framer-motion";
 import {
   useGetAcademyFamilyMe,
@@ -12,6 +12,8 @@ import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
+import { useFamilyMatches } from "@/lib/academy-matches-api";
+import { useMatchesCopy } from "@/i18n/matches-strings";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
 import { formatAmmanClock, useAcademyLiveStatus } from "@/components/academy-console/use-academy-live-status";
 import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
@@ -199,6 +201,8 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
     },
   });
   const family = familyQuery.data;
+  const matchesCopy = useMatchesCopy();
+  const familyMatches = useFamilyMatches(source === "me" && Boolean(user) && !isGuest);
   const familyToken = params.token ?? "";
 
   useEffect(() => {
@@ -485,6 +489,19 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                   </article>);
                 })}</div> : <div className="fp-empty" data-testid="family-session-footage-empty">{labels.noFootage}</div>}
               </section>
+              {(familyMatches.data?.length ?? 0) > 0 && <section className="fp-card" data-testid="family-match-pages">
+                <div className="fp-card-head"><div><h2 className="fp-card-title">{matchesCopy.family.matchPages}</h2><p className="fp-card-sub">{matchesCopy.family.matchPagesHint}</p></div><span className="fp-count">{familyMatches.data!.length}</span></div>
+                <div className="fp-sessions">{familyMatches.data!.slice(0, 8).map((match) => {
+                  const date = new Date(match.startsAt);
+                  return <article className="fp-session" key={match.id} data-testid={`family-match-page-${match.id}`}>
+                    <div className="fp-date"><strong>{new Intl.DateTimeFormat(locale, { day: "numeric" }).format(date)}</strong><span>{new Intl.DateTimeFormat(locale, { month: "short" }).format(date)}</span></div>
+                    <div className="fp-session-info"><strong>{match.type === "match" ? `${labels.match}${match.opponent ? ` · ${match.opponent}` : ""}` : labels.training}</strong><span><MapPin aria-hidden="true" />{match.academyName}{match.squadName ? ` · ${match.squadName}` : ""}</span></div>
+                    <Link href={`/academy/me/match/${match.id}`} className="fp-session-type inline-flex items-center gap-1.5" style={{ background: "var(--replay-floodlight)", color: "var(--replay-void)", textDecoration: "none" }}>
+                      {match.ownScore !== null && match.opponentScore !== null ? `${match.ownScore} : ${match.opponentScore} · ` : ""}{matchesCopy.family.open}
+                    </Link>
+                  </article>;
+                })}</div>
+              </section>}
               <section className="fp-card" data-testid="family-attendance">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.attendance}{attendanceRate != null ? ` · ${new Intl.NumberFormat(locale).format(attendanceRate)}%` : ""}</h2><p className="fp-card-sub">{labels.attendanceHint}</p></div><span className="fp-count">{family.attendance.length}</span></div>
                 <div className="fp-att-summary" data-testid="family-attendance-summary">

@@ -31,7 +31,15 @@ function trimLivePlaylist(
   const output: string[] = [];
   const segments: string[] = [];
   let pending: string[] = [];
-  let programTime: number | null = null;
+  // Wall-clock start of the next segment. An EXT-X-PROGRAM-DATE-TIME tag sets it;
+  // otherwise it runs on from the last tagged segment by the EXTINF durations, as
+  // the HLS spec defines. vps1's VAR playlist tags only some segments (98 of 450 on
+  // 2026-11-02), so requiring a tag on every one rejected every academy playlist.
+  // Camera gaps only push real time later than the run-on clock, so a segment kept
+  // by it really is at or after the cut; a segment before any tag is dropped.
+  let clock: number | null = null;
+  let duration = 0;
+  let sawTimestamp = false;
   let sawSegment = false;
   let keptSegment = false;
   // Segments (and the discontinuities they carry) dropped ahead of the first kept
@@ -41,7 +49,11 @@ function trimLivePlaylist(
   let droppedDiscontinuities = 0;
   for (const line of lines) {
     if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
-      programTime = Date.parse(line.slice("#EXT-X-PROGRAM-DATE-TIME:".length));
+      const parsed = Date.parse(line.slice("#EXT-X-PROGRAM-DATE-TIME:".length));
+      clock = Number.isFinite(parsed) ? parsed : null;
+    } else if (line.startsWith("#EXTINF:")) {
+      const seconds = Number.parseFloat(line.slice("#EXTINF:".length));
+      duration = Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
     }
     if (line.startsWith("#")) {
       const rewritten = line.replace(/URI="([^"]+)"/g, (full, uri: string) => {
@@ -56,10 +68,11 @@ function trimLivePlaylist(
     if (!line.trim()) continue;
     const name = segmentName(line.trim());
     if (!name || /^https?:\/\//i.test(line.trim())) return null;
+    const startedAt = clock;
     let keep = true;
     if (earliestProgramTime) {
-      if (programTime === null || !Number.isFinite(programTime)) return null;
-      keep = programTime >= earliestProgramTime.getTime();
+      keep = startedAt !== null && startedAt >= earliestProgramTime.getTime();
+      if (startedAt !== null) sawTimestamp = true;
     }
     if (keep) {
       output.push(...pending, `${prefix}${name}`);
@@ -70,9 +83,12 @@ function trimLivePlaylist(
       droppedDiscontinuities += pending.filter((tag) => tag === DISCONTINUITY).length;
     }
     pending = [];
-    programTime = null;
+    clock = startedAt !== null && duration > 0 ? startedAt + duration * 1000 : null;
+    duration = 0;
     sawSegment = true;
   }
+  // Asked to cut, but no segment carried a usable time: nothing can be shown safely.
+  if (earliestProgramTime && sawSegment && !sawTimestamp) return null;
   if (pending.length) output.push(...pending);
   if (droppedSegments > 0) advanceSequences(output, droppedSegments, droppedDiscontinuities);
   return { playlist: output.join("\n"), segments };
