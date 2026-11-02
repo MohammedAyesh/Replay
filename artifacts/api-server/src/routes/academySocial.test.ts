@@ -1,0 +1,296 @@
+import { createHmac } from "node:crypto";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import request from "supertest";
+import express, { type Express } from "express";
+import { eq } from "drizzle-orm";
+import {
+  academiesTable,
+  academyAdMediaTable,
+  academyContactsTable,
+  academyMembersTable,
+  academySocialAccountsTable,
+  academySocialCommentsTable,
+  academySocialMessagesTable,
+  academySocialPostsTable,
+  academySocialThreadsTable,
+  db,
+  fieldsTable,
+  usersTable,
+} from "@workspace/db";
+
+process.env.META_ACCESS_TOKEN = "test-token";
+process.env.META_AD_ACCOUNT_ID = "123456";
+process.env.META_APP_SECRET = "test-app-secret";
+process.env.META_APP_ID = "1401484938413305";
+
+vi.mock("../lib/clerkUserBridge", () => ({
+  getLocalUserId: vi.fn(async (req: { headers: Record<string, string | undefined> }) => {
+    const id = Number(req.headers["x-test-user"]);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  }),
+  getLocalUserRecord: vi.fn(async (req: { headers: Record<string, string | undefined> }) => {
+    const id = Number(req.headers["x-test-user"]);
+    if (!Number.isSafeInteger(id) || id < 1) return null;
+    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, id));
+    return user ?? null;
+  }),
+  unauthenticatedResponse: vi.fn((res: { status: (n: number) => { json: (b: unknown) => void } }) => {
+    res.status(401).json({ error: "Unauthenticated" });
+  }),
+}));
+
+const stamp = Date.now();
+const PAGE = `7${stamp}`;
+const IG = `17${stamp}`;
+const IGSID = `55${stamp}`;
+const PSID = `66${stamp}`;
+const posts: Array<{ path: string; params: Record<string, string> }> = [];
+let seq = 0;
+
+vi.mock("../lib/meta/graph", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/meta/graph")>();
+  return {
+    ...actual,
+    graphGet: vi.fn(async (path: string, params: Record<string, string> = {}) => {
+      if (path === IGSID) return { name: "Sami Haddad", username: "sami.h", profile_pic: "https://pic/x.jpg" };
+      if (path === PSID) return { first_name: "Abu", last_name: "Kareem" };
+      if (path.startsWith("ig-media-")) return { permalink: `https://instagram.com/p/${path}`, caption: "Training day" };
+      if (path.startsWith("ig-container-")) return { status_code: "FINISHED" };
+      if (path.startsWith("ig-published-")) return { permalink: "https://instagram.com/p/new" };
+      if (path.startsWith("fb-post-")) return { permalink_url: "https://facebook.com/post/1", message: "Hi" };
+      if (path.endsWith("/conversations")) return { data: [] };
+      if (params.fields?.includes("permalink")) return {};
+      throw new actual.MetaGraphError(`unexpected GET ${path}`, 404);
+    }),
+    graphPost: vi.fn(async (path: string, params: Record<string, string> = {}) => {
+      posts.push({ path, params });
+      seq += 1;
+      if (path === `${PAGE}/messages`) {
+        const recipient = JSON.parse(params.recipient);
+        return recipient.comment_id ? { message_id: `m-private-${seq}`, recipient_id: IGSID } : { message_id: `m-out-${seq}`, recipient_id: recipient.id };
+      }
+      if (path === `${IG}/media`) return { id: `ig-container-${seq}` };
+      if (path === `${IG}/media_publish`) return { id: `ig-published-${seq}` };
+      if (path === `${PAGE}/photos`) return { id: `photo-${seq}`, post_id: `fb-post-${seq}` };
+      return { success: true };
+    }),
+  };
+});
+
+import { encryptToken } from "../lib/meta/crypto";
+import { mediaSignature } from "../lib/social/account";
+import { maybeRunSocial } from "../lib/social/posts";
+import { sectionForPath } from "../lib/academyPermissions";
+import metaRouter from "./metaAds";
+import socialRouter from "./academySocial";
+
+let app: Express;
+let ownerId: number;
+let coachId: number;
+let fieldId: number;
+let academyId: number;
+let mediaId: number;
+const auth = (id: number) => ({ "x-test-user": String(id) });
+const base = () => `/api/academy/console/academies/${academyId}/social`;
+const JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
+
+async function hook(body: unknown) {
+  const raw = JSON.stringify(body);
+  const signature = `sha256=${createHmac("sha256", "test-app-secret").update(raw).digest("hex")}`;
+  return request(app).post("/api/meta/webhook").set("content-type", "application/json").set("x-hub-signature-256", signature).send(raw).expect(200);
+}
+
+const igDm = (mid: string, text: string, extra: Record<string, unknown> = {}) => ({
+  object: "instagram",
+  entry: [{ id: IG, time: Date.now(), messaging: [{ sender: { id: IGSID }, recipient: { id: IG }, timestamp: Date.now(), message: { mid, text, ...extra } }] }],
+});
+
+beforeAll(async () => {
+  app = express();
+  app.use("/api/meta/webhook", express.raw({ type: "*/*" }));
+  app.use(express.json({ limit: "10mb" }));
+  app.use("/api", metaRouter);
+  app.use("/api", socialRouter);
+  const users = await db.insert(usersTable).values([
+    { name: `Owner ${stamp}`, email: `so-owner-${stamp}@test.local` },
+    { name: `Coach ${stamp}`, email: `so-coach-${stamp}@test.local` },
+  ]).returning({ id: usersTable.id });
+  [ownerId, coachId] = users.map((u) => u.id);
+  const [field] = await db.insert(fieldsTable).values({ name: `Social field ${stamp}`, cameraId: "camera1" }).returning({ id: fieldsTable.id });
+  fieldId = field.id;
+  const [academy] = await db.insert(academiesTable).values({ name: `Social Academy ${stamp}`, fieldId }).returning({ id: academiesTable.id });
+  academyId = academy.id;
+  await db.insert(academyMembersTable).values([
+    { academyId, userId: ownerId, role: "owner" },
+    { academyId, userId: coachId, role: "coach" },
+  ]);
+  await db.insert(academySocialAccountsTable).values({
+    academyId, tokenEnc: encryptToken("sys-token"), pageId: PAGE, pageName: "Galaxy Academy", pageTokenEnc: encryptToken("page-token"),
+    igUserId: IG, igUsername: "galaxy.academy", subscribed: true, status: "connected", connectedAt: new Date(),
+  });
+  const [m] = await db.insert(academyAdMediaTable).values({ academyId, kind: "image", name: "Team photo", imageData: JPEG, status: "ready" }).returning({ id: academyAdMediaTable.id });
+  mediaId = m.id;
+});
+
+beforeEach(() => {
+  posts.length = 0;
+});
+
+afterAll(async () => {
+  if (academyId) await db.delete(academiesTable).where(eq(academiesTable.id, academyId));
+  if (fieldId) await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
+  for (const id of [ownerId, coachId]) if (id) await db.delete(usersTable).where(eq(usersTable.id, id));
+});
+
+describe("permissions", () => {
+  it("puts Instagram/Messenger chats in Chats and the rest in Social", () => {
+    expect(sectionForPath("/academy/console/academies/3/social/threads/9")).toEqual({ academyId: 3, section: "chats" });
+    expect(sectionForPath("/academy/console/academies/3/social/threads-hidden")).toEqual({ academyId: 3, section: "chats" });
+    expect(sectionForPath("/academy/console/academies/3/social/comments")).toEqual({ academyId: 3, section: "social" });
+    expect(sectionForPath("/academy/console/academies/3/social")).toEqual({ academyId: 3, section: "social" });
+  });
+});
+
+describe("Instagram Direct and Messenger", () => {
+  it("files a DM into a thread with the person's profile, once", async () => {
+    await hook(igDm(`mid-1-${stamp}`, "Do you have a U10 team?"));
+    await hook(igDm(`mid-1-${stamp}`, "Do you have a U10 team?")); // Meta retries
+    const [thread] = await db.select().from(academySocialThreadsTable).where(eq(academySocialThreadsTable.externalUserId, IGSID));
+    expect(thread).toMatchObject({ academyId, channel: "instagram", name: "Sami Haddad", username: "sami.h", stage: "new" });
+    expect(thread.lastInAt).not.toBeNull();
+    const messages = await db.select().from(academySocialMessagesTable).where(eq(academySocialMessagesTable.threadId, thread.id));
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ direction: "in", body: "Do you have a U10 team?", status: "received" });
+  });
+
+  it("keeps replies typed in the Instagram app (echoes) but not its own sends", async () => {
+    const echo = (mid: string, appId?: string) => ({
+      object: "instagram",
+      entry: [{ id: IG, messaging: [{ sender: { id: IG }, recipient: { id: IGSID }, timestamp: Date.now(), message: { mid, text: "Yes, Tuesdays", is_echo: true, ...(appId ? { app_id: appId } : {}) } }] }],
+    });
+    await hook(echo(`mid-echo-${stamp}`));
+    await hook(echo(`mid-ours-${stamp}`, "1401484938413305"));
+    const rows = await db.select().from(academySocialMessagesTable).where(eq(academySocialMessagesTable.direction, "out"));
+    const mine = rows.filter((r) => r.academyId === academyId);
+    expect(mine.map((r) => r.externalId)).toEqual([`mid-echo-${stamp}`]);
+    expect(mine[0].kind).toBe("app");
+  });
+
+  it("files Messenger messages too, and lists both with unread counts", async () => {
+    await hook({ object: "page", entry: [{ id: PAGE, messaging: [{ sender: { id: PSID }, recipient: { id: PAGE }, timestamp: Date.now(), message: { mid: `mid-fb-${stamp}`, text: "Price?" } }] }] });
+    const list = await request(app).get(`${base()}/threads`).set(auth(coachId)).expect(200);
+    expect(list.body).toHaveLength(2);
+    const fb = list.body.find((t: { channel: string }) => t.channel === "messenger");
+    expect(fb).toMatchObject({ name: "Abu Kareem", unread: 1, lastBody: "Price?", replyWindow: "open" });
+    const overview = await request(app).get(base()).set(auth(ownerId)).expect(200);
+    expect(overview.body).toMatchObject({ unreadThreads: 2, connection: { status: "connected", igUsername: "galaxy.academy" }, canManage: true });
+  });
+
+  it("replies inside the 24-hour window and refuses after 7 days", async () => {
+    const [thread] = await db.select().from(academySocialThreadsTable).where(eq(academySocialThreadsTable.externalUserId, IGSID));
+    const sent = await request(app).post(`${base()}/threads/${thread.id}/messages`).set(auth(coachId)).send({ body: "Yes! Come Tuesday at 5" }).expect(201);
+    expect(sent.body.status).toBe("sent");
+    expect(posts[0]).toMatchObject({ path: `${PAGE}/messages` });
+    expect(posts[0].params.messaging_type).toBe("RESPONSE");
+    expect(JSON.parse(posts[0].params.recipient)).toEqual({ id: IGSID });
+    const [after] = await db.select().from(academySocialThreadsTable).where(eq(academySocialThreadsTable.id, thread.id));
+    expect(after.stage).toBe("contacted");
+
+    await db.update(academySocialThreadsTable).set({ lastInAt: new Date(Date.now() - 3 * 86400_000) }).where(eq(academySocialThreadsTable.id, thread.id));
+    posts.length = 0;
+    await request(app).post(`${base()}/threads/${thread.id}/messages`).set(auth(ownerId)).send({ body: "Still interested?" }).expect(201);
+    expect(posts[0].params).toMatchObject({ messaging_type: "MESSAGE_TAG", tag: "HUMAN_AGENT" });
+
+    await db.update(academySocialThreadsTable).set({ lastInAt: new Date(Date.now() - 8 * 86400_000) }).where(eq(academySocialThreadsTable.id, thread.id));
+    const late = await request(app).post(`${base()}/threads/${thread.id}/messages`).set(auth(ownerId)).send({ body: "Hello?" }).expect(409);
+    expect(late.body.error).toMatch(/24 hours/);
+  });
+
+  it("archive/mute/block/personal need chats.manage; personal deletes the messages, blocked drops new ones", async () => {
+    const [thread] = await db.select().from(academySocialThreadsTable).where(eq(academySocialThreadsTable.externalUserId, PSID));
+    await request(app).post(`${base()}/threads/${thread.id}/state`).set(auth(coachId)).send({ archived: true }).expect(403);
+    await request(app).post(`${base()}/threads/${thread.id}/state`).set(auth(ownerId)).send({ blocked: true }).expect(200);
+    await hook({ object: "page", entry: [{ id: PAGE, messaging: [{ sender: { id: PSID }, recipient: { id: PAGE }, timestamp: Date.now(), message: { mid: `mid-fb2-${stamp}`, text: "hello??" } }] }] });
+    expect(await db.select().from(academySocialMessagesTable).where(eq(academySocialMessagesTable.externalId, `mid-fb2-${stamp}`))).toHaveLength(0);
+    await request(app).post(`${base()}/threads/${thread.id}/messages`).set(auth(ownerId)).send({ body: "x" }).expect(409);
+    await request(app).post(`${base()}/threads/${thread.id}/state`).set(auth(ownerId)).send({ personal: true }).expect(200);
+    expect(await db.select().from(academySocialMessagesTable).where(eq(academySocialMessagesTable.threadId, thread.id))).toHaveLength(0);
+    const hidden = await request(app).get(`${base()}/threads-hidden`).set(auth(ownerId)).expect(200);
+    expect(hidden.body[0]).toMatchObject({ id: thread.id, personal: true, blocked: true });
+    const list = await request(app).get(`${base()}/threads`).set(auth(ownerId)).expect(200);
+    expect(list.body.map((t: { id: number }) => t.id)).not.toContain(thread.id);
+  });
+
+  it("files the person into People as a lead once their phone is known", async () => {
+    const [thread] = await db.select().from(academySocialThreadsTable).where(eq(academySocialThreadsTable.externalUserId, IGSID));
+    await request(app).put(`${base()}/threads/${thread.id}/lead`).set(auth(coachId)).send({ phone: "0791234567" }).expect(200);
+    const res = await request(app).put(`${base()}/threads/${thread.id}/lead`).set(auth(coachId)).send({ stage: "trial" }).expect(200);
+    expect(res.body).toMatchObject({ stage: "trial", contact: { kind: "lead", stage: "trial", name: "Sami Haddad" } });
+    const [contact] = await db.select().from(academyContactsTable).where(eq(academyContactsTable.id, res.body.contact.id));
+    expect(contact).toMatchObject({ academyId, phone: "962791234567", source: "instagram" });
+  });
+});
+
+describe("comments", () => {
+  it("files Instagram and Facebook comments, skipping the academy's own", async () => {
+    await hook({ object: "instagram", entry: [{ id: IG, changes: [
+      { field: "comments", value: { id: `c-ig-${stamp}`, text: "How much per month?", from: { id: IGSID, username: "sami.h" }, media: { id: `ig-media-1` } } },
+      { field: "comments", value: { id: `c-own-${stamp}`, text: "Thanks!", from: { id: IG, username: "galaxy.academy" }, media: { id: `ig-media-1` } } },
+    ] }] });
+    await hook({ object: "page", entry: [{ id: PAGE, changes: [{ field: "feed", value: { item: "comment", verb: "add", comment_id: `c-fb-${stamp}`, post_id: `fb-post-1`, parent_id: `fb-post-1`, message: "Location?", from: { id: PSID, name: "Abu Kareem" }, created_time: Math.floor(Date.now() / 1000) } }] }] });
+    const list = await request(app).get(`${base()}/comments`).set(auth(ownerId)).expect(200);
+    expect(list.body).toHaveLength(2);
+    const ig = list.body.find((c: { channel: string }) => c.channel === "instagram");
+    expect(ig).toMatchObject({ body: "How much per month?", fromName: "@sami.h", postPermalink: "https://instagram.com/p/ig-media-1", canPrivateReply: true });
+  });
+
+  it("replies, hides and sends one private message that opens a DM", async () => {
+    const [ig] = await db.select().from(academySocialCommentsTable).where(eq(academySocialCommentsTable.commentId, `c-ig-${stamp}`));
+    await request(app).post(`${base()}/comments/${ig.id}/private-reply`).set(auth(coachId)).send({ text: "Sent you the prices!" }).expect(403);
+    const pr = await request(app).post(`${base()}/comments/${ig.id}/private-reply`).set(auth(ownerId)).send({ text: "Sent you the prices!" }).expect(200);
+    expect(JSON.parse(posts[0].params.recipient)).toEqual({ comment_id: `c-ig-${stamp}` });
+    expect(pr.body.threadId).toBeTruthy();
+    await request(app).post(`${base()}/comments/${ig.id}/private-reply`).set(auth(ownerId)).send({ text: "again" }).expect(409);
+    const [fb] = await db.select().from(academySocialCommentsTable).where(eq(academySocialCommentsTable.commentId, `c-fb-${stamp}`));
+    await request(app).post(`${base()}/comments/${fb.id}/reply`).set(auth(ownerId)).send({ text: "Airport Road" }).expect(200);
+    expect(posts.at(-1)).toMatchObject({ path: `c-fb-${stamp}/comments`, params: { message: "Airport Road" } });
+    await request(app).post(`${base()}/comments/${fb.id}/hide`).set(auth(ownerId)).send({ hidden: true }).expect(200);
+    expect(posts.at(-1)).toMatchObject({ path: `c-fb-${stamp}`, params: { is_hidden: "true" } });
+    const open = await request(app).get(`${base()}/comments`).set(auth(ownerId)).expect(200);
+    expect(open.body).toHaveLength(0);
+  });
+});
+
+describe("posts", () => {
+  it("publishes a photo to Instagram and Facebook from the media library", async () => {
+    const res = await request(app).post(`${base()}/posts`).set(auth(ownerId))
+      .send({ targets: ["instagram", "facebook"], format: "image", caption: "Match day 🔥", mediaIds: [mediaId] }).expect(201);
+    expect(res.body.status).toBe("published");
+    const igCreate = posts.find((p) => p.path === `${IG}/media`)!;
+    expect(igCreate.params.image_url).toContain(`/api/social/media/${mediaId}/${mediaSignature(mediaId)}.jpg`);
+    expect(posts.some((p) => p.path === `${IG}/media_publish`)).toBe(true);
+    expect(posts.find((p) => p.path === `${PAGE}/photos`)!.params.caption).toBe("Match day 🔥");
+    const [row] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, res.body.id));
+    expect(row.igPermalink).toBe("https://instagram.com/p/new");
+    expect(row.fbPostId).toMatch(/^fb-post-/);
+  });
+
+  it("checks the format and holds scheduled posts until their time", async () => {
+    await request(app).post(`${base()}/posts`).set(auth(ownerId)).send({ targets: ["instagram"], format: "reel", caption: "", mediaIds: [mediaId] }).expect(400);
+    await request(app).post(`${base()}/posts`).set(auth(coachId)).send({ targets: ["instagram"], format: "image", mediaIds: [mediaId] }).expect(403);
+    const soon = new Date(Date.now() + 60 * 60_000).toISOString();
+    const res = await request(app).post(`${base()}/posts`).set(auth(ownerId)).send({ targets: ["instagram"], format: "image", caption: "Later", mediaIds: [mediaId], scheduledFor: soon }).expect(201);
+    expect(res.body.status).toBe("scheduled");
+    expect(posts).toHaveLength(0);
+    await db.update(academySocialPostsTable).set({ scheduledFor: new Date(Date.now() - 1000) }).where(eq(academySocialPostsTable.id, res.body.id));
+    await maybeRunSocial(Number.MAX_SAFE_INTEGER);
+    const [row] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, res.body.id));
+    expect(row.status).toBe("published");
+  });
+
+  it("serves media to Meta only on a signed link", async () => {
+    await request(app).get(`/api/social/media/${mediaId}/deadbeefdeadbeefdeadbeef.jpg`).expect(404);
+    const ok = await request(app).get(`/api/social/media/${mediaId}/${mediaSignature(mediaId)}.jpg`).expect(200);
+    expect(ok.headers["content-type"]).toBe("image/jpeg");
+  });
+});

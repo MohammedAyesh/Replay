@@ -11,6 +11,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { ContactEditor, LinkPlayerForm, RelationshipChips } from "./contact-editor";
+import { useSocialCopy } from "@/i18n/social-strings";
+import { useHiddenSocialThreads, useSocialThreadState, useSocialThreads, type SocialThreadSummary } from "@/lib/academy-social-api";
+import { ChannelIcon, SocialChatRow, SocialThreadView } from "./social-chat";
 
 function initials(name: string | null, fallback: string) {
   const source = (name ?? "").trim();
@@ -27,35 +30,53 @@ function StatusTick({ status }: { status: string }) {
 }
 
 type ChatFilter = "all" | "unread" | "unknown" | "archived";
+type ChannelFilter = "all" | "whatsapp" | "instagram" | "messenger";
+type Row = { kind: "wa"; key: string; at: number; chat: ChatSummary } | { kind: "social"; key: string; at: number; thread: SocialThreadSummary };
 
-export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwner, initialPhone }: { academyId: number; isOwner: boolean; canManageChats?: boolean; initialPhone?: string | null }) {
+export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwner, initialPhone, initialSocialThreadId }: { academyId: number; isOwner: boolean; canManageChats?: boolean; initialPhone?: string | null; initialSocialThreadId?: number | null }) {
   const copy = usePeopleCopy();
   const team = useTeamCopy();
   const chats = useChats(academyId);
   const overview = useWhatsappOverview(academyId);
-  const [selected, setSelected] = useState<string | null>(initialPhone ?? null);
+  const social = useSocialThreads(academyId);
+  const socialCopy = useSocialCopy();
+  const [channel, setChannel] = useState<ChannelFilter>("all");
+  const [selected, setSelected] = useState<string | null>(initialSocialThreadId ? `s:${initialSocialThreadId}` : initialPhone ?? null);
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [query, setQuery] = useState("");
   const [hiddenOpen, setHiddenOpen] = useState(false);
 
   useEffect(() => { if (initialPhone) setSelected(initialPhone); }, [initialPhone]);
+  useEffect(() => { if (initialSocialThreadId) setSelected(`s:${initialSocialThreadId}`); }, [initialSocialThreadId]);
 
   // Blocked chats live under "Hidden chats"; archived ones under their own filter.
   const visible = useMemo(() => (chats.data ?? []).filter((c) => !c.blocked), [chats.data]);
-  const archivedCount = visible.filter((c) => c.archived).length;
+  const socialVisible = useMemo(() => (social.data ?? []).filter((t) => !t.blocked), [social.data]);
+  const archivedCount = visible.filter((c) => c.archived).length + socialVisible.filter((t) => t.archived).length;
   const list = useMemo(() => {
     const q = query.trim().toLocaleLowerCase();
-    return visible.filter((c) => {
+    const wa: Row[] = channel !== "all" && channel !== "whatsapp" ? [] : visible.filter((c) => {
       if (filter === "archived" ? !c.archived : c.archived) return false;
       if (filter === "unread" && (c.unread === 0 || c.muted)) return false;
       if (filter === "unknown" && c.contact && c.contact.players.length > 0 && c.contact.kind !== "unknown") return false;
       if (!q) return true;
       const hay = [c.contact?.name, c.display, c.phone, ...(c.contact?.players.map((p) => p.playerName) ?? []), ...(c.contact?.tags ?? [])].join(" ").toLocaleLowerCase();
       return hay.includes(q);
-    });
-  }, [visible, filter, query]);
+    }).map((c) => ({ kind: "wa", key: c.phone, at: new Date(c.lastAt).getTime(), chat: c }));
+    const so: Row[] = channel === "whatsapp" ? [] : socialVisible.filter((t) => {
+      if (channel !== "all" && t.channel !== channel) return false;
+      if (filter === "archived" ? !t.archived : t.archived) return false;
+      if (filter === "unread" && (t.unread === 0 || t.muted)) return false;
+      if (filter === "unknown" && t.contact) return false;
+      if (!q) return true;
+      return [t.name, t.username, t.contact?.display, t.lastBody].join(" ").toLocaleLowerCase().includes(q);
+    }).map((t) => ({ kind: "social", key: `s:${t.id}`, at: t.lastAt ? new Date(t.lastAt).getTime() : 0, thread: t }));
+    return [...wa, ...so].sort((a, b) => b.at - a.at);
+  }, [visible, socialVisible, filter, query, channel]);
 
-  const unknownCount = visible.filter((c) => !c.archived && (!c.contact || c.contact.kind === "unknown" || c.contact.players.length === 0)).length;
+  const unknownCount = visible.filter((c) => !c.archived && (!c.contact || c.contact.kind === "unknown" || c.contact.players.length === 0)).length
+    + socialVisible.filter((t) => !t.archived && !t.contact).length;
+  const hasSocial = (social.data ?? []).length > 0;
 
   return (
     <section className="space-y-4" data-testid="academy-chats" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
@@ -83,11 +104,25 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
                 </button>
               ))}
             </div>
+            {hasSocial && (
+              <div className="flex gap-1.5" data-testid="chat-channels">
+                {(["all", "whatsapp", "instagram", "messenger"] as const).map((c) => (
+                  <button key={c} type="button" onClick={() => setChannel(c)}
+                    className={cn("inline-flex min-h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold", channel === c ? "bg-floodlight/15 text-floodlight" : "bg-raised text-muted-text")}
+                    data-testid={`chat-channel-${c}`}>
+                    {c === "instagram" || c === "messenger" ? <ChannelIcon channel={c} className="h-3 w-3" /> : null}
+                    {socialCopy.chat[c]}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {chats.isLoading ? <div className="space-y-2 p-3">{[0, 1, 2, 3].map((n) => <div key={n} className="h-14 animate-pulse rounded-xl bg-raised" />)}</div>
               : list.length === 0 ? <p className="p-6 text-center text-sm leading-6 text-muted-text">{copy.chats.empty}</p>
-                : list.map((c) => <ChatRow key={c.phone} chat={c} active={selected === c.phone} onClick={() => setSelected(c.phone)} />)}
+                : list.map((r) => r.kind === "wa"
+                  ? <ChatRow key={r.key} chat={r.chat} active={selected === r.key} onClick={() => setSelected(r.key)} />
+                  : <SocialChatRow key={r.key} thread={r.thread} active={selected === r.key} onClick={() => setSelected(r.key)} />)}
           </div>
           {canManageChats && (
             <button type="button" onClick={() => setHiddenOpen(true)} className="flex items-center gap-2 border-t border-line px-3 py-2.5 text-xs text-muted-text hover:text-text" data-testid="button-hidden-chats">
@@ -98,7 +133,9 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
 
         {/* Thread */}
         <div className={cn("min-h-0", selected ? "flex" : "hidden md:flex")}>
-          {selected ? (
+          {selected?.startsWith("s:") ? (
+            <SocialThreadView academyId={academyId} threadId={Number(selected.slice(2))} canManage={canManageChats} onBack={() => setSelected(null)} onHidden={() => setSelected(null)} />
+          ) : selected ? (
             <Thread academyId={academyId} phone={selected} isOwner={isOwner} canManage={canManageChats} onBack={() => setSelected(null)} onHidden={() => setSelected(null)} />
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-text">
@@ -118,6 +155,8 @@ function HiddenChatsSheet({ academyId, open, onOpenChange }: { academyId: number
   const copy = useTeamCopy();
   const hidden = useHiddenChats(academyId, open);
   const state = useChatState(academyId);
+  const socialHidden = useHiddenSocialThreads(academyId, open);
+  const socialState = useSocialThreadState(academyId);
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side={copy.locale === "ar" ? "left" : "right"} className="w-full overflow-y-auto border-line bg-surface text-text sm:max-w-md" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
@@ -126,7 +165,19 @@ function HiddenChatsSheet({ academyId, open, onOpenChange }: { academyId: number
           <SheetDescription className="text-start">{copy.chat.personalConfirm}</SheetDescription>
         </SheetHeader>
         <ul className="mt-4 divide-y divide-line px-4">
-          {(hidden.data ?? []).length === 0 && <li className="py-4 text-sm text-muted-text">{copy.chat.noHidden}</li>}
+          {(hidden.data ?? []).length === 0 && (socialHidden.data ?? []).length === 0 && <li className="py-4 text-sm text-muted-text">{copy.chat.noHidden}</li>}
+          {(socialHidden.data ?? []).map((h) => (
+            <li key={`s${h.id}`} className="flex items-center gap-2 py-3">
+              <ChannelIcon channel={h.channel} className="h-4 w-4 shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-sm font-semibold" dir="auto">{h.name || (h.username ? `@${h.username}` : "—")}</span>
+              {h.personal && <span className="rounded-full bg-raised px-2 py-0.5 text-[11px] text-muted-text">{copy.chat.personalTag}</span>}
+              {h.blocked && <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] text-red-300">{copy.chat.blockedTag}</span>}
+              <Button type="button" size="sm" variant="ghost" disabled={socialState.isPending}
+                onClick={() => socialState.mutate({ threadId: h.id, state: { ...(h.personal ? { personal: false } : {}), ...(h.blocked ? { blocked: false } : {}) } }, { onSuccess: () => void socialHidden.refetch() })}>
+                {copy.chat.restore}
+              </Button>
+            </li>
+          ))}
           {(hidden.data ?? []).map((h) => (
             <li key={h.phone} className="flex items-center gap-2 py-3">
               <span className="min-w-0 flex-1">

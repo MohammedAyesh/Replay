@@ -58,7 +58,7 @@ const en = {
     sections: {
       dashboard: "Dashboard", squads: "Squads", players: "Players", registrations: "Registrations", attendance: "Attendance",
       schedule: "Schedule & results", recordings: "Recordings", matches: "Matches", fees: "Fees & payments", announcements: "Announcements",
-      chats: "Chats", people: "People", whatsapp: "WhatsApp", ads: "Ads", profile: "Profile", branding: "Branding", studio: "Studio",
+      chats: "Chats", people: "People", whatsapp: "WhatsApp", social: "Instagram & Facebook", ads: "Ads", profile: "Profile", branding: "Branding", studio: "Studio",
     } as Record<string, string>,
     screens: {
       schedule: "Schedule", footage: "Session videos", matches: "Match pages", attendance: "Attendance", news: "News", fees: "Fees", payments: "Payments",
@@ -136,7 +136,7 @@ const ar: Strings = {
     sections: {
       dashboard: "الرئيسية", squads: "الفرق", players: "اللاعبين", registrations: "التسجيلات", attendance: "الحضور",
       schedule: "الجدول والنتائج", recordings: "التسجيلات المصوّرة", matches: "المباريات", fees: "الرسوم والدفعات", announcements: "الإعلانات",
-      chats: "المحادثات", people: "الأشخاص", whatsapp: "واتساب", ads: "الإعلانات الممولة", profile: "الملف", branding: "الهوية", studio: "الاستوديو",
+      chats: "المحادثات", people: "الأشخاص", whatsapp: "واتساب", social: "إنستغرام وفيسبوك", ads: "الإعلانات الممولة", profile: "الملف", branding: "الهوية", studio: "الاستوديو",
     },
     screens: {
       schedule: "الجدول", footage: "فيديوهات الحصص", matches: "صفحات المباريات", attendance: "الحضور", news: "الأخبار", fees: "الرسوم", payments: "الدفعات",

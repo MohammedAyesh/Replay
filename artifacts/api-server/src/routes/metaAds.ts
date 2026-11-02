@@ -7,6 +7,7 @@ import { logger } from "../lib/logger";
 import { metaAdsConfigured, metaConfig, metaSignatureValid, metaWebhookVerifyToken } from "../lib/meta/config";
 import { graphGet, graphPost, MetaGraphError } from "../lib/meta/graph";
 import { fileUnassignedLeads, handleLeadgen } from "../lib/meta/leads";
+import { handleSocialWebhook } from "../lib/social/inbox";
 import { lastMetaSync, syncMetaAds, type CampaignNumbers } from "../lib/meta/sync";
 import { chargedByCampaign, ledgerNumbers } from "../lib/meta/wallet";
 import { formatPhoneForDisplay } from "../lib/whatsapp/phone";
@@ -71,7 +72,9 @@ router.post("/meta/webhook", async (req, res): Promise<void> => {
   const changes = (body.entry ?? []).flatMap((entry) => entry.changes ?? []).filter((c) => c.field === "leadgen" && c.value);
   try {
     for (const change of changes) await handleLeadgen(change.value!);
-    res.status(200).json({ ok: true, leads: changes.length });
+    // Instagram Direct, Messenger and comments for academies that connected their accounts.
+    const social = await handleSocialWebhook(body as Parameters<typeof handleSocialWebhook>[0]);
+    res.status(200).json({ ok: true, leads: changes.length, social });
   } catch (error) {
     // A non-2xx makes Meta retry, which is what we want if the lead could not be fetched.
     logger.error({ error: (error as Error)?.message }, "Meta lead webhook failed");

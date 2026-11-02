@@ -15,12 +15,12 @@ import { academyRolesForUser, type AcademyConsoleRole } from "./academyAccess";
 
 export const CONSOLE_SECTIONS = [
   "dashboard", "squads", "players", "registrations", "attendance", "schedule", "recordings", "matches",
-  "fees", "announcements", "chats", "people", "whatsapp", "ads", "profile", "branding", "studio",
+  "fees", "announcements", "chats", "people", "whatsapp", "social", "ads", "profile", "branding", "studio",
 ] as const;
 export type ConsoleSection = (typeof CONSOLE_SECTIONS)[number];
 
 /** Sections coaches don't see unless the owner opens them (and then with full control). */
-export const OWNER_SECTIONS: ConsoleSection[] = ["fees", "ads", "branding", "studio"];
+export const OWNER_SECTIONS: ConsoleSection[] = ["fees", "social", "ads", "branding", "studio"];
 
 export const FAMILY_SCREENS = ["schedule", "footage", "matches", "attendance", "news", "fees", "payments"] as const;
 export type FamilyScreen = (typeof FAMILY_SCREENS)[number];
@@ -161,11 +161,13 @@ export function sectionForPath(path: string): { academyId: number; section: Cons
     access: "team",
   };
   if (first === "whatsapp") return { academyId, section: second === "chats" ? "chats" : "whatsapp" };
+  // Instagram / Messenger conversations live in Chats; connecting, comments and posts in Social.
+  if (first === "social") return { academyId, section: second?.startsWith("threads") ? "chats" : "social" };
   return { academyId, section: map[first] ?? null };
 }
 
 /** Reading these exposes private data, so a role that can't see the section can't read it either. */
-export const PRIVATE_SECTIONS: ConsoleSection[] = ["fees", "ads", "chats", "people", "whatsapp", "branding", "studio"];
+export const PRIVATE_SECTIONS: ConsoleSection[] = ["fees", "ads", "chats", "people", "whatsapp", "social", "branding", "studio"];
 
 /** The family-page screens a parent or a player of this academy sees. */
 export async function familyScreensFor(academyId: number, role: FamilyRole): Promise<FamilyScreen[]> {

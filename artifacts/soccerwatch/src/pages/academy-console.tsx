@@ -30,6 +30,7 @@ import {
   UserRound,
   Video,
   X,
+  Instagram,
 } from "lucide-react";
 import {
   getGetAcademyQueryKey,
@@ -94,6 +95,8 @@ import { useAdsCopy } from "@/i18n/ads-strings";
 import { AcademyAdsSection } from "@/components/academy-console/ads-section";
 import { AcademyProfileSection } from "@/components/academy-console/profile-section";
 import { AcademyTeamSection } from "@/components/academy-console/team-section";
+import { AcademySocialSection } from "@/components/academy-console/social-section";
+import { useSocialCopy } from "@/i18n/social-strings";
 import { useTeamCopy } from "@/i18n/team-strings";
 import { useMyAcademyAccess } from "@/lib/academy-team-api";
 import { useProfileCopy } from "@/i18n/profile-strings";
@@ -112,7 +115,7 @@ import { AcademyRegistrationsSection } from "@/components/academy-console/regist
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "profile" | "branding" | "studio" | "team";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "team";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -199,6 +202,7 @@ function AcademyConsoleSidebar({
   const profileCopy = useProfileCopy();
   const studioCopy = useStudioCopy();
   const teamCopy = useTeamCopy();
+  const socialCopy = useSocialCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
   const items: Array<{ id: ConsoleSection; label: string; icon: typeof LayoutDashboard; ownerOnly?: boolean }> = [
     { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
@@ -213,6 +217,7 @@ function AcademyConsoleSidebar({
     { id: "announcements", label: labels.announcements, icon: Megaphone },
     { id: "chats", label: peopleCopy.chats.nav, icon: MessagesSquare },
     { id: "people", label: peopleCopy.people.nav, icon: ContactIcon },
+    { id: "social", label: socialCopy.nav, icon: Instagram, ownerOnly: true },
     { id: "ads", label: adsCopy.nav, icon: Target, ownerOnly: true },
     { id: "whatsapp", label: whatsappCopy.nav, icon: MessageCircle },
     { id: "profile", label: profileCopy.nav, icon: Building2 },
@@ -755,6 +760,7 @@ export default function AcademyConsole() {
   const [location, setLocation] = useLocation();
   const [section, setSection] = useState<ConsoleSection>("dashboard");
   const [chatPhone, setChatPhone] = useState<string | null>(null);
+  const [chatSocialThread, setChatSocialThread] = useState<number | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selectedAcademyId, setSelectedAcademyId] = useState<number | null>(readSelectedAcademyId);
   const membershipsQuery = useGetAcademyConsoleMemberships({
@@ -786,7 +792,7 @@ export default function AcademyConsole() {
   // What the owner lets this member see and run (Academy console → Team). Until it loads,
   // fall back to the role alone.
   const myAccess = useMyAcademyAccess(activeAcademyId);
-  const OWNER_ONLY: ConsoleSection[] = ["fees", "ads", "branding", "studio", "team"];
+  const OWNER_ONLY: ConsoleSection[] = ["fees", "social", "ads", "branding", "studio", "team"];
   const canSee = (s: ConsoleSection) => isOwner || (s !== "team" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
   const manages = (s: ConsoleSection) => isOwner || Boolean(myAccess.data?.manages.includes(s));
   const canManageChats = isOwner || Boolean(myAccess.data?.permissions.includes("chats.manage"));
@@ -817,7 +823,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "profile", "branding", "studio", "team"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "social", "profile", "branding", "studio", "team"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -901,7 +907,9 @@ export default function AcademyConsole() {
           ) : section === "whatsapp" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyWhatsappSection academyId={activeAcademyId} />
           ) : section === "chats" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyChatsSection academyId={activeAcademyId} isOwner={manages("chats")} canManageChats={canManageChats} initialPhone={chatPhone} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyChatsSection academyId={activeAcademyId} isOwner={manages("chats")} canManageChats={canManageChats} initialPhone={chatPhone} initialSocialThreadId={chatSocialThread} />
+          ) : section === "social" ? (
+            !manages("social") && !canSee("social") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademySocialSection academyId={activeAcademyId} onOpenChat={(threadId) => { setChatSocialThread(threadId); navigate("chats"); }} />
           ) : section === "people" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPeopleSection academyId={activeAcademyId} isOwner={manages("people")} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
           ) : section === "ads" ? (
