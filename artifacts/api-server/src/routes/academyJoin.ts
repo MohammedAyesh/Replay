@@ -14,6 +14,7 @@ import {
   SubmitPublicAcademyRegistrationParams,
   SubmitPublicAcademyRegistrationResponse,
 } from "@workspace/api-zod";
+import { onRegistrationReceived } from "../lib/whatsapp/automations";
 
 const router: IRouter = Router();
 const WINDOW_MS = 10 * 60 * 1000;
@@ -206,7 +207,7 @@ router.post("/join/:code", async (req, res): Promise<void> => {
       return { kind: "duplicate" as const };
     }
 
-    await tx.insert(academyRegistrationsTable).values({
+    const [registration] = await tx.insert(academyRegistrationsTable).values({
       academyId: academy.id,
       playerName: body.playerName.trim(),
       dateOfBirth: body.dateOfBirth ?? null,
@@ -215,8 +216,8 @@ router.post("/join/:code", async (req, res): Promise<void> => {
       preferredSquadId: body.preferredSquadId ?? null,
       notes: body.notes?.trim() || null,
       locale: body.locale,
-    });
-    return { kind: "created" as const };
+    }).returning();
+    return { kind: "created" as const, registration };
   });
 
   if (result.kind === "missing") {
@@ -231,6 +232,7 @@ router.post("/join/:code", async (req, res): Promise<void> => {
     res.status(200).json(SubmitPublicAcademyRegistrationResponse.parse({ ok: true, duplicate: true }));
     return;
   }
+  await onRegistrationReceived(result.registration.academyId, result.registration);
   res.status(201).json(SubmitPublicAcademyRegistrationResponse.parse({ ok: true }));
 });
 

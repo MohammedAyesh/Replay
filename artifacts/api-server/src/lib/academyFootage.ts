@@ -18,6 +18,7 @@ import {
   type FootageRequest,
 } from "./footageBooking";
 import { logger } from "./logger";
+import { onFootageReady } from "./whatsapp/automations";
 
 const ACTIVE_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
 // Statuses that hold the camera for a window. Matches the player booking path
@@ -415,6 +416,7 @@ export async function attachAcademyRecordingsForFootageRequest(
   const requestAcademyId = request.academyId;
   if (!videoId || requestAcademyId === null) return;
   const playbackUrl = getBunnyPlaybackUrl(videoId);
+  const attached: Array<{ academyId: number; sessionId: number; recordingId: number }> = [];
   await db.transaction(async (tx) => {
     // Serialize duplicate completion callbacks across API replicas without a
     // schema change; otherwise two workers could create duplicate recordings.
@@ -472,11 +474,13 @@ export async function attachAcademyRecordingsForFootageRequest(
         ))
         .limit(1);
       if (existingLink) continue;
-      await tx.insert(academyRecordingsTable).values({
+      const inserted = await tx.insert(academyRecordingsTable).values({
         academyId,
         recordingId,
         sessionId,
-      }).onConflictDoNothing();
+      }).onConflictDoNothing().returning({ id: academyRecordingsTable.id });
+      if (inserted.length > 0) attached.push({ academyId, sessionId, recordingId });
     }
   });
+  for (const link of attached) await onFootageReady(link.academyId, link.sessionId, link.recordingId);
 }

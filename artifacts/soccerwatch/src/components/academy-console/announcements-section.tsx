@@ -18,6 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { useWhatsappOverview } from "@/lib/academy-whatsapp-api";
+import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
 
 type AnnouncementForm = { title: string; body: string; squadId: string };
 const emptyForm: AnnouncementForm = { title: "", body: "", squadId: "" };
@@ -37,10 +39,20 @@ export function AcademyAnnouncementsSection({ academyId }: { academyId: number }
   const [form, setForm] = useState<AnnouncementForm>(emptyForm);
   const [saveError, setSaveError] = useState(false);
   const [deleteError, setDeleteError] = useState(false);
+  const whatsapp = useWhatsappOverview(academyId);
+  const whatsappCopy = useWhatsappCopy();
+  const whatsappOn = Boolean(whatsapp.data && whatsapp.data.sender !== "off");
+  const [sendWhatsapp, setSendWhatsapp] = useState(false);
   const announcements = useMemo(() => [...(announcementsQuery.data ?? [])].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)), [announcementsQuery.data]);
   const dateFormat = new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Amman" });
   const refresh = () => qc.invalidateQueries({ queryKey: getListAcademyConsoleAnnouncementsQueryKey(academyId) });
-  const openCreate = () => { setEditing(null); setForm({ ...emptyForm }); setSaveError(false); setFormOpen(true); };
+  const openCreate = () => {
+    setEditing(null);
+    setForm({ ...emptyForm });
+    setSaveError(false);
+    setSendWhatsapp(whatsappOn && (whatsapp.data?.automations.find((a) => a.key === "announcement")?.enabled ?? false));
+    setFormOpen(true);
+  };
   const openEdit = (item: AcademyAnnouncementSummary) => { setEditing(item); setForm({ title: item.title, body: item.body, squadId: item.squadId === null ? "" : String(item.squadId) }); setSaveError(false); setFormOpen(true); };
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -51,7 +63,8 @@ export function AcademyAnnouncementsSection({ academyId }: { academyId: number }
     const data = { title, body, squadId: form.squadId ? Number(form.squadId) : null };
     try {
       if (editing) await updateAnnouncement.mutateAsync({ academyId, announcementId: editing.id, data });
-      else await createAnnouncement.mutateAsync({ academyId, data });
+      // sendWhatsapp is read by the API outside the OpenAPI body.
+      else await createAnnouncement.mutateAsync({ academyId, data: { ...data, sendWhatsapp: sendWhatsapp && whatsappOn } as typeof data });
       await refresh();
       setFormOpen(false);
     } catch { setSaveError(true); }
@@ -97,6 +110,12 @@ export function AcademyAnnouncementsSection({ academyId }: { academyId: number }
             <div className="space-y-2"><Label htmlFor="announcement-title">{copy.title}</Label><Input id="announcement-title" required maxLength={200} value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} className="min-h-11 text-start" data-testid="input-announcement-title" /></div>
             <div className="space-y-2"><Label htmlFor="announcement-squad">{copy.audience}</Label><select id="announcement-squad" value={form.squadId} onChange={(e) => setForm((f) => ({ ...f, squadId: e.target.value }))} className="min-h-11 w-full rounded-lg border border-input bg-raised px-3 text-start text-sm text-text" data-testid="select-announcement-squad"><option value="">{copy.academyWide}</option>{(squadsQuery.data ?? []).map((squad) => <option key={squad.id} value={String(squad.id)}>{squad.name}</option>)}</select></div>
             <div className="space-y-2"><Label htmlFor="announcement-body">{copy.message}</Label><Textarea id="announcement-body" required maxLength={10000} rows={6} value={form.body} onChange={(e) => setForm((f) => ({ ...f, body: e.target.value }))} className="resize-y text-start" data-testid="input-announcement-body" /></div>
+            {!editing && whatsappOn && (
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-raised p-3" data-testid="announcement-whatsapp">
+                <input type="checkbox" checked={sendWhatsapp} onChange={(e) => setSendWhatsapp(e.target.checked)} className="mt-1 h-4 w-4 accent-[#2FD8C4]" data-testid="checkbox-announcement-whatsapp" />
+                <span><span className="block text-sm font-semibold text-text">{whatsappCopy.announcement.checkbox}</span><span className="mt-0.5 block text-xs text-muted-text">{whatsappCopy.announcement.hint}</span></span>
+              </label>
+            )}
             {saveError && <p className="text-sm text-destructive" role="alert" data-testid="announcement-save-error">{copy.saveError}</p>}
             <DialogFooter className="gap-2"><Button type="button" variant="outline" disabled={isSaving} onClick={() => setFormOpen(false)} className="min-h-11">{t.academyConsole.cancel}</Button><Button type="submit" disabled={isSaving} className="min-h-11 bg-floodlight font-bold text-void hover:bg-floodlight/90" data-testid="button-save-announcement">{isSaving ? copy.saving : copy.save}</Button></DialogFooter>
           </form>

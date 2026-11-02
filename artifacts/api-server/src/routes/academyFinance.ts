@@ -95,6 +95,7 @@ import {
   requireAcademyConsoleUser,
   requireAcademyMembership,
 } from "../lib/academyAccess";
+import { onFeePaid, onRenewalRecorded } from "../lib/whatsapp/automations";
 
 const router: IRouter = Router();
 const BUILT_IN_CATEGORIES = ["Rent", "Transport", "Replay", "Equipment", "Other"] as const;
@@ -907,6 +908,7 @@ router.post(
       badRequest(res, "A positive effective monthly fee is required before recording a renewal");
       return;
     }
+    await onRenewalRecorded(academyId, renewal.renewal);
     res.status(201).json(AcademyFinanceRenewalResponse.parse({
       id: renewal.renewal.id,
       playerId: renewal.renewal.playerId,
@@ -1125,7 +1127,7 @@ router.patch(
           eq(academyFeesTable.academyId, academyId),
         ))
         .returning();
-      return updated ? { kind: "fee" as const, fee: updated } : { kind: "missing" as const };
+      return updated ? { kind: "fee" as const, fee: updated, justPaid: updated.status === "paid" } : { kind: "missing" as const };
     });
     if (result.kind === "missing") {
       notFound(res, "Fee not found in this academy");
@@ -1135,6 +1137,7 @@ router.patch(
       res.status(409).json({ error: "A waived fee cannot be marked as paid" });
       return;
     }
+    if ("justPaid" in result && result.justPaid) await onFeePaid(academyId, result.fee);
     res.json(MarkAcademyFinanceFeePaidResponse.parse({
       id: result.fee.id,
       playerId: result.fee.playerId,

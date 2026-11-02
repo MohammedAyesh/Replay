@@ -98,6 +98,9 @@ app.use(cookieParser(COOKIE_SECRET));
 // Tracking bundles contain every-second-frame boxes and can be several MB for
 // a ten-minute clip. Keep the normal JSON API behavior while allowing the
 // authenticated admin upload to carry a real bundle.
+// WAHA signs its webhooks over the exact request bytes, so that one route gets
+// the raw body. express.raw marks the body parsed, and express.json skips it.
+app.use("/api/whatsapp/webhook", express.raw({ type: "*/*", limit: "5mb" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 

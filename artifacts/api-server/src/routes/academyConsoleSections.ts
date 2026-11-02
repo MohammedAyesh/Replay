@@ -39,6 +39,7 @@ import {
   requireAcademyConsoleUser,
   requireAcademyMembership,
 } from "../lib/academyAccess";
+import { onAnnouncementPosted, onAttendanceMarked, onFootageReady } from "../lib/whatsapp/automations";
 
 const router: IRouter = Router();
 
@@ -362,6 +363,7 @@ router.put(
       });
     }
 
+    await onAttendanceMarked(academyId, sessionId, body.data.entries);
     const sheet = await attendanceSheet(academyId, sessionId);
     if (!sheet) {
       res.status(404).json({ error: "Session not found in this academy" });
@@ -469,6 +471,7 @@ router.patch(
         eq(academyRecordingsTable.academyId, academyId),
         eq(academyRecordingsTable.recordingId, recordingId),
       ));
+    if (sessionId !== null) await onFootageReady(academyId, sessionId, recordingId);
 
     const [summary] = await academyConsoleRecordingSummaries(academyId, recordingId);
     if (!summary) {
@@ -543,7 +546,12 @@ router.post(
         createdBy: user.id,
       })
       .returning({ id: academyAnnouncementsTable.id });
+    // Not in the OpenAPI body: the console's "also send on WhatsApp" tick.
+    const whatsappQueued = req.body?.sendWhatsapp === true
+      ? await onAnnouncementPosted(academyId, { id: created.id, squadId, title, body: announcementBody, createdBy: user.id })
+      : 0;
     const [summary] = await academyAnnouncementSummaries(academyId, created.id);
+    res.setHeader("X-WhatsApp-Queued", String(whatsappQueued));
     res.status(201).json(CreateAcademyConsoleAnnouncementResponse.parse(summary));
   },
 );
