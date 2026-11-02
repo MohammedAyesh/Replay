@@ -113,3 +113,51 @@ export const academyWhatsappOptOutsTable = pgTable("academy_whatsapp_opt_outs", 
 export type AcademyWhatsappSettings = typeof academyWhatsappSettingsTable.$inferSelect;
 export type AcademyWhatsappMessage = typeof academyWhatsappMessagesTable.$inferSelect;
 export type AcademyWhatsappBroadcast = typeof academyWhatsappBroadcastsTable.$inferSelect;
+
+// ─── People (the start of the academy CRM) ───────────────────────────────────
+
+export const CONTACT_KINDS = ["unknown", "lead", "parent", "player", "coach", "staff", "other"] as const;
+export const LEAD_STAGES = ["new", "contacted", "trial", "joined", "lost"] as const;
+export const CONTACT_RELATIONSHIPS = ["father", "mother", "guardian", "sibling", "relative", "self", "other"] as const;
+
+/**
+ * One row per phone number an academy knows: a parent, a player, a coach, someone
+ * interested, or a number that messaged in and isn't sorted yet.
+ */
+export const academyContactsTable = pgTable("academy_contacts", {
+  id: serial("id").primaryKey(),
+  academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
+  phone: text("phone").notNull(),
+  name: text("name"),
+  kind: text("kind").notNull().default("unknown"),
+  /** Pipeline position for people who are interested (kind "lead"). */
+  stage: text("stage"),
+  source: text("source").notNull().default("manual"),
+  tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
+  notes: text("notes"),
+  lastReadAt: timestamp("last_read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("academy_contacts_academy_phone_unique").on(table.academyId, table.phone),
+  check("academy_contacts_kind_check", sql`${table.kind} in ('unknown', 'lead', 'parent', 'player', 'coach', 'staff', 'other')`),
+  check("academy_contacts_stage_check", sql`${table.stage} is null or ${table.stage} in ('new', 'contacted', 'trial', 'joined', 'lost')`),
+]);
+
+/** Which players a number belongs to, and how: "Abu Ali is Ali's father". */
+export const academyContactPlayersTable = pgTable("academy_contact_players", {
+  id: serial("id").primaryKey(),
+  contactId: integer("contact_id").notNull().references(() => academyContactsTable.id, { onDelete: "cascade" }),
+  playerId: integer("player_id").notNull().references(() => academyPlayersTable.id, { onDelete: "cascade" }),
+  relationship: text("relationship").notNull().default("guardian"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("academy_contact_players_contact_player_unique").on(table.contactId, table.playerId),
+  index("academy_contact_players_player_idx").on(table.playerId),
+  check(
+    "academy_contact_players_relationship_check",
+    sql`${table.relationship} in ('father', 'mother', 'guardian', 'sibling', 'relative', 'self', 'other')`,
+  ),
+]);
+
+export type AcademyContact = typeof academyContactsTable.$inferSelect;

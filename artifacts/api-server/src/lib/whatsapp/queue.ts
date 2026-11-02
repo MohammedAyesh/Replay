@@ -8,6 +8,7 @@ import {
   type AcademyWhatsappSettings,
 } from "@workspace/db";
 import { logger } from "../logger";
+import { upsertContact } from "./contacts";
 import { phoneFromChatId } from "./phone";
 import type { WhatsappLocale } from "./templates";
 import {
@@ -295,7 +296,7 @@ export async function dispatchQueue(options: { budgetMs?: number } = {}): Promis
       if (!row) break;
       const academyId = row.academy_id;
       if (!optOuts.has(academyId)) optOuts.set(academyId, await optedOutPhones(academyId));
-      if (row.kind !== "reply" && optOuts.get(academyId)!.has(row.phone)) {
+      if (row.kind !== "reply" && row.kind !== "chat" && optOuts.get(academyId)!.has(row.phone)) {
         await finish(row.id, { status: "skipped", error: "Recipient replied STOP" });
         summary.skipped += 1;
         continue;
@@ -398,18 +399,30 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
     return;
   }
 
-  if (event.event === "message") {
-    if (payload.fromMe === true) return;
+  if (event.event === "message" || event.event === "message.any") {
     const from = typeof payload.from === "string" ? payload.from : "";
-    if (from.endsWith("@g.us") || from.includes("status@broadcast")) return;
-    const phone = phoneFromChatId(from);
+    const to = typeof payload.to === "string" ? payload.to : "";
+    const fromMe = payload.fromMe === true;
+    const other = fromMe ? to : from;
+    if (other.endsWith("@g.us") || other.includes("status@broadcast") || other.endsWith("@newsletter")) return;
+    const phone = phoneFromChatId(other);
     if (!phone) return;
     const body = typeof payload.body === "string" ? payload.body : "";
+    const waMessageId = bareMessageId(typeof payload.id === "string" ? payload.id : null);
+    if (waMessageId) {
+      const [seen] = await db
+        .select({ id: academyWhatsappMessagesTable.id })
+        .from(academyWhatsappMessagesTable)
+        .where(eq(academyWhatsappMessagesTable.waMessageId, waMessageId))
+        .limit(1);
+      if (seen) return;
+    }
 
-    // Which academy is this reply for? Own number → that academy. Replay's number →
+    // Which academy is this for? Own number → that academy. Replay's number →
     // the academy that last messaged this phone from it.
     let academyId = academyForSession(session);
     if (academyId === null && session === REPLAY_SESSION) {
+      if (fromMe) return;
       const [last] = await db
         .select({ academyId: academyWhatsappMessagesTable.academyId })
         .from(academyWhatsappMessagesTable)
@@ -423,17 +436,39 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
       academyId = last?.academyId ?? null;
     }
     if (academyId === null) return;
+    const text = body.slice(0, 4000) || (payload.hasMedia ? "[media]" : "");
+
+    if (fromMe) {
+      // Typed on the academy's phone itself; messages the app sent are stored already.
+      if (payload.source === "api") return;
+      await db.insert(academyWhatsappMessagesTable).values({
+        academyId,
+        direction: "out",
+        kind: "phone",
+        phone,
+        body: text,
+        status: "sent",
+        sentAt: new Date(),
+        senderSession: session,
+        waMessageId,
+      });
+      return;
+    }
 
     await db.insert(academyWhatsappMessagesTable).values({
       academyId,
       direction: "in",
       kind: "reply",
       phone,
-      body: body.slice(0, 4000) || (payload.hasMedia ? "[media]" : ""),
+      body: text,
       status: "received",
       senderSession: session,
-      waMessageId: bareMessageId(typeof payload.id === "string" ? payload.id : null),
+      waMessageId,
     });
+    const pushName = typeof (payload._data as { pushName?: unknown } | undefined)?.pushName === "string"
+      ? String((payload._data as { pushName: string }).pushName)
+      : typeof (payload as { notifyName?: unknown }).notifyName === "string" ? String((payload as { notifyName: string }).notifyName) : null;
+    await upsertContact(academyId, phone, { kind: "unknown", source: "whatsapp", name: pushName });
 
     const word = body.trim().toLowerCase().replace(/[.!؟?]+$/, "");
     const settings = await getWhatsappSettings(academyId);
@@ -453,5 +488,58 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
         eq(academyWhatsappOptOutsTable.phone, phone),
       ));
     }
+  }
+}
+
+/**
+ * Send one queued message right away (a chat reply should not wait for the next
+ * minute's tick). Leaves it queued for the tick when the number isn't connected.
+ */
+export async function dispatchMessageNow(messageId: number): Promise<"sent" | "queued" | "failed"> {
+  if (!wahaConfigured()) return "queued";
+  const [message] = await db
+    .select({ academyId: academyWhatsappMessagesTable.academyId })
+    .from(academyWhatsappMessagesTable)
+    .where(eq(academyWhatsappMessagesTable.id, messageId));
+  if (!message) return "failed";
+  const settings = await getWhatsappSettings(message.academyId);
+  const session = senderSessionFor(settings);
+  if (!session) return "queued";
+  try {
+    if ((await getSession(session))?.status !== "WORKING") return "queued";
+  } catch {
+    return "queued";
+  }
+  const result = await db.execute(sql`
+    update academy_whatsapp_messages
+    set status = 'sending', attempts = attempts + 1, claimed_at = now(), sender_session = ${session}
+    where id = ${messageId} and status = 'queued'
+    returning id, academy_id, phone, body, attempts, kind
+  `);
+  const row = ((result as unknown as { rows: ClaimedRow[] }).rows ?? [])[0];
+  if (!row) return "queued";
+  let text = row.body;
+  if (session === REPLAY_SESSION) {
+    const [academy] = await db.select({ name: academiesTable.name }).from(academiesTable).where(eq(academiesTable.id, row.academy_id));
+    text = `*${academy?.name ?? ""}*\n${row.body}`.trim();
+  }
+  try {
+    const chatId = await checkNumber(session, row.phone);
+    if (!chatId) {
+      await finish(row.id, { status: "failed", error: "This number is not on WhatsApp" });
+      return "failed";
+    }
+    const waId = await sendText(session, chatId, text);
+    await finish(row.id, { status: "sent", sentAt: new Date(), waMessageId: bareMessageId(waId), error: null });
+    return "sent";
+  } catch (error) {
+    const transient = error instanceof WahaError ? error.transient : true;
+    const message = (error as Error).message?.slice(0, 500) ?? "Send failed";
+    if (transient && row.attempts < MAX_ATTEMPTS) {
+      await finish(row.id, { status: "queued", error: message });
+      return "queued";
+    }
+    await finish(row.id, { status: "failed", error: message });
+    return "failed";
   }
 }

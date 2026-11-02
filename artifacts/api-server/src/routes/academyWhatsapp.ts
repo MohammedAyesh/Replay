@@ -4,6 +4,8 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import {
   academiesTable,
+  academyContactPlayersTable,
+  academyContactsTable,
   academyPlayersTable,
   academySquadsTable,
   academyWhatsappBroadcastsTable,
@@ -19,8 +21,19 @@ import {
 } from "../lib/academyAccess";
 import { logger } from "../lib/logger";
 import { runScheduledAutomations } from "../lib/whatsapp/automations";
+import {
+  linkContactToPlayer,
+  linksForContacts,
+  listContacts,
+  syncAcademyContacts,
+  upsertContact,
+  type ContactKind,
+  type LeadStage,
+  type Relationship,
+} from "../lib/whatsapp/contacts";
 import { formatPhoneForDisplay, normalizePhone, phoneFromChatId } from "../lib/whatsapp/phone";
 import {
+  dispatchMessageNow,
   dispatchQueue,
   enqueueMessages,
   getWhatsappSettings,
@@ -430,9 +443,30 @@ router.post("/academy/console/academies/:academyId/whatsapp/preview", async (req
 
 const BroadcastBody = z.object({
   body: z.string().trim().min(1).max(4000),
-  audience: AudienceBody,
+  audience: AudienceBody.optional(),
+  /** People picked in the People list; replaces the audience when present. */
+  contactIds: z.array(z.number().int().positive()).min(1).max(2000).optional(),
   scheduledFor: z.string().datetime({ offset: true }).nullable().optional(),
-});
+}).refine((b) => b.audience || b.contactIds, { message: "Pick an audience or people" });
+
+/** Picked people as merged recipients, with the players they are linked to. */
+async function contactRecipients(academyId: number, contactIds: number[]) {
+  const contacts = await db.select().from(academyContactsTable)
+    .where(and(eq(academyContactsTable.academyId, academyId), inArray(academyContactsTable.id, contactIds)));
+  const links = await linksForContacts(contacts.map((c) => c.id));
+  return contacts.map((c) => {
+    const players = (links.get(c.id) ?? []).filter((l) => l.isActive);
+    const role: "parent" | "player" | "coach" = c.kind === "coach" ? "coach" : c.kind === "player" ? "player" : "parent";
+    return {
+      phone: c.phone,
+      name: c.name,
+      role,
+      playerIds: players.map((p) => p.playerId),
+      playerNames: players.map((p) => p.playerName),
+      squadNames: [...new Set(players.map((p) => p.squadName).filter((n): n is string => Boolean(n)))],
+    };
+  });
+}
 
 router.post("/academy/console/academies/:academyId/whatsapp/broadcasts", async (req, res): Promise<void> => {
   const access = await academyAccess(req, res);
@@ -447,16 +481,18 @@ router.post("/academy/console/academies/:academyId/whatsapp/broadcasts", async (
     res.status(409).json({ error: "Turn WhatsApp on first: link your number or choose Replay's number." });
     return;
   }
-  if (!(await validateAudience(access.academyId, body.data.audience, res))) return;
+  if (body.data.audience && !body.data.contactIds && !(await validateAudience(access.academyId, body.data.audience, res))) return;
   const scheduledFor = body.data.scheduledFor ? new Date(body.data.scheduledFor) : new Date();
   if (scheduledFor.getTime() > Date.now() + 60 * 86_400_000) {
     res.status(400).json({ error: "Schedule within the next 60 days" });
     return;
   }
 
-  const resolved = await resolveAudience(access.academyId, body.data.audience);
   const optOuts = await optedOutPhones(access.academyId);
-  const merged = mergeByPhone(resolved.recipients).filter((r) => !optOuts.has(r.phone));
+  const candidates = body.data.contactIds
+    ? await contactRecipients(access.academyId, body.data.contactIds)
+    : mergeByPhone((await resolveAudience(access.academyId, body.data.audience!)).recipients);
+  const merged = candidates.filter((r) => !optOuts.has(r.phone));
   if (merged.length === 0) {
     res.status(400).json({ error: "Nobody in this audience has a WhatsApp number on file" });
     return;
@@ -465,7 +501,7 @@ router.post("/academy/console/academies/:academyId/whatsapp/broadcasts", async (
   const [broadcast] = await db.insert(academyWhatsappBroadcastsTable).values({
     academyId: access.academyId,
     body: body.data.body,
-    audience: body.data.audience,
+    audience: body.data.contactIds ? { contactIds: body.data.contactIds } : body.data.audience!,
     recipientCount: merged.length,
     createdBy: access.user.id,
     scheduledFor,
@@ -789,6 +825,320 @@ router.post("/whatsapp/webhook", async (req, res): Promise<void> => {
     logger.warn({ error: (error as Error)?.message, event: event?.event }, "WhatsApp webhook handling failed");
   }
   res.json({ ok: true });
+});
+
+
+// ─── Chats ───────────────────────────────────────────────────────────────────
+
+function phoneParam(req: Request, res: Response): string | null {
+  const phone = normalizePhone(rawParam(req.params.phone));
+  if (!phone) res.status(400).json({ error: "Invalid phone number" });
+  return phone;
+}
+
+function contactView(
+  c: typeof academyContactsTable.$inferSelect,
+  players: Awaited<ReturnType<typeof linksForContacts>> extends Map<number, infer V> ? V : never,
+) {
+  return {
+    id: c.id,
+    phone: c.phone,
+    display: formatPhoneForDisplay(c.phone),
+    name: c.name,
+    kind: c.kind,
+    stage: c.stage,
+    source: c.source,
+    tags: Array.isArray(c.tags) ? (c.tags as string[]) : [],
+    notes: c.notes,
+    players,
+    createdAt: c.createdAt,
+  };
+}
+
+router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const result = await db.execute(sql`
+    select m.phone,
+      max(m.created_at) as "lastAt",
+      (array_agg(m.body order by m.created_at desc, m.id desc))[1] as "lastBody",
+      (array_agg(m.direction order by m.created_at desc, m.id desc))[1] as "lastDirection",
+      (array_agg(m.status order by m.created_at desc, m.id desc))[1] as "lastStatus",
+      count(*) filter (where m.direction = 'in' and m.created_at > coalesce(c.last_read_at, 'epoch'::timestamptz))::int as "unread"
+    from academy_whatsapp_messages m
+    left join academy_contacts c on c.academy_id = m.academy_id and c.phone = m.phone
+    where m.academy_id = ${access.academyId}
+    group by m.phone, c.last_read_at
+    order by max(m.created_at) desc
+    limit 300
+  `);
+  const rows = (result as unknown as { rows: Array<{ phone: string; lastAt: string; lastBody: string; lastDirection: string; lastStatus: string; unread: number }> }).rows ?? [];
+  const contacts = rows.length === 0 ? [] : await db.select().from(academyContactsTable)
+    .where(and(eq(academyContactsTable.academyId, access.academyId), inArray(academyContactsTable.phone, rows.map((r) => r.phone))));
+  const links = await linksForContacts(contacts.map((c) => c.id));
+  const byPhone = new Map(contacts.map((c) => [c.phone, c]));
+  res.json(rows.map((r) => {
+    const contact = byPhone.get(r.phone);
+    return {
+      phone: r.phone,
+      display: formatPhoneForDisplay(r.phone),
+      lastAt: r.lastAt,
+      lastBody: r.lastBody,
+      lastDirection: r.lastDirection,
+      lastStatus: r.lastStatus,
+      unread: r.unread,
+      contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
+    };
+  }));
+});
+
+router.get("/academy/console/academies/:academyId/whatsapp/chats/:phone", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const phone = phoneParam(req, res);
+  if (!phone) return;
+  const messages = await db
+    .select({
+      id: academyWhatsappMessagesTable.id,
+      direction: academyWhatsappMessagesTable.direction,
+      kind: academyWhatsappMessagesTable.kind,
+      body: academyWhatsappMessagesTable.body,
+      status: academyWhatsappMessagesTable.status,
+      error: academyWhatsappMessagesTable.error,
+      createdAt: academyWhatsappMessagesTable.createdAt,
+      sentAt: academyWhatsappMessagesTable.sentAt,
+    })
+    .from(academyWhatsappMessagesTable)
+    .where(and(eq(academyWhatsappMessagesTable.academyId, access.academyId), eq(academyWhatsappMessagesTable.phone, phone)))
+    .orderBy(desc(academyWhatsappMessagesTable.createdAt), desc(academyWhatsappMessagesTable.id))
+    .limit(300);
+  const [contact] = await db.select().from(academyContactsTable)
+    .where(and(eq(academyContactsTable.academyId, access.academyId), eq(academyContactsTable.phone, phone)));
+  if (contact && req.query.markRead !== "0") {
+    await db.update(academyContactsTable).set({ lastReadAt: new Date() }).where(eq(academyContactsTable.id, contact.id));
+  }
+  const links = contact ? await linksForContacts([contact.id]) : new Map();
+  const optOuts = await optedOutPhones(access.academyId);
+  res.json({
+    phone,
+    display: formatPhoneForDisplay(phone),
+    contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
+    optedOut: optOuts.has(phone),
+    messages: messages.reverse(),
+  });
+});
+
+const ChatSendBody = z.object({ body: z.string().trim().min(1).max(4000) });
+
+router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/messages", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const phone = phoneParam(req, res);
+  if (!phone) return;
+  const body = ChatSendBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Write a message first" });
+    return;
+  }
+  const settings = await getWhatsappSettings(access.academyId);
+  if (!senderSessionFor(settings)) {
+    res.status(409).json({ error: "Turn WhatsApp on first: link your number or choose Replay's number." });
+    return;
+  }
+  const contact = await upsertContact(access.academyId, phone, { source: "chat" });
+  const [message] = await db.insert(academyWhatsappMessagesTable).values({
+    academyId: access.academyId,
+    kind: "chat",
+    phone,
+    body: body.data.body,
+    recipientName: contact.name,
+    createdBy: access.user.id,
+  }).returning({ id: academyWhatsappMessagesTable.id });
+  const outcome = await dispatchMessageNow(message.id);
+  res.status(201).json({ id: message.id, outcome });
+});
+
+// ─── People (CRM) ────────────────────────────────────────────────────────────
+
+const KINDS = ["unknown", "lead", "parent", "player", "coach", "staff", "other"] as const;
+const STAGES = ["new", "contacted", "trial", "joined", "lost"] as const;
+const RELATIONSHIPS = ["father", "mother", "guardian", "sibling", "relative", "self", "other"] as const;
+const Tags = z.array(z.string().trim().min(1).max(40)).max(20);
+
+router.get("/academy/console/academies/:academyId/contacts", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  await syncAcademyContacts(access.academyId);
+  const contacts = await listContacts(access.academyId);
+  const optOuts = await optedOutPhones(access.academyId);
+  res.json(contacts.map((c) => ({
+    id: c.id,
+    phone: c.phone,
+    display: formatPhoneForDisplay(c.phone),
+    name: c.name,
+    kind: c.kind,
+    stage: c.stage,
+    source: c.source,
+    tags: c.tags,
+    notes: c.notes,
+    players: c.players,
+    lastMessageAt: c.lastMessageAt,
+    optedOut: optOuts.has(c.phone),
+    createdAt: c.createdAt,
+    updatedAt: c.updatedAt,
+  })));
+});
+
+const ContactBody = z.object({
+  phone: z.string().max(40).optional(),
+  name: z.string().trim().max(120).nullable().optional(),
+  kind: z.enum(KINDS).optional(),
+  stage: z.enum(STAGES).nullable().optional(),
+  tags: Tags.optional(),
+  notes: z.string().max(4000).nullable().optional(),
+  links: z.array(z.object({ playerId: z.number().int().positive(), relationship: z.enum(RELATIONSHIPS) })).max(20).optional(),
+});
+
+async function playerInAcademy(academyId: number, playerId: number): Promise<boolean> {
+  const [row] = await db.select({ id: academyPlayersTable.id }).from(academyPlayersTable)
+    .where(and(eq(academyPlayersTable.id, playerId), eq(academyPlayersTable.academyId, academyId)));
+  return Boolean(row);
+}
+
+async function contactInAcademy(academyId: number, contactId: number) {
+  const [row] = await db.select().from(academyContactsTable)
+    .where(and(eq(academyContactsTable.id, contactId), eq(academyContactsTable.academyId, academyId)));
+  return row ?? null;
+}
+
+async function respondContact(res: Response, academyId: number, contactId: number, status = 200) {
+  const contact = await contactInAcademy(academyId, contactId);
+  if (!contact) {
+    res.status(404).json({ error: "Person not found" });
+    return;
+  }
+  const links = await linksForContacts([contact.id]);
+  res.status(status).json(contactView(contact, links.get(contact.id) ?? []));
+}
+
+router.post("/academy/console/academies/:academyId/contacts", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const body = ContactBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const phone = normalizePhone(body.data.phone);
+  if (!phone) {
+    res.status(400).json({ error: "Enter a valid phone number, e.g. 0791234567" });
+    return;
+  }
+  for (const link of body.data.links ?? []) {
+    if (!(await playerInAcademy(access.academyId, link.playerId))) {
+      res.status(404).json({ error: "Player not found in this academy" });
+      return;
+    }
+  }
+  const contact = await upsertContact(access.academyId, phone, { source: "manual" });
+  const kind = body.data.kind ?? (body.data.links?.length ? (body.data.links.some((l) => l.relationship === "self") ? "player" : "parent") : contact.kind);
+  await db.update(academyContactsTable).set({
+    ...(body.data.name !== undefined ? { name: body.data.name || null } : {}),
+    kind,
+    stage: body.data.stage !== undefined ? body.data.stage : kind === "lead" ? (contact.stage ?? "new") : contact.stage,
+    ...(body.data.tags ? { tags: body.data.tags } : {}),
+    ...(body.data.notes !== undefined ? { notes: body.data.notes } : {}),
+    updatedAt: new Date(),
+  }).where(eq(academyContactsTable.id, contact.id));
+  for (const link of body.data.links ?? []) await linkContactToPlayer(contact.id, link.playerId, link.relationship, true);
+  await respondContact(res, access.academyId, contact.id, 201);
+});
+
+router.patch("/academy/console/academies/:academyId/contacts/:contactId", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const contactId = intParam(req.params.contactId);
+  const contact = contactId ? await contactInAcademy(access.academyId, contactId) : null;
+  if (!contact) {
+    res.status(404).json({ error: "Person not found" });
+    return;
+  }
+  const body = ContactBody.omit({ phone: true, links: true }).safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  const nextKind = body.data.kind ?? contact.kind;
+  await db.update(academyContactsTable).set({
+    ...(body.data.name !== undefined ? { name: body.data.name || null } : {}),
+    ...(body.data.kind ? { kind: body.data.kind } : {}),
+    ...(body.data.stage !== undefined
+      ? { stage: body.data.stage }
+      : nextKind === "lead" && !contact.stage ? { stage: "new" } : {}),
+    ...(body.data.tags ? { tags: body.data.tags } : {}),
+    ...(body.data.notes !== undefined ? { notes: body.data.notes } : {}),
+    updatedAt: new Date(),
+  }).where(eq(academyContactsTable.id, contact.id));
+  await respondContact(res, access.academyId, contact.id);
+});
+
+router.delete("/academy/console/academies/:academyId/contacts/:contactId", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res, true);
+  if (!access) return;
+  const contactId = intParam(req.params.contactId);
+  if (!contactId) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
+  await db.delete(academyContactsTable)
+    .where(and(eq(academyContactsTable.id, contactId), eq(academyContactsTable.academyId, access.academyId)));
+  res.status(204).send();
+});
+
+const LinkBody = z.object({ relationship: z.enum(RELATIONSHIPS) });
+
+router.put("/academy/console/academies/:academyId/contacts/:contactId/players/:playerId", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const contactId = intParam(req.params.contactId);
+  const playerId = intParam(req.params.playerId);
+  const contact = contactId ? await contactInAcademy(access.academyId, contactId) : null;
+  if (!contact || !playerId || !(await playerInAcademy(access.academyId, playerId))) {
+    res.status(404).json({ error: "Person or player not found" });
+    return;
+  }
+  const body = LinkBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: body.error.message });
+    return;
+  }
+  await linkContactToPlayer(contact.id, playerId, body.data.relationship as Relationship, true);
+  // Linking sorts the person: a parent or relative, or the player themself.
+  if (contact.kind === "unknown" || contact.kind === "lead" || contact.kind === "other") {
+    await db.update(academyContactsTable).set({
+      kind: (body.data.relationship === "self" ? "player" : "parent") as ContactKind,
+      stage: contact.kind === "lead" ? ("joined" as LeadStage) : contact.stage,
+      updatedAt: new Date(),
+    }).where(eq(academyContactsTable.id, contact.id));
+  }
+  await respondContact(res, access.academyId, contact.id);
+});
+
+router.delete("/academy/console/academies/:academyId/contacts/:contactId/players/:playerId", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const contactId = intParam(req.params.contactId);
+  const playerId = intParam(req.params.playerId);
+  const contact = contactId ? await contactInAcademy(access.academyId, contactId) : null;
+  if (!contact || !playerId) {
+    res.status(404).json({ error: "Person not found" });
+    return;
+  }
+  await db.delete(academyContactPlayersTable).where(and(
+    eq(academyContactPlayersTable.contactId, contact.id),
+    eq(academyContactPlayersTable.playerId, playerId),
+  ));
+  await respondContact(res, access.academyId, contact.id);
 });
 
 export default router;

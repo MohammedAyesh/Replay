@@ -7,6 +7,7 @@ import {
   db,
   usersTable,
 } from "@workspace/db";
+import { contactPhonesForPlayers } from "./contacts";
 import { normalizePhone } from "./phone";
 import type { AudienceRole } from "./templates";
 
@@ -82,6 +83,14 @@ export async function resolveAudience(academyId: number, scope: AudienceScope): 
       .innerJoin(usersTable, eq(usersTable.id, academyPlayerGuardiansTable.userId))
       .where(inArray(academyPlayerGuardiansTable.playerId, players.map((p) => p.id)))
     : [];
+  // Numbers the owner linked to players in Chats / People.
+  const linked = needPlayers && players.length > 0 ? await contactPhonesForPlayers(players.map((p) => p.id)) : [];
+  const linkedByPlayer = new Map<number, typeof linked>();
+  for (const row of linked) {
+    const list = linkedByPlayer.get(row.playerId) ?? [];
+    list.push(row);
+    linkedByPlayer.set(row.playerId, list);
+  }
   const guardiansByPlayer = new Map<number, typeof guardianRows>();
   for (const row of guardianRows) {
     if (row.disabled) continue;
@@ -106,6 +115,11 @@ export async function resolveAudience(academyId: number, scope: AudienceScope): 
         phones.add(phone);
         recipients.push({ ...base, phone, name: guardian.name, role: "parent" });
       }
+      for (const link of linkedByPlayer.get(player.id) ?? []) {
+        if (link.relationship === "self" || phones.has(link.phone)) continue;
+        phones.add(link.phone);
+        recipients.push({ ...base, phone: link.phone, name: link.name, role: "parent" });
+      }
       if (guardianPhone && !phones.has(guardianPhone)) {
         phones.add(guardianPhone);
         recipients.push({ ...base, phone: guardianPhone, name: null, role: "parent" });
@@ -113,7 +127,9 @@ export async function resolveAudience(academyId: number, scope: AudienceScope): 
       if (phones.size === 0) missing.push({ playerId: player.id, playerName: player.name, role: "parent" });
     }
     if (roles.has("players")) {
-      const phone = player.userId ? normalizePhone(player.userPhone) : null;
+      const own = player.userId ? normalizePhone(player.userPhone) : null;
+      const self = (linkedByPlayer.get(player.id) ?? []).find((l) => l.relationship === "self")?.phone ?? null;
+      const phone = own ?? self;
       if (phone) recipients.push({ ...base, phone, name: player.userName ?? player.name, role: "player" });
       else missing.push({ playerId: player.id, playerName: player.name, role: "player" });
     }
