@@ -1,6 +1,10 @@
-import { MessageCircle } from "lucide-react";
+import { useState } from "react";
+import { MessageCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
+import { useAdsWizardCopy } from "@/i18n/ads-wizard-strings";
+import { AdsConnectCard } from "./ads-connect";
+import { AdWizard } from "./ad-wizard";
 import { useAdsCopy } from "@/i18n/ads-strings";
-import { formatMoney, useAcademyAds, type CampaignNumbers, type Funnel } from "@/lib/meta-ads-api";
+import { formatMoney, useAcademyAds, useAdRequestAction, useAdRequests, useAdsConnection, type AdRequest, type CampaignNumbers, type Funnel } from "@/lib/meta-ads-api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -57,12 +61,13 @@ export function AcademyAdsSection({ academyId, onOpenChat }: { academyId: number
     </header>
   );
 
-  if (ads.isLoading) return <section className="space-y-5" dir={dir}>{header}<div className="h-40 animate-pulse rounded-2xl bg-raised" /></section>;
-  if (ads.isError || !ads.data) return <section className="space-y-5" dir={dir}>{header}<p className="text-sm text-red-400" role="alert">{copy.error} {(ads.error as Error | null)?.message}</p></section>;
+  const top = <>{header}<AdsConnectCard academyId={academyId} /><AdRequestsPanel academyId={academyId} /></>;
+  if (ads.isLoading) return <section className="space-y-5" dir={dir}>{top}<div className="h-40 animate-pulse rounded-2xl bg-raised" /></section>;
+  if (ads.isError || !ads.data) return <section className="space-y-5" dir={dir}>{top}<p className="text-sm text-red-400" role="alert">{copy.error} {(ads.error as Error | null)?.message}</p></section>;
 
   const data = ads.data;
   if (!data.campaigns.length && !data.leads.length) {
-    return <section className="space-y-5" dir={dir} data-testid="academy-ads">{header}<p className="rounded-2xl border border-dashed border-line p-8 text-center text-sm text-muted-text">{copy.empty}</p></section>;
+    return <section className="space-y-5" dir={dir} data-testid="academy-ads">{top}</section>;
   }
 
   const currency = data.campaigns.find((c) => c.insights?.currency)?.insights?.currency ?? "JOD";
@@ -76,7 +81,7 @@ export function AcademyAdsSection({ academyId, onOpenChat }: { academyId: number
 
   return (
     <section className="space-y-5" data-testid="academy-ads" dir={dir}>
-      {header}
+      {top}
       {data.lastSyncedAt && <p className="text-xs text-muted-text">{copy.updated(timeFmt.format(new Date(data.lastSyncedAt)))}</p>}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
@@ -165,6 +170,78 @@ export function AcademyAdsSection({ academyId, onOpenChat }: { academyId: number
           </ul>
         )}
       </section>
+    </section>
+  );
+}
+
+const STATUS_TONE: Record<string, string> = {
+  draft: "bg-raised text-muted-text",
+  pending_approval: "bg-amber-300/15 text-amber-200",
+  launching: "bg-sky-400/15 text-sky-300",
+  active: "bg-turf/15 text-turf",
+  paused: "bg-raised text-muted-text",
+  rejected: "bg-red-500/15 text-red-400",
+  failed: "bg-red-500/15 text-red-400",
+};
+
+/** The ads the owner builds in Replay, with the wizard. */
+function AdRequestsPanel({ academyId }: { academyId: number }) {
+  const copy = useAdsWizardCopy();
+  const requests = useAdRequests(academyId);
+  const info = useAdsConnection(academyId);
+  const act = useAdRequestAction(academyId);
+  const [wizard, setWizard] = useState<{ open: boolean; editing: AdRequest | null }>({ open: false, editing: null });
+  const connection = info.data?.connection;
+  const connected = connection?.status === "connected";
+  const mode = connection?.mode === "own" && connected ? "own" : "replay";
+  const rows = requests.data?.requests ?? [];
+  const currency = (mode === "own" ? connection?.currency : null) ?? rows[0]?.currency ?? "USD";
+
+  return (
+    <section className="rounded-2xl border border-line bg-surface p-5" data-testid="ad-requests">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-display text-xl font-bold text-text">{copy.list.title}</h2>
+        <Button type="button" onClick={() => setWizard({ open: true, editing: null })} disabled={!requests.data} className="min-h-10 rounded-xl bg-floodlight font-bold text-void" data-testid="button-new-ad">
+          <Plus className="me-1.5 h-4 w-4" aria-hidden="true" />{copy.list.newAd}
+        </Button>
+      </div>
+      {requests.isError && <p className="mt-3 text-sm text-red-400" role="alert">{(requests.error as Error).message}</p>}
+      {!rows.length ? <p className="mt-3 text-sm text-muted-text">{copy.list.empty}</p> : (
+        <ul className="mt-3 divide-y divide-line">
+          {rows.map((r) => (
+            <li key={r.id} className="flex flex-wrap items-center gap-3 py-3" data-testid={`ad-request-${r.id}`}>
+              <div className="min-w-0 flex-1">
+                <p className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-text" dir="auto">{r.name}</span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", STATUS_TONE[r.status])}>{copy.list.status[r.status]}</span>
+                </p>
+                <p className="mt-0.5 text-xs text-muted-text">{copy.list.goal[r.goal]} · {copy.list.perDay(formatMoney(r.dailyBudget, r.currency, copy.locale))}</p>
+                {r.error && ["rejected", "failed"].includes(r.status) && <p className="mt-1 text-xs text-red-400" dir="auto">{r.error}</p>}
+              </div>
+              <div className="flex gap-1">
+                {["draft", "rejected", "failed"].includes(r.status) && (
+                  <>
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setWizard({ open: true, editing: r })}><Pencil className="me-1 h-4 w-4" aria-hidden="true" />{copy.list.edit}</Button>
+                    <Button type="button" size="sm" disabled={!connected || !r.hasImage || act.isPending} onClick={() => act.mutate({ id: r.id, action: "submit" })} className="bg-turf font-bold text-void">
+                      {r.mode === "replay" ? copy.list.submitReplay : copy.list.submit}
+                    </Button>
+                  </>
+                )}
+                {r.status === "active" && <Button type="button" size="sm" variant="ghost" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "pause" })}><Pause className="me-1 h-4 w-4" aria-hidden="true" />{copy.list.pause}</Button>}
+                {r.status === "paused" && <Button type="button" size="sm" variant="ghost" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "resume" })}><Play className="me-1 h-4 w-4" aria-hidden="true" />{copy.list.resume}</Button>}
+                {["draft", "rejected", "failed", "pending_approval"].includes(r.status) && (
+                  <Button type="button" size="sm" variant="ghost" className="text-red-400" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "delete" })} aria-label={copy.list.delete}><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {act.isError && <p className="mt-2 text-sm text-red-400" role="alert">{(act.error as Error).message}</p>}
+      {requests.data && (
+        <AdWizard academyId={academyId} open={wizard.open} editing={wizard.editing} onClose={() => setWizard({ open: false, editing: null })}
+          defaults={requests.data.defaults} mode={mode} currency={currency} pageName={connection?.pageName ?? null} />
+      )}
     </section>
   );
 }

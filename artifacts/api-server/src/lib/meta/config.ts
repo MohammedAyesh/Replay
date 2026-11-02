@@ -14,6 +14,10 @@ export type MetaConfig = {
   adAccountId: string | null;
   appSecret: string | null;
   graphVersion: string;
+  /** Not secret: Replay's Meta app, its business portfolio, and the Login for Business configuration. */
+  appId: string;
+  businessId: string;
+  loginConfigId: string | null;
 };
 
 export function metaConfig(env: NodeJS.ProcessEnv = process.env): MetaConfig {
@@ -23,6 +27,9 @@ export function metaConfig(env: NodeJS.ProcessEnv = process.env): MetaConfig {
     adAccountId: account ? (account.startsWith("act_") ? account : `act_${account.replace(/\D/g, "")}`) : null,
     appSecret: env.META_APP_SECRET?.trim() || null,
     graphVersion: env.META_GRAPH_VERSION?.trim() || "v26.0",
+    appId: env.META_APP_ID?.trim() || "1401484938413305",
+    businessId: env.META_BUSINESS_ID?.trim() || "3918266301637396",
+    loginConfigId: env.META_LOGIN_CONFIG_ID?.trim() || null,
   };
 }
 
@@ -47,4 +54,9 @@ export function metaSignatureValid(raw: Buffer, header: string | undefined, appS
   let diff = 0;
   for (let i = 0; i < expected.length; i += 1) diff |= expected.charCodeAt(i) ^ value.toLowerCase().charCodeAt(i);
   return diff === 0;
+}
+
+/** Per-academy Meta tokens are stored encrypted with a key derived from the app secret. */
+export function tokenKey(appSecret: string): Buffer {
+  return createHmac("sha256", appSecret).update("replay-meta-token-v1").digest();
 }

@@ -5,6 +5,8 @@ import { upsertContact } from "../whatsapp/contacts";
 import { normalizePhone } from "../whatsapp/phone";
 import { metaAdsConfigured } from "./config";
 import { graphGet } from "./graph";
+import { tokenForPage } from "./connections";
+import { academyMetaConnectionsTable } from "@workspace/db";
 
 export const AD_TAG = "Meta ad";
 
@@ -151,8 +153,11 @@ export function readLeadFields(fieldData: FieldData | undefined): { name: string
 export async function handleLeadgen(value: { leadgen_id?: string | number; page_id?: string | number; form_id?: string | number; ad_id?: string | number }) {
   const leadgenId = value.leadgen_id ? String(value.leadgen_id) : null;
   if (!leadgenId) return null;
+  const pageId = value.page_id ? String(value.page_id) : null;
+  // A Page connected with the academy's own business is read with its token.
+  const token = await tokenForPage(pageId);
   const lead = await graphGet<{ id: string; created_time?: string; field_data?: FieldData; ad_id?: string; campaign_id?: string; form_id?: string }>(
-    leadgenId, { fields: "id,created_time,field_data,ad_id,campaign_id,form_id" },
+    leadgenId, { fields: "id,created_time,field_data,ad_id,campaign_id,form_id" }, { token },
   );
   const fields = readLeadFields(lead.field_data);
   return recordAdLead({
@@ -161,11 +166,21 @@ export async function handleLeadgen(value: { leadgen_id?: string | number; page_
     campaignId: lead.campaign_id ?? null,
     adId: lead.ad_id ?? (value.ad_id ? String(value.ad_id) : null),
     formId: lead.form_id ?? (value.form_id ? String(value.form_id) : null),
-    pageId: value.page_id ? String(value.page_id) : null,
+    pageId,
+    // A form on an academy's own Page belongs to that academy even before its campaign syncs.
+    academyId: await academyForPage(pageId),
     phone: fields.phone,
     name: fields.name,
     email: fields.email,
     answers: fields.answers,
     createdAt: lead.created_time ? new Date(lead.created_time) : undefined,
   });
+}
+
+async function academyForPage(pageId: string | null): Promise<number | null> {
+  if (!pageId) return null;
+  const rows = await db.select({ academyId: academyMetaConnectionsTable.academyId }).from(academyMetaConnectionsTable)
+    .where(eq(academyMetaConnectionsTable.pageId, pageId));
+  // Only when exactly one academy uses this Page.
+  return rows.length === 1 ? rows[0].academyId : null;
 }

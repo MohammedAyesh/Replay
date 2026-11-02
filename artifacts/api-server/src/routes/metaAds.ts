@@ -1,7 +1,7 @@
 import { desc, eq, isNull, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { academiesTable, academyContactsTable, db, metaAdCampaignsTable, metaAdLeadsTable } from "@workspace/db";
+import { academiesTable, academyContactsTable, academyMetaConnectionsTable, db, metaAdCampaignsTable, metaAdLeadsTable } from "@workspace/db";
 import { requireAcademyConsoleUser, requireAcademyMembership, type AcademyConsoleUser } from "../lib/academyAccess";
 import { logger } from "../lib/logger";
 import { metaAdsConfigured, metaConfig, metaSignatureValid, metaWebhookVerifyToken } from "../lib/meta/config";
@@ -109,12 +109,22 @@ router.get("/admin/meta-ads", async (req, res): Promise<void> => {
         accountError = (error as Error).message;
       }
     }
-    const [campaigns, leadCounts, academies, lastSync] = await Promise.all([
+    const [campaigns, leadCounts, academies, lastSync, connections] = await Promise.all([
       db.select().from(metaAdCampaignsTable).orderBy(desc(metaAdCampaignsTable.startedAt)),
       db.select({ campaignId: metaAdLeadsTable.campaignId, total: sql<number>`count(*)::int`, unassigned: sql<number>`count(*) filter (where ${metaAdLeadsTable.academyId} is null)::int` })
         .from(metaAdLeadsTable).groupBy(metaAdLeadsTable.campaignId),
       db.select({ id: academiesTable.id, name: academiesTable.name }).from(academiesTable).orderBy(academiesTable.name),
       lastMetaSync(),
+      db.select({
+        academyId: academyMetaConnectionsTable.academyId,
+        academyName: academiesTable.name,
+        mode: academyMetaConnectionsTable.mode,
+        status: academyMetaConnectionsTable.status,
+        pageName: academyMetaConnectionsTable.pageName,
+        adAccountName: academyMetaConnectionsTable.adAccountName,
+        leadsSubscribed: academyMetaConnectionsTable.leadsSubscribed,
+        error: academyMetaConnectionsTable.error,
+      }).from(academyMetaConnectionsTable).innerJoin(academiesTable, eq(academiesTable.id, academyMetaConnectionsTable.academyId)),
     ]);
     const counts = new Map(leadCounts.map((c) => [c.campaignId, c]));
     res.json({
@@ -136,12 +146,14 @@ router.get("/admin/meta-ads", async (req, res): Promise<void> => {
         objective: c.objective,
         startedAt: c.startedAt,
         academyId: c.academyId,
+        ownAccount: Boolean(c.adAccountId),
         insights: c.insights as CampaignNumbers | null,
         insights30d: c.insights30d as CampaignNumbers | null,
         leads: counts.get(c.id)?.total ?? 0,
         unassignedLeads: counts.get(c.id)?.unassigned ?? 0,
       })),
       leadsWithoutCampaign: counts.get(null)?.total ?? 0,
+      connections,
     });
   } catch (error) {
     sendError(res, error, "Admin Meta ads overview failed");

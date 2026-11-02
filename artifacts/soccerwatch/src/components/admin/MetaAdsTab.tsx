@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Check, Copy, RefreshCw } from "lucide-react";
-import { formatMoney, useAdminMetaAds, useAdminMetaPages, useAssignCampaign, useSubscribePage, useSyncMetaAds } from "@/lib/meta-ads-api";
+import { formatMoney, useAdminAdRequests, useAdminMetaAds, useAdminMetaPages, useAssignCampaign, useReviewAdRequest, useSubscribePage, useSyncMetaAds } from "@/lib/meta-ads-api";
 import { cn } from "@/lib/utils";
 
 function CopyField({ label, value }: { label: string; value: string | null }) {
@@ -45,6 +45,26 @@ export default function MetaAdsTab() {
         <p className="text-sm text-red-400">Could not load Meta ads{query.error ? `: ${(query.error as Error).message}` : "."}</p>
       ) : (
         <>
+          <AdApprovals />
+
+          <section className="rounded-2xl border border-line bg-surface p-4 text-sm">
+            <p className="font-semibold text-text">Academies connected to Meta</p>
+            {!data.connections.length ? <p className="mt-1 text-xs text-muted-text">None yet. Owners connect from Academy console → Ads.</p> : (
+              <ul className="mt-2 divide-y divide-line text-xs">
+                {data.connections.map((c) => (
+                  <li key={c.academyId} className="flex flex-wrap items-center gap-2 py-2">
+                    <span className="font-semibold text-text">{c.academyName}</span>
+                    <span className="rounded-full bg-raised px-2 py-0.5 text-muted-text">{c.mode === "own" ? "own ad account" : "via Replay"}</span>
+                    <span className={c.status === "connected" ? "text-turf" : "text-amber-200"}>{c.status}</span>
+                    <span className="text-muted-text">{c.pageName ?? "—"}{c.adAccountName ? ` · ${c.adAccountName}` : ""}</span>
+                    {!c.leadsSubscribed && c.status === "connected" && <span className="text-amber-200">leads not subscribed</span>}
+                    {c.error && <span className="text-red-400">{c.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
           <section className="space-y-3 rounded-2xl border border-line bg-surface p-4 text-sm">
             <p className="font-semibold text-text">Connection</p>
             <ul className="space-y-1 text-xs">
@@ -126,12 +146,12 @@ export default function MetaAdsTab() {
                         <td className="text-end tabular-nums text-muted-text">{c.insights?.leads ?? 0}</td>
                         <td className="text-end tabular-nums text-text">{c.leads}{c.unassignedLeads > 0 && <span className="ms-1 rounded-full bg-amber-300/15 px-1.5 text-amber-200">{c.unassignedLeads} waiting</span>}</td>
                         <td className="ps-3">
-                          <select value={c.academyId ?? ""} disabled={assign.isPending}
+                          {c.ownAccount ? <span className="text-muted-text">{data.academies.find((a) => a.id === c.academyId)?.name ?? "—"} (own account)</span> : <select value={c.academyId ?? ""} disabled={assign.isPending}
                             onChange={(e) => assign.mutate({ campaignId: c.id, academyId: e.target.value ? Number(e.target.value) : null })}
                             className="h-8 w-48 rounded-lg border border-input bg-raised px-2 text-xs text-text" data-testid={`select-campaign-academy-${c.id}`}>
                             <option value="">Not assigned</option>
                             {data.academies.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                          </select>
+                          </select>}
                         </td>
                       </tr>
                     ))}
@@ -145,5 +165,49 @@ export default function MetaAdsTab() {
         </>
       )}
     </div>
+  );
+}
+
+/** Ads academies built to run on Replay's ad account: Replay pays, so each one needs a yes here. */
+function AdApprovals() {
+  const requests = useAdminAdRequests();
+  const review = useReviewAdRequest();
+  const [reason, setReason] = useState<Record<number, string>>({});
+  const rows = requests.data ?? [];
+  const waiting = rows.filter((r) => r.status === "pending_approval");
+  const recent = rows.filter((r) => r.status !== "pending_approval").slice(0, 10);
+  return (
+    <section className="rounded-2xl border border-line bg-surface p-4 text-sm" data-testid="admin-ad-approvals">
+      <p className="font-semibold text-text">Ads waiting for approval {waiting.length > 0 && <span className="ms-1 rounded-full bg-amber-300/15 px-2 text-amber-200">{waiting.length}</span>}</p>
+      <p className="mt-0.5 text-xs text-muted-text">These run on Replay's ad account and spend Replay's money. Approving publishes them on Meta straight away.</p>
+      {requests.isError && <p className="mt-2 text-xs text-red-400">{(requests.error as Error).message}</p>}
+      {!waiting.length ? <p className="mt-2 text-xs text-muted-text">Nothing waiting.</p> : (
+        <ul className="mt-3 space-y-3">
+          {waiting.map((r) => (
+            <li key={r.id} className="grid gap-3 rounded-xl border border-line p-3 md:grid-cols-[160px_1fr]">
+              {r.imageData ? <img src={r.imageData} alt="" className="aspect-square w-full rounded-lg object-cover" /> : <div className="aspect-square rounded-lg bg-raised" />}
+              <div className="space-y-1 text-xs">
+                <p className="text-sm font-semibold text-text">{r.academyName} · {r.name}</p>
+                <p className="text-muted-text">{r.goal === "whatsapp" ? "WhatsApp messages" : "Sign-up form"} · {formatMoney(r.dailyBudget, r.currency, "en")}/day · {r.radiusKm} km · ages {r.ageMin}–{r.ageMax}
+                  {r.startAt ? ` · from ${new Date(r.startAt).toLocaleDateString()}` : ""}{r.endAt ? ` to ${new Date(r.endAt).toLocaleDateString()}` : " · no end date"}</p>
+                <p className="font-semibold text-text" dir="auto">{r.headline}</p>
+                <p className="whitespace-pre-line text-text" dir="auto">{r.primaryText}</p>
+                <div className="flex flex-wrap items-center gap-2 pt-2">
+                  <button type="button" disabled={review.isPending} onClick={() => review.mutate({ id: r.id, approve: true })} className="rounded-lg bg-turf px-3 py-1.5 font-bold text-void disabled:opacity-50">Approve and publish</button>
+                  <input value={reason[r.id] ?? ""} onChange={(e) => setReason({ ...reason, [r.id]: e.target.value })} placeholder="Reason (shown to the owner)" className="h-8 min-w-48 flex-1 rounded-lg border border-input bg-raised px-2 text-text" />
+                  <button type="button" disabled={review.isPending} onClick={() => review.mutate({ id: r.id, approve: false, reason: reason[r.id] })} className="rounded-lg bg-raised px-3 py-1.5 text-red-400">Reject</button>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {review.isError && <p className="mt-2 text-xs text-red-400">{(review.error as Error).message}</p>}
+      {recent.length > 0 && (
+        <ul className="mt-3 divide-y divide-line text-xs">
+          {recent.map((r) => <li key={r.id} className="flex flex-wrap gap-2 py-1.5"><span className="text-text">{r.academyName} · {r.name}</span><span className="text-muted-text">{r.status}{r.mode === "own" ? " · own account" : ""}</span>{r.error && <span className="text-red-400">{r.error}</span>}</li>)}
+        </ul>
+      )}
+    </section>
   );
 }
