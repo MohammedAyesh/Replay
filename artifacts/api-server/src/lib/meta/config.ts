@@ -29,7 +29,7 @@ export function metaConfig(env: NodeJS.ProcessEnv = process.env): MetaConfig {
     graphVersion: env.META_GRAPH_VERSION?.trim() || "v26.0",
     appId: env.META_APP_ID?.trim() || "1401484938413305",
     businessId: env.META_BUSINESS_ID?.trim() || "3918266301637396",
-    loginConfigId: env.META_LOGIN_CONFIG_ID?.trim() || null,
+    loginConfigId: env.META_LOGIN_CONFIG_ID?.trim() || "1127305789840487",
   };
 }
 
