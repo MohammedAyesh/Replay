@@ -15,6 +15,7 @@ import {
   academyWhatsappMessagesTable,
   academyWhatsappOptOutsTable,
   academyWhatsappSettingsTable,
+  academyContactsTable,
   db,
   fieldsTable,
   usersTable,
@@ -312,5 +313,73 @@ describe("webhook", () => {
     const rows = await messages();
     expect(rows.find((m) => m.direction === "in")?.body).toBe("إيقاف");
     expect(rows.find((m) => m.kind === "reply" && m.direction === "out")).toBeTruthy();
+  });
+});
+
+describe("chats and people", () => {
+  function sign(body: string) {
+    return createHmac("sha512", waha.wahaWebhookSecret()).update(body).digest("hex");
+  }
+  async function hook(event: Record<string, unknown>) {
+    const body = JSON.stringify(event);
+    await request(app).post("/api/whatsapp/webhook").set("content-type", "application/json").set("x-webhook-hmac", sign(body)).send(body).expect(200);
+  }
+
+  it("files a message from an unknown number as an unread chat and a new person", async () => {
+    await hook({ event: "message.any", session: `academy-${academyId}`, payload: { id: "IN-NEW-1", from: "962795550001@c.us", fromMe: false, body: "Hi, how much is the academy?", _data: { pushName: "Sami" } } });
+    // The same event delivered twice is stored once.
+    await hook({ event: "message.any", session: `academy-${academyId}`, payload: { id: "IN-NEW-1", from: "962795550001@c.us", fromMe: false, body: "Hi, how much is the academy?" } });
+    const chats = await request(app).get(`${base()}/chats`).set(auth(coachId)).expect(200);
+    const chat = chats.body.find((c: { phone: string }) => c.phone === "962795550001");
+    expect(chat).toMatchObject({ unread: 1, lastDirection: "in" });
+    expect(chat.contact).toMatchObject({ kind: "unknown", name: "Sami" });
+    const thread = await request(app).get(`${base()}/chats/0795550001`).set(auth(coachId)).expect(200);
+    expect(thread.body.messages).toHaveLength(1);
+    const again = await request(app).get(`${base()}/chats`).set(auth(coachId)).expect(200);
+    expect(again.body.find((c: { phone: string }) => c.phone === "962795550001").unread).toBe(0);
+  });
+
+  it("keeps what the owner typed on the phone, but not what the app sent", async () => {
+    await hook({ event: "message.any", session: `academy-${academyId}`, payload: { id: "OUT-PHONE-1", to: "962795550001@c.us", fromMe: true, source: "app", body: "35 JOD a month" } });
+    await hook({ event: "message.any", session: `academy-${academyId}`, payload: { id: "OUT-API-1", to: "962795550001@c.us", fromMe: true, source: "api", body: "ignored" } });
+    const rows = (await messages()).filter((m) => m.phone === "962795550001");
+    expect(rows.map((m) => [m.direction, m.kind])).toEqual([["out", "phone"]]);
+  });
+
+  it("sends a chat reply straight away", async () => {
+    const res = await request(app).post(`${base()}/chats/962795550001/messages`).set(auth(coachId)).send({ body: "Come try Friday at 5" }).expect(201);
+    expect(res.body.outcome).toBe("sent");
+    expect(vi.mocked(waha.sendText)).toHaveBeenCalledTimes(1);
+  });
+
+  it("links a number to a player with a relationship, and audiences use it", async () => {
+    const people = await request(app).get(`/api/academy/console/academies/${academyId}/contacts`).set(auth(ownerId)).expect(200);
+    // Synced from what was already on file: Zaid's guardian number, linked as guardian.
+    const zaidParent = people.body.find((p: { phone: string }) => p.phone === "962790000009");
+    expect(zaidParent).toMatchObject({ kind: "parent" });
+    expect(zaidParent.players.map((p: { playerName: string; relationship: string }) => [p.playerName, p.relationship])).toEqual([["Zaid", "guardian"]]);
+
+    const [sami] = await db.select().from(academyContactsTable)
+      .where(and(eq(academyContactsTable.academyId, academyId), eq(academyContactsTable.phone, "962795550001")));
+    const linked = await request(app).put(`/api/academy/console/academies/${academyId}/contacts/${sami.id}/players/${omar}`)
+      .set(auth(ownerId)).send({ relationship: "father" }).expect(200);
+    expect(linked.body).toMatchObject({ kind: "parent", players: [{ playerName: "Omar", relationship: "father" }] });
+
+    const preview = await request(app).post(`${base()}/preview`).set(auth(ownerId))
+      .send({ audience: { roles: ["parents"], squadIds: null, playerIds: [omar] } }).expect(200);
+    expect(preview.body.recipients.map((r: { phone: string }) => r.phone).sort()).toEqual(["+962 79 000 0003", "+962 79 555 0001"]);
+  });
+
+  it("adds an interested person, moves them through stages and messages a selection", async () => {
+    const created = await request(app).post(`/api/academy/console/academies/${academyId}/contacts`).set(auth(ownerId))
+      .send({ phone: "0795550002", name: "Lead Lina", kind: "lead", tags: ["U10", "Instagram"] }).expect(201);
+    expect(created.body).toMatchObject({ kind: "lead", stage: "new", tags: ["U10", "Instagram"] });
+    const moved = await request(app).patch(`/api/academy/console/academies/${academyId}/contacts/${created.body.id}`).set(auth(ownerId))
+      .send({ stage: "trial", notes: "Trial Friday" }).expect(200);
+    expect(moved.body).toMatchObject({ stage: "trial", notes: "Trial Friday" });
+    const sent = await request(app).post(`${base()}/broadcasts`).set(auth(ownerId))
+      .send({ body: "Hi {name}, see you Friday", contactIds: [created.body.id] }).expect(201);
+    expect(sent.body.queued).toBe(1);
+    expect((await messages()).find((m) => m.phone === "962795550002")?.body).toBe("Hi Lead Lina, see you Friday");
   });
 });

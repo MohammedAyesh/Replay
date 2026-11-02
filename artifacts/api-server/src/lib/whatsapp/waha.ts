@@ -172,7 +172,7 @@ function sessionConfig(metadata: Record<string, string>) {
     webhooks: [
       {
         url: webhookUrl(),
-        events: ["message", "message.ack", "session.status"],
+        events: ["message.any", "message.ack", "session.status"],
         ...(secret ? { hmac: { key: secret } } : {}),
         retries: { policy: "constant", delaySeconds: 5, attempts: 6 },
       },

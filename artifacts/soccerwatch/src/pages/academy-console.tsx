@@ -13,6 +13,8 @@ import {
   Menu,
   Megaphone,
   MessageCircle,
+  MessagesSquare,
+  Contact as ContactIcon,
   PanelLeft,
   Pencil,
   Plus,
@@ -77,6 +79,9 @@ import { cn } from "@/lib/utils";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 import { AcademyWhatsappSection } from "@/components/academy-console/whatsapp-section";
 import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
+import { usePeopleCopy } from "@/i18n/people-strings";
+import { AcademyChatsSection } from "@/components/academy-console/chats-section";
+import { AcademyPeopleSection } from "@/components/academy-console/people-section";
 import { AcademyPlayersSection } from "@/components/academy-console/players-section";
 import { AcademySessionsSection } from "@/components/academy-console/sessions-section";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
@@ -89,7 +94,7 @@ import { AcademyRegistrationsSection } from "@/components/academy-console/regist
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -168,6 +173,7 @@ function AcademyConsoleSidebar({
   const { t, locale, setLocale } = useTranslation();
   const labels = t.academyConsole;
   const whatsappCopy = useWhatsappCopy();
+  const peopleCopy = usePeopleCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
   const items: Array<{ id: ConsoleSection; label: string; icon: typeof LayoutDashboard; ownerOnly?: boolean }> = [
     { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
@@ -179,6 +185,8 @@ function AcademyConsoleSidebar({
     { id: "recordings", label: labels.recordings, icon: Video },
     { id: "fees", label: labels.feesPayments, icon: ReceiptText, ownerOnly: true },
     { id: "announcements", label: labels.announcements, icon: Megaphone },
+    { id: "chats", label: peopleCopy.chats.nav, icon: MessagesSquare },
+    { id: "people", label: peopleCopy.people.nav, icon: ContactIcon },
     { id: "whatsapp", label: whatsappCopy.nav, icon: MessageCircle },
   ];
 
@@ -715,6 +723,7 @@ export default function AcademyConsole() {
   const { t, locale } = useTranslation();
   const [location, setLocation] = useLocation();
   const [section, setSection] = useState<ConsoleSection>("dashboard");
+  const [chatPhone, setChatPhone] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selectedAcademyId, setSelectedAcademyId] = useState<number | null>(readSelectedAcademyId);
   const membershipsQuery = useGetAcademyConsoleMemberships({
@@ -765,7 +774,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -847,6 +856,10 @@ export default function AcademyConsole() {
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyAnnouncementsSection academyId={activeAcademyId} />
           ) : section === "whatsapp" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyWhatsappSection academyId={activeAcademyId} />
+          ) : section === "chats" ? (
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyChatsSection academyId={activeAcademyId} isOwner={isOwner} initialPhone={chatPhone} />
+          ) : section === "people" ? (
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPeopleSection academyId={activeAcademyId} isOwner={isOwner} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
           ) : <AcademyConsoleSkeleton />}
         </div>
       </main>

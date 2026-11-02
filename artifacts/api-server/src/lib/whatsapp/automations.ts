@@ -35,6 +35,7 @@ import {
   type EffectiveAutomation,
   type WhatsappLocale,
 } from "./templates";
+import { linkContactToPlayer, upsertContact } from "./contacts";
 import { normalizePhone } from "./phone";
 import { publicBaseUrl } from "./waha";
 
@@ -319,6 +320,17 @@ export async function onRegistrationReceived(
   academyId: number,
   registration: { id: number; playerName: string; guardianName: string | null; guardianPhone: string; locale: string },
 ): Promise<void> {
+  await safely("registration_contact", async () => {
+    const phone = normalizePhone(registration.guardianPhone);
+    if (phone) {
+      await upsertContact(academyId, phone, {
+        kind: "lead",
+        name: registration.guardianName,
+        source: "registration",
+        notes: `Registration: ${registration.playerName}`,
+      });
+    }
+  });
   await safely("registration_received", async () => {
     const ctx = await automationContext(academyId, "registration_received");
     if (!ctx) return;
@@ -344,6 +356,12 @@ export async function onRegistrationApproved(
   academyId: number,
   registration: { id: number; guardianName: string | null; guardianPhone: string; playerName: string; createdPlayerId: number | null },
 ): Promise<void> {
+  await safely("registration_contact", async () => {
+    const phone = normalizePhone(registration.guardianPhone);
+    if (!phone) return;
+    const contact = await upsertContact(academyId, phone, { kind: "parent", name: registration.guardianName, source: "registration" });
+    if (registration.createdPlayerId) await linkContactToPlayer(contact.id, registration.createdPlayerId, "guardian");
+  });
   await safely("registration_approved", async () => {
     const ctx = await automationContext(academyId, "registration_approved");
     if (!ctx) return;

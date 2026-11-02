@@ -279,3 +279,160 @@ export function useAdminWhatsapp() {
     refetchInterval: 30_000,
   });
 }
+
+// ─── Chats & People ──────────────────────────────────────────────────────────
+
+export type ContactKind = "unknown" | "lead" | "parent" | "player" | "coach" | "staff" | "other";
+export type LeadStage = "new" | "contacted" | "trial" | "joined" | "lost";
+export type Relationship = "father" | "mother" | "guardian" | "sibling" | "relative" | "self" | "other";
+export const CONTACT_KINDS: ContactKind[] = ["parent", "player", "lead", "coach", "staff", "other", "unknown"];
+export const LEAD_STAGES: LeadStage[] = ["new", "contacted", "trial", "joined", "lost"];
+export const RELATIONSHIPS: Relationship[] = ["father", "mother", "guardian", "sibling", "relative", "self", "other"];
+
+export type ContactPlayerLink = { playerId: number; playerName: string; squadName: string | null; relationship: Relationship; isActive: boolean };
+
+export type Contact = {
+  id: number;
+  phone: string;
+  display: string;
+  name: string | null;
+  kind: ContactKind;
+  stage: LeadStage | null;
+  source: string;
+  tags: string[];
+  notes: string | null;
+  players: ContactPlayerLink[];
+  lastMessageAt?: string | null;
+  optedOut?: boolean;
+  createdAt: string;
+};
+
+export type ChatSummary = {
+  phone: string;
+  display: string;
+  lastAt: string;
+  lastBody: string;
+  lastDirection: "in" | "out";
+  lastStatus: WhatsappMessage["status"];
+  unread: number;
+  contact: Contact | null;
+};
+
+export type ChatThread = {
+  phone: string;
+  display: string;
+  contact: Contact | null;
+  optedOut: boolean;
+  messages: Array<Pick<WhatsappMessage, "id" | "direction" | "kind" | "body" | "status" | "error" | "createdAt" | "sentAt">>;
+};
+
+export function useChats(academyId: number) {
+  return useQuery({
+    queryKey: key(academyId, "chats"),
+    queryFn: () => call<ChatSummary[]>(`/academy/console/academies/${academyId}/whatsapp/chats`),
+    refetchInterval: 8_000,
+  });
+}
+
+export function useChatThread(academyId: number, phone: string | null) {
+  return useQuery({
+    queryKey: key(academyId, "chat", phone),
+    queryFn: () => call<ChatThread>(`/academy/console/academies/${academyId}/whatsapp/chats/${phone}`),
+    enabled: Boolean(phone),
+    refetchInterval: 5_000,
+  });
+}
+
+export function useSendChat(academyId: number, phone: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: string) =>
+      call<{ id: number; outcome: "sent" | "queued" | "failed" }>(
+        `/academy/console/academies/${academyId}/whatsapp/chats/${phone}/messages`,
+        { method: "POST", body: json({ body }) },
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: key(academyId, "chat", phone) });
+      void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
+    },
+  });
+}
+
+export function useContacts(academyId: number) {
+  return useQuery({
+    queryKey: key(academyId, "contacts"),
+    queryFn: () => call<Contact[]>(`/academy/console/academies/${academyId}/contacts`),
+    staleTime: 15_000,
+  });
+}
+
+function useInvalidateContacts(academyId: number) {
+  const qc = useQueryClient();
+  return () => {
+    void qc.invalidateQueries({ queryKey: key(academyId, "contacts") });
+    void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
+    void qc.invalidateQueries({ queryKey: key(academyId, "chat") });
+  };
+}
+
+export type ContactInput = {
+  phone?: string;
+  name?: string | null;
+  kind?: ContactKind;
+  stage?: LeadStage | null;
+  tags?: string[];
+  notes?: string | null;
+  links?: Array<{ playerId: number; relationship: Relationship }>;
+};
+
+export function useCreateContact(academyId: number) {
+  const invalidate = useInvalidateContacts(academyId);
+  return useMutation({
+    mutationFn: (body: ContactInput) => call<Contact>(`/academy/console/academies/${academyId}/contacts`, { method: "POST", body: json(body) }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateContact(academyId: number) {
+  const invalidate = useInvalidateContacts(academyId);
+  return useMutation({
+    mutationFn: ({ id, ...body }: ContactInput & { id: number }) =>
+      call<Contact>(`/academy/console/academies/${academyId}/contacts/${id}`, { method: "PATCH", body: json(body) }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useDeleteContact(academyId: number) {
+  const invalidate = useInvalidateContacts(academyId);
+  return useMutation({
+    mutationFn: (id: number) => call(`/academy/console/academies/${academyId}/contacts/${id}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useLinkContact(academyId: number) {
+  const invalidate = useInvalidateContacts(academyId);
+  return useMutation({
+    mutationFn: ({ contactId, playerId, relationship }: { contactId: number; playerId: number; relationship: Relationship }) =>
+      call<Contact>(`/academy/console/academies/${academyId}/contacts/${contactId}/players/${playerId}`, { method: "PUT", body: json({ relationship }) }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUnlinkContact(academyId: number) {
+  const invalidate = useInvalidateContacts(academyId);
+  return useMutation({
+    mutationFn: ({ contactId, playerId }: { contactId: number; playerId: number }) =>
+      call<Contact>(`/academy/console/academies/${academyId}/contacts/${contactId}/players/${playerId}`, { method: "DELETE" }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useSendToContacts(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { body: string; contactIds: number[] }) =>
+      call<{ broadcastId: number; queued: number }>(`/academy/console/academies/${academyId}/whatsapp/broadcasts`, { method: "POST", body: json(body) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: key(academyId) }),
+  });
+}
