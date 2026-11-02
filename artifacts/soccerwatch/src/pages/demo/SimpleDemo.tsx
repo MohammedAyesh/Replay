@@ -50,6 +50,7 @@ const COPY: Record<DemoLocale, {
   stepsTitle: string;
   steps: Array<{ title: string; text: string }>;
   contactTitle: PersonaText;
+  callBackOnly: string;
   fullDemo: string;
   privacy: string;
   terms: string;
@@ -124,6 +125,7 @@ const COPY: Record<DemoLocale, {
       { title: "Players get their clips.", text: "After the whistle, with your badge on them." },
     ],
     contactTitle: { pitch: "See it on your pitch.", academy: "See it at your academy." },
+    callBackOnly: "Leave your number and we'll call you back.",
     fullDemo: "See the full demo",
     privacy: "Privacy",
     terms: "Terms",
@@ -198,6 +200,7 @@ const COPY: Record<DemoLocale, {
       { title: "اللاعبين بتوصلهم مقاطعهم.", text: "بعد الصافرة، وعليها شعارك." },
     ],
     contactTitle: { pitch: "شوفها على ملعبك.", academy: "شوفها بأكاديميتك." },
+    callBackOnly: "اترك رقمك ومنرجعلك.",
     fullDemo: "شوف الديمو الكامل",
     privacy: "الخصوصية",
     terms: "الشروط",
@@ -372,7 +375,7 @@ export default function SimpleDemo() {
 
       <main>
         {/* ── hero ──────────────────────────────────────────────────────── */}
-        <section className="lp-hero">
+        <section className="lp-hero" style={{ ["--lp-hero-still" as string]: `url(${heroImage})` }}>
           <LoopVideo clip={wideClip} fallback={stillFallback} className="lp-hero-media" />
           <div className="lp-wrap lp-hero-body">
             <div className="lp-seg" role="group" aria-label={c.personaLabel}>
@@ -528,7 +531,11 @@ export default function SimpleDemo() {
             <div className="lp-owner lp-contact">
               <div>
                 <h2 className="lp-h2">{c.contactTitle[persona]}</h2>
-                <p className="lp-text">{data?.leadsEnabled ? contactCopy.body : contactCopy.bodyWhatsapp}</p>
+                <p className="lp-text">
+                  {data?.leadsEnabled
+                    ? (whatsappHref ? contactCopy.body : c.callBackOnly)
+                    : contactCopy.bodyWhatsapp}
+                </p>
               </div>
               <LeadForm persona={persona} lang={lang} whatsappHref={whatsappHref} leadsEnabled={Boolean(data?.leadsEnabled)} />
             </div>

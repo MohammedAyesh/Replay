@@ -186,6 +186,8 @@
 
 .lp-hero {
   position: relative;
+  /* the still shows while the clip loads (the API proxy can take seconds) */
+  background: var(--lp-hero-still, none) center / cover no-repeat;
   display: flex;
   align-items: flex-end;
   min-height: 100svh;

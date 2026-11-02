@@ -243,7 +243,7 @@ export default function Login() {
 
       <main>
         {/* ── hero ──────────────────────────────────────────────────────── */}
-        <section className="lp-hero">
+        <section className="lp-hero" style={{ ["--lp-hero-still" as string]: `url(${heroImage})` }}>
           <LoopVideo clip={heroClip} fallback={heroImage} className="lp-hero-media" />
           <div className="lp-wrap lp-hero-body">
             <h1 className="lp-h1">
