@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   useLoginAsGuest,
@@ -19,10 +19,11 @@ import ownersImage from "@/assets/fields-amman.png";
 import familyImage from "@/assets/academies-watching.png";
 import { useSupportContact, supportMailto } from "@/lib/client-settings";
 import { useLegalCopy } from "@/i18n/legal-strings";
-import { useReport, useShowcase, withBase, type DemoClip } from "@/pages/demo/data";
+import { useReport, useShowcase } from "@/pages/demo/data";
 import { LiveBroadcast } from "@/pages/demo/LiveBroadcast";
 import { demoCopy } from "@/pages/demo/copy";
 import "@/pages/demo/demo.css";
+import { basePath, Brand, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "./landing-parts";
 import "./landing.css";
 
 // ─── copy ─────────────────────────────────────────────────────────────────────
@@ -119,80 +120,10 @@ const COPY = {
   },
 } as const;
 
-const PILLAR_ICONS: Record<string, string> = {
-  clips: "M6.5 8.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Zm0 12a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5ZM8.3 7.6 20 19M20 5 8.3 16.4",
-  stats: "M4 20V11M10 20V4M16 20v-7M22 20H2",
-  live: "M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2",
-};
-
 const OWNER_WHATSAPP_TEXT = {
   en: "Hi, I'd like Replay at my pitch.",
   ar: "مرحبا، بدي ريبلاي بملعبي.",
 } as const;
-
-// ─── small parts ──────────────────────────────────────────────────────────────
-
-function Chevron() {
-  return (
-    <svg className="lp-chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-      <path d="M4.5 2.5 8 6l-3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function Brand() {
-  return (
-    <>
-      <img src={`${import.meta.env.BASE_URL}replay-mark.svg`} alt="" aria-hidden="true" />
-      <span className="replay-wordmark" aria-label="Replay">
-        <span className="replay-wordmark-ar" lang="ar">ريبلاي</span>
-        <span className="replay-wordmark-en">REPLAY</span>
-      </span>
-    </>
-  );
-}
-
-/**
- * A muted looping clip that plays only while on screen, and never plays when
- * the visitor has asked for reduced motion (the poster stays instead).
- */
-function LoopVideo({ clip, fallback, className }: { clip: DemoClip | undefined; fallback: string; className?: string }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  const reduceMotion = useReducedMotion();
-
-  useEffect(() => {
-    const video = ref.current;
-    if (!video || reduceMotion || !clip) return;
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) void video.play().catch(() => {});
-        else video.pause();
-      },
-      { threshold: 0.25 },
-    );
-    observer.observe(video);
-    return () => observer.disconnect();
-  }, [clip, reduceMotion]);
-
-  if (!clip || reduceMotion) {
-    return <img className={className} src={clip ? withBase(clip.poster) : fallback} alt="" aria-hidden="true" />;
-  }
-  return (
-    <video
-      ref={ref}
-      className={className}
-      src={withBase(clip.src)}
-      poster={withBase(clip.poster)}
-      muted
-      loop
-      playsInline
-      preload="metadata"
-      aria-hidden="true"
-    />
-  );
-}
-
-const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // ─── page ─────────────────────────────────────────────────────────────────────
 
@@ -230,12 +161,6 @@ export default function Login() {
     : null;
 
   const numberFormat = new Intl.NumberFormat(isRtl ? "ar-JO-u-nu-latn" : "en-US");
-  const formatDate = (iso: string) => {
-    const parsed = new Date(`${iso}T12:00:00Z`);
-    if (Number.isNaN(parsed.getTime())) return iso;
-    return new Intl.DateTimeFormat(isRtl ? "ar-JO-u-nu-latn" : "en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(parsed);
-  };
-
   useEffect(() => {
     try {
       if (sessionStorage.getItem("replay_account_deleted") !== "1") return;
@@ -293,16 +218,6 @@ export default function Login() {
       },
     });
   };
-
-  // Only rows with something in them: a 0–0 row says nothing.
-  const teamRows = team
-    ? ([
-        [c.goals, team.goals],
-        [c.shots, team.shots],
-        [c.passes, team.passesCompleted],
-        [c.dribbles, team.dribblesWon],
-      ] as const).filter(([, pair]) => pair[0] + pair[1] > 0)
-    : [];
 
   return (
     <div className="lp" dir={isRtl ? "rtl" : "ltr"} lang={lang}>
@@ -374,9 +289,7 @@ export default function Login() {
               {c.pillars.map((pillar) => (
                 <li key={pillar.id}>
                   <a className="lp-pillar" href={`#${pillar.id}`}>
-                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <path d={PILLAR_ICONS[pillar.id]} />
-                    </svg>
+                    <Icon name={pillar.id as IconName} />
                     <h3 className="lp-h3">{pillar.title}</h3>
                     <p className="lp-text">{pillar.text}</p>
                   </a>
@@ -413,28 +326,14 @@ export default function Login() {
                 <p className="lp-text">{c.statsText}</p>
               </div>
               {team && report ? (
-                <figure className="lp-stats" style={{ margin: 0 }}>
-                  <div className="lp-stats-row">
-                    <b>{team.possessionPercent[0]}%</b>
-                    <span>{c.possession}</span>
-                    <b>{team.possessionPercent[1]}%</b>
-                  </div>
-                  <div className="lp-bar" aria-hidden="true">
-                    <i style={{ width: `${team.possessionPercent[0]}%`, background: "var(--replay-floodlight)" }} />
-                    <i style={{ width: `${team.possessionPercent[1]}%`, background: "var(--replay-violet)" }} />
-                  </div>
-                  {teamRows.map(([label, pair]) => (
-                    <div className="lp-stats-row" key={label}>
-                      <b>{pair[0]}</b>
-                      <span>{label}</span>
-                      <b>{pair[1]}</b>
-                    </div>
-                  ))}
-                  <figcaption className="lp-stats-note">{c.statsNote(formatDate(report.date))}</figcaption>
-                </figure>
+                <MatchStatsCard
+                  report={report}
+                  rtl={isRtl}
+                  labels={{ possession: c.possession, goals: c.goals, shots: c.shots, passes: c.passes, dribbles: c.dribbles, note: c.statsNote }}
+                />
               ) : (
                 <div className="lp-media">
-                  <img src={showcase?.match?.poster ?? heroImage} alt="" aria-hidden="true" />
+                  <img src={heroImage} alt="" aria-hidden="true" />
                 </div>
               )}
             </div>

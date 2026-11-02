@@ -1,19 +1,209 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useReducedMotion } from "framer-motion";
 
-import { ReplayMark } from "@/components/ReplayMark";
+import heroImage from "@/assets/hero-floodlit-pitch.png";
+import familyImage from "@/assets/academies-watching.png";
+import playersImage from "@/assets/clips-editing.png";
 import { useLocale } from "@/i18n/context";
-import { ClipCard, HeroVideo } from "./ClipRail";
-import { Contact } from "./Contact";
+import { basePath, Brand, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "@/pages/landing-parts";
 import { demoCopy, type DemoLocale, type Persona } from "./copy";
-import { formatMatchDate, formatNumber, useReport, useShowcase, withBase, type DemoReport } from "./data";
-import { useInView } from "./playback";
-import { simpleCopy } from "./simpleCopy";
+import { LiveBroadcast } from "./LiveBroadcast";
+import { useReport, useShowcase, withBase, type DemoClip } from "./data";
 import "./demo.css";
+import "@/pages/landing.css";
 
 /**
- * The short /demo (2026-10-26): what an owner gets, real clips as proof, what
- * it adds a month, and how to get it. Everything else is on /demo/full.
+ * /demo (rewritten 2026-11-02): the owner's side of the home page. Same
+ * design (landing.css, Apple HIG restraint), same real footage and match.
+ * Pitches and academies get their own words; no money figure on this page
+ * (Mohammed, 26 Oct). The long page lives on at /demo/full.
  */
+
+type PersonaText = Record<Persona, string>;
+type Item = { icon: IconName; title: string; text: string };
+
+const COPY: Record<DemoLocale, {
+  title: string;
+  lang: string;
+  langLabel: string;
+  forPlayers: string;
+  getProposal: string;
+  whatsapp: string;
+  personaLabel: string;
+  personas: PersonaText;
+  hero: Record<Persona, [string, string]>;
+  lead: PersonaText;
+  rebook: string;
+  clips: string;
+  valuesTitle: string;
+  values: Record<Persona, Item[]>;
+  brandTitle: string;
+  brandText: PersonaText;
+  statsTitle: string;
+  statsText: PersonaText;
+  stats: { possession: string; goals: string; shots: string; passes: string; dribbles: string; note: (date: string) => string };
+  liveTitle: string;
+  liveText: PersonaText;
+  liveNote: string;
+  consoleTitle: string;
+  console: Item[];
+  stepsTitle: string;
+  steps: Array<{ title: string; text: string }>;
+  contactTitle: PersonaText;
+  fullDemo: string;
+  privacy: string;
+  terms: string;
+  city: string;
+}> = {
+  en: {
+    title: "Replay · for pitches and academies",
+    lang: "ع",
+    langLabel: "العربية",
+    forPlayers: "For players",
+    getProposal: "Get a proposal",
+    whatsapp: "WhatsApp",
+    personaLabel: "Show for",
+    personas: { pitch: "Pitches", academy: "Academies" },
+    hero: {
+      pitch: ["Let your players", "market your pitch."],
+      academy: ["Let your players", "market your academy."],
+    },
+    lead: {
+      pitch: "One camera records every match. Players share clips with your badge on them, and their friends come to play.",
+      academy: "One camera records every session. Players share clips with your badge on them, and parents watch live.",
+    },
+    rebook: "of paying teams book again",
+    clips: "clips made",
+    valuesTitle: "What it brings you.",
+    values: {
+      pitch: [
+        { icon: "calendar", title: "More bookings", text: "Every shared clip shows where the match was played." },
+        { icon: "players", title: "Teams come back", text: "Players return to see their clips and stats." },
+        { icon: "hands", title: "Nothing to run", text: "No camera operator. No editing. No staff time." },
+      ],
+      academy: [
+        { icon: "players", title: "More players", text: "Every clip parents share carries your badge." },
+        { icon: "stats", title: "Players stay", text: "Parents see their child improve, session after session." },
+        { icon: "hands", title: "Nothing to run", text: "No camera operator. No editing. No coach time." },
+      ],
+    },
+    brandTitle: "Your badge on every clip.",
+    brandText: {
+      pitch: "Your logo in the corner and a booking card at the end. Players post them on Instagram, TikTok and WhatsApp.",
+      academy: "Your logo on every clip and a card at the end. Parents share them with the whole family.",
+    },
+    statsTitle: "Pro stats. No wearables.",
+    statsText: {
+      pitch: "Possession, passes and distance for every player, measured by the camera. Players come back to see theirs.",
+      academy: "Possession, passes and distance for every player, measured by the camera. Parents see the progress.",
+    },
+    stats: {
+      possession: "Possession",
+      goals: "Goals",
+      shots: "Shots",
+      passes: "Passes",
+      dribbles: "Dribbles won",
+      note: (date) => `A real match, ${date}. Names hidden.`,
+    },
+    liveTitle: "Live, with no one filming.",
+    liveText: {
+      pitch: "The camera follows the ball, with the score and clock on screen. Friends watch from home.",
+      academy: "The camera follows the ball, with the score and clock on screen. Parents watch from work.",
+    },
+    liveNote: "A recorded match, shown as it streams.",
+    consoleTitle: "Run it from your phone.",
+    console: [
+      { icon: "history", title: "Any past hour", text: "Request it from your console and get it on WhatsApp." },
+      { icon: "calendar", title: "Booked matches", text: "Book a match and the team gets the video." },
+      { icon: "var", title: "VAR", text: "Check a disputed goal while the match is still on." },
+    ],
+    stepsTitle: "Running after one visit.",
+    steps: [
+      { title: "One camera, installed.", text: "It runs on your own internet." },
+      { title: "It records by itself.", text: "Every match and session. No staff needed." },
+      { title: "Players get their clips.", text: "After the whistle, with your badge on them." },
+    ],
+    contactTitle: { pitch: "See it on your pitch.", academy: "See it at your academy." },
+    fullDemo: "See the full demo",
+    privacy: "Privacy",
+    terms: "Terms",
+    city: "Amman, Jordan",
+  },
+  ar: {
+    title: "ريبلاي · للملاعب والأكاديميات",
+    lang: "EN",
+    langLabel: "English",
+    forPlayers: "للاعبين",
+    getProposal: "اطلب عرض",
+    whatsapp: "واتساب",
+    personaLabel: "اعرض لـ",
+    personas: { pitch: "ملاعب", academy: "أكاديميات" },
+    hero: {
+      pitch: ["خلّي لاعبينك", "يسوّقوا لملعبك."],
+      academy: ["خلّي لاعبينك", "يسوّقوا لأكاديميتك."],
+    },
+    lead: {
+      pitch: "كاميرا وحدة بتصوّر كل مباراة. اللاعبين بنشروا مقاطعهم وعليها شعار ملعبك، وأصحابهم بيجوا يلعبوا عندك.",
+      academy: "كاميرا وحدة بتصوّر كل حصة. اللاعبين بنشروا مقاطعهم وعليها شعار أكاديميتك، والأهل بتابعوا مباشر.",
+    },
+    rebook: "من الفرق اللي بتدفع بترجع تحجز",
+    clips: "مقطع انعمل",
+    valuesTitle: "شو بتجيبلك.",
+    values: {
+      pitch: [
+        { icon: "calendar", title: "حجوزات أكثر", text: "كل مقطع بنشروه بيبيّن وين انلعبت المباراة." },
+        { icon: "players", title: "الفرق بترجع", text: "اللاعبين بيرجعوا يشوفوا مقاطعهم وأرقامهم." },
+        { icon: "hands", title: "ولا إشي تشغّله", text: "بدون مصوّر، بدون مونتاج، وبدون وقت من موظفينك." },
+      ],
+      academy: [
+        { icon: "players", title: "لاعبين أكثر", text: "كل مقطع بنشروه الأهل عليه شعار أكاديميتك." },
+        { icon: "stats", title: "اللاعبين بضلّوا", text: "الأهل بشوفوا ابنهم بتحسّن حصة بعد حصة." },
+        { icon: "hands", title: "ولا إشي تشغّله", text: "بدون مصوّر، بدون مونتاج، وبدون وقت من المدربين." },
+      ],
+    },
+    brandTitle: "شعارك على كل مقطع.",
+    brandText: {
+      pitch: "شعارك بالزاوية وبطاقة حجز بالآخر. اللاعبين بنشروها على إنستغرام وتيك توك وواتساب.",
+      academy: "شعارك على كل مقطع وبطاقة بالآخر. الأهل بنشروها للعيلة كلها.",
+    },
+    statsTitle: "أرقام محترفين. بدون ما حدا يلبس إشي.",
+    statsText: {
+      pitch: "الاستحواذ والتمريرات والمسافة لكل لاعب، والكاميرا بتقيسها. اللاعبين بيرجعوا يشوفوا أرقامهم.",
+      academy: "الاستحواذ والتمريرات والمسافة لكل لاعب، والكاميرا بتقيسها. الأهل بشوفوا التحسّن.",
+    },
+    stats: {
+      possession: "الاستحواذ",
+      goals: "الأهداف",
+      shots: "التسديدات",
+      passes: "التمريرات",
+      dribbles: "مراوغات ناجحة",
+      note: (date) => `مباراة حقيقية، ${date}. الأسماء مخفية.`,
+    },
+    liveTitle: "بث مباشر بدون مصوّر.",
+    liveText: {
+      pitch: "الكاميرا بتلحق الطابة، والنتيجة والوقت على الشاشة. الأصحاب بتابعوا من البيت.",
+      academy: "الكاميرا بتلحق الطابة، والنتيجة والوقت على الشاشة. الأهل بتابعوا من الشغل.",
+    },
+    liveNote: "مباراة مسجّلة، معروضة مثل ما بتنبث.",
+    consoleTitle: "شغّلها من تلفونك.",
+    console: [
+      { icon: "history", title: "أي ساعة فاتت", text: "اطلبها من لوحتك وبتوصلك عالواتساب." },
+      { icon: "calendar", title: "المباريات المحجوزة", text: "احجز مباراة والفريق بتوصله الفيديو." },
+      { icon: "var", title: "VAR", text: "شيّك على هدف مختلف عليه والمباراة لسا شغّالة." },
+    ],
+    stepsTitle: "بتشتغل من أول زيارة.",
+    steps: [
+      { title: "منركّب كاميرا وحدة.", text: "بتشتغل على الإنترنت اللي عندك." },
+      { title: "بتصوّر لحالها.", text: "كل مباراة وكل حصة، بدون موظفين." },
+      { title: "اللاعبين بتوصلهم مقاطعهم.", text: "بعد الصافرة، وعليها شعارك." },
+    ],
+    contactTitle: { pitch: "شوفها على ملعبك.", academy: "شوفها بأكاديميتك." },
+    fullDemo: "شوف الديمو الكامل",
+    privacy: "الخصوصية",
+    terms: "الشروط",
+    city: "عمّان، الأردن",
+  },
+};
 
 const PERSONA_KEY = "replay-demo-persona";
 
@@ -29,57 +219,94 @@ function initialPersona(): Persona {
   return "pitch";
 }
 
-/*
- * No money figure on this page (Mohammed, 26 Oct): for pitches the value is
- * more bookings, for academies more players who stay longer. The full page's
- * calculator (/demo/full) is unchanged.
- */
+/** The callback form (POST /api/demo/leads) and WhatsApp, in the page's style. */
+function LeadForm({ persona, lang, whatsappHref, leadsEnabled }: {
+  persona: Persona;
+  lang: DemoLocale;
+  whatsappHref: string | null;
+  leadsEnabled: boolean;
+}) {
+  const copy = demoCopy[lang].sections.contact;
+  const [name, setName] = useState("");
+  const [place, setPlace] = useState("");
+  const [phone, setPhone] = useState("");
+  const [website, setWebsite] = useState("");
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
-/** Real numbers from the demo's analysed match: the match, and its standout players. */
-function RealNumbers({ report, lang }: { report: DemoReport; lang: DemoLocale }) {
-  const c = simpleCopy[lang];
-  const furthest = Math.max(0, ...report.players.map((p) => p.distanceKm ?? 0));
-  const fastest = Math.max(0, ...report.players.map((p) => p.topSpeedKmh ?? 0));
-  const tiles: Array<{ label: string; value: string; unit?: string }> = [];
-  if (report.team) {
-    tiles.push({ label: c.stats.score, value: `${report.team.goals[0]} – ${report.team.goals[1]}` });
-    tiles.push({ label: c.stats.possession, value: `${Math.round(report.team.possessionPercent[0])}–${Math.round(report.team.possessionPercent[1])}`, unit: "%" });
-    tiles.push({ label: c.stats.shots, value: `${report.team.shots[0]} – ${report.team.shots[1]}` });
-  }
-  if (report.players.length) tiles.push({ label: c.stats.players, value: formatNumber(report.players.length, lang) });
-  if (furthest > 0) tiles.push({ label: c.stats.furthest, value: formatNumber(furthest, lang, 1), unit: c.stats.km });
-  if (fastest > 0) tiles.push({ label: c.stats.fastest, value: formatNumber(fastest, lang, 1), unit: c.stats.kmh });
-  if (!tiles.length) return null;
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (state === "sending") return;
+    setState("sending");
+    try {
+      const response = await fetch(withBase("/api/demo/leads"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "omit",
+        body: JSON.stringify({ name, place, phone, persona, website, locale: lang }),
+      });
+      setState(response.ok ? "sent" : "error");
+    } catch {
+      setState("error");
+    }
+  };
+
   return (
-    <section className="dm-section dm-section--tight" aria-labelledby="dm-real-title">
-      <div className="dm-wrap">
-        <h2 id="dm-real-title" className="dm-h2 dm-h2--small">{c.statsTitle}</h2>
-        <p className="dm-small dm-simple-note">{c.statsNote(formatMatchDate(report.date, lang))}</p>
-        <dl className="dm-real">
-          {tiles.map((tile) => (
-            <div key={tile.label} className="dm-real-tile">
-              <dt>{tile.label}</dt>
-              <dd><span className="dm-num" dir="ltr">{tile.value}</span>{tile.unit && <small>{tile.unit}</small>}</dd>
-            </div>
-          ))}
-        </dl>
-      </div>
-    </section>
+    <div className="lp-form">
+      {leadsEnabled && state !== "sent" && (
+        <form onSubmit={submit}>
+          <label className="lp-field">
+            <span>{copy.name}</span>
+            <input value={name} onChange={(e) => setName(e.target.value)} required maxLength={80} autoComplete="name" />
+          </label>
+          <label className="lp-field">
+            <span>{copy.place[persona]}</span>
+            <input value={place} onChange={(e) => setPlace(e.target.value)} required maxLength={120} autoComplete="organization" />
+          </label>
+          <label className="lp-field">
+            <span>{copy.phone}</span>
+            <input
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              required
+              type="tel"
+              inputMode="tel"
+              autoComplete="tel"
+              pattern="[0-9+ ()\-]{7,20}"
+              dir="ltr"
+            />
+          </label>
+          {/* honeypot: people never see or fill it */}
+          <input className="lp-hp" name="website" tabIndex={-1} autoComplete="off" aria-hidden="true" value={website} onChange={(e) => setWebsite(e.target.value)} />
+          <button type="submit" className="lp-btn lp-btn--primary lp-btn--block" disabled={state === "sending"}>
+            {state === "sending" ? copy.sending : copy.send}
+          </button>
+          {state === "error" && <p className="lp-form-msg lp-form-msg--error" role="alert">{copy.error}</p>}
+        </form>
+      )}
+      {state === "sent" && <p className="lp-form-msg" role="status">{copy.sent}</p>}
+      {whatsappHref && (
+        <a className={`lp-btn lp-btn--block ${leadsEnabled ? "lp-btn--quiet" : "lp-btn--primary"}`} href={whatsappHref} target="_blank" rel="noopener noreferrer">
+          {copy.whatsapp}
+        </a>
+      )}
+      {!leadsEnabled && !whatsappHref && <p className="lp-form-msg">{copy.noChannel}</p>}
+    </div>
   );
 }
 
 export default function SimpleDemo() {
   const { locale, setLocale } = useLocale();
   const lang: DemoLocale = locale === "en" ? "en" : "ar";
-  const copy = demoCopy[lang];
-  const c = simpleCopy[lang];
+  const isRtl = lang === "ar";
+  const c = COPY[lang];
+  const contactCopy = demoCopy[lang].sections.contact;
+  const reduceMotion = useReducedMotion();
   const [persona, setPersonaState] = useState<Persona>(initialPersona);
-  const showcase = useShowcase();
-  const data = showcase.data;
-  const reportQuery = useReport(Boolean(data?.match?.analysed));
-  const report = reportQuery.data?.available ? reportQuery.data.report : null;
-  const { ref: heroRef, inView: heroInView } = useInView<HTMLElement>("0px", 0.05);
-  const { ref: contactRef, inView: contactInView } = useInView<HTMLElement>("0px", 0.05);
+  const [solidNav, setSolidNav] = useState(false);
+
+  const { data } = useShowcase();
+  const { data: reportData } = useReport(Boolean(data?.match?.analysed));
+  const report = reportData?.available ? reportData.report : null;
 
   const setPersona = (next: Persona) => {
     setPersonaState(next);
@@ -95,15 +322,20 @@ export default function SimpleDemo() {
 
   useEffect(() => {
     const previous = document.title;
-    document.title = lang === "ar" ? "ريبلاي · كاميرا لملعبك" : "Replay · a camera for your pitch";
+    document.title = c.title;
     return () => { document.title = previous; };
-  }, [lang]);
+  }, [c.title]);
 
-  // Two videos on the page, no more (Mohammed, 26 Oct): one sideline (16:9)
-  // that plays by itself, and one vertical (9:16) inside a phone frame. The
-  // academy view uses only academy-branded copies, never a pitch's.
+  useEffect(() => {
+    const onScroll = () => setSolidNav(window.scrollY > 24);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // The academy view only ever shows academy-branded copies, never a pitch's.
   const { wideClip, tallClip } = useMemo(() => {
-    const clips = (persona === "academy" ? data?.academyClips : data?.clips) ?? [];
+    const clips: DemoClip[] = (persona === "academy" ? data?.academyClips : data?.clips) ?? [];
     const byViews = [...clips].sort((x, y) => y.viewCount - x.viewCount);
     const wide = byViews.find((clip) => clip.aspectRatio === "16:9") ?? null;
     const tall = byViews.find((clip) => clip.aspectRatio === "9:16")
@@ -111,136 +343,215 @@ export default function SimpleDemo() {
       ?? null;
     return { wideClip: wide, tallClip: tall };
   }, [data?.clips, data?.academyClips, data?.socialClips, persona]);
-  const returnRate = data?.returnRatePercent ?? null;
-  const values = c.values[persona].filter((value) => value.stat !== "returnRate" || returnRate !== null);
-  const scrollToContact = () => document.getElementById("contact")?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+  const returnRate = persona === "pitch" ? data?.returnRatePercent ?? null : null;
+  const clipCount = data?.counts.clips ?? null;
+  const numberFormat = new Intl.NumberFormat(isRtl ? "ar-JO-u-nu-latn" : "en-US");
+  const whatsappHref = data?.salesWhatsapp
+    ? `https://wa.me/${data.salesWhatsapp}?text=${encodeURIComponent(contactCopy.whatsappMessage[persona])}`
+    : null;
+  const toContact = () => document.getElementById("contact")?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  // Bunny Stream thumbnails need a referer, so stills come from the app's own assets.
+  const stillFallback = heroImage;
 
   return (
-    <div className="dm dm-simple" lang={lang} dir={lang === "ar" ? "rtl" : "ltr"} data-testid="page-demo">
-      <header className="dm-top">
-        <div className="dm-wrap dm-top-row">
-          <a className="dm-brand" href="#top" aria-label="Replay">
-            <ReplayMark className="dm-brand-mark" />
-            <span className="dm-brand-word">{copy.brand}</span>
+    <div className="lp" dir={isRtl ? "rtl" : "ltr"} lang={lang} data-testid="page-demo">
+      {/* ── nav ─────────────────────────────────────────────────────────── */}
+      <header className="lp-nav" data-solid={solidNav}>
+        <nav className="lp-wrap lp-nav-row" aria-label="Replay">
+          <a className="lp-brand" href={`${basePath}/`} aria-label="Replay">
+            <Brand />
           </a>
-          <div className="dm-top-actions">
-            <button type="button" className="dm-lang" onClick={() => setLocale(lang === "ar" ? "en" : "ar")} lang={lang === "ar" ? "en" : "ar"}>
-              {copy.switchLanguage}
-            </button>
-            <button type="button" className="dm-btn dm-btn--primary dm-btn--small" onClick={scrollToContact}>{copy.getCamera}</button>
-          </div>
-        </div>
+          <a className="lp-nav-link lp-nav-link--wide" href={`${basePath}/`}>{c.forPlayers}</a>
+          <button type="button" className="lp-lang" onClick={() => setLocale(isRtl ? "en" : "ar")} aria-label={c.langLabel} lang={isRtl ? "en" : "ar"}>
+            {c.lang}
+          </button>
+          <button type="button" className="lp-btn lp-btn--primary lp-btn--small" onClick={toContact}>{c.getProposal}</button>
+        </nav>
       </header>
 
-      <main id="top">
-        <section ref={heroRef} className="dm-hero dm-hero--short" aria-labelledby="dm-hero-title">
-          {/* A still, not a third video. */}
-          <HeroVideo clip={null} fallbackPoster={wideClip?.poster ?? data?.match?.poster ?? null} />
-          <div className="dm-wrap dm-hero-body">
-            <p className="dm-hero-kicker">{c.kicker[persona]}</p>
-            <h1 id="dm-hero-title" className="dm-h1">{c.title[persona]}</h1>
-            <p className="dm-hero-lead">{c.lead[persona]}</p>
-            <div className="dm-hero-actions">
-              <button type="button" className="dm-btn dm-btn--primary" onClick={scrollToContact}>{copy.getCamera}</button>
-              <a className="dm-btn dm-btn--ghost" href={withBase(`/demo/full?for=${persona}`)}>{c.full}</a>
-              <div className="dm-seg" role="group" aria-label={copy.personaQuestion}>
-                {(["pitch", "academy"] as Persona[]).map((key) => (
-                  <button key={key} type="button" aria-pressed={persona === key} className={`dm-seg-btn ${persona === key ? "is-on" : ""}`} onClick={() => setPersona(key)}>
-                    {copy.personas[key]}
-                  </button>
-                ))}
-              </div>
+      <main>
+        {/* ── hero ──────────────────────────────────────────────────────── */}
+        <section className="lp-hero">
+          <LoopVideo clip={wideClip} fallback={stillFallback} className="lp-hero-media" />
+          <div className="lp-wrap lp-hero-body">
+            <div className="lp-seg" role="group" aria-label={c.personaLabel}>
+              {(["pitch", "academy"] as Persona[]).map((key) => (
+                <button key={key} type="button" aria-pressed={persona === key} onClick={() => setPersona(key)}>
+                  {c.personas[key]}
+                </button>
+              ))}
+            </div>
+            <h1 className="lp-h1">
+              <span>{c.hero[persona][0]}</span>
+              <span>{c.hero[persona][1]}</span>
+            </h1>
+            <p className="lp-lead">{c.lead[persona]}</p>
+            <div className="lp-actions">
+              <button type="button" className="lp-btn lp-btn--primary" onClick={toContact}>{c.getProposal}</button>
+              {whatsappHref && (
+                <a className="lp-btn lp-btn--quiet" href={whatsappHref} target="_blank" rel="noopener noreferrer">{c.whatsapp}</a>
+              )}
             </div>
           </div>
         </section>
 
-        <section className="dm-section dm-section--tight" aria-labelledby="dm-values-title">
-          <div className="dm-wrap">
-            <h2 id="dm-values-title" className="dm-h2 dm-h2--small">{c.valuesTitle}</h2>
-            <ul className="dm-values">
-              {values.map((value) => (
-                <li key={value.title} className={`dm-value ${value.stat ? "dm-value--stat" : ""}`}>
-                  {value.stat === "returnRate" && returnRate !== null && (
-                    <strong className="dm-big-num" dir="ltr">{formatNumber(returnRate, lang)}%</strong>
-                  )}
-                  <h3>{value.title}</h3>
-                  <p>{value.body}</p>
+        {/* ── proof ─────────────────────────────────────────────────────── */}
+        {(returnRate || clipCount) && (
+          <div className="lp-wrap">
+            <dl className="lp-proof">
+              {returnRate ? (
+                <div>
+                  <dt>{c.rebook}</dt>
+                  <dd>{numberFormat.format(returnRate)}%</dd>
+                </div>
+              ) : null}
+              {clipCount ? (
+                <div>
+                  <dt>{c.clips}</dt>
+                  <dd>{numberFormat.format(clipCount)}</dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+        )}
+
+        {/* ── what it brings ────────────────────────────────────────────── */}
+        <section className="lp-section">
+          <div className="lp-wrap">
+            <h2 className="lp-h2 lp-center">{c.valuesTitle}</h2>
+            <ul className="lp-pillars">
+              {c.values[persona].map((item) => (
+                <li key={item.title}>
+                  <div className="lp-pillar">
+                    <Icon name={item.icon} />
+                    <h3 className="lp-h3">{item.title}</h3>
+                    <p className="lp-text">{item.text}</p>
+                  </div>
                 </li>
               ))}
             </ul>
           </div>
         </section>
 
-        {wideClip || tallClip ? (
-          <section className="dm-section dm-section--tight dm-section--raised" aria-labelledby="dm-clips-title">
-            <div className="dm-wrap">
-              <h2 id="dm-clips-title" className="dm-h2 dm-h2--small">{c.clipsTitle[persona]}</h2>
-              <p className="dm-small dm-simple-note">{c.clipsNote[persona]}</p>
-              <div className="dm-pair">
-                {wideClip && (
-                  <div className="dm-pair-wide">
-                    <ClipCard clip={wideClip} copy={copy.sections.clips} near autoplay />
-                  </div>
-                )}
-                {tallClip && (
-                  <figure className="dm-phone">
-                    <div className="dm-phone-body">
-                      <span className="dm-phone-notch" aria-hidden="true" />
-                      <ClipCard clip={tallClip} copy={copy.sections.clips} near autoplay={false} />
-                      <span className="dm-phone-bar" aria-hidden="true" />
-                    </div>
-                    <figcaption className="dm-small">{c.phoneCaption[persona]}</figcaption>
-                  </figure>
-                )}
+        {/* ── the three automations, owner's view ───────────────────────── */}
+        <section className="lp-section lp-section--raised">
+          <div className="lp-wrap">
+            <div className="lp-feature">
+              <div>
+                <h2 className="lp-h2">{c.brandTitle}</h2>
+                <p className="lp-text">{c.brandText[persona]}</p>
               </div>
+              {tallClip ? (
+                <div className="lp-phone">
+                  <div className="lp-media">
+                    <LoopVideo clip={tallClip} fallback={stillFallback} />
+                  </div>
+                </div>
+              ) : wideClip ? (
+                <div className="lp-media">
+                  <LoopVideo clip={wideClip} fallback={playersImage} />
+                </div>
+              ) : (
+                <div className="lp-media lp-media--plain">
+                  <img src={playersImage} alt="" aria-hidden="true" />
+                </div>
+              )}
             </div>
-          </section>
-        ) : null}
 
-        {report && <RealNumbers report={report} lang={lang} />}
+            {report?.team && (
+              <div className="lp-feature lp-feature--flip">
+                <div>
+                  <h2 className="lp-h2">{c.statsTitle}</h2>
+                  <p className="lp-text">{c.statsText[persona]}</p>
+                </div>
+                <MatchStatsCard report={report} labels={c.stats} rtl={isRtl} />
+              </div>
+            )}
 
-        <section className="dm-section dm-section--tight dm-section--raised" aria-labelledby="dm-also-title">
-          <div className="dm-wrap">
-            <h2 id="dm-also-title" className="dm-h2 dm-h2--small">{c.alsoTitle}</h2>
-            <ul className="dm-also">
-              {c.also.map((item) => (
-                <li key={item.title}><strong>{item.title}</strong><span>{item.body}</span></li>
-              ))}
-            </ul>
-            <p className="dm-simple-setup">{c.setup}</p>
-            <a className="dm-full-card" href={withBase(`/demo/full?for=${persona}`)}>
-              <span>
-                <strong>{c.full}</strong>
-                <span>{c.fullBody}</span>
-              </span>
-              <span className="dm-full-card-go" aria-hidden="true">{lang === "ar" ? "←" : "→"}</span>
-            </a>
+            <div className={`lp-feature${report?.team ? "" : " lp-feature--flip"}`}>
+              <div>
+                <h2 className="lp-h2">{c.liveTitle}</h2>
+                <p className="lp-text">{c.liveText[persona]}</p>
+              </div>
+              {data?.match && report?.broadcast && !reduceMotion ? (
+                <figure className="lp-live" style={{ margin: 0 }}>
+                  <LiveBroadcast match={data.match} report={report} copy={demoCopy[lang].sections.live} />
+                  <figcaption className="lp-stats-note">{c.liveNote}</figcaption>
+                </figure>
+              ) : (
+                <div className="lp-media lp-media--plain">
+                  <img src={familyImage} alt="" aria-hidden="true" />
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
-        <section id="contact" ref={contactRef} className="dm-contact" aria-labelledby="contact-title">
-          <div className="dm-wrap dm-contact-grid">
-            <div>
-              <h2 id="contact-title" className="dm-h2">{copy.sections.contact.title[persona]}</h2>
-              <p className="dm-lead">{data?.leadsEnabled ? copy.sections.contact.body : copy.sections.contact.bodyWhatsapp}</p>
+        {/* ── the owner console ─────────────────────────────────────────── */}
+        <section className="lp-section">
+          <div className="lp-wrap">
+            <h2 className="lp-h2 lp-center">{c.consoleTitle}</h2>
+            <ul className="lp-pillars">
+              {c.console.map((item) => (
+                <li key={item.title}>
+                  <div className="lp-pillar">
+                    <Icon name={item.icon} />
+                    <h3 className="lp-h3">{item.title}</h3>
+                    <p className="lp-text">{item.text}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+
+        {/* ── how it starts ─────────────────────────────────────────────── */}
+        <section className="lp-section lp-section--raised">
+          <div className="lp-wrap">
+            <h2 className="lp-h2 lp-center">{c.stepsTitle}</h2>
+            <ol className="lp-steps">
+              {c.steps.map((step, index) => (
+                <li key={step.title}>
+                  <span className="lp-step-num" aria-hidden="true">{numberFormat.format(index + 1)}</span>
+                  <h3 className="lp-h3">{step.title}</h3>
+                  <p className="lp-text">{step.text}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        {/* ── contact ───────────────────────────────────────────────────── */}
+        <section className="lp-section" id="contact">
+          <div className="lp-wrap">
+            <div className="lp-owner lp-contact">
+              <div>
+                <h2 className="lp-h2">{c.contactTitle[persona]}</h2>
+                <p className="lp-text">{data?.leadsEnabled ? contactCopy.body : contactCopy.bodyWhatsapp}</p>
+              </div>
+              <LeadForm persona={persona} lang={lang} whatsappHref={whatsappHref} leadsEnabled={Boolean(data?.leadsEnabled)} />
             </div>
-            <Contact persona={persona} copy={copy.sections.contact} whatsapp={data?.salesWhatsapp ?? null} leadsEnabled={Boolean(data?.leadsEnabled)} />
+            <p className="lp-center lp-more-row">
+              <a className="lp-more" href={withBase(`/demo/full?for=${persona}`)}>
+                {c.fullDemo} <Chevron />
+              </a>
+            </p>
           </div>
         </section>
       </main>
 
-      <footer className="dm-footer">
-        <div className="dm-wrap dm-footer-row">
-          <span>{copy.footer}</span>
-          <a href={withBase("/privacy")}>{lang === "ar" ? "الخصوصية" : "Privacy"}</a>
+      {/* ── footer ────────────────────────────────────────────────────── */}
+      <footer className="lp-footer">
+        <div className="lp-wrap lp-footer-row">
+          <a className="lp-brand" href={`${basePath}/`} aria-label="Replay">
+            <Brand />
+          </a>
+          <a href={`${basePath}/privacy`}>{c.privacy}</a>
+          <a href={`${basePath}/terms`}>{c.terms}</a>
+          <span>{c.city}</span>
         </div>
       </footer>
-
-      <div className={`dm-sticky ${!heroInView && !contactInView ? "is-shown" : ""}`} aria-hidden={heroInView || contactInView}>
-        <button type="button" className="dm-btn dm-btn--primary dm-btn--wide" onClick={scrollToContact} tabIndex={heroInView || contactInView ? -1 : 0}>
-          {copy.getCamera}
-        </button>
-      </div>
     </div>
   );
 }

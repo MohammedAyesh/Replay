@@ -568,6 +568,128 @@
   color: var(--lp-ink);
 }
 
+/* ── owner page (/demo) ──────────────────────────────────────────────── */
+
+/* segmented control, over the hero video */
+.lp-seg {
+  display: inline-flex;
+  gap: 2px;
+  margin-bottom: 28px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+
+.lp-seg button {
+  min-width: 96px;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--lp-dim);
+  font: 600 14px/1 var(--lp-body);
+  cursor: pointer;
+}
+
+.lp-seg button[aria-pressed="true"] {
+  background: var(--lp-ink);
+  color: var(--replay-void, #0b0f1a);
+}
+
+.lp-steps {
+  display: grid;
+  gap: 40px;
+  margin: 56px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lp-step-num {
+  display: block;
+  margin-bottom: 14px;
+  color: var(--replay-floodlight, #d4ff4f);
+  font: 700 56px/1 var(--lp-head);
+  font-variant-numeric: tabular-nums;
+}
+
+.lp-steps .lp-text {
+  margin-top: 8px;
+}
+
+#contact {
+  scroll-margin-top: 40px;
+}
+
+.lp-contact {
+  display: grid;
+  gap: 32px;
+  align-items: start;
+}
+
+.lp-form,
+.lp-form form {
+  display: grid;
+  gap: 12px;
+}
+
+.lp-field {
+  display: grid;
+  gap: 6px;
+  color: var(--lp-dim);
+  font: 600 14px/1.2 var(--lp-body);
+}
+
+.lp-field input {
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(11, 15, 26, 0.6);
+  color: var(--lp-ink);
+  font: 500 17px/1 var(--lp-body);
+}
+
+.lp-field input:focus {
+  outline: 2px solid var(--replay-floodlight, #d4ff4f);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.lp-hp {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lp-btn--block {
+  width: 100%;
+}
+
+.lp-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.lp-form-msg {
+  margin: 4px 0 0;
+  color: var(--lp-ink);
+  font: 500 17px/1.45 var(--lp-body);
+}
+
+.lp-form-msg--error {
+  color: var(--replay-live, #ff5a3c);
+}
+
+.lp-more-row {
+  margin: 28px 0 0;
+}
+
 /* ── wider screens ───────────────────────────────────────────────────── */
 
 @media (min-width: 760px) {
@@ -579,8 +701,14 @@
     grid-template-columns: 1fr 1fr;
   }
 
-  .lp-pillars {
+  .lp-pillars,
+  .lp-steps {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .lp-contact {
+    grid-template-columns: 1fr minmax(0, 380px);
+    gap: 64px;
   }
 
   .lp-card {
