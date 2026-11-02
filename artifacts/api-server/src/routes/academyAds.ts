@@ -190,9 +190,20 @@ async function currencyFor(mode: "replay" | "own", connection: AcademyMetaConnec
 }
 
 async function academyLocation(academyId: number): Promise<{ name: string; latitude: number | null; longitude: number | null }> {
-  const [row] = await db.select({ name: academiesTable.name, latitude: fieldsTable.latitude, longitude: fieldsTable.longitude })
-    .from(academiesTable).leftJoin(fieldsTable, eq(fieldsTable.id, academiesTable.fieldId)).where(eq(academiesTable.id, academyId));
-  return { name: row?.name ?? "", latitude: row?.latitude ?? null, longitude: row?.longitude ?? null };
+  // The academy's own pin (Academy console → Profile) wins over its field's.
+  const [row] = await db.select({
+    name: academiesTable.name,
+    latitude: academiesTable.latitude,
+    longitude: academiesTable.longitude,
+    fieldLatitude: fieldsTable.latitude,
+    fieldLongitude: fieldsTable.longitude,
+  }).from(academiesTable).leftJoin(fieldsTable, eq(fieldsTable.id, academiesTable.fieldId)).where(eq(academiesTable.id, academyId));
+  const own = row?.latitude != null && row?.longitude != null;
+  return {
+    name: row?.name ?? "",
+    latitude: own ? row!.latitude : row?.fieldLatitude ?? null,
+    longitude: own ? row!.longitude : row?.fieldLongitude ?? null,
+  };
 }
 
 function requestView(row: AcademyAdRequest, withImage = false) {
