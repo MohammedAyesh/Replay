@@ -79,6 +79,7 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
 });
 
 import adsRouter from "./academyAds";
+import walletRouter from "./academyAdWallet";
 import { decryptToken, encryptToken } from "../lib/meta/crypto";
 import { parsePageRef } from "../lib/meta/connections";
 import { creativeSpec, targetingFor } from "../lib/meta/launch";
@@ -102,6 +103,7 @@ beforeAll(async () => {
   app = express();
   app.use(express.json({ limit: "10mb" }));
   app.use("/api", adsRouter);
+  app.use("/api", walletRouter);
   const users = await db.insert(usersTable).values([
     { name: `Admin ${tag}`, email: `admin-ads-${tag}@test.local`, isAdmin: true },
     { name: `Owner ${tag}`, email: `owner-ads-${tag}@test.local` },
@@ -156,8 +158,8 @@ describe("pure parts", () => {
       age_min: 18,
       age_max: 65,
     });
-    expect(creativeSpec({ goal: "whatsapp", headline: "H", primaryText: "T" }, "p1", "hash", null).link_data.call_to_action.type).toBe("WHATSAPP_MESSAGE");
-    expect(creativeSpec({ goal: "lead_form", headline: "H", primaryText: "T" }, "p1", "hash", "f1").link_data.call_to_action).toEqual({ type: "SIGN_UP", value: { lead_gen_form_id: "f1" } });
+    expect(creativeSpec({ goal: "whatsapp", headline: "H", primaryText: "T" }, "p1", "hash", null).link_data!.call_to_action.type).toBe("WHATSAPP_MESSAGE");
+    expect(creativeSpec({ goal: "lead_form", headline: "H", primaryText: "T" }, "p1", "hash", "f1").link_data!.call_to_action).toEqual({ type: "SIGN_UP", value: { lead_gen_form_id: "f1", link: "http://fb.me/" } });
   });
 });
 
@@ -193,8 +195,14 @@ describe("connecting Meta", () => {
 describe("building ads", () => {
   it("keeps a Replay-account ad waiting for Replay's approval, then launches it paused-first", async () => {
     const created = await request(app).post(`${base(academyId)}/requests`).set(auth(ownerId)).send(ad()).expect(201);
-    expect(created.body).toMatchObject({ mode: "replay", status: "draft", currency: "USD", dailyBudget: 7.5, latitude: expect.closeTo(31.95, 2) });
+    // The owner works in JOD; Meta's USD budget is never shown to him.
+    expect(created.body).toMatchObject({ mode: "replay", status: "draft", currency: "JOD", dailyBudget: 7.5, latitude: expect.closeTo(31.95, 2) });
+    expect(created.body.metaDailyBudget).toBeUndefined();
     const id = created.body.id;
+    // Three days of budget must be in the wallet first.
+    const low = await request(app).post(`${base(academyId)}/requests/${id}/submit`).set(auth(ownerId)).expect(402);
+    expect(low.body).toMatchObject({ code: "wallet_low", balance: 0, need: 22.5 });
+    await request(app).post(`/api/admin/meta-ads/wallets/${academyId}/adjust`).set(auth(adminId)).send({ amount: 40, note: "test credit" }).expect(201);
     const submitted = await request(app).post(`${base(academyId)}/requests/${id}/submit`).set(auth(ownerId)).expect(200);
     expect(submitted.body.status).toBe("pending_approval");
     expect(posts.some((p) => p.path.endsWith("/campaigns"))).toBe(false);
@@ -205,7 +213,8 @@ describe("building ads", () => {
     const paths = posts.map((p) => p.path);
     expect(paths.slice(0, 5)).toEqual(["act_111/adimages", "act_111/campaigns", "act_111/adsets", "act_111/adcreatives", "act_111/ads"]);
     const adset = posts.find((p) => p.path === "act_111/adsets")!.params;
-    expect(adset).toMatchObject({ daily_budget: "750", destination_type: "WHATSAPP", optimization_goal: "CONVERSATIONS", status: "PAUSED" });
+    // 7.5 JOD a day at Replay's rate: 7.5 / (0.709 × 1.07) = 9.88 USD.
+    expect(adset).toMatchObject({ daily_budget: "988", destination_type: "WHATSAPP", optimization_goal: "CONVERSATIONS", status: "PAUSED" });
     // Everything was created paused and switched on last, ad first.
     expect(posts.slice(-3).every((p) => p.params.status === "ACTIVE")).toBe(true);
     const [campaign] = await db.select().from(metaAdCampaignsTable).where(eq(metaAdCampaignsTable.id, approved.body.metaCampaignId));

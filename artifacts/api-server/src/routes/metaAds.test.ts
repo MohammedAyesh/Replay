@@ -248,7 +248,9 @@ describe("Meta webhook", () => {
     await request(app).get(`/api/academy/console/academies/${academyId}/ads`).set(auth(coachId)).expect(403);
     const res = await request(app).get(`/api/academy/console/academies/${academyId}/ads`).set(auth(ownerId)).expect(200);
     const a = res.body.campaigns.find((c: { id: string }) => c.id === campaignA);
-    expect(a).toMatchObject({ insights: { spend: 40.5 }, funnel: { leads: 1, joined: 1, trial: 1, contacted: 1 } });
+    // Replay's account: the owner sees only what his wallet paid. This campaign was assigned by an
+    // admin and never charged, so it shows no spend (never Meta's own 40.5).
+    expect(a).toMatchObject({ insights: { spend: null, currency: "JOD" }, funnel: { leads: 1, joined: 1, trial: 1, contacted: 1 } });
     const b = res.body.campaigns.find((c: { id: string }) => c.id === campaignB);
     expect(b.funnel.leads).toBe(2);
     expect(res.body.leads[0]).toHaveProperty("phoneDisplay");

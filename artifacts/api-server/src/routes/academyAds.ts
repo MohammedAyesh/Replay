@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { academiesTable, academyAdRequestsTable, db, fieldsTable, type AcademyAdRequest, type AcademyMetaConnection } from "@workspace/db";
-import { requireAcademyConsoleUser, requireAcademyMembership, type AcademyConsoleUser } from "../lib/academyAccess";
-import { logger } from "../lib/logger";
+import { academiesTable, academyAdMediaTable, academyAdRequestsTable, db, fieldsTable, type AcademyAdRequest, type AcademyMetaConnection } from "@workspace/db";
+import { type AcademyConsoleUser } from "../lib/academyAccess";
+import { adminAccess, intParam, ownerAccess, sendFailure } from "../lib/meta/routeAccess";
+import { MIN_DAILY_FILS, budgetFilsFromMeta, committedDailyFils, fundsToStart, metaBudgetFor, walletBalanceFils } from "../lib/meta/wallet";
 import { metaAdsConfigured, metaConfig } from "../lib/meta/config";
 import {
   checkSharedPage,
@@ -14,8 +15,8 @@ import {
   listOwnAssets,
   selectOwnAssets,
 } from "../lib/meta/connections";
-import { graphGet, MetaGraphError } from "../lib/meta/graph";
-import { currencyOffset, launchAdRequest, launchContext, setAdRunning } from "../lib/meta/launch";
+import { graphGet } from "../lib/meta/graph";
+import { currencyOffset, launchAdRequest, launchContext, requestQuestions, requestVariants, setAdRunning } from "../lib/meta/launch";
 
 /**
  * Academy owners connect Meta and build ads from Replay (Academy console → Ads).
@@ -23,42 +24,7 @@ import { currencyOffset, launchAdRequest, launchContext, setAdRunning } from "..
  * own account go live as soon as he submits (Meta bills him).
  */
 const router: IRouter = Router();
-
-function intParam(value: string | string[] | undefined): number | null {
-  const n = Number(Array.isArray(value) ? value[0] : value);
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
-}
-
-function fail(res: Response, error: unknown, what: string) {
-  if (error instanceof MetaGraphError) {
-    res.status(error.status >= 400 && error.status < 600 ? (error.status === 500 ? 502 : error.status) : 502).json({ error: error.message });
-    return;
-  }
-  const cause = (error as { cause?: { code?: string } })?.cause;
-  if (cause?.code === "42P01") {
-    res.status(500).json({ error: "The ads tables are missing from this database. Run the schema push and publish with the database review." });
-    return;
-  }
-  logger.error({ error: (error as Error)?.message }, what);
-  res.status(500).json({ error: (error as Error)?.message?.slice(0, 300) ?? "Failed" });
-}
-
-async function ownerAccess(req: Request, res: Response): Promise<{ user: AcademyConsoleUser; academyId: number } | null> {
-  const user = await requireAcademyConsoleUser(req, res);
-  if (!user) return null;
-  const academyId = intParam(req.params.academyId);
-  if (!academyId) {
-    res.status(400).json({ error: "Invalid academy id" });
-    return null;
-  }
-  const roles = await requireAcademyMembership(user.id, academyId, res);
-  if (!roles) return null;
-  if (!roles.includes("owner")) {
-    res.status(403).json({ error: "Academy owner role required" });
-    return null;
-  }
-  return { user, academyId };
-}
+const fail = sendFailure;
 
 function connectionView(connection: AcademyMetaConnection | null) {
   if (!connection) return null;
@@ -161,9 +127,11 @@ router.delete(`${base}/connection`, async (req, res): Promise<void> => {
 
 // ─── Ad requests ─────────────────────────────────────────────────────────────
 
+const Variant = z.object({ headline: z.string().trim().min(1).max(40), primaryText: z.string().trim().min(1).max(600) });
 const AdBody = z.object({
   goal: z.enum(["whatsapp", "lead_form"]),
   name: z.string().trim().min(1).max(80),
+  /** Replay's account: JOD a day (what the wallet is charged at most). Own account: its currency. */
   dailyBudget: z.number().positive().max(1000),
   startAt: z.string().datetime({ offset: true }).nullable().optional(),
   endAt: z.string().datetime({ offset: true }).nullable().optional(),
@@ -172,11 +140,24 @@ const AdBody = z.object({
   radiusKm: z.number().int().min(1).max(80),
   ageMin: z.number().int().min(18).max(65),
   ageMax: z.number().int().min(18).max(65),
-  headline: z.string().trim().min(1).max(40),
-  primaryText: z.string().trim().min(1).max(600),
+  headline: z.string().trim().max(40).optional(),
+  primaryText: z.string().trim().max(600).optional(),
+  /** 1–3 versions of the text; each runs as its own ad. */
+  variants: z.array(Variant).min(1).max(3).optional(),
   locale: z.enum(["ar", "en"]),
   imageData: z.string().max(4_000_000).regex(/^data:image\/(png|jpe?g|webp);base64,/).nullable().optional(),
+  /** Photos/videos from the academy's media: 1 is a single ad, 2–10 a carousel. */
+  cards: z.array(z.object({
+    mediaId: z.number().int().positive(),
+    headline: z.string().trim().max(40).nullable().optional(),
+    description: z.string().trim().max(20).nullable().optional(),
+  })).max(10).optional(),
+  questions: z.array(z.object({
+    label: z.string().trim().min(1).max(80),
+    options: z.array(z.string().trim().min(1).max(80)).max(10).optional(),
+  })).max(5).optional(),
   extraQuestion: z.string().trim().max(80).nullable().optional(),
+  templateId: z.number().int().positive().nullable().optional(),
 });
 
 let replayCurrency: { value: string; at: number } | null = null;
@@ -206,16 +187,20 @@ async function academyLocation(academyId: number): Promise<{ name: string; latit
   };
 }
 
-function requestView(row: AcademyAdRequest, withImage = false) {
+function requestView(row: AcademyAdRequest, opts: { withImage?: boolean; admin?: boolean } = {}) {
   const offset = currencyOffset(row.currency);
+  // Replay's account: the owner sees his JOD budget, never Meta's.
+  const replayBudget = row.mode === "replay" && row.budgetFils != null;
   return {
     id: row.id,
     mode: row.mode,
     goal: row.goal,
     name: row.name,
     status: row.status,
-    dailyBudget: row.dailyBudget / offset,
-    currency: row.currency,
+    pausedReason: row.pausedReason,
+    dailyBudget: replayBudget ? row.budgetFils! / 1000 : row.dailyBudget / offset,
+    currency: replayBudget ? "JOD" : row.currency,
+    ...(opts.admin ? { metaDailyBudget: row.dailyBudget / offset, metaCurrency: row.currency } : {}),
     startAt: row.startAt,
     endAt: row.endAt,
     latitude: row.latitude,
@@ -225,10 +210,15 @@ function requestView(row: AcademyAdRequest, withImage = false) {
     ageMax: row.ageMax,
     headline: row.headline,
     primaryText: row.primaryText,
+    variants: requestVariants(row),
     locale: row.locale,
     extraQuestion: row.extraQuestion,
-    hasImage: Boolean(row.imageData),
-    imageData: withImage ? row.imageData : undefined,
+    questions: requestQuestions(row),
+    cards: Array.isArray(row.cards) ? row.cards : [],
+    templateId: row.templateId,
+    metaAds: Array.isArray(row.metaAds) ? row.metaAds : [],
+    hasImage: Boolean(row.imageData) || (Array.isArray(row.cards) && row.cards.length > 0),
+    imageData: opts.withImage ? row.imageData : undefined,
     metaCampaignId: row.metaCampaignId,
     error: row.error,
     submittedAt: row.submittedAt,
@@ -266,7 +256,7 @@ router.get(`${base}/requests/:id`, async (req, res): Promise<void> => {
     res.status(404).json({ error: "Ad not found" });
     return;
   }
-  res.json(requestView(row, true));
+  res.json(requestView(row, { withImage: true }));
 });
 
 async function saveRequest(req: Request, res: Response, existing: AcademyAdRequest | null, access: { user: AcademyConsoleUser; academyId: number }) {
@@ -275,32 +265,69 @@ async function saveRequest(req: Request, res: Response, existing: AcademyAdReque
     res.status(400).json({ error: body.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
     return;
   }
-  if (body.data.ageMin > body.data.ageMax) {
+  const data = body.data;
+  if (data.ageMin > data.ageMax) {
     res.status(400).json({ error: "The youngest age is above the oldest" });
     return;
+  }
+  const variants = data.variants ?? (data.headline && data.primaryText ? [{ headline: data.headline, primaryText: data.primaryText }] : []);
+  if (!variants.length) {
+    res.status(400).json({ error: "Write a headline and the ad's text" });
+    return;
+  }
+  const cards = data.cards ?? [];
+  if (cards.length) {
+    const ids = [...new Set(cards.map((c) => c.mediaId))];
+    const media = await db.select({ id: academyAdMediaTable.id, status: academyAdMediaTable.status }).from(academyAdMediaTable)
+      .where(and(eq(academyAdMediaTable.academyId, access.academyId), inArray(academyAdMediaTable.id, ids)));
+    if (media.length !== ids.length) {
+      res.status(400).json({ error: "One of the photos or videos isn't in this academy's media" });
+      return;
+    }
+    if (media.some((m) => m.status === "failed")) {
+      res.status(400).json({ error: "One of the videos couldn't be processed. Remove it and upload it again." });
+      return;
+    }
   }
   const connection = await getConnection(access.academyId);
   const mode = connection?.mode === "own" && connection.status === "connected" ? "own" : "replay";
   const currency = existing?.mode === mode ? existing.currency : await currencyFor(mode, connection);
+  let budgetFils: number | null = null;
+  let metaBudget: number;
+  if (mode === "replay") {
+    budgetFils = Math.round(data.dailyBudget * 1000);
+    if (budgetFils < MIN_DAILY_FILS) {
+      res.status(400).json({ error: `The daily budget must be at least ${MIN_DAILY_FILS / 1000} JOD` });
+      return;
+    }
+    metaBudget = metaBudgetFor(budgetFils, currency);
+  } else {
+    metaBudget = Math.round(data.dailyBudget * currencyOffset(currency));
+  }
   const location = await academyLocation(access.academyId);
   const values = {
     mode,
-    goal: body.data.goal,
-    name: body.data.name,
-    dailyBudget: Math.round(body.data.dailyBudget * currencyOffset(currency)),
+    goal: data.goal,
+    name: data.name,
+    dailyBudget: metaBudget,
+    budgetFils,
     currency,
-    startAt: body.data.startAt ? new Date(body.data.startAt) : null,
-    endAt: body.data.endAt ? new Date(body.data.endAt) : null,
-    latitude: body.data.latitude ?? location.latitude,
-    longitude: body.data.longitude ?? location.longitude,
-    radiusKm: body.data.radiusKm,
-    ageMin: body.data.ageMin,
-    ageMax: body.data.ageMax,
-    headline: body.data.headline,
-    primaryText: body.data.primaryText,
-    locale: body.data.locale,
-    ...(body.data.imageData !== undefined ? { imageData: body.data.imageData } : {}),
-    extraQuestion: body.data.extraQuestion ?? null,
+    startAt: data.startAt ? new Date(data.startAt) : null,
+    endAt: data.endAt ? new Date(data.endAt) : null,
+    latitude: data.latitude ?? location.latitude,
+    longitude: data.longitude ?? location.longitude,
+    radiusKm: data.radiusKm,
+    ageMin: data.ageMin,
+    ageMax: data.ageMax,
+    headline: variants[0].headline,
+    primaryText: variants[0].primaryText,
+    variants,
+    locale: data.locale,
+    ...(data.imageData !== undefined ? { imageData: data.imageData } : {}),
+    cards,
+    questions: data.goal === "lead_form" ? (data.questions ?? (data.extraQuestion ? [{ label: data.extraQuestion }] : [])) : [],
+    extraQuestion: data.extraQuestion ?? null,
+    templateId: data.templateId ?? existing?.templateId ?? null,
     updatedAt: new Date(),
   };
   if (existing) {
@@ -311,6 +338,25 @@ async function saveRequest(req: Request, res: Response, existing: AcademyAdReque
     const [row] = await db.insert(academyAdRequestsTable).values({ ...values, academyId: access.academyId, createdBy: access.user.id }).returning();
     res.status(201).json(requestView(row));
   }
+}
+
+/**
+ * Replay's account: is there enough in the wallet for this ad on top of a day of each of the
+ * academy's other running or waiting ads?
+ */
+async function fundsCheck(request: AcademyAdRequest, own: number): Promise<{ ok: true } | { ok: false; balance: number; need: number }> {
+  if (request.mode !== "replay") return { ok: true };
+  const [balance, others] = await Promise.all([walletBalanceFils(request.academyId), committedDailyFils(request.academyId, request.id)]);
+  const need = own + others;
+  return balance >= need ? { ok: true } : { ok: false, balance: balance / 1000, need: need / 1000 };
+}
+
+/** A Replay-account draft saved before the wallet existed has no JOD budget yet: give it one. */
+async function withWalletBudget(request: AcademyAdRequest): Promise<AcademyAdRequest> {
+  if (request.mode !== "replay" || request.budgetFils != null) return request;
+  const [row] = await db.update(academyAdRequestsTable).set({ budgetFils: budgetFilsFromMeta(request.dailyBudget, request.currency) })
+    .where(eq(academyAdRequestsTable.id, request.id)).returning();
+  return row;
 }
 
 router.post(`${base}/requests`, async (req, res): Promise<void> => {
@@ -368,8 +414,8 @@ router.post(`${base}/requests/:id/submit`, async (req, res): Promise<void> => {
       res.status(409).json({ error: "This ad was already submitted" });
       return;
     }
-    if (!existing.imageData) {
-      res.status(400).json({ error: "Add an image first" });
+    if (!existing.imageData && !(Array.isArray(existing.cards) && existing.cards.length)) {
+      res.status(400).json({ error: "Add a photo or a video first" });
       return;
     }
     const connection = await getConnection(access.academyId);
@@ -382,6 +428,12 @@ router.post(`${base}/requests/:id/submit`, async (req, res): Promise<void> => {
       const ctx = launchContext(existing, connection, location.name);
       const row = await launchAdRequest({ ...existing, status: "launching" }, ctx);
       res.json(requestView(row));
+      return;
+    }
+    const funded = await withWalletBudget(existing);
+    const funds = await fundsCheck(funded, fundsToStart(funded));
+    if (!funds.ok) {
+      res.status(402).json({ error: "Top up your ads wallet first", code: "wallet_low", balance: funds.balance, need: funds.need });
       return;
     }
     const [row] = await db.update(academyAdRequestsTable).set({ status: "pending_approval", submittedAt: new Date(), error: null, updatedAt: new Date() })
@@ -402,9 +454,26 @@ for (const [action, running] of [["pause", false], ["resume", true]] as const) {
         res.status(existing ? 409 : 404).json({ error: existing ? "This ad isn't running" : "Ad not found" });
         return;
       }
+      if (running && existing.pausedReason === "ended") {
+        res.status(409).json({ error: "This ad has ended. Make a new one, or copy this one with new dates." });
+        return;
+      }
+      if (running) {
+        const funds = await fundsCheck(existing, existing.budgetFils ?? 0);
+        if (!funds.ok) {
+          res.status(402).json({ error: "Top up your ads wallet to switch this ad back on", code: "wallet_low", balance: funds.balance, need: funds.need });
+          return;
+        }
+      }
       const connection = await getConnection(access.academyId);
       const token = existing.mode === "own" ? connectionToken(connection) : undefined;
-      res.json(requestView(await setAdRunning(existing, { token }, running)));
+      const row = await setAdRunning(existing, { token }, running);
+      if (running && row.pausedReason) {
+        const [cleared] = await db.update(academyAdRequestsTable).set({ pausedReason: null }).where(eq(academyAdRequestsTable.id, row.id)).returning();
+        res.json(requestView(cleared));
+        return;
+      }
+      res.json(requestView(row));
     } catch (error) {
       fail(res, error, "Pausing or resuming an ad failed");
     }
@@ -413,15 +482,7 @@ for (const [action, running] of [["pause", false], ["resume", true]] as const) {
 
 // ─── Admin: approve ads that run on Replay's account ─────────────────────────
 
-async function requireAdmin(req: Request, res: Response): Promise<AcademyConsoleUser | null> {
-  const user = await requireAcademyConsoleUser(req, res);
-  if (!user) return null;
-  if (!user.isAdmin) {
-    res.status(403).json({ error: "Admin access required" });
-    return null;
-  }
-  return user;
-}
+const requireAdmin = adminAccess;
 
 router.get("/admin/meta-ads/requests", async (req, res): Promise<void> => {
   if (!(await requireAdmin(req, res))) return;
@@ -432,7 +493,15 @@ router.get("/admin/meta-ads/requests", async (req, res): Promise<void> => {
       .where(inArray(academyAdRequestsTable.status, ["pending_approval", "launching", "active", "paused", "failed", "rejected"]))
       .orderBy(desc(academyAdRequestsTable.updatedAt))
       .limit(100);
-    res.json(rows.map((r) => ({ ...requestView(r.request, r.request.status === "pending_approval"), academyId: r.request.academyId, academyName: r.academyName })));
+    const balances = new Map<number, number>();
+    for (const id of new Set(rows.map((r) => r.request.academyId))) balances.set(id, await walletBalanceFils(id));
+    res.json(rows.map((r) => ({
+      ...requestView(r.request, { withImage: r.request.status === "pending_approval", admin: true }),
+      academyId: r.request.academyId,
+      academyName: r.academyName,
+      walletBalance: (balances.get(r.request.academyId) ?? 0) / 1000,
+      fundsToStart: r.request.mode === "replay" ? fundsToStart(r.request) / 1000 : null,
+    })));
   } catch (error) {
     fail(res, error, "Listing ad requests failed");
   }
@@ -448,11 +517,17 @@ router.post("/admin/meta-ads/requests/:id/approve", async (req, res): Promise<vo
       res.status(existing ? 409 : 404).json({ error: existing ? "This ad isn't waiting for approval" : "Ad not found" });
       return;
     }
+    const funded = await withWalletBudget(existing);
+    const funds = await fundsCheck(funded, fundsToStart(funded));
+    if (!funds.ok) {
+      res.status(402).json({ error: `The academy's wallet has ${funds.balance} JOD; with its other ads this one needs ${funds.need} JOD to start` });
+      return;
+    }
     await db.update(academyAdRequestsTable).set({ reviewedBy: admin.id }).where(eq(academyAdRequestsTable.id, existing.id));
     const connection = await getConnection(existing.academyId);
     const location = await academyLocation(existing.academyId);
-    const row = await launchAdRequest(existing, launchContext(existing, connection, location.name));
-    res.json(requestView(row));
+    const row = await launchAdRequest(funded, launchContext(funded, connection, location.name));
+    res.json(requestView(row, { admin: true }));
   } catch (error) {
     fail(res, error, "Approving an ad failed");
   }

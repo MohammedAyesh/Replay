@@ -18,9 +18,21 @@ import { isBunnyStorageConfigured, uploadBufferToBunnyStorage } from "../lib/bun
 import { getOutputDims } from "../lib/ffmpegExport";
 import { overlayFits } from "../lib/brandingAssets";
 import { BRANDING_PRESETS, presetCrestPath } from "../lib/clipBranding/assets";
-import { lookFor, presetFileFromUrl } from "../lib/clipBranding/plan";
-import { PREVIEW_DIMS, renderPreviewMp4, renderPreviewPng } from "../lib/clipBranding/preview";
-import { END_SCREEN_KINDS, OVERLAY_STYLES, type EndScreenKind } from "../lib/clipBranding/types";
+import { presetFileFromUrl } from "../lib/clipBranding/plan";
+import {
+  PROFILE_SCHEMA_MISSING,
+  isMissingBrandingSchema,
+  previewForScope,
+  profileJson,
+  readPngSize,
+  storeCrest,
+  upsertProfile,
+  validateProfileFields,
+} from "../lib/clipBranding/profileStore";
+
+// Kept importable from here: they were exported by this module before the
+// profile helpers moved to lib/clipBranding/profileStore.ts.
+export { isMissingBrandingSchema, readPngSize };
 
 /**
  * Uploading and listing the branding burned into exported clips.
@@ -60,27 +72,9 @@ async function requireAdmin(req: Parameters<typeof getLocalUserId>[0]): Promise<
   return user?.isAdmin ? userId : null;
 }
 
-export function isMissingBrandingSchema(err: unknown): boolean {
-  const code = (err as { code?: string })?.code ?? ((err as { cause?: { code?: string } })?.cause)?.code;
-  if (code === "42P01") return true;
-  return /relation .* does not exist/i.test(String((err as Error)?.message ?? ""));
-}
-
 const SCHEMA_MISSING =
   "The branding table has not been created in this database yet. " +
   "Open a Shell tab and run: pnpm --filter @workspace/db run push";
-
-/** PNG dimensions, straight out of the IHDR chunk. */
-export function readPngSize(buffer: Buffer): { width: number; height: number } | null {
-  // 8-byte signature, then a length+type header, then IHDR's width and height.
-  if (buffer.length < 24) return null;
-  if (buffer.readUInt32BE(0) !== 0x89504e47 || buffer.readUInt32BE(4) !== 0x0d0a1a0a) return null;
-  if (buffer.toString("ascii", 12, 16) !== "IHDR") return null;
-  const width = buffer.readUInt32BE(16);
-  const height = buffer.readUInt32BE(20);
-  if (!width || !height) return null;
-  return { width, height };
-}
 
 function parseScope(raw: unknown): { scopeType: BrandingScopeType; scopeId: number } | null {
   const value = String(Array.isArray(raw) ? raw[0] : raw ?? "");
@@ -167,50 +161,6 @@ router.get("/admin/branding", async (req, res): Promise<void> => {
 // /profile, /crest, /preset and /preview as a branding kind.
 // ── Branding profiles: the look the export draws itself ─────────────────────
 
-const HEX = /^#[0-9a-fA-F]{6}$/;
-const PROFILE_SCHEMA_MISSING =
-  "The branding_profiles table has not been created in this database yet. " +
-  "In development run: pnpm --filter @workspace/db run push. In production it is created by the next Publish from the Replit website.";
-
-function profileJson(row: typeof brandingProfilesTable.$inferSelect) {
-  return {
-    ...row,
-    crestPreset: presetFileFromUrl(row.crestUrl) ? row.crestUrl!.slice("preset:".length) : null,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-function cleanText(value: unknown, max: number): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim().slice(0, max);
-  return trimmed || null;
-}
-
-async function scopeName(scopeType: BrandingScopeType, scopeId: number): Promise<string> {
-  if (scopeType === "global") return "Replay";
-  const table = scopeType === "academy" ? academiesTable : fieldsTable;
-  const [row] = await db.select({ name: table.name }).from(table).where(eq(table.id, scopeId));
-  return row?.name ?? "";
-}
-
-async function upsertProfile(
-  scope: { scopeType: BrandingScopeType; scopeId: number },
-  values: Partial<typeof brandingProfilesTable.$inferInsert>,
-  adminId: number,
-) {
-  const nameEn = values.nameEn ?? (await scopeName(scope.scopeType, scope.scopeId));
-  const [saved] = await db
-    .insert(brandingProfilesTable)
-    .values({ ...values, nameEn, scopeType: scope.scopeType, scopeId: scope.scopeId, updatedBy: adminId })
-    .onConflictDoUpdate({
-      target: [brandingProfilesTable.scopeType, brandingProfilesTable.scopeId],
-      set: { ...values, updatedBy: adminId, updatedAt: new Date() },
-    })
-    .returning();
-  return saved;
-}
-
 /** PUT /admin/branding/profile — JSON: scope plus the profile fields. */
 router.put("/admin/branding/profile", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
@@ -222,26 +172,10 @@ router.put("/admin/branding/profile", async (req, res): Promise<void> => {
     res.status(404).json({ error: `No such ${scope.scopeType}: ${scope.scopeId}` });
     return;
   }
-  const nameEn = cleanText(body.nameEn, 40);
-  if (!nameEn) { res.status(400).json({ error: "The English name is required." }); return; }
-  const primaryColor = typeof body.primaryColor === "string" && HEX.test(body.primaryColor) ? body.primaryColor.toUpperCase() : null;
-  if (!primaryColor) { res.status(400).json({ error: "The main colour must look like #F4CF1F." }); return; }
-  const accentRaw = body.accentColor;
-  if (accentRaw && !(typeof accentRaw === "string" && HEX.test(accentRaw))) {
-    res.status(400).json({ error: "The second colour must look like #3DB54A, or be empty." });
-    return;
-  }
+  const fields = validateProfileFields(body);
+  if (!fields.ok) { res.status(400).json({ error: fields.error }); return; }
   try {
-    const saved = await upsertProfile(scope, {
-      nameEn,
-      nameAr: cleanText(body.nameAr, 60),
-      taglineAr: cleanText(body.taglineAr, 60),
-      primaryColor,
-      accentColor: accentRaw ? String(accentRaw).toUpperCase() : null,
-      bookingPhone: cleanText(body.bookingPhone, 30),
-      instagram: cleanText(body.instagram, 40)?.replace(/^@/, "") ?? null,
-      showPlayerNames: body.showPlayerNames === true,
-    }, adminId);
+    const saved = await upsertProfile(scope, fields.values, adminId);
     logger.info({ scope, adminId }, "Branding profile saved");
     res.json(profileJson(saved));
   } catch (err) {
@@ -281,23 +215,9 @@ router.put("/admin/branding/crest", uploadAsset.single("asset"), async (req, res
   }
   const file = req.file;
   if (!file?.buffer?.length) { res.status(400).json({ error: "Attach the crest as the 'asset' field." }); return; }
-  if (file.size > MAX_OVERLAY_BYTES) { res.status(400).json({ error: "A crest must be under 8 MB." }); return; }
-  const size = readPngSize(file.buffer);
-  if (!size) { res.status(400).json({ error: "A crest must be a PNG with a transparent background." }); return; }
-  if (!isBunnyStorageConfigured()) {
-    res.status(503).json({ error: "Bunny Storage is not configured, so a crest cannot be stored." });
-    return;
-  }
-  const scopeKey = scope.scopeType === "global" ? "global" : `${scope.scopeType}-${scope.scopeId}`;
-  try {
-    const crestUrl = await uploadBufferToBunnyStorage(file.buffer, `branding/${scopeKey}/crest-${Date.now()}.png`, "image/png");
-    const saved = await upsertProfile(scope, { crestUrl, crestWidth: size.width, crestHeight: size.height }, adminId);
-    res.json(profileJson(saved));
-  } catch (err) {
-    if (isMissingBrandingSchema(err)) { res.status(503).json({ error: PROFILE_SCHEMA_MISSING }); return; }
-    logger.error({ err, scope }, "Could not store the crest");
-    res.status(502).json({ error: "Could not store the crest." });
-  }
+  const stored = await storeCrest(scope, file.buffer, adminId);
+  if (!stored.ok) { res.status(stored.status).json({ error: stored.error }); return; }
+  res.json(profileJson(stored.profile));
 });
 
 /**
@@ -358,56 +278,11 @@ router.get("/admin/branding/preview", async (req, res): Promise<void> => {
   if (!(await requireAdmin(req))) { unauthenticatedResponse(res, req); return; }
   const scope = parseScope(req.query.scope);
   if (!scope) { res.status(400).json({ error: 'scope must be "global", "academy:<id>" or "field:<id>"' }); return; }
-  const what = String(req.query.what ?? "signOff");
-  const isKind = (END_SCREEN_KINDS as readonly string[]).includes(what);
-  const isOverlay = (OVERLAY_STYLES as readonly string[]).includes(what) && what !== "uploaded";
-  if (!isKind && !isOverlay) { res.status(400).json({ error: "Unknown preview." }); return; }
-  const dims = PREVIEW_DIMS[req.query.aspect === "16:9" ? "16:9" : "9:16"];
-  const num = (v: unknown, lo: number, hi: number, d: number) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : d;
-  };
-  const seconds = num(req.query.seconds, 2, 6, 3);
-  const blur = num(req.query.blur, 0, 40, 22);
-  const dim = num(req.query.dim, 0, 90, 50) / 100;
-
-  const temps: string[] = [];
-  try {
-    // An academy's clips fall back on the look of the field it plays at, as
-    // exports do, so its preview has to as well.
-    let fieldId: number | null = scope.scopeType === "field" ? scope.scopeId : null;
-    if (scope.scopeType === "academy") {
-      const [a] = await db.select({ fieldId: academiesTable.fieldId }).from(academiesTable)
-        .where(eq(academiesTable.id, scope.scopeId));
-      fieldId = a?.fieldId ?? null;
-    }
-    const look = await lookFor({
-      academyId: scope.scopeType === "academy" ? scope.scopeId : null,
-      fieldId,
-    }, temps);
-    if (!look) { res.status(404).json({ error: "Nothing to preview yet: give this venue a name first." }); return; }
-    if (req.query.format === "mp4" && isKind) {
-      // The console bumps `v` whenever the look is saved, so a new crest of the
-      // same size is not served from the cache.
-      const lookKey = JSON.stringify({
-        ...look,
-        crest: look.crest ? `${look.crest.width}x${look.crest.height}` : null,
-        scope,
-        v: String(req.query.v ?? ""),
-      });
-      const file = await renderPreviewMp4({ look, lookKey, kind: what as EndScreenKind, dims, seconds, blur, dim });
-      res.type("mp4").sendFile(file);
-      return;
-    }
-    const png = await renderPreviewPng({ look, what: what as never, dims, blur, dim });
-    res.setHeader("Cache-Control", "no-store");
-    res.type("png").send(png);
-  } catch (err) {
-    logger.error({ err, scope, what }, "Branding preview failed");
-    res.status(500).json({ error: "Could not render the preview." });
-  } finally {
-    for (const t of temps) fs.unlink(t, () => {});
-  }
+  const result = await previewForScope(scope, req.query as Record<string, unknown>);
+  if (result.kind === "error") { res.status(result.status).json({ error: result.error }); return; }
+  if (result.kind === "mp4") { res.type("mp4").sendFile(result.file); return; }
+  res.setHeader("Cache-Control", "no-store");
+  res.type("png").send(result.body);
 });
 
 /**

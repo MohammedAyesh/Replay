@@ -160,7 +160,8 @@ export async function lookFor(
           .from(academiesTable).where(eq(academiesTable.id, scope.academyId));
         if (a) {
           nameEn ||= a.name;
-          if (!crestUrl && a.logoUrl && /^https?:\/\//i.test(a.logoUrl)) crestUrl = a.logoUrl;
+          // The console's Profile stores an uploaded logo as a data: URL.
+          if (!crestUrl && a.logoUrl && (/^https?:\/\//i.test(a.logoUrl) || /^data:image\//i.test(a.logoUrl))) crestUrl = a.logoUrl;
         }
       }
       if (!nameEn && scope.fieldId) {
@@ -175,8 +176,14 @@ export async function lookFor(
 
   let crest = null;
   const presetFile = presetFileFromUrl(crestUrl);
+  const inline = /^data:image\/[a-z+.-]+;base64,/i.exec(crestUrl ?? "");
   if (presetFile) {
     crest = await loadLocalImage(presetFile);
+  } else if (inline) {
+    crest = await loadImage(Buffer.from(crestUrl!.slice(inline[0].length), "base64")).catch((err: unknown) => {
+      logger.warn({ err }, "Academy logo is not a readable image — drawing initials instead");
+      return null;
+    });
   } else if (crestUrl) {
     const local = await fetchBrandingAsset(crestUrl, "crest", {
       referer: (() => { try { return `https://${new URL(crestUrl!).host}/`; } catch { return undefined; } })(),

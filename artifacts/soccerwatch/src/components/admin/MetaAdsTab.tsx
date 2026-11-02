@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check, Copy, RefreshCw } from "lucide-react";
 import { formatMoney, useAdminAdRequests, useAdminMetaAds, useAdminMetaPages, useAssignCampaign, useReviewAdRequest, useSubscribePage, useSyncMetaAds } from "@/lib/meta-ads-api";
+import { AdminAdTemplates, AdminWallets, ApprovalMedia } from "./MetaAdsWalletTemplates";
 import { cn } from "@/lib/utils";
 
 function CopyField({ label, value }: { label: string; value: string | null }) {
@@ -46,6 +47,7 @@ export default function MetaAdsTab() {
       ) : (
         <>
           <AdApprovals />
+          <AdminWallets />
 
           <section className="rounded-2xl border border-line bg-surface p-4 text-sm">
             <p className="font-semibold text-text">Academies connected to Meta</p>
@@ -162,6 +164,8 @@ export default function MetaAdsTab() {
             {assign.isError && <p className="mt-2 text-xs text-red-400">{(assign.error as Error).message}</p>}
             {data.leadsWithoutCampaign > 0 && <p className="mt-2 text-xs text-amber-200">{data.leadsWithoutCampaign} lead(s) came from an ad Meta couldn't match to a campaign.</p>}
           </section>
+
+          <AdminAdTemplates />
         </>
       )}
     </div>
@@ -185,13 +189,27 @@ function AdApprovals() {
         <ul className="mt-3 space-y-3">
           {waiting.map((r) => (
             <li key={r.id} className="grid gap-3 rounded-xl border border-line p-3 md:grid-cols-[160px_1fr]">
-              {r.imageData ? <img src={r.imageData} alt="" className="aspect-square w-full rounded-lg object-cover" /> : <div className="aspect-square rounded-lg bg-raised" />}
+              <ApprovalMedia request={r} />
               <div className="space-y-1 text-xs">
                 <p className="text-sm font-semibold text-text">{r.academyName} · {r.name}</p>
-                <p className="text-muted-text">{r.goal === "whatsapp" ? "WhatsApp messages" : "Sign-up form"} · {formatMoney(r.dailyBudget, r.currency, "en")}/day · {r.radiusKm} km · ages {r.ageMin}–{r.ageMax}
+                <p className="text-muted-text">{r.goal === "whatsapp" ? "WhatsApp messages" : "Sign-up form"} · {formatMoney(r.dailyBudget, r.currency, "en")}/day
+                  {r.mode === "replay" ? ` (Meta ${formatMoney(r.metaDailyBudget, r.metaCurrency, "en")})` : ""} · {r.radiusKm} km · ages {r.ageMin}–{r.ageMax}
                   {r.startAt ? ` · from ${new Date(r.startAt).toLocaleDateString()}` : ""}{r.endAt ? ` to ${new Date(r.endAt).toLocaleDateString()}` : " · no end date"}</p>
-                <p className="font-semibold text-text" dir="auto">{r.headline}</p>
-                <p className="whitespace-pre-line text-text" dir="auto">{r.primaryText}</p>
+                {r.fundsToStart !== null && (
+                  <p className={r.walletBalance >= r.fundsToStart ? "text-turf" : "text-amber-200"}>
+                    Wallet {formatMoney(r.walletBalance, "JOD", "en")} · needs {formatMoney(r.fundsToStart, "JOD", "en")} to start
+                  </p>
+                )}
+                {r.variants.map((v, i) => (
+                  <div key={i} className="rounded-lg bg-raised/60 p-2">
+                    {r.variants.length > 1 && <p className="font-bold text-turf">{String.fromCharCode(65 + i)}</p>}
+                    <p className="font-semibold text-text" dir="auto">{v.headline}</p>
+                    <p className="whitespace-pre-line text-text" dir="auto">{v.primaryText}</p>
+                  </div>
+                ))}
+                {r.goal === "lead_form" && r.questions.length > 0 && (
+                  <p className="text-muted-text" dir="auto">Questions: {r.questions.map((q) => `${q.label}${q.options?.length ? ` (${q.options.join(", ")})` : ""}`).join(" · ")}</p>
+                )}
                 <div className="flex flex-wrap items-center gap-2 pt-2">
                   <button type="button" disabled={review.isPending} onClick={() => review.mutate({ id: r.id, approve: true })} className="rounded-lg bg-turf px-3 py-1.5 font-bold text-void disabled:opacity-50">Approve and publish</button>
                   <input value={reason[r.id] ?? ""} onChange={(e) => setReason({ ...reason, [r.id]: e.target.value })} placeholder="Reason (shown to the owner)" className="h-8 min-w-48 flex-1 rounded-lg border border-input bg-raised px-2 text-text" />

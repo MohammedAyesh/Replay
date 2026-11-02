@@ -222,10 +222,28 @@ export async function canCreateClipFromVideo(req: Request, videoId: string): Pro
     .from(recordingsTable)
     .innerJoin(fieldsTable, eq(recordingsTable.fieldId, fieldsTable.id));
 
-  return recordings.some(({ recording, field }) => (
+  if (recordings.some(({ recording, field }) => (
     extractBunnyVideoId(recording.videoUrl) === videoId
     && isPublicRecordingInContext(recording, field, context)
-  ));
+  ))) return true;
+
+  // Owners and coaches clip their own academy's recordings in the academy
+  // console (Recordings), public or not.
+  return isAcademyMemberVideo(context.viewer, videoId);
+}
+
+/** Is `videoId` a recording attached to an academy this signed-in viewer is a member of? */
+async function isAcademyMemberVideo(viewer: PublicFootageViewer, videoId: string): Promise<boolean> {
+  if (!viewer || viewer.isGuest || viewer.isDisabled) return false;
+  const rows = await db
+    .select({ videoUrl: recordingsTable.videoUrl })
+    .from(academyRecordingsTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
+    .innerJoin(academyMembersTable, and(
+      eq(academyMembersTable.academyId, academyRecordingsTable.academyId),
+      eq(academyMembersTable.userId, viewer.id),
+    ));
+  return rows.some((row) => extractBunnyVideoId(row.videoUrl) === videoId);
 }
 
 export async function canViewBunnyVideo(req: Request, videoId: string): Promise<boolean> {

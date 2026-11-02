@@ -3,6 +3,8 @@ import { MessageCircle, Pause, Pencil, Play, Plus, Trash2 } from "lucide-react";
 import { useAdsWizardCopy } from "@/i18n/ads-wizard-strings";
 import { AdsConnectCard } from "./ads-connect";
 import { AdWizard } from "./ad-wizard";
+import { AdsWalletCard } from "./ads-wallet";
+import { useAdsExtraCopy } from "@/i18n/ads-extra-strings";
 import { useAdsCopy } from "@/i18n/ads-strings";
 import { formatMoney, useAcademyAds, useAdRequestAction, useAdRequests, useAdsConnection, type AdRequest, type CampaignNumbers, type Funnel } from "@/lib/meta-ads-api";
 import { Button } from "@/components/ui/button";
@@ -16,8 +18,8 @@ const STAGE_TONE: Record<string, string> = {
   lost: "bg-raised text-muted-text",
 };
 
-function per(spend: number | undefined, count: number): number | null {
-  return spend !== undefined && count > 0 ? spend / count : null;
+function per(spend: number | null | undefined, count: number): number | null {
+  return spend !== undefined && spend !== null && count > 0 ? spend / count : null;
 }
 
 function FunnelBars({ funnel, copy }: { funnel: Funnel; copy: ReturnType<typeof useAdsCopy> }) {
@@ -61,7 +63,7 @@ export function AcademyAdsSection({ academyId, onOpenChat }: { academyId: number
     </header>
   );
 
-  const top = <>{header}<AdsConnectCard academyId={academyId} /><AdRequestsPanel academyId={academyId} /></>;
+  const top = <>{header}<AdsConnectCard academyId={academyId} /><WalletIfReplay academyId={academyId} /><AdRequestsPanel academyId={academyId} /></>;
   if (ads.isLoading) return <section className="space-y-5" dir={dir}>{top}<div className="h-40 animate-pulse rounded-2xl bg-raised" /></section>;
   if (ads.isError || !ads.data) return <section className="space-y-5" dir={dir}>{top}<p className="text-sm text-red-400" role="alert">{copy.error} {(ads.error as Error | null)?.message}</p></section>;
 
@@ -112,6 +114,7 @@ export function AcademyAdsSection({ academyId, onOpenChat }: { academyId: number
               </div>
               {c.insights30d && <p className="mt-1 text-xs text-muted-text">{copy.campaign.last30(money(c.insights30d.spend, c.insights30d.currency))}</p>}
               <div className="mt-4"><FunnelBars funnel={c.funnel} copy={copy} /></div>
+              {(c.ads?.length ?? 0) > 1 && <VariantResults ads={c.ads!} money={money} count={count} />}
               <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-text">
                 <span>{copy.campaign.perLead}: <b className="text-text">{money(per(n?.spend, c.funnel.leads), n?.currency)}</b></span>
                 <span>{copy.campaign.perJoined}: <b className="text-turf">{money(per(n?.spend, c.funnel.joined), n?.currency)}</b></span>
@@ -174,6 +177,38 @@ export function AcademyAdsSection({ academyId, onOpenChat }: { academyId: number
   );
 }
 
+/** Ads on Replay's account are prepaid: show the wallet once that's how the academy runs ads. */
+function WalletIfReplay({ academyId }: { academyId: number }) {
+  const info = useAdsConnection(academyId);
+  const connection = info.data?.connection;
+  if (!connection || connection.mode !== "replay" || connection.status !== "connected") return null;
+  return <AdsWalletCard academyId={academyId} />;
+}
+
+/** A campaign's text versions side by side: what each cost and brought in. */
+function VariantResults({ ads, money, count }: { ads: NonNullable<import("@/lib/meta-ads-api").AcademyAds["campaigns"][number]["ads"]>; money: (n: number | null | undefined, cur?: string | null) => string; count: (n: number) => string }) {
+  const extra = useAdsExtraCopy();
+  const sorted = [...ads].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  return (
+    <div className="mt-4 rounded-xl bg-raised/60 p-3" data-testid="variant-results">
+      <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-text">{extra.results.title}</p>
+      <table className="w-full text-sm">
+        <thead className="text-xs text-muted-text"><tr><th className="text-start font-medium" /><th className="text-end font-medium">{extra.results.cost}</th><th className="text-end font-medium">{extra.results.chats}</th><th className="text-end font-medium">{extra.results.leads}</th></tr></thead>
+        <tbody>
+          {sorted.map((a, i) => (
+            <tr key={a.id}>
+              <td className="py-1 font-bold text-turf">{/ · ([A-C])$/.exec(a.name ?? "")?.[1] ?? String.fromCharCode(65 + i)}</td>
+              <td className="py-1 text-end tabular-nums text-text">{money(a.insights?.spend, a.insights?.currency)}</td>
+              <td className="py-1 text-end tabular-nums text-text">{count(a.insights?.conversations ?? 0)}</td>
+              <td className="py-1 text-end tabular-nums text-text">{count(Math.max(a.leads, a.insights?.leads ?? 0))}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const STATUS_TONE: Record<string, string> = {
   draft: "bg-raised text-muted-text",
   pending_approval: "bg-amber-300/15 text-amber-200",
@@ -187,6 +222,7 @@ const STATUS_TONE: Record<string, string> = {
 /** The ads the owner builds in Replay, with the wizard. */
 function AdRequestsPanel({ academyId }: { academyId: number }) {
   const copy = useAdsWizardCopy();
+  const extra = useAdsExtraCopy();
   const requests = useAdRequests(academyId);
   const info = useAdsConnection(academyId);
   const act = useAdRequestAction(academyId);
@@ -213,7 +249,11 @@ function AdRequestsPanel({ academyId }: { academyId: number }) {
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-2">
                   <span className="font-semibold text-text" dir="auto">{r.name}</span>
-                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", STATUS_TONE[r.status])}>{copy.list.status[r.status]}</span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", r.pausedReason === "funds" ? "bg-amber-300/15 text-amber-200" : STATUS_TONE[r.status])}>
+                    {r.status === "paused" && r.pausedReason === "funds" ? extra.wallet.pausedFunds : r.status === "paused" && r.pausedReason === "ended" ? extra.wallet.ended : copy.list.status[r.status]}
+                  </span>
+                  {r.variants.length > 1 && <span className="rounded-full bg-raised px-2 py-0.5 text-[11px] text-muted-text">{r.variants.map((_, i) => String.fromCharCode(65 + i)).join("/")}</span>}
+                  {r.cards.length > 1 && <span className="rounded-full bg-raised px-2 py-0.5 text-[11px] text-muted-text">{extra.media.selected(r.cards.length)}</span>}
                 </p>
                 <p className="mt-0.5 text-xs text-muted-text">{copy.list.goal[r.goal]} · {copy.list.perDay(formatMoney(r.dailyBudget, r.currency, copy.locale))}</p>
                 {r.error && ["rejected", "failed"].includes(r.status) && <p className="mt-1 text-xs text-red-400" dir="auto">{r.error}</p>}
@@ -228,7 +268,12 @@ function AdRequestsPanel({ academyId }: { academyId: number }) {
                   </>
                 )}
                 {r.status === "active" && <Button type="button" size="sm" variant="ghost" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "pause" })}><Pause className="me-1 h-4 w-4" aria-hidden="true" />{copy.list.pause}</Button>}
-                {r.status === "paused" && <Button type="button" size="sm" variant="ghost" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "resume" })}><Play className="me-1 h-4 w-4" aria-hidden="true" />{copy.list.resume}</Button>}
+                {r.status === "paused" && r.pausedReason !== "ended" && <Button type="button" size="sm" variant="ghost" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "resume" })}><Play className="me-1 h-4 w-4" aria-hidden="true" />{copy.list.resume}</Button>}
+                {r.status === "paused" && r.pausedReason === "funds" && (
+                  <Button type="button" size="sm" variant="ghost" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "pause" })} title={extra.wallet.keepOffHint}>
+                    <Pause className="me-1 h-4 w-4" aria-hidden="true" />{extra.wallet.keepOff}
+                  </Button>
+                )}
                 {["draft", "rejected", "failed", "pending_approval"].includes(r.status) && (
                   <Button type="button" size="sm" variant="ghost" className="text-red-400" disabled={act.isPending} onClick={() => act.mutate({ id: r.id, action: "delete" })} aria-label={copy.list.delete}><Trash2 className="h-4 w-4" aria-hidden="true" /></Button>
                 )}

@@ -7,6 +7,8 @@ import {
   useListAcademyConsoleSessions,
   useListAcademyConsoleRecordings,
   useUpdateAcademyConsoleRecordingSession,
+  useCreateUserClip,
+  getListUserClipsQueryKey,
   type AcademySessionSummary,
   type AcademyConsoleRecording,
 } from "@workspace/api-client-react";
@@ -38,6 +40,9 @@ export function AcademyRecordingsSection({ academyId, academyName }: { academyId
     query: { queryKey: getListAcademyConsoleSessionsQueryKey(academyId), staleTime: 20_000 },
   });
   const updateRecordingSession = useUpdateAcademyConsoleRecordingSession();
+  // Owners and coaches save clips of the academy's footage, branded as the
+  // academy's; the owner finds every one of them in Studio.
+  const createUserClip = useCreateUserClip();
   const recordings = useMemo(() => [...(recordingsQuery.data ?? [])].sort((a, b) => (
     `${b.date} ${b.timeSlot}`.localeCompare(`${a.date} ${a.timeSlot}`)
   )), [recordingsQuery.data]);
@@ -137,12 +142,26 @@ export function AcademyRecordingsSection({ academyId, academyName }: { academyId
           source={{ kind: "bunny", videoId: extractBunnyGuid(playing.videoUrl) }}
           academyId={academyId}
           layout="overlay"
-          canSave={false}
+          canSave
           onPlaybackStart={viewTracking.onPlaybackStart}
           onPlaybackProgress={viewTracking.onPlaybackProgress}
           onRequireAuth={() => setPlaying(null)}
-          onSave={async () => {
-            throw new Error(copy.description);
+          onSave={async (draft) => {
+            await createUserClip.mutateAsync({
+              data: {
+                videoId: extractBunnyGuid(playing.videoUrl ?? ""),
+                recordingId: playing.id,
+                title: draft.title,
+                startTime: draft.startTime,
+                endTime: draft.endTime,
+                cropPath: draft.cropPath,
+                visibility: "private",
+                aspectRatio: draft.aspectRatio,
+                academyId,
+              },
+            });
+            void queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });
+            void queryClient.invalidateQueries({ queryKey: ["academy-studio-clips", academyId] });
           }}
           onClose={() => {
             viewTracking.flush();

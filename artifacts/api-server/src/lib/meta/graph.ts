@@ -54,3 +54,37 @@ export async function graphDelete(path: string, options: { token?: string } = {}
   const url = `https://graph.facebook.com/${config.graphVersion}/${path.replace(/^\//, "")}?${withAuth({}, config, options.token)}`;
   await parse(await fetch(url, { method: "DELETE", signal: AbortSignal.timeout(20_000) }));
 }
+
+/**
+ * Upload a video file to an ad account (graph-video host, multipart, streamed from disk).
+ * Returns Meta's video id; it is processed afterwards (see waitForVideo).
+ */
+export async function graphUploadVideo(act: string, filePath: string, name: string, options: { token?: string } = {}): Promise<string> {
+  const { openAsBlob } = await import("node:fs");
+  const config = metaConfig();
+  const form = new FormData();
+  for (const [key, value] of withAuth({ name: name.slice(0, 100) || "Replay video" }, config, options.token)) form.append(key, value);
+  form.append("source", await openAsBlob(filePath, { type: "video/mp4" }), "video.mp4");
+  const url = `https://graph-video.facebook.com/${config.graphVersion}/${act.replace(/^\//, "")}/advideos`;
+  const res = await parse<{ id?: string }>(await fetch(url, { method: "POST", body: form, signal: AbortSignal.timeout(15 * 60_000) }));
+  if (!res.id) throw new MetaGraphError("Meta didn't accept the video", 502);
+  return res.id;
+}
+
+export type VideoState = "ready" | "processing" | "error";
+
+export async function videoState(videoId: string, options: { token?: string } = {}): Promise<VideoState> {
+  const res = await graphGet<{ status?: { video_status?: string } }>(videoId, { fields: "status" }, options);
+  const status = res.status?.video_status ?? "processing";
+  return status === "ready" ? "ready" : status === "error" ? "error" : "processing";
+}
+
+/** Poll until Meta has processed the video, or the time runs out. */
+export async function waitForVideo(videoId: string, options: { token?: string; timeoutMs?: number; intervalMs?: number } = {}): Promise<VideoState> {
+  const until = Date.now() + (options.timeoutMs ?? 90_000);
+  for (;;) {
+    const state = await videoState(videoId, options);
+    if (state !== "processing" || Date.now() >= until) return state;
+    await new Promise((resolve) => setTimeout(resolve, options.intervalMs ?? 5000));
+  }
+}

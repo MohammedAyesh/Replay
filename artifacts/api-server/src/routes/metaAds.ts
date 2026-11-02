@@ -1,13 +1,14 @@
-import { desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { academiesTable, academyContactsTable, academyMetaConnectionsTable, db, metaAdCampaignsTable, metaAdLeadsTable } from "@workspace/db";
+import { academiesTable, academyContactsTable, academyMetaConnectionsTable, db, metaAdCampaignsTable, metaAdLeadsTable, metaAdsTable, academyAdRequestsTable } from "@workspace/db";
 import { requireAcademyConsoleUser, requireAcademyMembership, type AcademyConsoleUser } from "../lib/academyAccess";
 import { logger } from "../lib/logger";
 import { metaAdsConfigured, metaConfig, metaSignatureValid, metaWebhookVerifyToken } from "../lib/meta/config";
 import { graphGet, graphPost, MetaGraphError } from "../lib/meta/graph";
 import { fileUnassignedLeads, handleLeadgen } from "../lib/meta/leads";
 import { lastMetaSync, syncMetaAds, type CampaignNumbers } from "../lib/meta/sync";
+import { chargedByCampaign, ledgerNumbers } from "../lib/meta/wallet";
 import { formatPhoneForDisplay } from "../lib/whatsapp/phone";
 
 /**
@@ -305,6 +306,7 @@ router.get("/academy/console/academies/:academyId/ads", async (req, res): Promis
         id: metaAdLeadsTable.id,
         source: metaAdLeadsTable.source,
         campaignId: metaAdLeadsTable.campaignId,
+        formId: metaAdLeadsTable.formId,
         phone: metaAdLeadsTable.phone,
         name: metaAdLeadsTable.name,
         headline: metaAdLeadsTable.headline,
@@ -323,15 +325,56 @@ router.get("/academy/console/academies/:academyId/ads", async (req, res): Promis
     ]);
     const byCampaign = (id: string | null) => leads.filter((l) => l.campaignId === id);
     const campaignIds = new Set(campaigns.map((c) => c.id));
+    const ads = campaigns.length
+      ? await db.select().from(metaAdsTable).where(inArray(metaAdsTable.campaignId, [...campaignIds]))
+      : [];
+    const adLeads = campaigns.length
+      ? await db.select({ adId: metaAdLeadsTable.adId, n: sql<number>`count(*)::int` }).from(metaAdLeadsTable)
+        .where(and(eq(metaAdLeadsTable.academyId, academyId), inArray(metaAdLeadsTable.campaignId, [...campaignIds])))
+        .groupBy(metaAdLeadsTable.adId)
+      : [];
+    // Sign-up form answers come keyed q1…q5: put the questions back on them.
+    const formIds = [...new Set(leads.map((l) => l.formId).filter((f): f is string => Boolean(f)))];
+    const forms = formIds.length
+      ? await db.select({ formId: academyAdRequestsTable.metaFormId, questions: academyAdRequestsTable.questions, extraQuestion: academyAdRequestsTable.extraQuestion })
+        .from(academyAdRequestsTable).where(and(eq(academyAdRequestsTable.academyId, academyId), inArray(academyAdRequestsTable.metaFormId, formIds)))
+      : [];
+    const labelled = (formId: string | null, answers: Record<string, string> | null) => {
+      if (!answers) return null;
+      const form = forms.find((f) => f.formId === formId);
+      if (!form) return answers;
+      const out: Record<string, string> = {};
+      for (const [key, value] of Object.entries(answers)) {
+        const q = /^q(\d)$/.exec(key);
+        const questions = (form.questions ?? []) as Array<{ label: string }>;
+        const label = q ? questions[Number(q[1]) - 1]?.label : key === "extra" ? form.extraQuestion : null;
+        out[label ?? key] = value;
+      }
+      return out;
+    };
+    // Replay's account: the owner sees what his wallet actually paid (the ledger), never Meta's
+    // own figure. A Replay campaign with nothing charged shows no spend.
+    const charged = await chargedByCampaign(academyId);
+    const shown = (c: { id: string; adAccountId: string | null; insights: unknown }, n: unknown) =>
+      c.adAccountId
+        ? (n as CampaignNumbers | null)
+        : ledgerNumbers(n as CampaignNumbers | null, charged.get(c.id), (c.insights as CampaignNumbers | null)?.spend ?? null);
     res.json({
       campaigns: campaigns.map((c) => ({
         id: c.id,
         name: c.name,
         status: c.status,
         startedAt: c.startedAt,
-        insights: c.insights as CampaignNumbers | null,
-        insights30d: c.insights30d as CampaignNumbers | null,
+        insights: shown(c, c.insights),
+        insights30d: shown(c, c.insights30d),
         funnel: funnelOf(byCampaign(c.id)),
+        ads: ads.filter((a) => a.campaignId === c.id).map((a) => ({
+          id: a.id,
+          name: a.name,
+          status: a.status,
+          insights: shown(c, a.insights),
+          leads: adLeads.find((l) => l.adId === a.id)?.n ?? 0,
+        })),
       })),
       // Chats from an ad Replay doesn't run for this academy, or whose ad is unknown.
       otherLeads: funnelOf(leads.filter((l) => !l.campaignId || !campaignIds.has(l.campaignId))),
@@ -346,7 +389,7 @@ router.get("/academy/console/academies/:academyId/ads", async (req, res): Promis
         phoneDisplay: l.phone ? formatPhoneForDisplay(l.phone) : null,
         headline: l.headline,
         message: typeof (l.answers as { message?: unknown } | null)?.message === "string" ? (l.answers as { message: string }).message : null,
-        answers: l.source === "lead_form" ? (l.answers as Record<string, string> | null) : null,
+        answers: l.source === "lead_form" ? labelled(l.formId, l.answers as Record<string, string> | null) : null,
         createdAt: l.createdAt,
         contactId: l.contactId,
         stage: l.stage,
