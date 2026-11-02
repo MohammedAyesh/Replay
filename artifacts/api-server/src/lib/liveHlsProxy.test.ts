@@ -98,6 +98,55 @@ describe("rewriteLivePlaylist", () => {
     expect(bumped).toContain("#EXT-X-DISCONTINUITY-SEQUENCE:5");
   });
 
+  it("times untagged segments from the last timestamp, as vps1's VAR playlist needs", () => {
+    // vps1 tags only some segments; the rest follow on by their EXTINF durations.
+    const upstream = [
+      "#EXTM3U",
+      "#EXT-X-TARGETDURATION:13",
+      "#EXT-X-MEDIA-SEQUENCE:100",
+      "#EXT-X-PROGRAM-DATE-TIME:2026-11-02T10:14:50.000Z",
+      "#EXTINF:6.0,",
+      "/var/cam1/hls/seg/s_100.ts",
+      "#EXTINF:6.0,",
+      "/var/cam1/hls/seg/s_101.ts",
+      "#EXTINF:6.0,",
+      "/var/cam1/hls/seg/s_102.ts",
+      "#EXT-X-DISCONTINUITY",
+      "#EXT-X-PROGRAM-DATE-TIME:2026-11-02T10:15:30.000Z",
+      "#EXTINF:10.0,",
+      "/var/cam1/hls/seg/s_103.ts",
+      "#EXTINF:10.0,",
+      "/var/cam1/hls/seg/s_104.ts",
+      "",
+    ].join("\n");
+    const start = new Date("2026-11-02T10:15:00.000Z");
+    const result = rewriteLivePlaylist(upstream, "/p/", start)!;
+    expect(result).not.toBeNull();
+    // s_100 starts 10:14:50 and s_101 10:14:56: before the cut. s_102 starts 10:15:02.
+    expect(result).not.toContain("s_100.ts");
+    expect(result).not.toContain("s_101.ts");
+    expect(result).toContain("/p/s_102.ts");
+    expect(result).toContain("/p/s_103.ts");
+    expect(result).toContain("/p/s_104.ts");
+    expect(result).toContain("#EXT-X-MEDIA-SEQUENCE:102");
+    expect([...liveSegmentNames(upstream, start)!]).toEqual(["s_102.ts", "s_103.ts", "s_104.ts"]);
+  });
+
+  it("drops segments that come before the first timestamp", () => {
+    const upstream = [
+      "#EXTM3U",
+      "#EXTINF:4,",
+      "seg/unknown.ts",
+      "#EXT-X-PROGRAM-DATE-TIME:2026-11-02T10:16:00.000Z",
+      "#EXTINF:4,",
+      "seg/known.ts",
+      "",
+    ].join("\n");
+    const result = rewriteLivePlaylist(upstream, "/p/", new Date("2026-11-02T10:15:00.000Z"))!;
+    expect(result).not.toContain("unknown.ts");
+    expect(result).toContain("/p/known.ts");
+  });
+
   it("leaves the sequence untouched when nothing is dropped", () => {
     const upstream = playlist.replace("#EXT-X-TARGETDURATION:4", "#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:12");
     expect(rewriteLivePlaylist(upstream, "/p/", new Date("2026-10-13T09:00:00.000Z"))).toContain("#EXT-X-MEDIA-SEQUENCE:12");
