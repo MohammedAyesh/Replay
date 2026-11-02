@@ -28,7 +28,7 @@ import type { BrandLook } from "../lib/clipBranding/types";
 import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { logger } from "../lib/logger";
 import { renderStudioPng, type StudioContent, type StudioLocale } from "../lib/studio/posts";
-import { publicExportStatus } from "../lib/userClipExportState";
+import { academyClipStatus } from "../lib/userClipExportState";
 
 /**
  * Academy console → Studio (owner only).
@@ -424,14 +424,7 @@ async function academyClip(academyId: number, rawId: unknown) {
   return row.clip;
 }
 
-function clipStatus(clip: typeof userClipsTable.$inferSelect): "ready" | "processing" | "failed" | "expired" | "live" {
-  if (clip.videoId.startsWith("live:")) return clip.liveClipStatus === "failed" ? "failed" : "live";
-  const status = publicExportStatus(clip.exportStatus);
-  if (status === "done" && clip.exportedUrl) return "ready";
-  if (status === "error") return "failed";
-  if (status === "expired") return "expired";
-  return "processing";
-}
+const clipStatus = academyClipStatus;
 
 /** GET …/studio/clips — the academy's clips by its members, newest first. */
 router.get(`${base}/clips`, async (req, res): Promise<void> => {

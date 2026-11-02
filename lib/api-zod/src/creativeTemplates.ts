@@ -1,4 +1,6 @@
 import type { CreativeData, CreativeFormat, CreativeStyle, Scene } from "./creativeScene";
+import { DEFINITIONS, sampleFor } from "./creativeTemplates/content";
+import { buildScene } from "./creativeTemplates/build";
 
 /**
  * Creative hub template catalogue. Every template builds a Scene for any
@@ -9,6 +11,11 @@ import type { CreativeData, CreativeFormat, CreativeStyle, Scene } from "./creat
  *   CREATIVE_TEMPLATES: TemplateMeta[]
  *   buildTemplateScene(key, style, format, locale): Scene
  *   templateSampleData(key, locale): CreativeData
+ *
+ * The implementation lives in creativeTemplates/: content.ts says what each
+ * template says (fixed labels in EN and AR, {{bindings}} for facts, sample
+ * data); styles/*.ts draw each of the six layouts by hand per style; kit.ts
+ * mirrors everything for Arabic.
  */
 
 export type TemplateCategory = "matchday" | "results" | "players" | "recruitment" | "academy-life" | "community";
@@ -25,44 +32,37 @@ export type TemplateMeta = {
   fields: string[];
 };
 
-export const CREATIVE_TEMPLATES: TemplateMeta[] = [
-  {
-    key: "fulltime",
-    category: "results",
-    title: { en: "Full time", ar: "نهاية المباراة" },
-    kind: "image",
-    formats: ["post", "square", "story"],
-    fields: ["match.ownName", "match.opponent", "match.ownScore", "match.opponentScore", "match.squad", "match.date"],
-  },
-];
+export const TEMPLATE_CATEGORIES: TemplateCategory[] = ["matchday", "results", "players", "recruitment", "academy-life", "community"];
 
-const H = { post: 1350, square: 1080, story: 1920 } as const;
+const BINDING = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
 
-export function buildTemplateScene(key: string, style: CreativeStyle, format: CreativeFormat, locale: "en" | "ar"): Scene {
-  const h = H[format];
-  const ar = locale === "ar";
-  return {
-    v: 1,
-    format,
-    background: "#0B0F1A",
-    template: { key, style },
-    locale,
-    layers: [
-      { id: "accent", kind: "shape", shape: "rect", x: 0, y: h - 24, w: 1080, h: 24, fill: "@primary" },
-      { id: "crest", kind: "image", src: { type: "crest" }, x: 440, y: 80, w: 200, h: 200, fit: "contain" },
-      { id: "title", kind: "text", text: ar ? "نهاية المباراة" : "FULL TIME", font: ar ? "arabic-display" : "display", size: 110, weight: 800,
-        color: "@primary", align: "center", dir: "auto", x: 60, y: h / 2 - 260, w: 960, h: 140 },
-      { id: "score", kind: "text", text: "{{match.ownScore}} – {{match.opponentScore}}", font: "display", size: 260, weight: 800,
-        color: "#FFFFFF", align: "center", dir: "ltr", x: 60, y: h / 2 - 120, w: 960, h: 280 },
-      { id: "teams", kind: "text", text: "{{match.ownName}}  ·  {{match.opponent}}", font: ar ? "arabic" : "condensed", size: 52, weight: 700,
-        color: "#FFFFFF", align: "center", dir: "auto", x: 60, y: h / 2 + 180, w: 960, h: 80, fit: true },
-    ],
-  } as Scene;
+/** Every {{binding}} and media slot a scene reads, in first-seen order. */
+export function sceneFields(scene: Scene): string[] {
+  const out = new Set<string>();
+  for (const layer of scene.layers) {
+    if (layer.kind === "text") for (const m of layer.text.matchAll(BINDING)) out.add(m[1]);
+    else if ((layer.kind === "image" || layer.kind === "video") && layer.src.type === "binding") out.add(layer.src.path);
+  }
+  return [...out];
 }
 
-export function templateSampleData(_key: string, locale: "en" | "ar"): CreativeData {
+export const CREATIVE_TEMPLATES: TemplateMeta[] = DEFINITIONS.map((def) => {
+  const scene = buildScene(def.key, "broadcast", def.formats[0], "en");
   return {
-    academy: { name: locale === "ar" ? "أكاديمية" : "Academy" },
-    match: { ownName: locale === "ar" ? "أكاديميتنا" : "Our academy", opponent: locale === "ar" ? "الخصم" : "Opponent", ownScore: 3, opponentScore: 1, squad: "U12", date: "SAT 24 OCT" },
+    key: def.key,
+    category: def.category,
+    title: def.title,
+    kind: scene.durationMs !== undefined ? "video" : "image",
+    formats: def.formats,
+    fields: sceneFields(scene),
   };
+});
+
+export function buildTemplateScene(key: string, style: CreativeStyle, format: CreativeFormat, locale: "en" | "ar"): Scene {
+  return buildScene(key, style, format, locale);
+}
+
+/** Believable sample data so a gallery looks real before any data exists. Media are artwork keys "sample/<name>". */
+export function templateSampleData(key: string, locale: "en" | "ar"): CreativeData {
+  return sampleFor(key, locale);
 }

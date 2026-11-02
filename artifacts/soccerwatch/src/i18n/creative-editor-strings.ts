@@ -1,0 +1,330 @@
+import { useLocale } from "./context";
+
+/**
+ * Academy console → Creative hub → Editor. Owner only. English is the type;
+ * Arabic is Ammani, as across the console. Text the academy types into a post
+ * is theirs and never passes through here.
+ */
+const en = {
+  emptyTitle: "Nothing open yet",
+  emptyBody: "Pick a template and it opens here, ready to make your own.",
+  emptyCta: "Choose a template",
+  loading: "Opening…",
+  loadError: "Couldn't open this project.",
+  retry: "Try again",
+
+  titleLabel: "Project name",
+  titlePlaceholder: "Untitled",
+  save: { saving: "Saving…", saved: "Saved", unsaved: "Not saved yet", error: "Couldn't save — trying again" },
+  undo: "Undo",
+  redo: "Redo",
+  preview: "Preview",
+  next: "Next: publish",
+  close: "Close",
+  previewTitle: "Preview",
+  previewHint: "This is how it will look when it's exported.",
+
+  tools: { text: "Text", media: "Media", shapes: "Shapes", layers: "Layers", style: "Style", format: "Size", data: "Details" },
+  toolbar: "Editing tools",
+  canvasLabel: "Design canvas",
+  nothingSelected: "Tap something on the design to edit it.",
+  deselect: "Done",
+
+  // Text
+  addText: "Add text",
+  newText: "Your text",
+  content: "Text",
+  insertField: "Insert a detail",
+  insertFieldHint: "Fills in from Details, so you can reuse the post next week.",
+  showsAs: "Shows as",
+  font: "Font",
+  fonts: { display: "Bold", condensed: "Narrow", body: "Simple", serif: "Classic", script: "Handwritten", arabic: "Arabic", "arabic-display": "Arabic bold" },
+  size: "Size",
+  weight: "Weight",
+  weights: { 400: "Regular", 600: "Semi", 700: "Bold", 800: "Heavy", 900: "Black" } as Record<number, string>,
+  italic: "Italic",
+  colour: "Colour",
+  tokens: { "@primary": "Main", "@accent": "Second", "@ink": "Text", "@paper": "Background", "@muted": "Soft" } as Record<string, string>,
+  hex: "Hex colour",
+  align: "Align",
+  alignStart: "Start",
+  alignCenter: "Centre",
+  alignEnd: "End",
+  direction: "Direction",
+  dirAuto: "Auto",
+  dirLtr: "Left to right",
+  dirRtl: "Right to left",
+  uppercase: "CAPITALS",
+  letterSpacing: "Letter spacing",
+  lineHeight: "Line height",
+  fitText: "Shrink to fit the box",
+  outline: "Outline",
+  shadow: "Shadow",
+  pill: "Background pill",
+  width: "Width",
+  blur: "Blur",
+  padding: "Padding",
+  roundness: "Roundness",
+
+  // Common
+  opacity: "Opacity",
+  rotation: "Rotation",
+  entrance: "Entrance",
+  entrances: { none: "None", fade: "Fade", "slide-up": "Slide up", "slide-left": "Slide in", pop: "Pop" },
+  duplicate: "Duplicate",
+  remove: "Delete",
+  bringForward: "Bring forward",
+  sendBackward: "Send back",
+
+  // Media
+  addPicture: "Add picture",
+  addVideo: "Add video",
+  addCrest: "Add crest",
+  replace: "Replace",
+  useCrest: "Use the crest",
+  fit: "Fit",
+  fitCover: "Fill the box",
+  fitContain: "Show it all",
+  cutout: "Cut out the background",
+  muted: "Mute sound",
+  mediaKinds: { clip: "Saved clip", recording: "Match moment", upload: "Your upload", frame: "Still from a match", crest: "Academy crest", artwork: "Template artwork", binding: "From Details" } as Record<string, string>,
+  slotEmpty: "Empty slot: pick something from your library.",
+  videoOnlyInVideo: "Videos go in video templates. Pick a video template to use footage.",
+
+  // Shapes
+  addShape: "Add a shape",
+  shapes: { rect: "Box", ellipse: "Circle", line: "Line", slant: "Slanted band" },
+  fill: "Fill",
+  gradient: "Gradient",
+  gradientTo: "To",
+  angle: "Angle",
+  skew: "Slant",
+
+  // Layers
+  layersHint: "Top of the list is drawn on top.",
+  show: "Show",
+  hide: "Hide",
+  lock: "Lock",
+  unlock: "Unlock",
+  layerKinds: { text: "Text", image: "Picture", video: "Video", shape: "Shape" },
+  noLayers: "No layers yet.",
+
+  // Style
+  styleHint: "Same post, another look. Your text and pictures stay.",
+  styles: { broadcast: "Broadcast", street: "Street", editorial: "Editorial", luxury: "Luxury", playful: "Playful", cinematic: "Cinematic", stadium: "Stadium" },
+  noTemplate: "This design wasn't made from a template, so it has no other styles.",
+
+  // Format
+  formats: { post: "Post", square: "Square", story: "Story" },
+  formatSizes: { post: "4:5 · feed", square: "1:1 · feed", story: "9:16 · stories & reels" },
+  formatHint: "Everything moves to fit the new size. Check it after.",
+  designedFor: "Designed for this size",
+
+  // Data
+  dataHint: "Fill these in once; every {{detail}} in the design picks them up.",
+  fields: {
+    "match.ownName": "Your team", "match.opponent": "Opponent", "match.ownScore": "Your score", "match.opponentScore": "Their score",
+    "match.date": "Date", "match.time": "Time", "match.place": "Pitch", "match.squad": "Squad", "match.competition": "Competition",
+    "match.stage": "Round", "match.scorers": "Scorers",
+    "player.name": "Player name", "player.number": "Shirt number", "player.squad": "Player's squad", "player.position": "Position", "player.photo": "Player picture",
+    "academy.name": "Academy name", "academy.nameAr": "Academy name (Arabic)", "academy.phone": "Phone", "academy.instagram": "Instagram",
+    media: "Main picture or video",
+    "custom.headline": "Headline", "custom.subline": "Second line", "custom.cta": "Call to action", "custom.body": "Text", "custom.price": "Price",
+  } as Record<string, string>,
+  placeholders: {
+    "match.opponent": "Opponent's name", "match.date": "e.g. SAT 24 OCT", "match.time": "e.g. 5:00 PM", "match.squad": "e.g. U12",
+    "player.name": "As your academy writes it", "custom.headline": "Your own headline",
+  } as Record<string, string>,
+  playerNameHint: "Only shown if your academy shows player names.",
+  more: (n: number) => `Picture ${n}`,
+  pick: "Pick",
+  clear: "Clear",
+  addCustom: "Add your own line",
+  customName: "Name it (e.g. headline)",
+
+  // Timeline
+  timeline: "Timeline",
+  play: "Play",
+  pause: "Pause",
+  scrub: "Playhead",
+  total: "Length",
+  seconds: "s",
+  trim: "Trim",
+  trimIn: "Start at",
+  trimOut: "End at",
+  speed: "Speed",
+  slowMo: "Slow motion",
+  slowMoFrom: "From",
+  slowMoTo: "To",
+  slowMoSpeed: "Slow to",
+  slowMoAtPlayhead: "Add at the playhead",
+  barHint: "Drag a bar to move it, its ends to trim.",
+  fitToVideo: "Match the video's length",
+};
+
+const ar: typeof en = {
+  emptyTitle: "ما في إشي مفتوح",
+  emptyBody: "اختار قالب وبفتحلك هون، جاهز تعدّل عليه.",
+  emptyCta: "اختار قالب",
+  loading: "عم بفتح…",
+  loadError: "ما قدرنا نفتح هالتصميم.",
+  retry: "جرّب كمان مرة",
+
+  titleLabel: "اسم التصميم",
+  titlePlaceholder: "بدون اسم",
+  save: { saving: "عم بحفظ…", saved: "محفوظ", unsaved: "لسّا مش محفوظ", error: "ما انحفظ، عم نحاول كمان مرة" },
+  undo: "تراجع",
+  redo: "رجّع",
+  preview: "معاينة",
+  next: "التالي: النشر",
+  close: "سكّر",
+  previewTitle: "معاينة",
+  previewHint: "هيك رح يطلع لما تصدّره.",
+
+  tools: { text: "نص", media: "صور وفيديو", shapes: "أشكال", layers: "الطبقات", style: "الستايل", format: "المقاس", data: "التفاصيل" },
+  toolbar: "أدوات التعديل",
+  canvasLabel: "التصميم",
+  nothingSelected: "اكبس على أي إشي بالتصميم عشان تعدّله.",
+  deselect: "خلصت",
+
+  addText: "ضيف نص",
+  newText: "نصّك هون",
+  content: "النص",
+  insertField: "حط تفصيلة",
+  insertFieldHint: "بتنعبّى من التفاصيل، فبتقدر تستعمل البوست كمان مرة الأسبوع الجاي.",
+  showsAs: "رح يطلع هيك",
+  font: "الخط",
+  fonts: { display: "عريض", condensed: "ضيّق", body: "بسيط", serif: "كلاسيكي", script: "خط يد", arabic: "عربي", "arabic-display": "عربي عريض" },
+  size: "الحجم",
+  weight: "السماكة",
+  weights: { 400: "عادي", 600: "وسط", 700: "عريض", 800: "تقيل", 900: "أتقل إشي" },
+  italic: "مايل",
+  colour: "اللون",
+  tokens: { "@primary": "الأساسي", "@accent": "التاني", "@ink": "النص", "@paper": "الخلفية", "@muted": "هادي" },
+  hex: "كود اللون",
+  align: "المحاذاة",
+  alignStart: "البداية",
+  alignCenter: "النص",
+  alignEnd: "النهاية",
+  direction: "الاتجاه",
+  dirAuto: "تلقائي",
+  dirLtr: "من الشمال لليمين",
+  dirRtl: "من اليمين للشمال",
+  uppercase: "حروف كبيرة",
+  letterSpacing: "المسافة بين الحروف",
+  lineHeight: "المسافة بين السطور",
+  fitText: "صغّر النص ليزبط بالمربع",
+  outline: "إطار للحروف",
+  shadow: "ظل",
+  pill: "خلفية ورا النص",
+  width: "العرض",
+  blur: "التمويه",
+  padding: "الهامش",
+  roundness: "التدوير",
+
+  opacity: "الشفافية",
+  rotation: "التدوير",
+  entrance: "طريقة الظهور",
+  entrances: { none: "بدون", fade: "تلاشي", "slide-up": "من تحت", "slide-left": "من الجنب", pop: "نطّة" },
+  duplicate: "كرّر",
+  remove: "امسح",
+  bringForward: "لقدّام",
+  sendBackward: "لورا",
+
+  addPicture: "ضيف صورة",
+  addVideo: "ضيف فيديو",
+  addCrest: "ضيف الشعار",
+  replace: "غيّر",
+  useCrest: "حط الشعار",
+  fit: "طريقة العرض",
+  fitCover: "عبّي المربع",
+  fitContain: "بيّنها كلها",
+  cutout: "شيل الخلفية",
+  muted: "بدون صوت",
+  mediaKinds: { clip: "كليب محفوظ", recording: "لقطة من مباراة", upload: "إشي رفعته", frame: "صورة من مباراة", crest: "شعار الأكاديمية", artwork: "رسمة القالب", binding: "من التفاصيل" },
+  slotEmpty: "المكان فاضي: اختار إشي من مكتبتك.",
+  videoOnlyInVideo: "الفيديو بنحط بقوالب الفيديو. اختار قالب فيديو عشان تستعمل التصوير.",
+
+  addShape: "ضيف شكل",
+  shapes: { rect: "مربع", ellipse: "دائرة", line: "خط", slant: "شريط مايل" },
+  fill: "التعبئة",
+  gradient: "تدرّج",
+  gradientTo: "لـ",
+  angle: "الزاوية",
+  skew: "الميلان",
+
+  layersHint: "اللي فوق بالقائمة بيطلع فوق بالتصميم.",
+  show: "بيّن",
+  hide: "خبّي",
+  lock: "اقفل",
+  unlock: "افتح",
+  layerKinds: { text: "نص", image: "صورة", video: "فيديو", shape: "شكل" },
+  noLayers: "لسّا ما في طبقات.",
+
+  styleHint: "نفس البوست بشكل تاني. نصوصك وصورك بضلّوا.",
+  styles: { broadcast: "بث", street: "ستريت", editorial: "مجلة", luxury: "فخم", playful: "ملوّن", cinematic: "سينمائي", stadium: "ملعب" },
+  noTemplate: "هالتصميم مش معمول من قالب، فما إله ستايلات تانية.",
+
+  formats: { post: "بوست", square: "مربع", story: "ستوري" },
+  formatSizes: { post: "4:5 · الصفحة", square: "1:1 · الصفحة", story: "9:16 · ستوري وريلز" },
+  formatHint: "كل إشي بتحرّك ليزبط عالمقاس الجديد. تأكد منه بعدين.",
+  designedFor: "مصمم لهالمقاس",
+
+  dataHint: "عبّيهم مرة وحدة، وكل {{تفصيلة}} بالتصميم بتاخدهم.",
+  fields: {
+    "match.ownName": "فريقك", "match.opponent": "الخصم", "match.ownScore": "أهدافكم", "match.opponentScore": "أهدافهم",
+    "match.date": "التاريخ", "match.time": "الساعة", "match.place": "الملعب", "match.squad": "الفئة", "match.competition": "البطولة",
+    "match.stage": "الدور", "match.scorers": "اللي سجّلوا",
+    "player.name": "اسم اللاعب", "player.number": "رقم القميص", "player.squad": "فئة اللاعب", "player.position": "المركز", "player.photo": "صورة اللاعب",
+    "academy.name": "اسم الأكاديمية", "academy.nameAr": "اسم الأكاديمية بالعربي", "academy.phone": "التلفون", "academy.instagram": "إنستغرام",
+    media: "الصورة أو الفيديو الأساسي",
+    "custom.headline": "العنوان", "custom.subline": "السطر التاني", "custom.cta": "الدعوة للتسجيل", "custom.body": "النص", "custom.price": "السعر",
+  },
+  placeholders: {
+    "match.opponent": "اسم الفريق التاني", "match.date": "مثلاً السبت 24 تشرين الأول", "match.time": "مثلاً 5:00 المسا", "match.squad": "مثلاً U12",
+    "player.name": "زي ما بتكتبه الأكاديمية", "custom.headline": "عنوانك إنت",
+  },
+  playerNameHint: "ما بطلع إلا إذا أكاديميتك بتبيّن أسماء اللاعبين.",
+  more: (n: number) => `الصورة ${n}`,
+  pick: "اختار",
+  clear: "امسح",
+  addCustom: "ضيف سطر إلك",
+  customName: "سمّيه (مثلاً headline)",
+
+  timeline: "الخط الزمني",
+  play: "شغّل",
+  pause: "وقّف",
+  scrub: "مكان التشغيل",
+  total: "المدة",
+  seconds: "ث",
+  trim: "القص",
+  trimIn: "يبلّش من",
+  trimOut: "يخلص عند",
+  speed: "السرعة",
+  slowMo: "تصوير بطيء",
+  slowMoFrom: "من",
+  slowMoTo: "لـ",
+  slowMoSpeed: "بطّئ لـ",
+  slowMoAtPlayhead: "حطه عند مكان التشغيل",
+  barHint: "اسحب الشريط لتحرّكه، وأطرافه لتقصّه.",
+  fitToVideo: "خلّي المدة قد الفيديو",
+};
+
+export type CreativeEditorStrings = typeof en;
+
+export function useCreativeEditorCopy(): CreativeEditorStrings & { locale: "ar" | "en" } {
+  const { locale } = useLocale();
+  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+}
+
+export const creativeEditorStrings = { en, ar };
+
+/** A readable label for a {{binding}} path the strings do not name. */
+export function fieldLabel(copy: CreativeEditorStrings, path: string): string {
+  const named = copy.fields[path];
+  if (named) return named;
+  const more = /^more\.(\d+)$/.exec(path);
+  if (more) return copy.more(Number(more[1]) + 2);
+  const last = path.split(".").pop() ?? path;
+  return last.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}

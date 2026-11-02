@@ -47,3 +47,12 @@ export function isRenderPendingStatus(status: string | null | undefined): boolea
 export function publicExportStatus(status: string | null | undefined): string | null {
   return status == null ? null : isInternalPendingStatus(status) ? "pending" : status;
 }
+/** A clip's state as the academy console shows it (Studio and the Creative hub Library). */
+export function academyClipStatus(clip: { videoId: string; liveClipStatus: string | null; exportStatus: string | null; exportedUrl: string | null }): "ready" | "processing" | "failed" | "expired" | "live" {
+  if (clip.videoId.startsWith("live:")) return clip.liveClipStatus === "failed" ? "failed" : "live";
+  const status = publicExportStatus(clip.exportStatus);
+  if (status === "done" && clip.exportedUrl) return "ready";
+  if (status === "error") return "failed";
+  if (status === "expired") return "expired";
+  return "processing";
+}

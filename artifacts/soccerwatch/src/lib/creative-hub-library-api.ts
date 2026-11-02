@@ -1,0 +1,197 @@
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { MediaSource } from "@workspace/api-zod";
+import { apiUrl, call } from "@/lib/academy-studio-api";
+import { creativeKeys, creativePath } from "@/lib/creative-hub-api";
+
+/**
+ * Creative hub → Library. Hand-written client for
+ * routes/academyCreativeLibrary.ts (owner only). Players arrive already
+ * filtered by the academy's "show player names" setting: a first name or
+ * nothing, never a full name.
+ */
+
+export type RecordingSource = Extract<MediaSource, { type: "recording" }>;
+export type FrameSource = Extract<MediaSource, { type: "frame" }>;
+export type ClipSource = Extract<MediaSource, { type: "clip" }>;
+export type UploadSource = Extract<MediaSource, { type: "upload" }>;
+export type RecordingWindow = { recordingId: number; fromMs: number; toMs: number };
+
+export type LibraryPlayer = { number: number | null; firstName: string | null; squad: string | null };
+
+export type LibraryMatch = {
+  sessionId: number;
+  type: "match" | "training";
+  startsAt: string;
+  /** Amman day, YYYY-MM-DD, and clock, HH:mm */
+  date: string;
+  time: string;
+  location: string | null;
+  opponent: string | null;
+  ownScore: number | null;
+  opponentScore: number | null;
+  squad: { id: number; name: string } | null;
+  durationMs: number | null;
+  recordingIds: number[];
+  recordingId: number | null;
+  analysed: boolean;
+  still: FrameSource | null;
+  thumbnailUrl: string | null;
+};
+
+export type LibraryMomentType = "goal" | "chance" | "highlight" | "saved";
+export const LIBRARY_MOMENT_TYPES: LibraryMomentType[] = ["goal", "chance", "highlight", "saved"];
+
+export type LibraryMoment = {
+  id: string;
+  type: LibraryMomentType;
+  recordingId: number;
+  window: RecordingWindow;
+  atMs: number;
+  durationMs: number;
+  minute: number | null;
+  player: LibraryPlayer | null;
+  ours: boolean | null;
+  ownGoal: boolean;
+  title: string | null;
+  clipId: number | null;
+  source: RecordingSource;
+  still: FrameSource;
+  thumbnailUrl: string | null;
+};
+
+export type LibraryMoments = {
+  sessionId: number;
+  analysis: "ready" | "none" | "failed";
+  recordingIds: number[];
+  counts: Record<LibraryMomentType, number>;
+  moments: LibraryMoment[];
+  total: number;
+  nextOffset: number | null;
+};
+
+export type LibraryClip = {
+  clipId: number;
+  title: string | null;
+  status: "ready" | "processing" | "failed" | "expired" | "live";
+  aspectRatio: "16:9" | "9:16";
+  createdAt: string;
+  date: string;
+  durationMs: number;
+  sessionId: number | null;
+  source: ClipSource;
+  window: RecordingWindow | null;
+  still: FrameSource | null;
+  thumbnailUrl: string | null;
+  videoUrl: string | null;
+};
+
+export type LibraryUpload = {
+  mediaId: number;
+  kind: "image" | "video";
+  name: string;
+  status: string;
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  createdAt: string;
+  source: UploadSource;
+  thumbnailUrl: string | null;
+  videoUrl: string | null;
+};
+
+export type LibraryPlayers = {
+  showNames: boolean;
+  squads: Array<{ id: number; name: string }>;
+  players: Array<LibraryPlayer & { playerId: number; squadId: number | null }>;
+};
+
+export type LibraryFilter = {
+  squadId?: number | null;
+  /** shirt number */
+  player?: number | null;
+  types?: LibraryMomentType[];
+  /** Amman days, YYYY-MM-DD */
+  from?: string | null;
+  to?: string | null;
+  kind?: "image" | "video" | null;
+};
+
+function qs(f: LibraryFilter, offset: number, limit: number): string {
+  const p = new URLSearchParams();
+  if (f.squadId) p.set("squadId", String(f.squadId));
+  if (f.player !== null && f.player !== undefined) p.set("player", String(f.player));
+  if (f.types?.length) p.set("type", f.types.join(","));
+  if (f.from) p.set("from", f.from);
+  if (f.to) p.set("to", f.to);
+  if (f.kind) p.set("kind", f.kind);
+  p.set("offset", String(offset));
+  p.set("limit", String(limit));
+  return p.toString();
+}
+
+const libraryKey = (academyId: number, ...rest: unknown[]) => [...creativeKeys.all(academyId), "library", ...rest] as const;
+
+type Page = { total: number; nextOffset: number | null };
+
+function usePaged<T extends Page>(academyId: number, name: string, path: string, f: LibraryFilter, limit: number, enabled = true) {
+  return useInfiniteQuery({
+    queryKey: libraryKey(academyId, name, path, f),
+    enabled,
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => call<T>(creativePath(academyId, `${path}?${qs(f, pageParam, limit)}`)),
+    getNextPageParam: (last) => last.nextOffset ?? undefined,
+  });
+}
+
+export function useLibraryMatches(academyId: number, f: LibraryFilter) {
+  const q = usePaged<Page & { matches: LibraryMatch[] }>(academyId, "matches", "/library/matches", { squadId: f.squadId, player: f.player, from: f.from, to: f.to }, 24);
+  return { ...q, items: q.data?.pages.flatMap((p) => p.matches) ?? [] };
+}
+
+export function useLibraryMoments(academyId: number, sessionId: number | null, f: LibraryFilter) {
+  const q = usePaged<LibraryMoments>(academyId, "moments", `/library/matches/${sessionId ?? 0}/moments`, { types: f.types, player: f.player }, 60, sessionId !== null);
+  return { ...q, items: q.data?.pages.flatMap((p) => p.moments) ?? [], first: q.data?.pages[0] ?? null };
+}
+
+export function useLibraryClips(academyId: number, f: LibraryFilter) {
+  const q = usePaged<Page & { clips: LibraryClip[] }>(academyId, "clips", "/library/clips", { squadId: f.squadId, from: f.from, to: f.to }, 24);
+  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [] };
+}
+
+export function useLibraryUploads(academyId: number, f: LibraryFilter) {
+  const q = usePaged<Page & { uploads: LibraryUpload[] }>(academyId, "uploads", "/library/uploads", { kind: f.kind, from: f.from, to: f.to }, 30);
+  return { ...q, items: q.data?.pages.flatMap((p) => p.uploads) ?? [] };
+}
+
+export function useLibraryPlayers(academyId: number) {
+  return useQuery({
+    queryKey: libraryKey(academyId, "players"),
+    staleTime: 60_000,
+    queryFn: () => call<LibraryPlayers>(creativePath(academyId, "/library/players")),
+  });
+}
+
+export function useUploadLibraryMedia(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ file, name, width, height }: { file: Blob; name: string; width?: number; height?: number }) => {
+      const form = new FormData();
+      form.append("name", name);
+      if (width) form.append("width", String(width));
+      if (height) form.append("height", String(height));
+      form.append("file", file, name || "upload");
+      return call<{ upload: LibraryUpload }>(creativePath(academyId, "/library/uploads"), { method: "POST", body: form }).then((r) => r.upload);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: libraryKey(academyId, "uploads") });
+      // Ads → Media lists the same rows.
+      void qc.invalidateQueries({ queryKey: ["academy-ad-media", academyId] });
+    },
+  });
+}
+
+/** A server path ("/api/…") or an absolute URL, as something <img>/<video> can load. */
+export function browserUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path.startsWith("/api/") ? apiUrl(path) : path;
+}
