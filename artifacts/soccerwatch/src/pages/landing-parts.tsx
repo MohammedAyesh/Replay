@@ -58,7 +58,7 @@ export function Brand() {
  * A muted looping clip that plays only while on screen, and never plays when
  * the visitor has asked for reduced motion (the poster stays instead).
  */
-export function LoopVideo({ clip, fallback, className }: { clip: DemoClip | null | undefined; fallback: string; className?: string }) {
+export function LoopVideo({ clip, fallback, className }: { clip: Pick<DemoClip, "src" | "poster"> | null | undefined; fallback: string; className?: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const reduceMotion = useReducedMotion();
 
@@ -93,6 +93,19 @@ export function LoopVideo({ clip, fallback, className }: { clip: DemoClip | null
     />
   );
 }
+
+/**
+ * Two fixed clips shipped with the site, both from recording 403 (Jordan
+ * Galaxy, the 0–1 goal at 55:41), names hidden:
+ * - BRANDED_GOAL: 9:16 cut rendered by the app's own renderer (corner crest
+ *   plus the Jordan Galaxy sign-off card). It shows what a player shares.
+ * - LIVE_DEMO: a 16:9 following shot with broadcast chrome (score, ticking
+ *   clock, LIVE badge) burnt in, so the live section always plays. A
+ *   recorded match, and the caption says so.
+ * Rendered with scripts-local-render-demo-{goal,live}.ts (not committed).
+ */
+export const BRANDED_GOAL = { src: "/media/branded-goal.mp4", poster: "/media/branded-goal.jpg" };
+export const LIVE_DEMO = { src: "/media/live-demo.mp4", poster: "/media/live-demo.jpg" };
 
 /**
  * The clips the public pages may show. Only the demo's own branded copies
