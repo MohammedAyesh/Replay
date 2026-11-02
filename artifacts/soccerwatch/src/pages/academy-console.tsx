@@ -22,6 +22,7 @@ import {
   Trash2,
   Trophy,
   Target,
+  ShieldCheck,
   Building2,
   Clapperboard,
   Palette,
@@ -92,6 +93,9 @@ import { useMatchesCopy } from "@/i18n/matches-strings";
 import { useAdsCopy } from "@/i18n/ads-strings";
 import { AcademyAdsSection } from "@/components/academy-console/ads-section";
 import { AcademyProfileSection } from "@/components/academy-console/profile-section";
+import { AcademyTeamSection } from "@/components/academy-console/team-section";
+import { useTeamCopy } from "@/i18n/team-strings";
+import { useMyAcademyAccess } from "@/lib/academy-team-api";
 import { useProfileCopy } from "@/i18n/profile-strings";
 import { AcademyBrandingSection } from "@/components/academy-console/branding-section";
 import { AcademyStudioSection } from "@/components/academy-console/studio-section";
@@ -108,7 +112,7 @@ import { AcademyRegistrationsSection } from "@/components/academy-console/regist
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "profile" | "branding" | "studio";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "profile" | "branding" | "studio" | "team";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -171,6 +175,7 @@ function AcademyConsoleSidebar({
   academyLogoUrl,
   onSelectAcademy,
   isOwner,
+  canSee,
   pendingRegistrationCount,
   mobile = false,
 }: {
@@ -181,6 +186,7 @@ function AcademyConsoleSidebar({
   academyLogoUrl: string | null;
   onSelectAcademy: (academyId: number) => void;
   isOwner: boolean;
+  canSee: (section: ConsoleSection) => boolean;
   pendingRegistrationCount: number;
   mobile?: boolean;
 }) {
@@ -192,6 +198,7 @@ function AcademyConsoleSidebar({
   const adsCopy = useAdsCopy();
   const profileCopy = useProfileCopy();
   const studioCopy = useStudioCopy();
+  const teamCopy = useTeamCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
   const items: Array<{ id: ConsoleSection; label: string; icon: typeof LayoutDashboard; ownerOnly?: boolean }> = [
     { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
@@ -211,6 +218,7 @@ function AcademyConsoleSidebar({
     { id: "profile", label: profileCopy.nav, icon: Building2 },
     { id: "branding", label: studioCopy.branding.nav, icon: Palette, ownerOnly: true },
     { id: "studio", label: studioCopy.studio.nav, icon: Clapperboard, ownerOnly: true },
+    { id: "team", label: teamCopy.team.nav, icon: ShieldCheck, ownerOnly: true },
   ];
 
   return (
@@ -251,7 +259,7 @@ function AcademyConsoleSidebar({
       <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label={labels.navigation}>
         <p className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-text">{labels.workspace}</p>
         <div className="space-y-1">
-          {items.filter((item) => !item.ownerOnly || isOwner).map((item) => {
+          {items.filter((item) => (item.id === "team" ? isOwner : canSee(item.id))).map((item) => {
             const Icon = item.icon;
             return (
               <button
@@ -775,6 +783,13 @@ export default function AcademyConsole() {
     },
   });
   const isOwner = activeMembership?.roles.includes("owner") ?? false;
+  // What the owner lets this member see and run (Academy console → Team). Until it loads,
+  // fall back to the role alone.
+  const myAccess = useMyAcademyAccess(activeAcademyId);
+  const OWNER_ONLY: ConsoleSection[] = ["fees", "ads", "branding", "studio", "team"];
+  const canSee = (s: ConsoleSection) => isOwner || (s !== "team" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
+  const manages = (s: ConsoleSection) => isOwner || Boolean(myAccess.data?.manages.includes(s));
+  const canManageChats = isOwner || Boolean(myAccess.data?.permissions.includes("chats.manage"));
 
   useEffect(() => {
     if (!activeMembership) return;
@@ -785,8 +800,10 @@ export default function AcademyConsole() {
   }, [activeMembership, selectedAcademyId]);
 
   useEffect(() => {
-    if (!isOwner && (section === "fees" || section === "ads" || section === "branding" || section === "studio")) setSection("dashboard");
-  }, [isOwner, section]);
+    if (section === "dashboard") return;
+    if (section === "team" ? !isOwner : !canSee(section)) setSection("dashboard");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOwner, section, myAccess.data]);
 
   const navigate = (nextSection: ConsoleSection) => {
     setSection(nextSection);
@@ -797,7 +814,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "profile", "branding", "studio"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "profile", "branding", "studio", "team"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -837,6 +854,7 @@ export default function AcademyConsole() {
       setLocation("/academy");
     },
     isOwner,
+    canSee,
     pendingRegistrationCount: dashboardQuery.data?.pendingRegistrationCount ?? 0,
   };
 
@@ -860,13 +878,13 @@ export default function AcademyConsole() {
           {section === "dashboard" ? (
             dashboardQuery.isLoading ? <AcademyConsoleSkeleton /> :
               dashboardQuery.isError || !dashboardQuery.data ? <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted-text" data-testid="academy-dashboard-error">{t.academyConsole.dashboardError}</div> :
-                <Dashboard dashboard={dashboardQuery.data} isOwner={isOwner} />
+                <Dashboard dashboard={dashboardQuery.data} isOwner={manages("dashboard")} />
           ) : section === "squads" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} />
           ) : section === "players" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} isOwner={isOwner} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} isOwner={manages("players")} />
           ) : section === "registrations" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyRegistrationsSection academyId={activeAcademyId} isOwner={isOwner} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyRegistrationsSection academyId={activeAcademyId} isOwner={manages("registrations")} />
           ) : section === "schedule" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademySessionsSection academyId={activeAcademyId} />
           ) : section === "attendance" ? (
@@ -874,25 +892,27 @@ export default function AcademyConsole() {
           ) : section === "recordings" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyRecordingsSection academyId={activeAcademyId} academyName={activeMembership?.academyName ?? ""} />
           ) : section === "fees" ? (
-            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyFeesPaymentsSection academyId={activeAcademyId} />
+            !manages("fees") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyFeesPaymentsSection academyId={activeAcademyId} />
           ) : section === "announcements" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyAnnouncementsSection academyId={activeAcademyId} />
           ) : section === "whatsapp" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyWhatsappSection academyId={activeAcademyId} />
           ) : section === "chats" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyChatsSection academyId={activeAcademyId} isOwner={isOwner} initialPhone={chatPhone} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyChatsSection academyId={activeAcademyId} isOwner={manages("chats")} canManageChats={canManageChats} initialPhone={chatPhone} />
           ) : section === "people" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPeopleSection academyId={activeAcademyId} isOwner={isOwner} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPeopleSection academyId={activeAcademyId} isOwner={manages("people")} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
           ) : section === "ads" ? (
-            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyAdsSection academyId={activeAcademyId} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
+            !manages("ads") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyAdsSection academyId={activeAcademyId} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
           ) : section === "profile" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyProfileSection academyId={activeAcademyId} />
           ) : section === "branding" ? (
-            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyBrandingSection academyId={activeAcademyId} />
+            !manages("branding") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyBrandingSection academyId={activeAcademyId} />
           ) : section === "studio" ? (
-            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyStudioSection academyId={activeAcademyId} />
+            !manages("studio") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyStudioSection academyId={activeAcademyId} />
           ) : section === "matches" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyMatchesSection academyId={activeAcademyId} isOwner={isOwner} />
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyMatchesSection academyId={activeAcademyId} isOwner={manages("matches")} />
+          ) : section === "team" ? (
+            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyTeamSection academyId={activeAcademyId} />
           ) : <AcademyConsoleSkeleton />}
         </div>
       </main>

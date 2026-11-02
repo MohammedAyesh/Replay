@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   index,
   integer,
@@ -136,6 +137,16 @@ export const academyContactsTable = pgTable("academy_contacts", {
   tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
   notes: text("notes"),
   lastReadAt: timestamp("last_read_at", { withTimezone: true }),
+  /** Chat moved out of the main list (still receives). */
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  /** Messages still arrive but don't count as unread. */
+  muted: boolean("muted").notNull().default(false),
+  /** Nothing is stored from this number and nothing is sent to it. */
+  blockedAt: timestamp("blocked_at", { withTimezone: true }),
+  /** A personal chat on the academy's phone: its messages are deleted and no longer stored. */
+  personalAt: timestamp("personal_at", { withTimezone: true }),
+  /** "Who is this?" put off for later. */
+  linkDismissedAt: timestamp("link_dismissed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

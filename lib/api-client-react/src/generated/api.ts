@@ -10099,7 +10099,7 @@ export const useAddAcademyMember = <TError = ErrorType<void>,
 
 export const getRemoveAcademyMemberRoleUrl = (academyId: number,
     userId: number,
-    role: 'owner' | 'coach',) => {
+    role: 'owner' | 'manager' | 'coach',) => {
 
 
 
@@ -10112,7 +10112,7 @@ export const getRemoveAcademyMemberRoleUrl = (academyId: number,
  */
 export const removeAcademyMemberRole = async (academyId: number,
     userId: number,
-    role: 'owner' | 'coach', options?: RequestInit): Promise<void> => {
+    role: 'owner' | 'manager' | 'coach', options?: RequestInit): Promise<void> => {
 
   return customFetch<void>(getRemoveAcademyMemberRoleUrl(academyId,userId,role),
   {
@@ -10127,8 +10127,8 @@ export const removeAcademyMemberRole = async (academyId: number,
 
 
 export const getRemoveAcademyMemberRoleMutationOptions = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'coach'}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'coach'}, TContext> => {
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'manager' | 'coach'}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'manager' | 'coach'}, TContext> => {
 
 const mutationKey = ['removeAcademyMemberRole'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -10140,7 +10140,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAcademyMemberRole>>, {academyId: number;userId: number;role: 'owner' | 'coach'}> = (props) => {
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removeAcademyMemberRole>>, {academyId: number;userId: number;role: 'owner' | 'manager' | 'coach'}> = (props) => {
           const {academyId,userId,role} = props ?? {};
 
           return  removeAcademyMemberRole(academyId,userId,role,requestOptions)
@@ -10161,11 +10161,11 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
  * @summary Remove one academy role assignment without removing other roles
  */
 export const useRemoveAcademyMemberRole = <TError = ErrorType<void>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'coach'}, TContext>, request?: SecondParameter<typeof customFetch>}
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removeAcademyMemberRole>>, TError,{academyId: number;userId: number;role: 'owner' | 'manager' | 'coach'}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof removeAcademyMemberRole>>,
         TError,
-        {academyId: number;userId: number;role: 'owner' | 'coach'},
+        {academyId: number;userId: number;role: 'owner' | 'manager' | 'coach'},
         TContext
       > => {
       return useMutation(getRemoveAcademyMemberRoleMutationOptions(options));

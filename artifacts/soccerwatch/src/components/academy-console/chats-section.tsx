@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Check, CheckCheck, Clock, HelpCircle, Loader2, MessagesSquare, Search, Send, Smartphone, UserRoundCog, X } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, BellOff, Check, CheckCheck, Clock, EyeOff, HelpCircle, Loader2, MessagesSquare, MoreVertical, Search, Send, ShieldOff, Smartphone, UserRoundCog, X } from "lucide-react";
+import { useTeamCopy } from "@/i18n/team-strings";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePeopleCopy } from "@/i18n/people-strings";
 import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
-import { useChatThread, useChats, useSendChat, useWhatsappOverview, type ChatSummary } from "@/lib/academy-whatsapp-api";
+import { useChatState, useChatThread, useChatWho, useChats, useHiddenChats, useSendChat, useWhatsappOverview, type ChatState, type ChatSummary } from "@/lib/academy-whatsapp-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,28 +26,36 @@ function StatusTick({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5" aria-hidden="true" />;
 }
 
-export function AcademyChatsSection({ academyId, isOwner, initialPhone }: { academyId: number; isOwner: boolean; initialPhone?: string | null }) {
+type ChatFilter = "all" | "unread" | "unknown" | "archived";
+
+export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwner, initialPhone }: { academyId: number; isOwner: boolean; canManageChats?: boolean; initialPhone?: string | null }) {
   const copy = usePeopleCopy();
+  const team = useTeamCopy();
   const chats = useChats(academyId);
   const overview = useWhatsappOverview(academyId);
   const [selected, setSelected] = useState<string | null>(initialPhone ?? null);
-  const [filter, setFilter] = useState<"all" | "unread" | "unknown">("all");
+  const [filter, setFilter] = useState<ChatFilter>("all");
   const [query, setQuery] = useState("");
+  const [hiddenOpen, setHiddenOpen] = useState(false);
 
   useEffect(() => { if (initialPhone) setSelected(initialPhone); }, [initialPhone]);
 
+  // Blocked chats live under "Hidden chats"; archived ones under their own filter.
+  const visible = useMemo(() => (chats.data ?? []).filter((c) => !c.blocked), [chats.data]);
+  const archivedCount = visible.filter((c) => c.archived).length;
   const list = useMemo(() => {
     const q = query.trim().toLocaleLowerCase();
-    return (chats.data ?? []).filter((c) => {
-      if (filter === "unread" && c.unread === 0) return false;
+    return visible.filter((c) => {
+      if (filter === "archived" ? !c.archived : c.archived) return false;
+      if (filter === "unread" && (c.unread === 0 || c.muted)) return false;
       if (filter === "unknown" && c.contact && c.contact.players.length > 0 && c.contact.kind !== "unknown") return false;
       if (!q) return true;
       const hay = [c.contact?.name, c.display, c.phone, ...(c.contact?.players.map((p) => p.playerName) ?? []), ...(c.contact?.tags ?? [])].join(" ").toLocaleLowerCase();
       return hay.includes(q);
     });
-  }, [chats.data, filter, query]);
+  }, [visible, filter, query]);
 
-  const unknownCount = (chats.data ?? []).filter((c) => !c.contact || c.contact.kind === "unknown" || c.contact.players.length === 0).length;
+  const unknownCount = visible.filter((c) => !c.archived && (!c.contact || c.contact.kind === "unknown" || c.contact.players.length === 0)).length;
 
   return (
     <section className="space-y-4" data-testid="academy-chats" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
@@ -64,11 +74,12 @@ export function AcademyChatsSection({ academyId, isOwner, initialPhone }: { acad
               <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={copy.chats.search} className="min-h-10 ps-9" data-testid="input-chat-search" />
             </div>
             <div className="flex gap-1.5">
-              {(["all", "unread", "unknown"] as const).map((f) => (
+              {(["all", "unread", "unknown", "archived"] as const).filter((f) => f !== "archived" || archivedCount > 0).map((f) => (
                 <button key={f} type="button" onClick={() => setFilter(f)}
                   className={cn("min-h-8 rounded-full px-3 text-xs font-semibold", filter === f ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")}
                   data-testid={`chat-filter-${f}`}>
-                  {copy.chats.filters[f]}{f === "unknown" && unknownCount > 0 ? ` · ${unknownCount}` : ""}
+                  {f === "archived" ? team.chat.archived : copy.chats.filters[f]}
+                  {f === "unknown" && unknownCount > 0 ? ` · ${unknownCount}` : ""}{f === "archived" ? ` · ${archivedCount}` : ""}
                 </button>
               ))}
             </div>
@@ -78,12 +89,17 @@ export function AcademyChatsSection({ academyId, isOwner, initialPhone }: { acad
               : list.length === 0 ? <p className="p-6 text-center text-sm leading-6 text-muted-text">{copy.chats.empty}</p>
                 : list.map((c) => <ChatRow key={c.phone} chat={c} active={selected === c.phone} onClick={() => setSelected(c.phone)} />)}
           </div>
+          {canManageChats && (
+            <button type="button" onClick={() => setHiddenOpen(true)} className="flex items-center gap-2 border-t border-line px-3 py-2.5 text-xs text-muted-text hover:text-text" data-testid="button-hidden-chats">
+              <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />{team.chat.hidden}
+            </button>
+          )}
         </div>
 
         {/* Thread */}
         <div className={cn("min-h-0", selected ? "flex" : "hidden md:flex")}>
           {selected ? (
-            <Thread academyId={academyId} phone={selected} isOwner={isOwner} onBack={() => setSelected(null)} />
+            <Thread academyId={academyId} phone={selected} isOwner={isOwner} canManage={canManageChats} onBack={() => setSelected(null)} onHidden={() => setSelected(null)} />
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-text">
               <MessagesSquare className="h-10 w-10" aria-hidden="true" />
@@ -92,7 +108,42 @@ export function AcademyChatsSection({ academyId, isOwner, initialPhone }: { acad
           )}
         </div>
       </div>
+      {canManageChats && <HiddenChatsSheet academyId={academyId} open={hiddenOpen} onOpenChange={setHiddenOpen} />}
     </section>
+  );
+}
+
+/** Personal and blocked numbers, so the owner can bring them back. */
+function HiddenChatsSheet({ academyId, open, onOpenChange }: { academyId: number; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const copy = useTeamCopy();
+  const hidden = useHiddenChats(academyId, open);
+  const state = useChatState(academyId);
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent side={copy.locale === "ar" ? "left" : "right"} className="w-full overflow-y-auto border-line bg-surface text-text sm:max-w-md" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
+        <SheetHeader className="px-8 text-start">
+          <SheetTitle>{copy.chat.hidden}</SheetTitle>
+          <SheetDescription className="text-start">{copy.chat.personalConfirm}</SheetDescription>
+        </SheetHeader>
+        <ul className="mt-4 divide-y divide-line px-4">
+          {(hidden.data ?? []).length === 0 && <li className="py-4 text-sm text-muted-text">{copy.chat.noHidden}</li>}
+          {(hidden.data ?? []).map((h) => (
+            <li key={h.phone} className="flex items-center gap-2 py-3">
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-semibold" dir="auto">{h.name || h.display}</span>
+                <span className="text-xs text-muted-text" dir="ltr">{h.display}</span>
+              </span>
+              {h.personal && <span className="rounded-full bg-raised px-2 py-0.5 text-[11px] text-muted-text">{copy.chat.personalTag}</span>}
+              {h.blocked && <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] text-red-300">{copy.chat.blockedTag}</span>}
+              <Button type="button" size="sm" variant="ghost" disabled={state.isPending}
+                onClick={() => state.mutate({ phone: h.phone, state: { ...(h.personal ? { personal: false } : {}), ...(h.blocked ? { blocked: false } : {}) } })}>
+                {copy.chat.restore}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -117,15 +168,20 @@ function ChatRow({ chat, active, onClick }: { chat: ChatSummary; active: boolean
         <span className="mt-0.5 flex items-center gap-1.5">
           {chat.lastDirection === "out" && <span className="text-muted-text"><StatusTick status={chat.lastStatus} /></span>}
           <span className="truncate text-xs text-muted-text" dir="auto">{chat.lastBody}</span>
-          {chat.unread > 0 && <span className="ms-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-floodlight px-1.5 text-[10px] font-bold text-void">{chat.unread}</span>}
+          {chat.muted && <BellOff className="ms-auto h-3.5 w-3.5 shrink-0 text-muted-text" aria-label="muted" />}
+          {chat.unread > 0 && <span className={cn("grid h-5 min-w-5 shrink-0 place-items-center rounded-full px-1.5 text-[10px] font-bold", chat.muted ? "bg-raised text-muted-text" : "ms-auto bg-floodlight text-void")}>{chat.unread}</span>}
         </span>
       </span>
     </button>
   );
 }
 
-function Thread({ academyId, phone, isOwner, onBack }: { academyId: number; phone: string; isOwner: boolean; onBack: () => void }) {
+function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { academyId: number; phone: string; isOwner: boolean; canManage: boolean; onBack: () => void; onHidden: () => void }) {
   const copy = usePeopleCopy();
+  const team = useTeamCopy();
+  const chatState = useChatState(academyId);
+  const who = useChatWho(academyId);
+  const [confirm, setConfirm] = useState<null | "personal" | "block">(null);
   const waCopy = useWhatsappCopy();
   const thread = useChatThread(academyId, phone);
   const send = useSendChat(academyId, phone);
@@ -165,14 +221,63 @@ function Thread({ academyId, phone, isOwner, onBack }: { academyId: number; phon
           {contact && <RelationshipChips contact={contact} className="mt-1" />}
         </button>
         <Button type="button" variant="outline" size="sm" onClick={() => setInfoOpen(true)} data-testid="button-chat-info"><UserRoundCog className="me-1.5 h-4 w-4" aria-hidden="true" />{copy.contact.editTitle}</Button>
+        {canManage && data && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon" aria-label={team.chat.actions} data-testid="button-chat-actions"><MoreVertical className="h-4 w-4" aria-hidden="true" /></Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-48">
+              <DropdownMenuItem onSelect={() => chatState.mutate({ phone, state: { archived: !data.archived } as ChatState }, { onSuccess: () => { if (!data.archived) onHidden(); } })}>
+                <Archive className="me-2 h-4 w-4" aria-hidden="true" />{data.archived ? team.chat.unarchive : team.chat.archive}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => chatState.mutate({ phone, state: { muted: !data.muted } })}>
+                <BellOff className="me-2 h-4 w-4" aria-hidden="true" />{data.muted ? team.chat.unmute : team.chat.mute}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => (data.blocked ? chatState.mutate({ phone, state: { blocked: false } }) : setConfirm("block"))} className="text-red-300">
+                <ShieldOff className="me-2 h-4 w-4" aria-hidden="true" />{data.blocked ? team.chat.unblock : team.chat.block}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setConfirm("personal")}>
+                <EyeOff className="me-2 h-4 w-4" aria-hidden="true" />{team.chat.personal}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
-      {unknown && contact && (
-        <div className="border-b border-amber-300/20 bg-amber-300/5 p-3" data-testid="chat-who-is-this">
-          <p className="text-sm font-semibold text-amber-100">{copy.chats.unknownTitle}</p>
-          <p className="mb-2 text-xs text-muted-text">{copy.chats.unknownBody}</p>
-          <LinkPlayerForm academyId={academyId} contactId={contact.id} />
+      {confirm && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-red-400/30 bg-red-500/5 p-3 text-sm" role="alertdialog" data-testid="chat-confirm">
+          <p className="w-full text-text">{confirm === "personal" ? team.chat.personalConfirm : team.chat.blockConfirm}</p>
+          <Button type="button" size="sm" className="bg-red-500 font-bold text-white hover:bg-red-600" disabled={chatState.isPending}
+            onClick={() => chatState.mutate({ phone, state: confirm === "personal" ? { personal: true } : { blocked: true } }, { onSuccess: () => { setConfirm(null); onHidden(); } })}>
+            {team.chat.confirm}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setConfirm(null)}>{team.chat.cancel}</Button>
         </div>
+      )}
+      {chatState.isError && <p className="border-b border-line px-3 py-2 text-xs text-red-400" role="alert">{(chatState.error as Error).message}</p>}
+      {data?.blocked && <p className="border-b border-line bg-red-500/5 px-3 py-2 text-xs text-red-300">{team.chat.blockedNote}</p>}
+
+      {unknown && contact && !data?.linkLater && contact.kind !== "other" && (
+        <div className="border-b border-amber-300/20 bg-amber-300/5 p-3" data-testid="chat-who-is-this">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold text-amber-100">{copy.chats.unknownTitle}</p>
+              <p className="mb-2 text-xs text-muted-text">{copy.chats.unknownBody}</p>
+            </div>
+            <button type="button" className="text-muted-text hover:text-text" aria-label={team.chat.later} onClick={() => who.mutate({ phone, action: "later" })}><X className="h-4 w-4" aria-hidden="true" /></button>
+          </div>
+          <LinkPlayerForm academyId={academyId} contactId={contact.id} />
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button type="button" size="sm" variant="ghost" className="border border-line" disabled={who.isPending} onClick={() => who.mutate({ phone, action: "none" })} data-testid="button-who-none">{team.chat.noLink}</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={who.isPending} onClick={() => who.mutate({ phone, action: "later" })} data-testid="button-who-later">{team.chat.later}</Button>
+          </div>
+        </div>
+      )}
+      {unknown && contact && (data?.linkLater || contact.kind === "other") && contact.players.length === 0 && (
+        <button type="button" onClick={() => who.mutate({ phone, action: "ask" })} className="flex items-center gap-1.5 border-b border-line px-3 py-1.5 text-xs text-muted-text hover:text-text" data-testid="button-who-again">
+          <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />{team.chat.linkAgain}
+        </button>
       )}
       {data?.optedOut && <p className="border-b border-line bg-raised px-3 py-2 text-xs text-muted-text">{copy.chats.optedOut}</p>}
 

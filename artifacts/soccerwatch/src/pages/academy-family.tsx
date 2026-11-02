@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useParams, useSearch } from "wouter";
 import { AnimatePresence } from "framer-motion";
 import {
@@ -20,6 +21,7 @@ import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { nextFamilyClaimKey } from "@/lib/academy-family-claim";
 import { getRecordingViewInput } from "@/lib/recording-view-tracking";
 import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
+import { fetchFamilyScreens } from "@/lib/academy-team-api";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -204,6 +206,14 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
   const matchesCopy = useMatchesCopy();
   const familyMatches = useFamilyMatches(source === "me" && Boolean(user) && !isGuest);
   const familyToken = params.token ?? "";
+  // Screens the academy owner has switched off for this viewer (parent or player). The API strips their data too.
+  const familyScreens = useQuery({
+    queryKey: ["academy-family-screens", family?.player.id ?? null],
+    queryFn: () => fetchFamilyScreens(family?.player.id),
+    enabled: source === "me" && Boolean(family),
+    staleTime: 30_000,
+  });
+  const shows = (screen: string) => !familyScreens.data || familyScreens.data.screens.includes(screen);
 
   useEffect(() => {
     if (source !== "token" || authLoading || !user || isGuest) return;
@@ -429,7 +439,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
               </div>
             </section>
             <div className="fp-grid">
-              <section className="fp-card" data-testid="family-schedule">
+              {shows("schedule") && <section className="fp-card" data-testid="family-schedule">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.schedule}</h2><p className="fp-card-sub">{labels.scheduleHint}</p></div><span className="fp-count">{upcomingSessions.length}</span></div>
                 {upcomingSessions.length ? <div className="fp-sessions">{upcomingSessions.map((session, index) => {
                   const date = new Date(session.startsAt);
@@ -439,8 +449,8 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                     {session.type === "match" && session.ownScore !== null && session.opponentScore !== null ? <span className="fp-score" aria-label={labels.score}>{session.ownScore} : {session.opponentScore}</span> : <span className="fp-session-type">{session.type === "match" ? labels.match : labels.training}</span>}
                   </article>;
                 })}</div> : <div className="fp-empty" data-testid="family-schedule-empty">{labels.noSessions}</div>}
-              </section>
-              <section className="fp-card" data-testid="family-session-footage">
+              </section>}
+              {shows("footage") && <section className="fp-card" data-testid="family-session-footage">
                 <div className="fp-card-head">
                   <div><h2 className="fp-card-title">{labels.footage}</h2><p className="fp-card-sub">{labels.footageHint}</p></div>
                   <span className="fp-count">{footageSessions.reduce((total, session) => total + session.recordings.length, 0)}</span>
@@ -488,8 +498,8 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                     </button>
                   </article>);
                 })}</div> : <div className="fp-empty" data-testid="family-session-footage-empty">{labels.noFootage}</div>}
-              </section>
-              {(familyMatches.data?.length ?? 0) > 0 && <section className="fp-card" data-testid="family-match-pages">
+              </section>}
+              {shows("matches") && (familyMatches.data?.length ?? 0) > 0 && <section className="fp-card" data-testid="family-match-pages">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{matchesCopy.family.matchPages}</h2><p className="fp-card-sub">{matchesCopy.family.matchPagesHint}</p></div><span className="fp-count">{familyMatches.data!.length}</span></div>
                 <div className="fp-sessions">{familyMatches.data!.slice(0, 8).map((match) => {
                   const date = new Date(match.startsAt);
@@ -502,7 +512,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                   </article>;
                 })}</div>
               </section>}
-              <section className="fp-card" data-testid="family-attendance">
+              {shows("attendance") && <section className="fp-card" data-testid="family-attendance">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.attendance}{attendanceRate != null ? ` · ${new Intl.NumberFormat(locale).format(attendanceRate)}%` : ""}</h2><p className="fp-card-sub">{labels.attendanceHint}</p></div><span className="fp-count">{family.attendance.length}</span></div>
                 <div className="fp-att-summary" data-testid="family-attendance-summary">
                   {[
@@ -516,14 +526,14 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                   <span><span className="fp-att-date">{formatDate(item.startsAt, locale, { day: "numeric", month: "short", year: "numeric" })} · {item.location}</span><strong className="fp-att-type">{item.type === "match" ? labels.match : labels.training}</strong></span>
                   <span className={`fp-status ${item.status}`} data-testid={`family-attendance-status-${index}`}>{statusLabel(item.status)}</span>
                 </div>)}</div> : <div className="fp-empty" data-testid="family-attendance-empty">—</div>}
-              </section>
-              <section className="fp-card" data-testid="family-announcements">
+              </section>}
+              {shows("news") && <section className="fp-card" data-testid="family-announcements">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.news}</h2></div><span className="fp-count">{family.announcements.length}</span></div>
                 {family.announcements.length ? <div className="fp-news-list">{family.announcements.map((item, index) => <article className="fp-news-item" key={`${item.createdAt}-${index}`} data-testid={`family-announcement-${index}`}>
                   <h3 dir="auto">{item.title}</h3><p dir="auto">{item.body}</p><time dateTime={item.createdAt}>{formatDate(item.createdAt, locale, { day: "numeric", month: "long", year: "numeric" })}</time>
                 </article>)}</div> : <div className="fp-empty" data-testid="family-announcements-empty">{labels.noNews}</div>}
-              </section>
-              <section className="fp-card fp-finance" data-testid="family-finance">
+              </section>}
+              {shows("fees") && <section className="fp-card fp-finance" data-testid="family-finance">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.fees}</h2><p className="fp-card-sub">{family.finance ? labels.monthly : labels.noSubscription}</p></div><span className="fp-count"><WalletCards size={15} aria-hidden="true" /></span></div>
                 {family.finance ? <>
                   <div className="fp-pay-status"><Check size={15} aria-hidden="true" />{financeStatus === "paid" ? labels.paid : financeStatus === "expiring" ? labels.expiring : financeStatus === "expired" ? labels.expired : labels.noSubscription}</div>
@@ -534,8 +544,8 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                     {family.finance.outstandingFils > 0 ? <div><dt>{labels.balance}</dt><dd className="due" data-testid="family-outstanding-balance">{formatMoney(family.finance.outstandingFils, locale)}</dd></div> : <div><dt>{labels.balance}</dt><dd data-testid="family-outstanding-balance">{labels.clear}</dd></div>}
                   </dl>
                 </> : <div className="fp-pay-status"><Trophy size={15} aria-hidden="true" />{labels.noSubscription}</div>}
-              </section>
-              <section className="fp-card" data-testid="family-payments">
+              </section>}
+              {shows("payments") && <section className="fp-card" data-testid="family-payments">
                 <div className="fp-card-head">
                   <div><h2 className="fp-card-title">{labels.payments}</h2></div>
                   <span className="fp-count">{family.payments.length}</span>
@@ -567,7 +577,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                     })}
                   </div>
                 ) : <div className="fp-empty" data-testid="family-payments-empty">{labels.noPayments}</div>}
-              </section>
+              </section>}
             </div>
             <footer className="fp-footer"><span>{labels.privacy}</span>{family.academy.contactPhone && <a href={`tel:${family.academy.contactPhone}`} data-testid="link-contact-academy">{labels.contact}</a>}</footer>
           </div>

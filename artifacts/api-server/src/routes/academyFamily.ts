@@ -25,6 +25,7 @@ import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBri
 import { financePlayersForSquad } from "./academyFinance";
 import { allowAcademyFamilyClaim } from "./academyJoin";
 import { academyFootageSummary } from "../lib/academyFootage";
+import { FAMILY_SCREENS, familyScreensFor, type FamilyScreen } from "../lib/academyPermissions";
 
 const router: IRouter = Router();
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -143,6 +144,28 @@ type FamilyPlayer = Awaited<ReturnType<typeof findFamilyPlayersForUser>>[number]
 type FamilyWindow = Extract<ReturnType<typeof parseFamilyWindow>, { ok: true }>;
 
 async function readFamilyView(
+  player: FamilyPlayer,
+  linkedPlayers: FamilyPlayer[],
+  window: FamilyWindow,
+  screens: FamilyScreen[] = [...FAMILY_SCREENS],
+) {
+  const view = await readFullFamilyView(player, linkedPlayers, window);
+  // What the academy owner hid from this viewer's role (Academy console → Team) isn't sent.
+  const shows = (s: FamilyScreen) => screens.includes(s);
+  return {
+    ...view,
+    finance: shows("fees") ? view.finance : null,
+    payments: shows("payments") ? view.payments : [],
+    announcements: shows("news") ? view.announcements : [],
+    attendance: shows("attendance") ? view.attendance : [],
+    attendanceSummary: shows("attendance") ? view.attendanceSummary : { present: 0, late: 0, absent: 0, excused: 0, markedTotal: 0, percentPresent: null },
+    sessions: shows("schedule") || shows("footage")
+      ? view.sessions.map((session) => (shows("footage") ? session : { ...session, recordings: [] }))
+      : [],
+  };
+}
+
+async function readFullFamilyView(
   player: FamilyPlayer,
   linkedPlayers: FamilyPlayer[],
   window: FamilyWindow,
@@ -460,7 +483,27 @@ router.get("/academy/family/me", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(await readFamilyView(player, linkedPlayers, window));
+  const role = player.userId === user.id ? "player" : "parent";
+  res.json(await readFamilyView(player, linkedPlayers, window, await familyScreensFor(player.academyId, role)));
+});
+
+/** Which family-page screens this viewer sees for a player (the academy owner decides per role). */
+router.get("/academy/family/screens", async (req, res): Promise<void> => {
+  setNoStore(res);
+  const user = await getLocalUserRecord(req);
+  if (!user || user.isGuest || user.isDisabled) {
+    unauthenticatedResponse(res, req);
+    return;
+  }
+  const linked = await findFamilyPlayersForUser(user.id);
+  const wanted = Number(req.query.playerId);
+  const player = Number.isSafeInteger(wanted) && wanted > 0 ? linked.find((p) => p.id === wanted) : linked[0];
+  if (!player) {
+    res.status(404).json({ error: "No active academy player is linked to this account" });
+    return;
+  }
+  const role = player.userId === user.id ? "player" : "parent";
+  res.json({ role, screens: await familyScreensFor(player.academyId, role) });
 });
 
 export default router;

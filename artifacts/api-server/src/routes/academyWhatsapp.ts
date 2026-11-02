@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import {
@@ -20,6 +20,7 @@ import {
   type AcademyConsoleUser,
 } from "../lib/academyAccess";
 import { logger } from "../lib/logger";
+import { staffAccessFor } from "../lib/academyPermissions";
 import { runScheduledAutomations } from "../lib/whatsapp/automations";
 import { maybeSyncMetaAds } from "../lib/meta/sync";
 import {
@@ -39,6 +40,7 @@ import {
   enqueueMessages,
   getWhatsappSettings,
   handleWahaWebhook,
+  blockedPhones,
   optedOutPhones,
   saveWhatsappSettings,
   senderSessionFor,
@@ -426,8 +428,10 @@ router.post("/academy/console/academies/:academyId/whatsapp/preview", async (req
   if (!(await validateAudience(access.academyId, body.data, res))) return;
   const resolved = await resolveAudience(access.academyId, body.data);
   const optOuts = await optedOutPhones(access.academyId);
+  const blocked = await blockedPhones(access.academyId);
   const merged = mergeByPhone(resolved.recipients);
-  const reachable = merged.filter((r) => !optOuts.has(r.phone));
+  // Blocked numbers are skipped at dispatch; count them with the opted-out so the preview matches what sends.
+  const reachable = merged.filter((r) => !optOuts.has(r.phone) && !blocked.has(r.phone));
   res.json({
     count: reachable.length,
     optedOut: merged.length - reachable.length,
@@ -897,7 +901,7 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
       count(*) filter (where m.direction = 'in' and m.created_at > coalesce(c.last_read_at, 'epoch'::timestamptz))::int as "unread"
     from academy_whatsapp_messages m
     left join academy_contacts c on c.academy_id = m.academy_id and c.phone = m.phone
-    where m.academy_id = ${access.academyId}
+    where m.academy_id = ${access.academyId} and c.personal_at is null
     group by m.phone, c.last_read_at
     order by max(m.created_at) desc
     limit 300
@@ -917,9 +921,111 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
       lastDirection: r.lastDirection,
       lastStatus: r.lastStatus,
       unread: r.unread,
+      archived: Boolean(contact?.archivedAt),
+      muted: contact?.muted ?? false,
+      blocked: Boolean(contact?.blockedAt),
+      linkLater: Boolean(contact?.linkDismissedAt),
       contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
     };
   }));
+});
+
+// ─── Chat controls: archive, mute, block, personal, "who is this" ────────────
+
+/** Archive, mute, block and personal are the owner's, unless he gave "chats.manage" to the role. */
+async function canManageChats(access: Access): Promise<boolean> {
+  const staff = await staffAccessFor(access.user.id, access.academyId);
+  return Boolean(staff?.permissions.includes("chats.manage"));
+}
+
+const ChatStateBody = z.object({
+  archived: z.boolean().optional(),
+  muted: z.boolean().optional(),
+  blocked: z.boolean().optional(),
+  personal: z.boolean().optional(),
+});
+
+router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/state", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const phone = phoneParam(req, res);
+  if (!phone) return;
+  const body = ChatStateBody.safeParse(req.body ?? {});
+  if (!body.success || Object.keys(body.data).length === 0) {
+    res.status(400).json({ error: "Nothing to change" });
+    return;
+  }
+  if (!(await canManageChats(access))) {
+    res.status(403).json({ error: "Only the academy owner can archive, mute, block or hide chats, unless he gives your role that permission.", code: "chats_manage" });
+    return;
+  }
+  const contact = await upsertContact(access.academyId, phone, { source: "chat" });
+  const now = new Date();
+  const patch: Partial<typeof academyContactsTable.$inferInsert> = { updatedAt: now };
+  if (body.data.archived !== undefined) patch.archivedAt = body.data.archived ? now : null;
+  if (body.data.muted !== undefined) patch.muted = body.data.muted;
+  if (body.data.blocked !== undefined) patch.blockedAt = body.data.blocked ? now : null;
+  if (body.data.personal !== undefined) patch.personalAt = body.data.personal ? now : null;
+  const [row] = await db.update(academyContactsTable).set(patch).where(eq(academyContactsTable.id, contact.id)).returning();
+  if (body.data.personal) {
+    // A personal chat leaves Replay: what was stored goes, nothing new is kept.
+    await db.delete(academyWhatsappMessagesTable).where(and(
+      eq(academyWhatsappMessagesTable.academyId, access.academyId),
+      eq(academyWhatsappMessagesTable.phone, phone),
+      inArray(academyWhatsappMessagesTable.status, ["sent", "delivered", "read", "received", "failed", "skipped"]),
+    ));
+  }
+  if (body.data.blocked) {
+    // Nothing waiting goes out to a blocked number.
+    await db.update(academyWhatsappMessagesTable).set({ status: "skipped", error: "Blocked" }).where(and(
+      eq(academyWhatsappMessagesTable.academyId, access.academyId),
+      eq(academyWhatsappMessagesTable.phone, phone),
+      eq(academyWhatsappMessagesTable.status, "queued"),
+    ));
+  }
+  res.json({ phone, archived: Boolean(row.archivedAt), muted: row.muted, blocked: Boolean(row.blockedAt), personal: Boolean(row.personalAt) });
+});
+
+/** Numbers hidden as personal or blocked, so they can be brought back. */
+router.get("/academy/console/academies/:academyId/whatsapp/hidden", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  if (!(await canManageChats(access))) {
+    res.status(403).json({ error: "Only the academy owner can see hidden chats", code: "chats_manage" });
+    return;
+  }
+  const rows = await db.select().from(academyContactsTable).where(and(
+    eq(academyContactsTable.academyId, access.academyId),
+    or(isNotNull(academyContactsTable.personalAt), isNotNull(academyContactsTable.blockedAt)),
+  ));
+  res.json(rows.map((c) => ({ phone: c.phone, display: formatPhoneForDisplay(c.phone), name: c.name, personal: Boolean(c.personalAt), blocked: Boolean(c.blockedAt) })));
+});
+
+/** "Who is this?": not linked to any player, or not now. Anyone who can chat may answer it. */
+router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/who", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const phone = phoneParam(req, res);
+  if (!phone) return;
+  const action = req.body?.action;
+  if (action !== "none" && action !== "later" && action !== "ask") {
+    res.status(400).json({ error: "action must be none, later or ask" });
+    return;
+  }
+  const contact = await upsertContact(access.academyId, phone, { source: "chat" });
+  const patch: Partial<typeof academyContactsTable.$inferInsert> = { updatedAt: new Date() };
+  if (action === "later") patch.linkDismissedAt = new Date();
+  if (action === "ask") {
+    patch.linkDismissedAt = null;
+    if (contact.kind === "other") patch.kind = "unknown";
+  }
+  // Not anyone's parent or player: someone else (a supplier, a friend of the academy…).
+  if (action === "none") {
+    patch.linkDismissedAt = new Date();
+    if (contact.kind === "unknown") patch.kind = "other";
+  }
+  const [row] = await db.update(academyContactsTable).set(patch).where(eq(academyContactsTable.id, contact.id)).returning();
+  res.json({ phone, kind: row.kind, linkLater: Boolean(row.linkDismissedAt) });
 });
 
 router.get("/academy/console/academies/:academyId/whatsapp/chats/:phone", async (req, res): Promise<void> => {
@@ -954,7 +1060,12 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats/:phone", async 
     display: formatPhoneForDisplay(phone),
     contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
     optedOut: optOuts.has(phone),
-    messages: messages.reverse(),
+    archived: Boolean(contact?.archivedAt),
+    muted: contact?.muted ?? false,
+    blocked: Boolean(contact?.blockedAt),
+    linkLater: Boolean(contact?.linkDismissedAt),
+    canManage: await canManageChats(access),
+    messages: contact?.personalAt ? [] : messages.reverse(),
   });
 });
 
@@ -976,6 +1087,10 @@ router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/message
     return;
   }
   const contact = await upsertContact(access.academyId, phone, { source: "chat" });
+  if (contact.blockedAt) {
+    res.status(409).json({ error: "This number is blocked. Unblock it to message it." });
+    return;
+  }
   const [message] = await db.insert(academyWhatsappMessagesTable).values({
     academyId: access.academyId,
     kind: "chat",
@@ -999,7 +1114,7 @@ router.get("/academy/console/academies/:academyId/contacts", async (req, res): P
   const access = await academyAccess(req, res);
   if (!access) return;
   await syncAcademyContacts(access.academyId);
-  const contacts = await listContacts(access.academyId);
+  const contacts = (await listContacts(access.academyId)).filter((c) => !c.personalAt);
   const optOuts = await optedOutPhones(access.academyId);
   res.json(contacts.map((c) => ({
     id: c.id,
@@ -1014,6 +1129,7 @@ router.get("/academy/console/academies/:academyId/contacts", async (req, res): P
     players: c.players,
     lastMessageAt: c.lastMessageAt,
     optedOut: optOuts.has(c.phone),
+    blocked: Boolean(c.blockedAt),
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   })));

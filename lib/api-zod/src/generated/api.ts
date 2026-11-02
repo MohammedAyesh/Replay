@@ -2348,7 +2348,7 @@ export const RejectAcademyConsoleRegistrationResponse = zod.void()
 export const GetAcademyConsoleMembershipsResponseItem = zod.object({
   "academyId": zod.number(),
   "academyName": zod.string(),
-  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1)
+  "roles": zod.array(zod.enum(['owner', 'manager', 'coach'])).min(1)
 })
 export const GetAcademyConsoleMembershipsResponse = zod.array(GetAcademyConsoleMembershipsResponseItem)
 
@@ -2381,7 +2381,7 @@ export const getAcademyConsoleDashboardResponseCollectThisWeekOneTotalFilsMin = 
 export const GetAcademyConsoleDashboardResponse = zod.object({
   "academyId": zod.number(),
   "academyName": zod.string(),
-  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1),
+  "roles": zod.array(zod.enum(['owner', 'manager', 'coach'])).min(1),
   "squadCount": zod.number().min(getAcademyConsoleDashboardResponseSquadCountMin),
   "activePlayerCount": zod.number().min(getAcademyConsoleDashboardResponseActivePlayerCountMin),
   "upcomingSessionCount": zod.number().min(getAcademyConsoleDashboardResponseUpcomingSessionCountMin),
@@ -4630,7 +4630,7 @@ export const ListAcademyMembersResponseItem = zod.object({
   "userId": zod.number(),
   "name": zod.string(),
   "email": zod.string().email(),
-  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1)
+  "roles": zod.array(zod.enum(['owner', 'manager', 'coach'])).min(1)
 })
 export const ListAcademyMembersResponse = zod.array(ListAcademyMembersResponseItem)
 
@@ -4647,7 +4647,7 @@ export const AddAcademyMemberParams = zod.object({
 
 export const AddAcademyMemberBody = zod.object({
   "email": zod.string().email(),
-  "role": zod.enum(['owner', 'coach'])
+  "role": zod.enum(['owner', 'manager', 'coach'])
 })
 
 
@@ -4657,7 +4657,7 @@ export const AddAcademyMemberResponse = zod.object({
   "userId": zod.number(),
   "name": zod.string(),
   "email": zod.string().email(),
-  "roles": zod.array(zod.enum(['owner', 'coach'])).min(1)
+  "roles": zod.array(zod.enum(['owner', 'manager', 'coach'])).min(1)
 })
 
 
@@ -4671,7 +4671,7 @@ export const AddAcademyMemberResponse = zod.object({
 export const RemoveAcademyMemberRoleParams = zod.object({
   "academyId": zod.coerce.number().min(1),
   "userId": zod.coerce.number().min(1),
-  "role": zod.enum(['owner', 'coach'])
+  "role": zod.enum(['owner', 'manager', 'coach'])
 })
 
 export const RemoveAcademyMemberRoleResponse = zod.void()

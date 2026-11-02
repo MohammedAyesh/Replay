@@ -5,7 +5,7 @@ import { getLocalUserRecord, unauthenticatedResponse } from "./clerkUserBridge";
 
 export type AcademyConsoleUser = NonNullable<Awaited<ReturnType<typeof getLocalUserRecord>>>;
 export type AcademyConsoleRole = typeof academyMembersTable.$inferSelect.role;
-const ACADEMY_ROLE_ORDER: AcademyConsoleRole[] = ["owner", "coach"];
+const ACADEMY_ROLE_ORDER: AcademyConsoleRole[] = ["owner", "manager", "coach"];
 
 export async function requireAcademyConsoleUser(
   req: Request,
@@ -55,7 +55,15 @@ export async function requireAcademyMembership(
   res: Response,
 ): Promise<AcademyConsoleRole[] | null> {
   const roles = await academyRolesForUser(userId, academyId);
-  if (roles.length > 0) return roles;
+  if (roles.length > 0) {
+    // The access gate marks a request in a section this member manages (a manager, or a
+    // coach the owner opened an owner-only section to): he has the owner's controls there.
+    const elevated = (res.locals as { academyElevated?: { academyId: number; userId: number } } | undefined)?.academyElevated;
+    if (elevated && elevated.academyId === academyId && elevated.userId === userId && !roles.includes("owner")) {
+      return ["owner", ...roles];
+    }
+    return roles;
+  }
   res.status(403).json({ error: "Academy membership required" });
   return null;
 }

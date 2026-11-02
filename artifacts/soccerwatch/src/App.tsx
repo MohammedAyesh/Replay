@@ -57,6 +57,7 @@ import AcademyConsole from "@/pages/academy-console";
 import AcademyJoinPage from "@/pages/academy-join";
 import AcademyFamilyPage from "@/pages/academy-family";
 import AcademyMatchPage from "@/pages/academy-match";
+import AcademyInvitePage from "@/pages/academy-invite";
 import WeeklyHighlightPage from "@/pages/weekly-highlight";
 
 const MatchReportDevPreview = import.meta.env.DEV
@@ -526,7 +527,7 @@ function AppRouter() {
   const { locale } = useLocale();
   const [location] = useLocation();
   const isPublicJoinRoute = location.split("?")[0].startsWith("/join/");
-  const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/");
+  const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/") || location.split(/[?#]/)[0].startsWith("/academy/invite/");
   const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute;
   const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me" || location.split(/[?#]/)[0].startsWith("/academy/me/match/");
   // "Is this you?" is a full-screen swipe deck: no app bars around it
@@ -579,6 +580,7 @@ function AppRouter() {
       <Switch>
         <Route path="/join/:code" component={AcademyJoinPage} />
         <Route path="/p/:token"><AcademyFamilyPage source="token" /></Route>
+        <Route path="/academy/invite/:token" component={AcademyInvitePage} />
         <Route path="/" component={Landing} />
         <Route path="/sign-in/*?" component={SignInPage} />
         <Route path="/sign-up/*?" component={SignUpPage} />

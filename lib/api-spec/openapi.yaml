@@ -4038,7 +4038,7 @@ paths:
           required: true
           schema:
             type: string
-            enum: [owner, coach]
+            enum: [owner, manager, coach]
       responses:
         "204":
           description: Role assignment removed
@@ -7121,7 +7121,7 @@ components:
 
     AcademyMemberRole:
       type: string
-      enum: [owner, coach]
+      enum: [owner, manager, coach]
 
     AcademyConsoleMembership:
       type: object

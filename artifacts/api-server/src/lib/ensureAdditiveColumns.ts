@@ -30,6 +30,12 @@ const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   { table: "academy_ad_requests", column: "meta_ads", type: "jsonb" },
   { table: "academy_ad_requests", column: "template_id", type: "integer" },
   { table: "academy_ad_requests", column: "paused_reason", type: "text" },
+  // 0054_academy_team_access_and_chat_controls.sql
+  { table: "academy_contacts", column: "archived_at", type: "timestamp with time zone" },
+  { table: "academy_contacts", column: "muted", type: "boolean DEFAULT false NOT NULL" },
+  { table: "academy_contacts", column: "blocked_at", type: "timestamp with time zone" },
+  { table: "academy_contacts", column: "personal_at", type: "timestamp with time zone" },
+  { table: "academy_contacts", column: "link_dismissed_at", type: "timestamp with time zone" },
 ];
 
 const TABLES: Array<{ table: string; statements: string[] }> = [
@@ -80,11 +86,43 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
         CONSTRAINT "academy_ad_templates_goal_check" CHECK ("goal" in ('whatsapp', 'lead_form')))`,
     ],
   },
+  {
+    table: "academy_access_settings",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "academy_access_settings" (
+        "academy_id" integer PRIMARY KEY CONSTRAINT "academy_access_settings_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+        "sections" jsonb DEFAULT '{}'::jsonb NOT NULL, "permissions" jsonb DEFAULT '{}'::jsonb NOT NULL,
+        "updated_by" integer CONSTRAINT "academy_access_settings_updated_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+        "updated_at" timestamp with time zone DEFAULT now() NOT NULL)`,
+    ],
+  },
+  {
+    table: "academy_staff_invites",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "academy_staff_invites" (
+        "id" serial PRIMARY KEY,
+        "academy_id" integer NOT NULL CONSTRAINT "academy_staff_invites_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+        "role" text NOT NULL, "token" text NOT NULL, "label" text,
+        "created_by" integer CONSTRAINT "academy_staff_invites_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+        "expires_at" timestamp with time zone NOT NULL,
+        "accepted_by" integer CONSTRAINT "academy_staff_invites_accepted_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+        "accepted_at" timestamp with time zone, "revoked_at" timestamp with time zone,
+        "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+        CONSTRAINT "academy_staff_invites_token_unique" UNIQUE ("token"),
+        CONSTRAINT "academy_staff_invites_role_check" CHECK ("role" in ('manager', 'coach')))`,
+      `CREATE INDEX IF NOT EXISTS "academy_staff_invites_academy_idx" ON "academy_staff_invites" ("academy_id")`,
+    ],
+  },
+];
+
+/** Checks that only ever widen what's allowed (0054: academy managers). */
+const WIDENED_CHECKS: Array<{ table: string; name: string; mustContain: string; definition: string }> = [
+  { table: "academy_members", name: "academy_members_role_check", mustContain: "'manager'", definition: `CHECK ("role" in ('owner', 'manager', 'coach'))` },
 ];
 
 /** Returns how many columns and tables it had to add. */
 export async function ensureAdditiveColumns(pool: Pool): Promise<number> {
-  const names = [...new Set([...COLUMNS.map((c) => c.table), ...TABLES.map((t) => t.table)])];
+  const names = [...new Set([...COLUMNS.map((c) => c.table), ...TABLES.map((t) => t.table), ...WIDENED_CHECKS.map((c) => c.table)])];
   const { rows } = await pool.query<{ table_name: string; column_name: string }>(
     `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1)`,
     [names],
@@ -101,6 +139,16 @@ export async function ensureAdditiveColumns(pool: Pool): Promise<number> {
     // A table the publish never created can't take a column; its own feature fails alone.
     if (!tables.has(c.table) || have.has(`${c.table}.${c.column}`)) continue;
     await pool.query(`ALTER TABLE "${c.table}" ADD COLUMN IF NOT EXISTS "${c.column}" ${c.type}`);
+    added += 1;
+  }
+  for (const c of WIDENED_CHECKS) {
+    if (!tables.has(c.table)) continue;
+    const { rows: defs } = await pool.query<{ def: string }>(
+      `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = $1`, [c.name],
+    );
+    if (defs[0]?.def.includes(c.mustContain)) continue;
+    await pool.query(`ALTER TABLE "${c.table}" DROP CONSTRAINT IF EXISTS "${c.name}"`);
+    await pool.query(`ALTER TABLE "${c.table}" ADD CONSTRAINT "${c.name}" ${c.definition}`);
     added += 1;
   }
   return added;

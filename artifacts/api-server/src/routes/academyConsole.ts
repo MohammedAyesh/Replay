@@ -92,18 +92,18 @@ import { logger } from "../lib/logger";
 import { loadSessionSnapshot, onRegistrationApproved, onSessionCancelled, onSessionChanged, onSessionCreated } from "../lib/whatsapp/automations";
 
 const router: IRouter = Router();
-const ROLE_ORDER = ["owner", "coach"] as const;
+const ROLE_ORDER = ["owner", "manager", "coach"] as const;
 const JOIN_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function rawParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
-function sortedRoles(roles: string[]): Array<"owner" | "coach"> {
+function sortedRoles(roles: string[]): Array<"owner" | "manager" | "coach"> {
   return [...new Set(roles)].sort(
     (a, b) => ROLE_ORDER.indexOf(a as (typeof ROLE_ORDER)[number])
       - ROLE_ORDER.indexOf(b as (typeof ROLE_ORDER)[number]),
-  ) as Array<"owner" | "coach">;
+  ) as Array<"owner" | "manager" | "coach">;
 }
 
 async function academySquadSummaries(academyId: number, squadId?: number) {
@@ -403,7 +403,7 @@ async function listAcademyMemberSummaries(academyId: number) {
     userId: number;
     name: string;
     email: string;
-    roles: Array<"owner" | "coach">;
+    roles: Array<"owner" | "manager" | "coach">;
   }>();
 
   for (const row of rows) {

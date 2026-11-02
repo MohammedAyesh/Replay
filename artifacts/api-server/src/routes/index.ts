@@ -55,6 +55,8 @@ import academyMatchesRouter from "./academyMatches";
 import metaAdsRouter from "./metaAds";
 import academyAdsRouter from "./academyAds";
 import academyProfileRouter from "./academyProfile";
+import academyTeamRouter from "./academyTeam";
+import { academyAccessGate } from "./academyAccessGate";
 import academyAdWalletRouter from "./academyAdWallet";
 import academyAdMediaRouter from "./academyAdMedia";
 import academyAdTemplatesRouter from "./academyAdTemplates";
@@ -66,6 +68,8 @@ import weeklyHighlightsRouter from "./weeklyHighlights";
 const router: IRouter = Router();
 
 router.use(healthRouter);
+// Before every academy console route: what the owner lets managers and coaches see and do.
+router.use(academyAccessGate);
 router.use(authRouter);
 router.use(bunnyCollectionsRouter);
 router.use(bunnyVideosRouter);
@@ -99,6 +103,7 @@ router.use(academyMatchesRouter);
 router.use(metaAdsRouter);
 router.use(academyAdsRouter);
 router.use(academyProfileRouter);
+router.use(academyTeamRouter);
 router.use(academyAdWalletRouter);
 router.use(academyAdMediaRouter);
 router.use(academyAdTemplatesRouter);

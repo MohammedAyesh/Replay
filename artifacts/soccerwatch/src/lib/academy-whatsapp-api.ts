@@ -315,6 +315,10 @@ export type ChatSummary = {
   lastDirection: "in" | "out";
   lastStatus: WhatsappMessage["status"];
   unread: number;
+  archived: boolean;
+  muted: boolean;
+  blocked: boolean;
+  linkLater: boolean;
   contact: Contact | null;
 };
 
@@ -323,6 +327,11 @@ export type ChatThread = {
   display: string;
   contact: Contact | null;
   optedOut: boolean;
+  archived: boolean;
+  muted: boolean;
+  blocked: boolean;
+  linkLater: boolean;
+  canManage: boolean;
   messages: Array<Pick<WhatsappMessage, "id" | "direction" | "kind" | "body" | "status" | "error" | "createdAt" | "sentAt">>;
 };
 
@@ -355,6 +364,47 @@ export function useSendChat(academyId: number, phone: string | null) {
       void qc.invalidateQueries({ queryKey: key(academyId, "chat", phone) });
       void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
     },
+  });
+}
+
+export type ChatState = { archived?: boolean; muted?: boolean; blocked?: boolean; personal?: boolean };
+
+/** Archive, mute, block or mark personal (the owner, or a role he gave "manage chats"). */
+export function useChatState(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ phone, state }: { phone: string; state: ChatState }) =>
+      call<{ phone: string; archived: boolean; muted: boolean; blocked: boolean; personal: boolean }>(
+        `/academy/console/academies/${academyId}/whatsapp/chats/${phone}/state`, { method: "POST", body: json(state) },
+      ),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
+      void qc.invalidateQueries({ queryKey: key(academyId, "chat", v.phone) });
+      void qc.invalidateQueries({ queryKey: key(academyId, "hidden") });
+      void qc.invalidateQueries({ queryKey: key(academyId, "contacts") });
+    },
+  });
+}
+
+/** "Who is this?": not a player's family ("none"), not now ("later"), or ask again ("ask"). */
+export function useChatWho(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ phone, action }: { phone: string; action: "none" | "later" | "ask" }) =>
+      call(`/academy/console/academies/${academyId}/whatsapp/chats/${phone}/who`, { method: "POST", body: json({ action }) }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
+      void qc.invalidateQueries({ queryKey: key(academyId, "chat", v.phone) });
+      void qc.invalidateQueries({ queryKey: key(academyId, "contacts") });
+    },
+  });
+}
+
+export function useHiddenChats(academyId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: key(academyId, "hidden"),
+    queryFn: () => call<Array<{ phone: string; display: string; name: string | null; personal: boolean; blocked: boolean }>>(`/academy/console/academies/${academyId}/whatsapp/hidden`),
+    enabled,
   });
 }
 

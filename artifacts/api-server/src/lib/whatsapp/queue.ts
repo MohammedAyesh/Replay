@@ -1,6 +1,7 @@
-import { and, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import {
   academiesTable,
+  academyContactsTable,
   academyWhatsappMessagesTable,
   academyWhatsappOptOutsTable,
   academyWhatsappSettingsTable,
@@ -135,6 +136,13 @@ export async function enqueueMessages(messages: OutgoingMessage[]): Promise<numb
     queued += rows.length;
   }
   return queued;
+}
+
+/** Numbers the academy blocked in Chats: nothing is sent to them. */
+export async function blockedPhones(academyId: number): Promise<Set<string>> {
+  const rows = await db.select({ phone: academyContactsTable.phone }).from(academyContactsTable)
+    .where(and(eq(academyContactsTable.academyId, academyId), isNotNull(academyContactsTable.blockedAt)));
+  return new Set(rows.map((r) => r.phone));
 }
 
 export async function optedOutPhones(academyId: number): Promise<Set<string>> {
@@ -290,6 +298,7 @@ export async function dispatchQueue(options: { budgetMs?: number } = {}): Promis
     for (const id of academyIds) sentToday.set(id, await sentTodayCount([id], null));
     let sessionSentToday = session === REPLAY_SESSION ? await sentTodayCount(null, REPLAY_SESSION) : 0;
     const optOuts = new Map<number, Set<string>>();
+    const blocked = new Map<number, Set<string>>();
     let open = academyIds.filter((id) => (sentToday.get(id) ?? 0) < (limits.get(id) ?? 300));
     let sentThisTick = 0;
 
@@ -299,6 +308,12 @@ export async function dispatchQueue(options: { budgetMs?: number } = {}): Promis
       if (!row) break;
       const academyId = row.academy_id;
       if (!optOuts.has(academyId)) optOuts.set(academyId, await optedOutPhones(academyId));
+      if (!blocked.has(academyId)) blocked.set(academyId, await blockedPhones(academyId));
+      if (blocked.get(academyId)!.has(row.phone)) {
+        await finish(row.id, { status: "skipped", error: "Blocked" });
+        summary.skipped += 1;
+        continue;
+      }
       if (row.kind !== "reply" && row.kind !== "chat" && optOuts.get(academyId)!.has(row.phone)) {
         await finish(row.id, { status: "skipped", error: "Recipient replied STOP" });
         summary.skipped += 1;
@@ -491,6 +506,12 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
       academyId = last?.academyId ?? null;
     }
     if (academyId === null) return;
+    // A blocked number, or a chat the academy marked personal, is never stored.
+    const [hidden] = await db.select({ blockedAt: academyContactsTable.blockedAt, personalAt: academyContactsTable.personalAt })
+      .from(academyContactsTable)
+      .where(and(eq(academyContactsTable.academyId, academyId), eq(academyContactsTable.phone, phone)))
+      .limit(1);
+    if (hidden?.blockedAt || hidden?.personalAt) return;
     const text = body.slice(0, 4000) || (payload.hasMedia ? "[media]" : "");
 
     if (fromMe) {

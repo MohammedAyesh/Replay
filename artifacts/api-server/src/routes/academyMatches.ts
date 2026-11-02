@@ -19,6 +19,7 @@ import {
   type TrackingManifest,
 } from "@workspace/db";
 import { requireAcademyConsoleUser, requireAcademyMembership, type AcademyConsoleUser } from "../lib/academyAccess";
+import { familyScreensFor } from "../lib/academyPermissions";
 import {
   computeAcademyMatchStats,
   goalVoteCount,
@@ -739,9 +740,14 @@ router.get("/academy/family/matches", async (req, res): Promise<void> => {
     res.json([]);
     return;
   }
-  const kids = await db.select({ academyId: academyPlayersTable.academyId, squadId: academyPlayersTable.squadId })
+  const kids = await db.select({ academyId: academyPlayersTable.academyId, squadId: academyPlayersTable.squadId, userId: academyPlayersTable.userId })
     .from(academyPlayersTable).where(and(inArray(academyPlayersTable.id, [...viewer.familyPlayerIds]), eq(academyPlayersTable.isActive, true)));
-  const academyIds = [...new Set(kids.map((k) => k.academyId))];
+  // Only academies that show match pages to this viewer (as the player himself, or as family).
+  const academyIds: number[] = [];
+  for (const academyId of new Set(kids.map((k) => k.academyId))) {
+    const role = kids.some((k) => k.academyId === academyId && k.userId === viewer.user.id) ? "player" : "parent";
+    if ((await familyScreensFor(academyId, role)).includes("matches")) academyIds.push(academyId);
+  }
   if (!academyIds.length) {
     res.json([]);
     return;

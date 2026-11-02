@@ -1441,6 +1441,7 @@ export type AcademyMemberRole = typeof AcademyMemberRole[keyof typeof AcademyMem
 
 export const AcademyMemberRole = {
   owner: 'owner',
+  manager: 'manager',
   coach: 'coach',
 } as const;
 
