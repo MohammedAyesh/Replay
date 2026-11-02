@@ -31,3 +31,4 @@ export const UpdateProfileBody = z.object({
     .max(updateProfileBodyOneAgeMax),
   gender: z.enum(["male", "female", "prefer_not_to_say"]),
 }));
+export * from "./creativeScene";

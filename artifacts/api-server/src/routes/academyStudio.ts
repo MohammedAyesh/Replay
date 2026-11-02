@@ -53,7 +53,7 @@ const TZ = "Asia/Amman";
 // ── Shared look and data ─────────────────────────────────────────────────────
 
 /** Whether the academy's own profile allows names. Never inherited from a field or Replay. */
-async function namesAllowed(academyId: number): Promise<boolean> {
+export async function namesAllowed(academyId: number): Promise<boolean> {
   try {
     const [row] = await db.select({ show: brandingProfilesTable.showPlayerNames }).from(brandingProfilesTable)
       .where(and(eq(brandingProfilesTable.scopeType, "academy"), eq(brandingProfilesTable.scopeId, academyId)));
@@ -75,7 +75,7 @@ function contactFor(academy: Academy, look: BrandLook, locale: StudioLocale): st
   return phone ? `${locale === "ar" ? "اتصل" : "Call"} ${phone}` : null;
 }
 
-async function studioLook(access: AcademyOwnerAccess, temps: string[]): Promise<BrandLook> {
+export async function studioLook(access: AcademyOwnerAccess, temps: string[]): Promise<BrandLook> {
   const { academy } = access;
   const look = await lookFor({ academyId: access.academyId, fieldId: academy.fieldId }, temps);
   const fallback: BrandLook = {

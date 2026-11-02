@@ -57,3 +57,4 @@ export * from "./goalVotes";
 export * from "./momentChecks";
 export * from "./weeklyHighlights";
 export * from "./academySocial";
+export * from "./academyCreative";

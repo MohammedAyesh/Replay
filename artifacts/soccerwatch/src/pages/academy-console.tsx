@@ -25,6 +25,7 @@ import {
   ShieldCheck,
   Building2,
   Clapperboard,
+  Sparkles,
   Palette,
   Users,
   UserRound,
@@ -103,6 +104,8 @@ import { useProfileCopy } from "@/i18n/profile-strings";
 import { AcademyBrandingSection } from "@/components/academy-console/branding-section";
 import { AcademyStudioSection } from "@/components/academy-console/studio-section";
 import { useStudioCopy } from "@/i18n/studio-strings";
+import { AcademyCreativeHub } from "@/components/creative-hub/hub";
+import { useCreativeCopy } from "@/i18n/creative-strings";
 import { AcademyPlayersSection } from "@/components/academy-console/players-section";
 import { AcademySessionsSection } from "@/components/academy-console/sessions-section";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
@@ -115,7 +118,7 @@ import { AcademyRegistrationsSection } from "@/components/academy-console/regist
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "team";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "creative" | "team";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -201,6 +204,7 @@ function AcademyConsoleSidebar({
   const adsCopy = useAdsCopy();
   const profileCopy = useProfileCopy();
   const studioCopy = useStudioCopy();
+  const creativeCopy = useCreativeCopy();
   const teamCopy = useTeamCopy();
   const socialCopy = useSocialCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
@@ -223,6 +227,7 @@ function AcademyConsoleSidebar({
     { id: "profile", label: profileCopy.nav, icon: Building2 },
     { id: "branding", label: studioCopy.branding.nav, icon: Palette, ownerOnly: true },
     { id: "studio", label: studioCopy.studio.nav, icon: Clapperboard, ownerOnly: true },
+    { id: "creative", label: creativeCopy.nav, icon: Sparkles, ownerOnly: true },
     { id: "team", label: teamCopy.team.nav, icon: ShieldCheck, ownerOnly: true },
   ];
 
@@ -792,7 +797,7 @@ export default function AcademyConsole() {
   // What the owner lets this member see and run (Academy console → Team). Until it loads,
   // fall back to the role alone.
   const myAccess = useMyAcademyAccess(activeAcademyId);
-  const OWNER_ONLY: ConsoleSection[] = ["fees", "social", "ads", "branding", "studio", "team"];
+  const OWNER_ONLY: ConsoleSection[] = ["fees", "social", "ads", "branding", "studio", "creative", "team"];
   const canSee = (s: ConsoleSection) => isOwner || (s !== "team" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
   const manages = (s: ConsoleSection) => isOwner || Boolean(myAccess.data?.manages.includes(s));
   const canManageChats = isOwner || Boolean(myAccess.data?.permissions.includes("chats.manage"));
@@ -823,7 +828,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "social", "profile", "branding", "studio", "team"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "social", "profile", "branding", "studio", "creative", "team"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -920,6 +925,8 @@ export default function AcademyConsole() {
             !manages("branding") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyBrandingSection academyId={activeAcademyId} />
           ) : section === "studio" ? (
             !manages("studio") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyStudioSection academyId={activeAcademyId} />
+          ) : section === "creative" ? (
+            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyCreativeHub academyId={activeAcademyId} />
           ) : section === "matches" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyMatchesSection academyId={activeAcademyId} isOwner={manages("matches")} />
           ) : section === "team" ? (
