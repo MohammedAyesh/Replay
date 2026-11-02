@@ -9,7 +9,6 @@ import {
   getGetMeQueryKey,
 } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
-import { useReducedMotion } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 import { useClerk, useUser } from "@clerk/react";
@@ -19,11 +18,9 @@ import ownersImage from "@/assets/fields-amman.png";
 import familyImage from "@/assets/academies-watching.png";
 import { useSupportContact, supportMailto } from "@/lib/client-settings";
 import { useLegalCopy } from "@/i18n/legal-strings";
-import { useReport, useShowcase } from "@/pages/demo/data";
-import { LiveBroadcast } from "@/pages/demo/LiveBroadcast";
-import { demoCopy } from "@/pages/demo/copy";
+import { useShowcase } from "@/pages/demo/data";
 import "@/pages/demo/demo.css";
-import { AppShot, basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, type IconName } from "./landing-parts";
+import { AppShot, basePath, Brand, BRANDED_GOAL, brandedClips, Chevron, Icon, LIVE_DEMO, LoopVideo, type IconName } from "./landing-parts";
 import "./landing.css";
 
 // ─── copy ─────────────────────────────────────────────────────────────────────
@@ -135,14 +132,10 @@ export default function Login() {
   const c = COPY[lang];
 
   const { data: showcase } = useShowcase();
-  const { data: reportData } = useReport(Boolean(showcase?.match?.analysed));
-  const report = reportData?.report ?? null;
 
   // Branded copies only: the page says every clip carries the pitch's badge.
   const branded = brandedClips(showcase);
   const heroClip = branded.wide[0];
-  const reduceMotion = useReducedMotion();
-  const storyClip = branded.tall[0];
   const clipCount = showcase?.counts.clips ?? null;
   const returnRate = showcase?.returnRatePercent ?? null;
   const salesWhatsapp = showcase?.salesWhatsapp ?? null;
@@ -297,17 +290,11 @@ export default function Login() {
                 <h2 className="lp-h2">{c.clipsTitle}</h2>
                 <p className="lp-text">{c.clipsText}</p>
               </div>
-              {storyClip ? (
-                <div className="lp-phone">
-                  <div className="lp-media">
-                    <LoopVideo clip={storyClip} fallback={playersImage} />
-                  </div>
-                </div>
-              ) : (
+              <div className="lp-phone">
                 <div className="lp-media">
-                  <LoopVideo clip={branded.wide[1] ?? branded.wide[0]} fallback={playersImage} />
+                  <LoopVideo clip={BRANDED_GOAL} fallback={playersImage} />
                 </div>
-              )}
+              </div>
             </div>
 
             <div className="lp-feature lp-feature--flip" id="stats">
@@ -323,16 +310,12 @@ export default function Login() {
                 <h2 className="lp-h2">{c.liveTitle}</h2>
                 <p className="lp-text">{c.liveText}</p>
               </div>
-              {showcase?.match && report?.broadcast && !reduceMotion ? (
-                <figure className="lp-live" style={{ margin: 0 }}>
-                  <LiveBroadcast match={showcase.match} report={report} copy={demoCopy[lang].sections.live} />
-                  <figcaption className="lp-stats-note">{c.liveNote}</figcaption>
-                </figure>
-              ) : (
-                <div className="lp-media lp-media--plain">
-                  <img src={familyImage} alt="" aria-hidden="true" />
+              <figure className="lp-shot">
+                <div className="lp-media">
+                  <LoopVideo clip={LIVE_DEMO} fallback={familyImage} />
                 </div>
-              )}
+                <figcaption className="lp-stats-note">{c.liveNote}</figcaption>
+              </figure>
             </div>
           </div>
         </section>

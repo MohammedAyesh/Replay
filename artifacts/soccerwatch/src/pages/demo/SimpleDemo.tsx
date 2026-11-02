@@ -5,10 +5,9 @@ import heroImage from "@/assets/hero-floodlit-pitch.png";
 import familyImage from "@/assets/academies-watching.png";
 import playersImage from "@/assets/clips-editing.png";
 import { useLocale } from "@/i18n/context";
-import { AppShot, basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, type IconName } from "@/pages/landing-parts";
+import { AppShot, basePath, Brand, BRANDED_GOAL, brandedClips, Chevron, Icon, LIVE_DEMO, LoopVideo, type IconName } from "@/pages/landing-parts";
 import { demoCopy, type DemoLocale, type Persona } from "./copy";
-import { LiveBroadcast } from "./LiveBroadcast";
-import { useReport, useShowcase, withBase } from "./data";
+import { useShowcase, withBase } from "./data";
 import "./demo.css";
 import "@/pages/landing.css";
 
@@ -78,13 +77,13 @@ const COPY: Record<DemoLocale, {
     valuesTitle: "What it brings you.",
     values: {
       pitch: [
-        { icon: "calendar", title: "More bookings", text: "Every shared clip shows where the match was played." },
-        { icon: "players", title: "Teams come back", text: "Players return to see their clips and stats." },
+        { icon: "clips", title: "Free advertising", text: "Players post their clips with your badge on them. Every post advertises your pitch." },
+        { icon: "calendar", title: "More bookings", text: "Their friends see where they played, and book it next." },
         { icon: "hands", title: "Nothing to run", text: "No camera operator. No editing. No staff time." },
       ],
       academy: [
-        { icon: "players", title: "More players", text: "Every clip parents share carries your badge." },
-        { icon: "stats", title: "Players stay", text: "Parents see their child improve, session after session." },
+        { icon: "clips", title: "Free advertising", text: "Parents share their child's clips with your badge on them." },
+        { icon: "players", title: "More players", text: "Other parents see where they train, and sign up." },
         { icon: "hands", title: "Nothing to run", text: "No camera operator. No editing. No coach time." },
       ],
     },
@@ -146,13 +145,13 @@ const COPY: Record<DemoLocale, {
     valuesTitle: "شو بتجيبلك.",
     values: {
       pitch: [
-        { icon: "calendar", title: "حجوزات أكثر", text: "كل مقطع بنشروه بيبيّن وين انلعبت المباراة." },
-        { icon: "players", title: "الفرق بترجع", text: "اللاعبين بيرجعوا يشوفوا مقاطعهم وأرقامهم." },
+        { icon: "clips", title: "إعلان مجاني", text: "اللاعبين بنشروا مقاطعهم وعليها شعار ملعبك. كل منشور إعلان لملعبك." },
+        { icon: "calendar", title: "حجوزات أكثر", text: "أصحابهم بشوفوا وين لعبوا، وبيحجزوا عندك." },
         { icon: "hands", title: "ولا إشي تشغّله", text: "بدون مصوّر، بدون مونتاج، وبدون وقت من موظفينك." },
       ],
       academy: [
-        { icon: "players", title: "لاعبين أكثر", text: "كل مقطع بنشروه الأهل عليه شعار أكاديميتك." },
-        { icon: "stats", title: "اللاعبين بضلّوا", text: "الأهل بشوفوا ابنهم بتحسّن حصة بعد حصة." },
+        { icon: "clips", title: "إعلان مجاني", text: "الأهل بنشروا مقاطع أولادهم وعليها شعار أكاديميتك." },
+        { icon: "players", title: "لاعبين أكثر", text: "أهالي ثانيين بشوفوا وين بيتدربوا، وبيسجّلوا أولادهم." },
         { icon: "hands", title: "ولا إشي تشغّله", text: "بدون مصوّر، بدون مونتاج، وبدون وقت من المدربين." },
       ],
     },
@@ -294,8 +293,6 @@ export default function SimpleDemo() {
   const [solidNav, setSolidNav] = useState(false);
 
   const { data } = useShowcase();
-  const { data: reportData } = useReport(Boolean(data?.match?.analysed));
-  const report = reportData?.available ? reportData.report : null;
 
   const setPersona = (next: Persona) => {
     setPersonaState(next);
@@ -323,8 +320,9 @@ export default function SimpleDemo() {
   }, []);
 
   // Only branded copies, since the page says every clip carries the owner's
-  // badge. Pitches see Jordan Galaxy's copies; academies only ever see
-  // academy-branded copies, never a pitch's.
+  // badge. Pitches see Jordan Galaxy's copies (the phone always shows the
+  // shipped BRANDED_GOAL); academies only ever see academy-branded copies,
+  // never a pitch's.
   const { wideClip, tallClip } = useMemo(() => {
     if (persona === "academy") {
       const academy = (data?.academyClips ?? []).filter((clip) => clip.branded);
@@ -334,7 +332,7 @@ export default function SimpleDemo() {
       };
     }
     const branded = brandedClips(data);
-    return { wideClip: branded.wide[0] ?? null, tallClip: branded.tall[0] ?? null };
+    return { wideClip: branded.wide[0] ?? null, tallClip: BRANDED_GOAL };
   }, [data, persona]);
 
   const returnRate = persona === "pitch" ? data?.returnRatePercent ?? null : null;
@@ -390,24 +388,16 @@ export default function SimpleDemo() {
         </section>
 
         {/* ── proof ─────────────────────────────────────────────────────── */}
-        {(returnRate || clipCount) && (
+        {clipCount ? (
           <div className="lp-wrap">
             <dl className="lp-proof">
-              {returnRate ? (
-                <div>
-                  <dt>{c.rebook}</dt>
-                  <dd>{numberFormat.format(returnRate)}%</dd>
-                </div>
-              ) : null}
-              {clipCount ? (
-                <div>
-                  <dt>{c.clips}</dt>
-                  <dd>{numberFormat.format(clipCount)}</dd>
-                </div>
-              ) : null}
+              <div>
+                <dt>{c.clips}</dt>
+                <dd>{numberFormat.format(clipCount)}</dd>
+              </div>
             </dl>
           </div>
-        )}
+        ) : null}
 
         {/* ── what it brings ────────────────────────────────────────────── */}
         <section className="lp-section">
@@ -465,16 +455,12 @@ export default function SimpleDemo() {
                 <h2 className="lp-h2">{c.liveTitle}</h2>
                 <p className="lp-text">{c.liveText[persona]}</p>
               </div>
-              {data?.match && report?.broadcast && !reduceMotion ? (
-                <figure className="lp-live" style={{ margin: 0 }}>
-                  <LiveBroadcast match={data.match} report={report} copy={demoCopy[lang].sections.live} />
-                  <figcaption className="lp-stats-note">{c.liveNote}</figcaption>
-                </figure>
-              ) : (
-                <div className="lp-media lp-media--plain">
-                  <img src={familyImage} alt="" aria-hidden="true" />
+              <figure className="lp-shot">
+                <div className="lp-media">
+                  <LoopVideo clip={LIVE_DEMO} fallback={familyImage} />
                 </div>
-              )}
+                <figcaption className="lp-stats-note">{c.liveNote}</figcaption>
+              </figure>
             </div>
           </div>
         </section>
@@ -512,6 +498,18 @@ export default function SimpleDemo() {
             </ol>
           </div>
         </section>
+
+        {/* ── teams come back (pitches only), last word before contact ──── */}
+        {returnRate ? (
+          <div className="lp-wrap">
+            <dl className="lp-proof">
+              <div>
+                <dt>{c.rebook}</dt>
+                <dd>{numberFormat.format(returnRate)}%</dd>
+              </div>
+            </dl>
+          </div>
+        ) : null}
 
         {/* ── contact ───────────────────────────────────────────────────── */}
         <section className="lp-section" id="contact">
