@@ -5,7 +5,7 @@ import heroImage from "@/assets/hero-floodlit-pitch.png";
 import familyImage from "@/assets/academies-watching.png";
 import playersImage from "@/assets/clips-editing.png";
 import { useLocale } from "@/i18n/context";
-import { basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "@/pages/landing-parts";
+import { AppShot, basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, type IconName } from "@/pages/landing-parts";
 import { demoCopy, type DemoLocale, type Persona } from "./copy";
 import { LiveBroadcast } from "./LiveBroadcast";
 import { useReport, useShowcase, withBase } from "./data";
@@ -41,7 +41,7 @@ const COPY: Record<DemoLocale, {
   brandText: PersonaText;
   statsTitle: string;
   statsText: PersonaText;
-  stats: { possession: string; goals: string; shots: string; passes: string; dribbles: string; note: (date: string) => string };
+  statsShot: string;
   liveTitle: string;
   liveText: PersonaText;
   liveNote: string;
@@ -98,14 +98,7 @@ const COPY: Record<DemoLocale, {
       pitch: "Possession, passes and distance for every player, measured by the camera. Players come back to see theirs.",
       academy: "Possession, passes and distance for every player, measured by the camera. Parents see the progress.",
     },
-    stats: {
-      possession: "Possession",
-      goals: "Goals",
-      shots: "Shots",
-      passes: "Passes",
-      dribbles: "Dribbles won",
-      note: (date) => `A real match, ${date}. Names hidden.`,
-    },
+    statsShot: "Straight from the Replay app: a real match at Jordan Galaxy, 26 October.",
     liveTitle: "Live, with no one filming.",
     liveText: {
       pitch: "The camera follows the ball, with the score and clock on screen. Friends watch from home.",
@@ -173,14 +166,7 @@ const COPY: Record<DemoLocale, {
       pitch: "الاستحواذ والتمريرات والمسافة لكل لاعب، والكاميرا بتقيسها. اللاعبين بيرجعوا يشوفوا أرقامهم.",
       academy: "الاستحواذ والتمريرات والمسافة لكل لاعب، والكاميرا بتقيسها. الأهل بشوفوا التحسّن.",
     },
-    stats: {
-      possession: "الاستحواذ",
-      goals: "الأهداف",
-      shots: "التسديدات",
-      passes: "التمريرات",
-      dribbles: "مراوغات ناجحة",
-      note: (date) => `مباراة حقيقية، ${date}. الأسماء مخفية.`,
-    },
+    statsShot: "من تطبيق ريبلاي: مباراة حقيقية بجوردان جالاكسي، 26 تشرين الأول.",
     liveTitle: "بث مباشر بدون مصوّر.",
     liveText: {
       pitch: "الكاميرا بتلحق الطابة، والنتيجة والوقت على الشاشة. الأصحاب بتابعوا من البيت.",
@@ -466,17 +452,15 @@ export default function SimpleDemo() {
               )}
             </div>
 
-            {report?.team && (
-              <div className="lp-feature lp-feature--flip">
-                <div>
-                  <h2 className="lp-h2">{c.statsTitle}</h2>
-                  <p className="lp-text">{c.statsText[persona]}</p>
-                </div>
-                <MatchStatsCard report={report} labels={c.stats} rtl={isRtl} />
+            <div className="lp-feature lp-feature--flip">
+              <div>
+                <h2 className="lp-h2">{c.statsTitle}</h2>
+                <p className="lp-text">{c.statsText[persona]}</p>
               </div>
-            )}
+              <AppShot lang={lang} caption={c.statsShot} />
+            </div>
 
-            <div className={`lp-feature${report?.team ? "" : " lp-feature--flip"}`}>
+            <div className="lp-feature">
               <div>
                 <h2 className="lp-h2">{c.liveTitle}</h2>
                 <p className="lp-text">{c.liveText[persona]}</p>

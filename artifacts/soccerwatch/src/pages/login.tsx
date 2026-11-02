@@ -23,7 +23,7 @@ import { useReport, useShowcase } from "@/pages/demo/data";
 import { LiveBroadcast } from "@/pages/demo/LiveBroadcast";
 import { demoCopy } from "@/pages/demo/copy";
 import "@/pages/demo/demo.css";
-import { basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "./landing-parts";
+import { AppShot, basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, type IconName } from "./landing-parts";
 import "./landing.css";
 
 // ─── copy ─────────────────────────────────────────────────────────────────────
@@ -57,12 +57,7 @@ const COPY = {
     clipsText: "Every goal and chance, cut for you with the pitch's badge on it. Pick yourself once to get yours.",
     statsTitle: "Automatic stats.",
     statsText: "Possession, shots and passes for both teams. Distance and touches for every player. Nothing to wear.",
-    possession: "Possession",
-    shots: "Shots",
-    passes: "Passes",
-    goals: "Goals",
-    dribbles: "Dribbles won",
-    statsNote: (date: string) => `A real match, ${date}. Names hidden.`,
+    statsShot: "Straight from the Replay app: a real match at Jordan Galaxy, 26 October.",
     liveTitle: "Automated live stream.",
     liveText: "The camera follows the ball on its own, with the score and clock on screen. Family watches from anywhere.",
     liveNote: "A recorded match, shown as it streams.",
@@ -101,12 +96,7 @@ const COPY = {
     clipsText: "كل هدف وفرصة بنقصّوا إلك وعليه شعار الملعب. اختار حالك مرة وحدة وبتوصلك لقطاتك.",
     statsTitle: "إحصائيات أوتوماتيك.",
     statsText: "الاستحواذ والتسديدات والتمريرات للفريقين، والمسافة واللمسات لكل لاعب. بدون ما تلبس إشي.",
-    possession: "الاستحواذ",
-    shots: "التسديدات",
-    passes: "التمريرات",
-    goals: "الأهداف",
-    dribbles: "مراوغات ناجحة",
-    statsNote: (date: string) => `مباراة حقيقية، ${date}. الأسماء مخفية.`,
+    statsShot: "من تطبيق ريبلاي: مباراة حقيقية بجوردان جالاكسي، 26 تشرين الأول.",
     liveTitle: "بث مباشر أوتوماتيك.",
     liveText: "الكاميرا بتلحق الطابة لحالها، والنتيجة والوقت على الشاشة. الأهل بتابعوا من وين ما كانوا.",
     liveNote: "مباراة مسجّلة، معروضة مثل ما بتنبث.",
@@ -147,7 +137,6 @@ export default function Login() {
   const { data: showcase } = useShowcase();
   const { data: reportData } = useReport(Boolean(showcase?.match?.analysed));
   const report = reportData?.report ?? null;
-  const team = report?.team ?? null;
 
   // Branded copies only: the page says every clip carries the pitch's badge.
   const branded = brandedClips(showcase);
@@ -326,17 +315,7 @@ export default function Login() {
                 <h2 className="lp-h2">{c.statsTitle}</h2>
                 <p className="lp-text">{c.statsText}</p>
               </div>
-              {team && report ? (
-                <MatchStatsCard
-                  report={report}
-                  rtl={isRtl}
-                  labels={{ possession: c.possession, goals: c.goals, shots: c.shots, passes: c.passes, dribbles: c.dribbles, note: c.statsNote }}
-                />
-              ) : (
-                <div className="lp-media">
-                  <img src={heroImage} alt="" aria-hidden="true" />
-                </div>
-              )}
+              <AppShot lang={lang} caption={c.statsShot} />
             </div>
 
             <div className="lp-feature" id="live">
