@@ -20,6 +20,9 @@ import familyImage from "@/assets/academies-watching.png";
 import { useSupportContact, supportMailto } from "@/lib/client-settings";
 import { useLegalCopy } from "@/i18n/legal-strings";
 import { useReport, useShowcase, withBase, type DemoClip } from "@/pages/demo/data";
+import { LiveBroadcast } from "@/pages/demo/LiveBroadcast";
+import { demoCopy } from "@/pages/demo/copy";
+import "@/pages/demo/demo.css";
 import "./landing.css";
 
 // ─── copy ─────────────────────────────────────────────────────────────────────
@@ -34,31 +37,36 @@ const COPY = {
     createAccount: "Create account",
     guest: "Browse as guest",
     hero: ["No need to tell the story.", "We already filmed it."],
-    lead: "Every match on a Replay pitch, on your phone minutes after the whistle.",
+    lead: "Clips, stats and a live stream from every match. All automatic.",
     clips: "clips made",
     rebook: "of teams book again",
+    pillarsTitle: "One camera. Nothing to press.",
+    pillars: [
+      { id: "clips", title: "Automatic clips", text: "Cut and branded for you." },
+      { id: "stats", title: "Automatic stats", text: "For every team and player." },
+      { id: "live", title: "Automated live stream", text: "The camera follows the ball." },
+    ],
     cardsTitle: "Made for both sides of the pitch.",
     players: "Players",
     playersText: "Watch, clip and share every match.",
     owners: "Pitches and academies",
     ownersText: "More bookings. No extra work for your staff.",
     seeHow: "See how it works",
-    findTitle: "Find yourself.",
-    findText: "Pick yourself once. Replay finds every moment you were in.",
-    statsTitle: "The match, in numbers.",
-    statsText: "Possession, shots and passes. For both teams and every player.",
+    clipsTitle: "Automatic clips.",
+    clipsText: "Every goal and chance, cut for you with the pitch's badge on it. Pick yourself once to get yours.",
+    statsTitle: "Automatic stats.",
+    statsText: "Possession, shots and passes for both teams. Distance and touches for every player. Nothing to wear.",
     possession: "Possession",
     shots: "Shots",
     passes: "Passes",
     goals: "Goals",
     dribbles: "Dribbles won",
     statsNote: (date: string) => `A real match, ${date}. Names hidden.`,
-    shareTitle: "Clip it. Share it.",
-    shareText: "Trim on your phone. Post it with the pitch's badge on it.",
-    liveTitle: "Live, for family.",
-    liveText: "Academy sessions stream live, wherever parents are.",
+    liveTitle: "Automated live stream.",
+    liveText: "The camera follows the ball on its own, with the score and clock on screen. Family watches from anywhere.",
+    liveNote: "A recorded match, shown as it streams.",
     ownerTitle: "Run a pitch or an academy?",
-    ownerText: "Cameras installed for you. Clips go out with your name on them.",
+    ownerText: "Cameras installed for you. Clips, stats and live run by themselves, with your name on them.",
     whatsapp: "WhatsApp",
     privacy: "Privacy",
     terms: "Terms",
@@ -73,31 +81,36 @@ const COPY = {
     createAccount: "أنشئ حساب",
     guest: "تصفّح كزائر",
     hero: ["مش لازم تحكي عنها", "إحنا صورناها."],
-    lead: "كل مباراة على ملعب ريبلاي، على تلفونك بعد الصافرة بدقايق.",
+    lead: "مقاطع وإحصائيات وبث مباشر من كل مباراة. كله أوتوماتيك.",
     clips: "مقطع انعمل",
     rebook: "من الفرق بترجع تحجز",
+    pillarsTitle: "كاميرا وحدة. ولا إشي بدك تكبسه.",
+    pillars: [
+      { id: "clips", title: "مقاطع أوتوماتيك", text: "مقصوصة وعليها شعار الملعب." },
+      { id: "stats", title: "إحصائيات أوتوماتيك", text: "لكل فريق ولكل لاعب." },
+      { id: "live", title: "بث مباشر أوتوماتيك", text: "الكاميرا بتلحق الطابة." },
+    ],
     cardsTitle: "معمول للاعبين وللملاعب.",
     players: "اللاعبين",
     playersText: "شوف، قص، وشارك كل مباراة.",
     owners: "الملاعب والأكاديميات",
     ownersText: "حجوزات أكثر، وبدون أي شغل زيادة على موظفينك.",
     seeHow: "شوف كيف بتشتغل",
-    findTitle: "لاقي حالك.",
-    findText: "اختار حالك مرة وحدة، وريبلاي بيلاقيلك كل لقطة كنت فيها.",
-    statsTitle: "المباراة بالأرقام.",
-    statsText: "الاستحواذ والتسديدات والتمريرات. للفريقين ولكل لاعب.",
+    clipsTitle: "مقاطع أوتوماتيك.",
+    clipsText: "كل هدف وفرصة بنقصّوا إلك وعليه شعار الملعب. اختار حالك مرة وحدة وبتوصلك لقطاتك.",
+    statsTitle: "إحصائيات أوتوماتيك.",
+    statsText: "الاستحواذ والتسديدات والتمريرات للفريقين، والمسافة واللمسات لكل لاعب. بدون ما تلبس إشي.",
     possession: "الاستحواذ",
     shots: "التسديدات",
     passes: "التمريرات",
     goals: "الأهداف",
     dribbles: "مراوغات ناجحة",
     statsNote: (date: string) => `مباراة حقيقية، ${date}. الأسماء مخفية.`,
-    shareTitle: "قصّها. شاركها.",
-    shareText: "قص من تلفونك، وانشرها وعليها شعار الملعب.",
-    liveTitle: "مباشر للأهل.",
-    liveText: "حصص الأكاديمية بتنبث مباشر، وين ما كان الأهل.",
+    liveTitle: "بث مباشر أوتوماتيك.",
+    liveText: "الكاميرا بتلحق الطابة لحالها، والنتيجة والوقت على الشاشة. الأهل بتابعوا من وين ما كانوا.",
+    liveNote: "مباراة مسجّلة، معروضة مثل ما بتنبث.",
     ownerTitle: "عندك ملعب أو أكاديمية؟",
-    ownerText: "الكاميرات بنركبها إحنا، والمقاطع بتطلع وعليها اسمك.",
+    ownerText: "الكاميرات بنركبها إحنا. المقاطع والإحصائيات والبث بيشتغلوا لحالهم، وعليهم اسمك.",
     whatsapp: "واتساب",
     privacy: "الخصوصية",
     terms: "الشروط",
@@ -105,6 +118,12 @@ const COPY = {
     city: "عمّان، الأردن",
   },
 } as const;
+
+const PILLAR_ICONS: Record<string, string> = {
+  clips: "M6.5 8.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5Zm0 12a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5ZM8.3 7.6 20 19M20 5 8.3 16.4",
+  stats: "M4 20V11M10 20V4M16 20v-7M22 20H2",
+  live: "M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM7.8 16.2a6 6 0 0 1 0-8.4M16.2 7.8a6 6 0 0 1 0 8.4M4.9 19.1a10 10 0 0 1 0-14.2M19.1 4.9a10 10 0 0 1 0 14.2",
+};
 
 const OWNER_WHATSAPP_TEXT = {
   en: "Hi, I'd like Replay at my pitch.",
@@ -201,7 +220,7 @@ export default function Login() {
 
   const wideClips = showcase?.clips ?? [];
   const heroClip = wideClips[0];
-  const findClip = wideClips[1] ?? wideClips[0];
+  const reduceMotion = useReducedMotion();
   const storyClip = (showcase?.socialClips ?? []).find((clip) => clip.aspectRatio === "9:16");
   const clipCount = showcase?.counts.clips ?? null;
   const returnRate = showcase?.returnRatePercent ?? null;
@@ -347,41 +366,48 @@ export default function Login() {
           </div>
         )}
 
-        {/* ── two audiences ─────────────────────────────────────────────── */}
+        {/* ── what the camera does ──────────────────────────────────────── */}
         <section className="lp-section">
           <div className="lp-wrap">
-            <h2 className="lp-h2 lp-center">{c.cardsTitle}</h2>
-            <div className="lp-cards">
-              <article className="lp-card">
-                <img src={playersImage} alt="" aria-hidden="true" />
-                <h3 className="lp-h3">{c.players}</h3>
-                <p className="lp-text">{c.playersText}</p>
-                <Link className="lp-more" href="/sign-up">{c.createAccount} <Chevron /></Link>
-              </article>
-              <article className="lp-card">
-                <img src={ownersImage} alt="" aria-hidden="true" />
-                <h3 className="lp-h3">{c.owners}</h3>
-                <p className="lp-text">{c.ownersText}</p>
-                <Link className="lp-more" href="/demo">{c.seeHow} <Chevron /></Link>
-              </article>
-            </div>
+            <h2 className="lp-h2 lp-center">{c.pillarsTitle}</h2>
+            <ul className="lp-pillars">
+              {c.pillars.map((pillar) => (
+                <li key={pillar.id}>
+                  <a className="lp-pillar" href={`#${pillar.id}`}>
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d={PILLAR_ICONS[pillar.id]} />
+                    </svg>
+                    <h3 className="lp-h3">{pillar.title}</h3>
+                    <p className="lp-text">{pillar.text}</p>
+                  </a>
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
 
         {/* ── features ──────────────────────────────────────────────────── */}
         <section className="lp-section lp-section--raised">
           <div className="lp-wrap">
-            <div className="lp-feature">
+            <div className="lp-feature" id="clips">
               <div>
-                <h2 className="lp-h2">{c.findTitle}</h2>
-                <p className="lp-text">{c.findText}</p>
+                <h2 className="lp-h2">{c.clipsTitle}</h2>
+                <p className="lp-text">{c.clipsText}</p>
               </div>
-              <div className="lp-media">
-                <LoopVideo clip={findClip} fallback={heroImage} />
-              </div>
+              {storyClip ? (
+                <div className="lp-phone">
+                  <div className="lp-media">
+                    <LoopVideo clip={storyClip} fallback={playersImage} />
+                  </div>
+                </div>
+              ) : (
+                <div className="lp-media">
+                  <LoopVideo clip={wideClips[1] ?? wideClips[0]} fallback={playersImage} />
+                </div>
+              )}
             </div>
 
-            <div className="lp-feature lp-feature--flip">
+            <div className="lp-feature lp-feature--flip" id="stats">
               <div>
                 <h2 className="lp-h2">{c.statsTitle}</h2>
                 <p className="lp-text">{c.statsText}</p>
@@ -413,32 +439,42 @@ export default function Login() {
               )}
             </div>
 
-            <div className="lp-feature">
-              <div>
-                <h2 className="lp-h2">{c.shareTitle}</h2>
-                <p className="lp-text">{c.shareText}</p>
-              </div>
-              {storyClip ? (
-                <div className="lp-phone">
-                  <div className="lp-media">
-                    <LoopVideo clip={storyClip} fallback={playersImage} />
-                  </div>
-                </div>
-              ) : (
-                <div className="lp-media lp-media--plain">
-                  <img src={playersImage} alt="" aria-hidden="true" />
-                </div>
-              )}
-            </div>
-
-            <div className="lp-feature lp-feature--flip">
+            <div className="lp-feature" id="live">
               <div>
                 <h2 className="lp-h2">{c.liveTitle}</h2>
                 <p className="lp-text">{c.liveText}</p>
               </div>
-              <div className="lp-media lp-media--plain">
-                <img src={familyImage} alt="" aria-hidden="true" />
-              </div>
+              {showcase?.match && report?.broadcast && !reduceMotion ? (
+                <figure className="lp-live" style={{ margin: 0 }}>
+                  <LiveBroadcast match={showcase.match} report={report} copy={demoCopy[lang].sections.live} />
+                  <figcaption className="lp-stats-note">{c.liveNote}</figcaption>
+                </figure>
+              ) : (
+                <div className="lp-media lp-media--plain">
+                  <img src={familyImage} alt="" aria-hidden="true" />
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ── two audiences ─────────────────────────────────────────────── */}
+        <section className="lp-section">
+          <div className="lp-wrap">
+            <h2 className="lp-h2 lp-center">{c.cardsTitle}</h2>
+            <div className="lp-cards">
+              <article className="lp-card">
+                <img src={playersImage} alt="" aria-hidden="true" />
+                <h3 className="lp-h3">{c.players}</h3>
+                <p className="lp-text">{c.playersText}</p>
+                <Link className="lp-more" href="/sign-up">{c.createAccount} <Chevron /></Link>
+              </article>
+              <article className="lp-card">
+                <img src={ownersImage} alt="" aria-hidden="true" />
+                <h3 className="lp-h3">{c.owners}</h3>
+                <p className="lp-text">{c.ownersText}</p>
+                <Link className="lp-more" href="/demo">{c.seeHow} <Chevron /></Link>
+              </article>
             </div>
           </div>
         </section>
