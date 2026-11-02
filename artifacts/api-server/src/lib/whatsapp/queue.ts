@@ -9,6 +9,8 @@ import {
 } from "@workspace/db";
 import { logger } from "../logger";
 import { upsertContact } from "./contacts";
+import { recordAdLead } from "../meta/leads";
+import { findAdReferral } from "../meta/referral";
 import { phoneFromChatId } from "./phone";
 import type { WhatsappLocale } from "./templates";
 import {
@@ -418,9 +420,32 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
       if (seen) return;
     }
 
+    const pushName = typeof (payload._data as { pushName?: unknown } | undefined)?.pushName === "string"
+      ? String((payload._data as { pushName: string }).pushName)
+      : typeof (payload as { notifyName?: unknown }).notifyName === "string" ? String((payload as { notifyName: string }).notifyName) : null;
+
     // Which academy is this for? Own number → that academy. Replay's number →
-    // the academy that last messaged this phone from it.
+    // the academy whose ad they tapped, else the academy that last messaged
+    // this phone from it.
     let academyId = academyForSession(session);
+    const referral = fromMe ? null : findAdReferral(payload);
+    if (referral) {
+      const lead = await recordAdLead({
+        source: "whatsapp",
+        externalId: `wa:${waMessageId ?? referral.ctwaClid ?? `${phone}:${Date.now()}`}`,
+        academyId,
+        adId: referral.adId,
+        ctwaClid: referral.ctwaClid,
+        headline: referral.headline,
+        phone,
+        name: pushName,
+        answers: { message: body.slice(0, 500), adBody: referral.body, sourceUrl: referral.sourceUrl },
+      }).catch((error) => {
+        logger.warn({ error: (error as Error).message }, "Recording a click-to-WhatsApp lead failed");
+        return null;
+      });
+      academyId ??= lead?.academyId ?? null;
+    }
     if (academyId === null && session === REPLAY_SESSION) {
       if (fromMe) return;
       const [last] = await db
@@ -465,9 +490,6 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
       senderSession: session,
       waMessageId,
     });
-    const pushName = typeof (payload._data as { pushName?: unknown } | undefined)?.pushName === "string"
-      ? String((payload._data as { pushName: string }).pushName)
-      : typeof (payload as { notifyName?: unknown }).notifyName === "string" ? String((payload as { notifyName: string }).notifyName) : null;
     await upsertContact(academyId, phone, { kind: "unknown", source: "whatsapp", name: pushName });
 
     const word = body.trim().toLowerCase().replace(/[.!؟?]+$/, "");

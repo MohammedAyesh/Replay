@@ -27,6 +27,7 @@ export * from "./academyOtherPayments";
 export * from "./academyPaymentCategories";
 export * from "./academyWhatsapp";
 export * from "./academyMatches";
+export * from "./metaAds";
 export * from "./liveSchedules";
 export * from "./clipSettings";
 export * from "./recordingSchedules";

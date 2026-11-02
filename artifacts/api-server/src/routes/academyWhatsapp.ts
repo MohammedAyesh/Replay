@@ -21,6 +21,7 @@ import {
 } from "../lib/academyAccess";
 import { logger } from "../lib/logger";
 import { runScheduledAutomations } from "../lib/whatsapp/automations";
+import { maybeSyncMetaAds } from "../lib/meta/sync";
 import {
   linkContactToPlayer,
   linksForContacts,
@@ -815,7 +816,9 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
   try {
     const scheduled = await runScheduledAutomations();
     const dispatched = await dispatchQueue({ budgetMs: Math.max(10_000, 50_000 - (Date.now() - started)) });
-    res.json({ scheduled, dispatched, ms: Date.now() - started });
+    // The same tick keeps Replay's Meta ad numbers fresh (at most hourly; never fails the tick).
+    const meta = await maybeSyncMetaAds();
+    res.json({ scheduled, dispatched, meta: typeof meta === "string" ? meta : "synced", ms: Date.now() - started });
   } catch (error) {
     // vps1 logs this body: say what broke (e.g. a table missing after a publish).
     logger.error({ error: (error as Error)?.message }, "WhatsApp tick failed");
