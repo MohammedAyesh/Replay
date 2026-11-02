@@ -6,6 +6,7 @@ import { startOwnerStatusSync } from "./routes/owner";
 import { backfillMatchRooms } from "./lib/matchRooms";
 import { refreshStaleMatchStatsCaches } from "./lib/matchStatsCacheJobs";
 import { warmDemoBrandingPreviews } from "./routes/demoBranding";
+import { ensureAdditiveColumns } from "./lib/ensureAdditiveColumns";
 
 attachPostgresIdleErrorListener(pool, logger);
 
@@ -21,6 +22,13 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+try {
+  const added = await ensureAdditiveColumns(pool);
+  if (added) logger.warn({ added }, "Added missing additive columns at startup (schema push had not reached this database)");
+} catch (error) {
+  logger.error({ error }, "Startup column check failed");
 }
 
 app.listen(port, (err) => {
