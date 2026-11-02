@@ -551,6 +551,7 @@ export function summarizeTrackingSegments(segments: TrackingSegmentPayload[]): T
         endFrame: track.endFrame,
       })),
       events: segment.events,
+      inPlaySpans: (segment.inPlaySpans ?? []).map((span) => ({ start: span.start, end: span.end })),
     })),
   };
 }
@@ -1212,13 +1213,25 @@ async function getBundleSegments(bundleId: number) {
     .orderBy(asc(recordingTrackingSegmentsTable.segmentIndex));
 }
 
+/**
+ * How many segment objects one bundle read downloads at once. They used to be
+ * read one after another, so a 2-hour game (12 objects) cost twelve storage
+ * round trips in a row before the first claim request could answer.
+ */
+const BUNDLE_SEGMENT_READ_CONCURRENCY = 4;
+
 export async function readBundleSegments(bundleId: number): Promise<TrackingSegmentPayload[]> {
   const rows = await getBundleSegments(bundleId);
-  const segments: TrackingSegmentPayload[] = [];
-  for (const row of rows) {
-    const body = await readClaimSegment(row.objectPath);
-    segments.push(JSON.parse(body.toString("utf8")) as TrackingSegmentPayload);
-  }
+  const segments: TrackingSegmentPayload[] = new Array(rows.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < rows.length) {
+      const index = next++;
+      const body = await readClaimSegment(rows[index].objectPath);
+      segments[index] = JSON.parse(body.toString("utf8")) as TrackingSegmentPayload;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BUNDLE_SEGMENT_READ_CONCURRENCY, rows.length) }, worker));
   return segments;
 }
 

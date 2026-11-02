@@ -20,7 +20,15 @@ export type ClaimBundleSegments = {
   readonly tracksById: ReadonlyMap<string, CachedTrack>;
 };
 
-const MAX_CACHED_BUNDLES = 2;
+/**
+ * Parsed bundles kept in memory. A 2-hour game parses to several hundred MB,
+ * so this stays small; CLAIM_BUNDLE_CACHE_MAX raises it on a bigger instance.
+ * The /find intro and summary chain reads no longer use this cache at all.
+ */
+const MAX_CACHED_BUNDLES = (() => {
+  const configured = Number.parseInt(process.env.CLAIM_BUNDLE_CACHE_MAX ?? "", 10);
+  return Number.isInteger(configured) && configured >= 1 && configured <= 16 ? configured : 2;
+})();
 type CacheEntry = {
   promise: Promise<ClaimBundleSegments>;
   settled: boolean;

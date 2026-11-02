@@ -222,7 +222,26 @@ export type ChainContext = {
    * declared, the number on screen was not the number that unlocked the match.
    */
   offPitch: Array<{ fromSeconds: number; toSeconds: number }>;
+  /** False when loaded with includeSegments: false; see withSegments(). */
+  segmentsLoaded: boolean;
+  /** The bundle-version key the segment cache is read under. */
+  segmentsCacheKey: string;
 };
+
+/**
+ * The context with its segments, reading them (through the shared cache) only
+ * if it was loaded without them. For routes that can usually answer from the
+ * bundle summary and need the boxes only for an older bundle.
+ */
+export async function withSegments(ctx: ChainContext): Promise<ChainContext> {
+  if (ctx.segmentsLoaded) return ctx;
+  const loaded = await loadClaimBundleSegments(
+    ctx.segmentsCacheKey,
+    () => readBundleSegments(ctx.bundleId),
+    ctx.bundleId,
+  );
+  return { ...ctx, segments: loaded.segments, tracksById: loaded.tracksById, segmentsLoaded: true };
+}
 
 /**
  * The frames this claimant has already given an answer at.
@@ -282,9 +301,10 @@ export async function loadContext(
   const needsCachedSegments = includeSegments || !summaryFingerprint;
   // The summary catches structural tracking changes; updatedAt also catches
   // a replacement of boxes whose track ids and frame ranges stayed the same.
+  const segmentsCacheKey = `${bundle.id}:${bundle.updatedAt.toISOString()}:${summaryFingerprint ?? "legacy"}`;
   const bundleSegments = needsCachedSegments
     ? await loadClaimBundleSegments(
-      `${bundle.id}:${bundle.updatedAt.toISOString()}:${summaryFingerprint ?? "legacy"}`,
+      segmentsCacheKey,
       () => readBundleSegments(bundle.id),
       bundle.id,
     )
@@ -300,6 +320,8 @@ export async function loadContext(
       segments: bundleSegments?.segments ?? [],
       tracksById: bundleSegments?.tracksById ?? new Map<string, CachedTrack>(),
       fingerprint,
+      segmentsLoaded: bundleSegments !== null,
+      segmentsCacheKey,
       identityId: claimIdentityId(userId, recordingId),
       answeredFrames: await answeredFramesFor(recordingId, userId, fingerprint),
       // The time outside the recording's match window counts as off-pitch,
@@ -325,6 +347,12 @@ function describe(
   labelRecorded: boolean | null = null,
   /** The claimant has no chain because an administrator released it. */
   resetByAdmin = false,
+  /**
+   * "summary" skips the open questions, which need every box in the game. The
+   * /find page asks for this view: it reads the chain, name and coverage and
+   * asks its own questions, so it never waited on the 88 MB read for them.
+   */
+  view: "full" | "summary" = "full",
 ) {
   const spans = chainIntervals(chain, ctx.manifest, ctx.offPitch);
   /*
@@ -335,7 +363,7 @@ function describe(
    * floor on writes only, and the write and the refetch disagreed -- which is
    * how a stop ended up sitting on the playhead.
    */
-  const open = openUncertainties(
+  const open = view === "summary" ? [] : openUncertainties(
     chain,
     ctx.tracksById,
     crossingsFromSegments(ctx.segments),
@@ -386,8 +414,10 @@ function describe(
       /** False means the whole map is being ignored, however full it looks. */
       matchesBundle: mapMatchesBundle,
       /** Source tracks in this bundle, for comparison with `people`. */
-      tracks: ctx.tracksById.size,
-      segments: ctx.segments.length,
+      tracks: ctx.segmentsLoaded
+        ? ctx.tracksById.size
+        : (ctx.manifest.summary?.segments ?? []).reduce((sum, segment) => sum + segment.tracks.length, 0),
+      segments: ctx.segmentsLoaded ? ctx.segments.length : ctx.manifest.segments.length,
       /**
        * Which linker produced this bundle, when the pipeline stamped it.
        *
@@ -433,7 +463,9 @@ function describe(
       chainLength: chain.length,
       coveragePercent,
       durationSeconds: matchWindowSeconds(ctx.manifest),
-      hasOpenQuestion: uncertainty !== null,
+      // The summary view never looked for open questions, so it cannot say
+      // there are none: it never reports a claim complete.
+      hasOpenQuestion: view === "summary" || uncertainty !== null,
     }),
     requiredCoveragePercent: requiredCoverageFor(matchWindowSeconds(ctx.manifest)),
     /**
@@ -1088,8 +1120,12 @@ function fingerprintConflict(ctx: ChainContext, sent: string | null | undefined,
 
 /* ------------------------------------------------------------------ */
 
+/** Header the /find page sends for the summary view of GET /chain. */
+export const CLAIM_CHAIN_VIEW_HEADER = "x-claim-chain-view";
+
 router.get("/recordings/:id/claim-match/chain", async (req, res): Promise<void> => {
-  const ctx = await begin(req, res);
+  const view = req.header?.(CLAIM_CHAIN_VIEW_HEADER) === "summary" ? "summary" : "full";
+  const ctx = await begin(req, res, { includeSegments: view === "full" });
   if (!ctx) return;
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
   const chain = chainOf(ctx.manifest, ctx.identityId);
@@ -1107,7 +1143,8 @@ router.get("/recordings/:id/claim-match/chain", async (req, res): Promise<void> 
       ));
     resetByAdmin = own?.state === "released";
   }
-  res.json(describe(ctx, chain, identity?.name ?? null, null, resetByAdmin));
+  res.setHeader("Vary", CLAIM_CHAIN_VIEW_HEADER);
+  res.json(describe(ctx, chain, identity?.name ?? null, null, resetByAdmin, view));
 });
 
 /**

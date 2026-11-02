@@ -68,13 +68,24 @@ export function boxesAt(chunks: Record<number, Chunk>, k: number, lt: number): B
   return out;
 }
 
+/**
+ * The playlist still goes through the proxy (it checks the viewer may see the
+ * video), but `direct=1` asks for segment lines that point straight at Bunny,
+ * so the video itself is not relayed through Replit. The server honours it only
+ * on replayjo.com; preview hosts keep proxied segments.
+ */
+function withDirectSegments(url: string): string {
+  if (!url.startsWith("/api/hls-proxy/manifest?") || /[?&]direct=1(&|$)/.test(url)) return url;
+  return `${url}&direct=1`;
+}
+
 function browserSafeVideoUrl(url: string | undefined | null): string | undefined {
   if (!url) return undefined;
-  if (url.startsWith("/api/hls-proxy/")) return url;
+  if (url.startsWith("/api/hls-proxy/")) return withDirectSegments(url);
   try {
     const parsed = new URL(url);
     if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
-      return `/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`;
+      return withDirectSegments(`/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`);
     }
   } catch {
     // relative sources play as they are
@@ -266,18 +277,52 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
     const url = browserSafeVideoUrl(videoUrl);
     if (!v || !url) return;
     let hls: Hls | null = null;
+    let cancelled = false;
     setVideoError(false);
     const isHls = url.includes(".m3u8") || url.includes("/hls-proxy/");
-    if (isHls && Hls.isSupported()) {
-      hls = new Hls({ enableWorker: true, maxBufferLength: 20, backBufferLength: 30 });
+    // If Bunny refuses the direct segments, play the proxied stream instead,
+    // once, from where the video was.
+    const proxied = url.replace(/&direct=1(?=&|$)/, "");
+    const canFallBack = proxied !== url;
+    const attach = (source: string, startPosition: number, fallback: boolean) => {
+      hls = new Hls({ enableWorker: true, maxBufferLength: 20, backBufferLength: 30, startPosition });
       capPlaybackQuality(hls);
-      hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
-      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) setVideoError(true); });
-      hls.attachMedia(v);
+      const instance = hls;
+      instance.on(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(source));
+      instance.on(Hls.Events.ERROR, (_e, data) => {
+        if (!data.fatal || cancelled) return;
+        if (fallback) {
+          const at = v.currentTime || 0;
+          instance.destroy();
+          attach(proxied, at, false);
+          return;
+        }
+        setVideoError(true);
+      });
+      instance.attachMedia(v);
+    };
+    let onNativeError: (() => void) | null = null;
+    if (isHls && Hls.isSupported()) {
+      attach(url, -1, canFallBack);
     } else {
+      if (canFallBack) {
+        onNativeError = () => {
+          if (!onNativeError) return;
+          v.removeEventListener("error", onNativeError);
+          onNativeError = null;
+          const at = v.currentTime || 0;
+          v.src = proxied;
+          if (at > 0) v.currentTime = at;
+        };
+        v.addEventListener("error", onNativeError);
+      }
       v.src = url;
     }
-    return () => { hls?.destroy(); };
+    return () => {
+      cancelled = true;
+      if (onNativeError) v.removeEventListener("error", onNativeError);
+      (hls as Hls | null)?.destroy();
+    };
   }, [videoUrl]);
 
   useEffect(() => {

@@ -120,7 +120,11 @@ export default function ClaimGamePage() {
   const recordingId = Number(params.id);
   const enabled = Number.isInteger(recordingId) && recordingId > 0 && Boolean(user) && !isGuest;
   const matchQueryKey = useMemo(() => getGetClaimMatchQueryKey(recordingId), [recordingId]);
-  const chainQueryKey = useMemo(() => getGetClaimChainQueryKey(recordingId), [recordingId]);
+  // The summary view: this page reads the chain, name and coverage, never the
+  // open questions, and those cost the server a read of every box in the game.
+  // Its own key, so the /claim page never gets a summary from the cache; the
+  // invalidations below use the shorter key, which matches this one too.
+  const chainQueryKey = useMemo(() => [...getGetClaimChainQueryKey(recordingId), "summary"] as const, [recordingId]);
   const rosterQueryKey = useMemo(() => getGetClaimMatchRosterQueryKey(recordingId), [recordingId]);
   const claimQuery = useGetClaimMatch(recordingId, {
     query: {
@@ -130,7 +134,10 @@ export default function ClaimGamePage() {
       refetchOnWindowFocus: "always",
     },
   });
-  const chainQuery = useGetClaimChain(recordingId, { query: { enabled, queryKey: chainQueryKey } });
+  const chainQuery = useGetClaimChain(recordingId, {
+    query: { enabled, queryKey: chainQueryKey },
+    request: { headers: { "x-claim-chain-view": "summary" } },
+  });
   const rosterQuery = useGetClaimMatchRoster(recordingId, {
     query: {
       enabled,
@@ -882,6 +889,14 @@ export function GameClaim({
   const ensure = useCallback(async (k: number) => {
     await loadChunk(k);
     ctx.CH = chunks.current;
+    // Fetch the next block in the visit order while the player works on this
+    // one, so moving on does not wait on a ~10 MB download. One block ahead
+    // only: a whole game is ~130 MB of tracking and crops on mobile data.
+    const order = ctxRef.current.S.order;
+    const next = order[order.indexOf(k) + 1];
+    if (next !== undefined && !chunks.current[next]) {
+      void loadChunk(next).catch(() => { /* loaded again, with Retry, when reached */ });
+    }
   }, [ctx, loadChunk]);
 
   const applyShirtIdentityToChunk = (k: number): boolean => {

@@ -219,6 +219,12 @@ export type TrackingBundleSummary = {
       endFrame: number;
     }>;
     events: TrackingSegmentPayload["events"];
+    /**
+     * Copied from the segment so GET /claim-match/game can answer without
+     * reading the segment objects. Absent on bundles summarised before
+     * 2026-11-02; the server fills it in the first time it reads them.
+     */
+    inPlaySpans?: TrackingSegmentPayload["inPlaySpans"];
   }>;
 };
 

@@ -353,3 +353,28 @@ describe("the whole claim, one call after another", () => {
     expect(new Set(labels.map((row) => row.bundleFingerprint)).size).toBe(1);
   });
 });
+
+describe("the /find page's summary view of the chain", () => {
+  it("returns the same chain, name and coverage without reading the boxes", async () => {
+    await request(app).post(url("/tap")).send({ trackId: "A", frame: 20, name: "Mohammed" });
+    const full = await request(app).get(url());
+    // A new bundle version: nothing for this bundle is in the segment cache.
+    await db.update(recordingTrackingBundlesTable)
+      .set({ updatedAt: new Date(Date.now() + 60_000) })
+      .where(eq(recordingTrackingBundlesTable.id, bundleId));
+    vi.mocked(readClaimSegment).mockClear();
+
+    const summary = await request(app).get(url()).set("x-claim-chain-view", "summary");
+    expect(summary.status).toBe(200);
+    expect(readClaimSegment).not.toHaveBeenCalled();
+    expect(summary.body.chain).toEqual(full.body.chain);
+    expect(summary.body.name).toBe("Mohammed");
+    expect(summary.body.identityId).toBe(full.body.identityId);
+    expect(summary.body.coveragePercent).toBe(full.body.coveragePercent);
+    expect(summary.body.identityMap.tracks).toBe(3);
+    // It never looked for questions, so it asks none and claims nothing.
+    expect(summary.body.openQuestions).toEqual([]);
+    expect(summary.body.completed).toBe(false);
+    expect(summary.headers.vary).toMatch(/x-claim-chain-view/i);
+  });
+});

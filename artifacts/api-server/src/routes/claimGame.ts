@@ -21,7 +21,7 @@
  * matches" all see a game claim exactly as they see a chain claim.
  */
 import { Router, type IRouter } from "express";
-import { and, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import {
@@ -79,6 +79,7 @@ import {
   recordFindDecisionLabel,
   syncChainClaim,
   type ChainContext,
+  withSegments,
 } from "./claimChain";
 import { getClaimMatchWritableBundle, requireAccountUser } from "./claimMatch";
 import { ClaimBundleChangedError, sendBundleReplaced } from "../lib/claimBundleChanged";
@@ -250,7 +251,16 @@ async function claimMatchChoices(ctx: ChainContext): Promise<{
     // so there is nothing to continue onto in the next recording.
     const windowEnd = readMatchWindow(source.manifest)?.endSeconds ?? source.manifest.duration;
     if (end > rw.endMs && !continuation && windowEnd >= source.manifest.duration) {
-      const next = await db.select({ recording: recordingsTable, manifest: recordingTrackingBundlesTable.manifest, field: fieldsTable })
+      // Only two numbers of each manifest are needed; selecting the whole
+      // jsonb read every tracked recording's manifest on the field.
+      const next = await db.select({
+        recording: recordingsTable,
+        manifest: {
+          videoStartSeconds: sql<number>`coalesce((${recordingTrackingBundlesTable.manifest}->>'videoStartSeconds')::float8, 0)`,
+          duration: sql<number>`coalesce((${recordingTrackingBundlesTable.manifest}->>'duration')::float8, 0)`,
+        },
+        field: fieldsTable,
+      })
         .from(recordingsTable)
         .innerJoin(recordingTrackingBundlesTable, eq(recordingTrackingBundlesTable.recordingId, recordingsTable.id))
         .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
@@ -266,9 +276,9 @@ async function claimMatchChoices(ctx: ChainContext): Promise<{
   return { matches, continuation };
 }
 
-function inPlaySpans(ctx: ChainContext): Array<[number, number]> {
+function sortedSpans(sources: ReadonlyArray<{ readonly inPlaySpans?: ReadonlyArray<{ readonly start: number; readonly end: number }> }>): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
-  for (const segment of ctx.segments) {
+  for (const segment of sources) {
     for (const span of segment.inPlaySpans ?? []) {
       if (span.end > span.start) spans.push([span.start, span.end]);
     }
@@ -277,14 +287,73 @@ function inPlaySpans(ctx: ChainContext): Array<[number, number]> {
   return spans;
 }
 
+/**
+ * The game's in-play spans from the bundle summary, or null when the summary
+ * predates them (every summarised segment must carry its spans).
+ */
+export function summaryInPlaySpans(manifest: ChainContext["manifest"]): Array<[number, number]> | null {
+  const summary = manifest.summary?.segments;
+  if (!summary?.length || summary.length !== manifest.segments.length) return null;
+  if (!summary.every((segment) => Array.isArray(segment.inPlaySpans))) return null;
+  return sortedSpans(summary);
+}
+
+/**
+ * Copy the in-play spans into an older bundle's summary, so the next GET
+ * /game for it answers without reading the segments. One jsonb_set on the
+ * summary only, and only while the row still holds the tracking it was read
+ * from (a replacement changes the fingerprint). The identity writes rewrite
+ * the manifest under a row lock and may overwrite this, which only means it is
+ * written again next time.
+ */
+async function backfillSummaryInPlaySpans(ctx: ChainContext): Promise<void> {
+  const summary = ctx.manifest.summary;
+  if (!summary?.segments?.length || summary.segments.length !== ctx.segments.length) return;
+  const byIndex = new Map(ctx.segments.map((segment) => [segment.segmentIndex, segment]));
+  if (!summary.segments.every((segment) => byIndex.has(segment.segmentIndex))) return;
+  const segments = summary.segments.map((segment) => ({
+    ...segment,
+    inPlaySpans: (byIndex.get(segment.segmentIndex)!.inPlaySpans ?? []).map((span) => ({ start: span.start, end: span.end })),
+  }));
+  try {
+    await db.execute(sql`
+      update ${recordingTrackingBundlesTable}
+      set manifest = jsonb_set(manifest, '{summary,segments}', ${JSON.stringify(segments)}::jsonb)
+      where id = ${ctx.bundleId}
+        and manifest ? 'summary'
+        and manifest->'provenance'->>'bundleFingerprint' = ${ctx.fingerprint}`);
+  } catch (error) {
+    console.error("[claim-game] in-play summary backfill failed", { bundleId: ctx.bundleId, error });
+  }
+}
+
+async function inPlaySpans(ctx: ChainContext): Promise<Array<[number, number]>> {
+  const fromSummary = summaryInPlaySpans(ctx.manifest);
+  if (fromSummary) return fromSummary;
+  const full = await withSegments(ctx);
+  void backfillSummaryInPlaySpans(full);
+  return sortedSpans(full.segments);
+}
+
 function matchWindowForClient(ctx: ChainContext): { startSeconds: number; endSeconds: number } | null {
   const window = readMatchWindow(ctx.manifest);
   return window ? { startSeconds: window.startSeconds, endSeconds: window.endSeconds } : null;
 }
 
 router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> => {
-  const ctx = await begin(req, res);
+  // Only the in-play spans come from the tracking, and the bundle summary
+  // carries them: this used to read every segment of the game (88 MB on a
+  // 2-hour recording) and kept the /find intro on "Loading" for 7-9 s.
+  const ctx = await begin(req, res, { includeSegments: false });
   if (!ctx) return;
+  // The page's first save with parts needs the full tracking. Start reading
+  // it into the shared cache now, while the player reads the intro, instead
+  // of making that first answer wait for it.
+  if (!ctx.segmentsLoaded) {
+    void withSegments(ctx).catch((error) => {
+      console.error("[claim-game] segment prefetch failed", { recordingId: ctx.recordingId, error });
+    });
+  }
   const [row] = await db
     .select({
       gameState: claimMatchProgressTable.gameState,
@@ -308,7 +377,7 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     completed: stale ? false : row?.completed ?? false,
     staleState: stale,
     bundleFingerprint: ctx.fingerprint,
-    inPlaySpans: inPlaySpans(ctx),
+    inPlaySpans: await inPlaySpans(ctx),
     /**
      * Where the match is on this recording (tracking seconds), or null for
      * the whole recording. The page starts the claim inside it and skips
@@ -372,7 +441,9 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     res.status(413).json({ error: "Claim too large" });
     return;
   }
-  const ctx = await begin(req, res);
+  // A save without parts only stores the page's state, so it needs no
+  // tracking; one with parts is clamped to the tracks and derives the claim.
+  const ctx = await begin(req, res, { includeSegments: parsed.data.parts !== undefined });
   if (!ctx) return;
   if (parsed.data.bundleFingerprint && parsed.data.bundleFingerprint !== ctx.fingerprint) {
     sendBundleReplaced(res, ctx.fingerprint);
