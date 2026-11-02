@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, boolean, timestamp, unique, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, unique, index, real } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { fieldsTable } from "./fields";
@@ -13,6 +13,16 @@ export const academiesTable = pgTable("academies", {
   description: text("description"),
   logoUrl: text("logo_url"),
   contactPhone: text("contact_phone"),
+  /** Owner-edited profile (Academy console → Profile). All optional; location falls back to the field's. */
+  nameAr: text("name_ar"),
+  whatsappPhone: text("whatsapp_phone"),
+  email: text("email"),
+  address: text("address"),
+  latitude: real("latitude"),
+  longitude: real("longitude"),
+  instagramUrl: text("instagram_url"),
+  facebookUrl: text("facebook_url"),
+  websiteUrl: text("website_url"),
   /** Bunny Storage CDN URL of this academy's branding intro clip, prepended to exports and playback of its clips. */
   introVideoUrl: text("intro_video_url"),
   joinCode: text("join_code"),

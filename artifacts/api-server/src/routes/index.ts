@@ -54,6 +54,7 @@ import academyWhatsappRouter from "./academyWhatsapp";
 import academyMatchesRouter from "./academyMatches";
 import metaAdsRouter from "./metaAds";
 import academyAdsRouter from "./academyAds";
+import academyProfileRouter from "./academyProfile";
 import demoBrandingRouter from "./demoBranding";
 import weeklyHighlightsRouter from "./weeklyHighlights";
 
@@ -92,6 +93,7 @@ router.use(academyWhatsappRouter);
 router.use(academyMatchesRouter);
 router.use(metaAdsRouter);
 router.use(academyAdsRouter);
+router.use(academyProfileRouter);
 router.use(contaboRouter);
 router.use(liveRouter);
 router.use(hlsProxyRouter);

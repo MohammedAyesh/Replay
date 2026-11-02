@@ -13,7 +13,7 @@ import {
   GetMatchLiveClipStatusResponse,
 } from "@workspace/api-zod";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
-import { LIVE_CAMERA_UPSTREAM, parseLiveCamera } from "../lib/liveCameras";
+import { LIVE_CAMERA_UPSTREAM, liveCameraAlias } from "../lib/liveCameras";
 import { loadRoomByCode, matchPhase, matchWindow, normalizeCode } from "../lib/matchRooms";
 import { logger } from "../lib/logger";
 import { controlFetch, controlResponse } from "./contabo";
@@ -119,7 +119,10 @@ async function getMatchContext(req: Request, res: Response): Promise<MatchLiveCo
 }
 
 function cameraForMatch(ctx: MatchLiveContext): { controlCamera: string; streamCamera: string } | null {
-  const controlCamera = parseLiveCamera(ctx.field.cameraId ?? undefined);
+  // The pitch's camera, else the booking's own. Either may be stored as "camera1" or
+  // "cam1": an academy pitch stored as "cam1" left the VAR tab saying "not available"
+  // for a whole session (G2EQEZ, 2026-11-02) while vps1 was streaming it.
+  const controlCamera = liveCameraAlias(ctx.field.cameraId) ?? liveCameraAlias(ctx.request.cameraId);
   if (!controlCamera) return null;
   const streamCamera = LIVE_CAMERA_UPSTREAM.get(controlCamera) ?? varCamera(controlCamera);
   return { controlCamera, streamCamera };

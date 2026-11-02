@@ -22,6 +22,7 @@ import {
   Trash2,
   Trophy,
   Target,
+  Building2,
   Users,
   UserRound,
   Video,
@@ -88,6 +89,8 @@ import { AcademyMatchesSection } from "@/components/academy-console/matches-sect
 import { useMatchesCopy } from "@/i18n/matches-strings";
 import { useAdsCopy } from "@/i18n/ads-strings";
 import { AcademyAdsSection } from "@/components/academy-console/ads-section";
+import { AcademyProfileSection } from "@/components/academy-console/profile-section";
+import { useProfileCopy } from "@/i18n/profile-strings";
 import { AcademyPlayersSection } from "@/components/academy-console/players-section";
 import { AcademySessionsSection } from "@/components/academy-console/sessions-section";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
@@ -100,7 +103,7 @@ import { AcademyRegistrationsSection } from "@/components/academy-console/regist
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "profile";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -182,6 +185,7 @@ function AcademyConsoleSidebar({
   const peopleCopy = usePeopleCopy();
   const matchesCopy = useMatchesCopy();
   const adsCopy = useAdsCopy();
+  const profileCopy = useProfileCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
   const items: Array<{ id: ConsoleSection; label: string; icon: typeof LayoutDashboard; ownerOnly?: boolean }> = [
     { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
@@ -198,6 +202,7 @@ function AcademyConsoleSidebar({
     { id: "people", label: peopleCopy.people.nav, icon: ContactIcon },
     { id: "ads", label: adsCopy.nav, icon: Target, ownerOnly: true },
     { id: "whatsapp", label: whatsappCopy.nav, icon: MessageCircle },
+    { id: "profile", label: profileCopy.nav, icon: Building2 },
   ];
 
   return (
@@ -784,7 +789,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "profile"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -872,6 +877,8 @@ export default function AcademyConsole() {
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPeopleSection academyId={activeAcademyId} isOwner={isOwner} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
           ) : section === "ads" ? (
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyAdsSection academyId={activeAcademyId} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
+          ) : section === "profile" ? (
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyProfileSection academyId={activeAcademyId} />
           ) : section === "matches" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyMatchesSection academyId={activeAcademyId} isOwner={isOwner} />
           ) : <AcademyConsoleSkeleton />}
