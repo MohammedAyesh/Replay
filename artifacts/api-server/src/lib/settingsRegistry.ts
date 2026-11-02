@@ -719,6 +719,14 @@ export const SETTINGS: readonly SettingDefinition[] = [
     type: "string",
     defaultValue: "",
   },
+  {
+    key: "demo.socialClipIds",
+    group: "Demo page",
+    label: "Vertical (9:16) clips shown on the demo",
+    description: "Comma-separated ids of finished 9:16 clips for the phone on the home page and the demo, in order. Empty picks the best vertical clips automatically.",
+    type: "string",
+    defaultValue: "",
+  },
 ] as const;
 
 export type SettingKey = (typeof SETTINGS)[number]["key"];

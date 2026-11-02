@@ -5,10 +5,10 @@ import heroImage from "@/assets/hero-floodlit-pitch.png";
 import familyImage from "@/assets/academies-watching.png";
 import playersImage from "@/assets/clips-editing.png";
 import { useLocale } from "@/i18n/context";
-import { basePath, Brand, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "@/pages/landing-parts";
+import { basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "@/pages/landing-parts";
 import { demoCopy, type DemoLocale, type Persona } from "./copy";
 import { LiveBroadcast } from "./LiveBroadcast";
-import { useReport, useShowcase, withBase, type DemoClip } from "./data";
+import { useReport, useShowcase, withBase } from "./data";
 import "./demo.css";
 import "@/pages/landing.css";
 
@@ -336,16 +336,20 @@ export default function SimpleDemo() {
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
 
-  // The academy view only ever shows academy-branded copies, never a pitch's.
+  // Only branded copies, since the page says every clip carries the owner's
+  // badge. Pitches see Jordan Galaxy's copies; academies only ever see
+  // academy-branded copies, never a pitch's.
   const { wideClip, tallClip } = useMemo(() => {
-    const clips: DemoClip[] = (persona === "academy" ? data?.academyClips : data?.clips) ?? [];
-    const byViews = [...clips].sort((x, y) => y.viewCount - x.viewCount);
-    const wide = byViews.find((clip) => clip.aspectRatio === "16:9") ?? null;
-    const tall = byViews.find((clip) => clip.aspectRatio === "9:16")
-      ?? (persona === "pitch" ? (data?.socialClips ?? []).find((clip) => clip.branded && clip.aspectRatio === "9:16") : undefined)
-      ?? null;
-    return { wideClip: wide, tallClip: tall };
-  }, [data?.clips, data?.academyClips, data?.socialClips, persona]);
+    if (persona === "academy") {
+      const academy = (data?.academyClips ?? []).filter((clip) => clip.branded);
+      return {
+        wideClip: academy.find((clip) => clip.aspectRatio === "16:9") ?? null,
+        tallClip: academy.find((clip) => clip.aspectRatio === "9:16") ?? null,
+      };
+    }
+    const branded = brandedClips(data);
+    return { wideClip: branded.wide[0] ?? null, tallClip: branded.tall[0] ?? null };
+  }, [data, persona]);
 
   const returnRate = persona === "pitch" ? data?.returnRatePercent ?? null : null;
   const clipCount = data?.counts.clips ?? null;

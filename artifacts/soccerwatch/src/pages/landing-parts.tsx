@@ -92,6 +92,20 @@ export function LoopVideo({ clip, fallback, className }: { clip: DemoClip | null
   );
 }
 
+/**
+ * The clips the public pages may show. Only the demo's own branded copies
+ * (crest in the corner, end card) qualify: both pages say clips are branded,
+ * so an unbranded original never appears. Order is the admin's pin order.
+ * With no branded copy ready, callers show a still instead.
+ */
+export function brandedClips(showcase: { clips?: DemoClip[]; socialClips?: DemoClip[] } | undefined): { wide: DemoClip[]; tall: DemoClip[] } {
+  const all = [...(showcase?.clips ?? []), ...(showcase?.socialClips ?? [])].filter((clip) => clip.branded);
+  return {
+    wide: all.filter((clip) => clip.aspectRatio === "16:9"),
+    tall: all.filter((clip) => clip.aspectRatio === "9:16"),
+  };
+}
+
 export function formatLongDate(iso: string, rtl: boolean): string {
   const parsed = new Date(`${iso}T12:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return iso;

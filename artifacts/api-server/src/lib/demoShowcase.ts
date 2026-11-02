@@ -317,8 +317,28 @@ export function brandedOrOriginal(rows: ClipRow[], ready: Set<number>, minimum: 
   return rows.map((row) => toDemoClip(row, false));
 }
 
-/** The best finished vertical clips, for the social-media section. */
+/**
+ * The finished vertical clips for the phone frame: the pinned ones
+ * (demo.socialClipIds) in their order, or else the best automatically.
+ */
 async function pickSocialClips(): Promise<ClipRow[]> {
+  const pinned = parseIdList(await settingString("demo.socialClipIds"));
+  if (pinned.length) {
+    const pinnedRows = await db
+      .select()
+      .from(userClipsTable)
+      .where(and(
+        inArray(userClipsTable.id, pinned),
+        eq(userClipsTable.exportStatus, "done"),
+        eq(userClipsTable.isHidden, false),
+        isNull(userClipsTable.hiddenReason),
+        eq(userClipsTable.aspectRatio, "9:16"),
+      ));
+    const ordered = pinned
+      .map((id) => pinnedRows.find((row) => row.id === id))
+      .filter((row): row is ClipRow => Boolean(row?.exportedUrl));
+    if (ordered.length) return ordered.slice(0, 3);
+  }
   const rows = await db
     .select()
     .from(userClipsTable)
