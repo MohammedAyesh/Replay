@@ -23,7 +23,7 @@ import { useReport, useShowcase } from "@/pages/demo/data";
 import { LiveBroadcast } from "@/pages/demo/LiveBroadcast";
 import { demoCopy } from "@/pages/demo/copy";
 import "@/pages/demo/demo.css";
-import { basePath, Brand, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "./landing-parts";
+import { basePath, Brand, brandedClips, Chevron, Icon, LoopVideo, MatchStatsCard, type IconName } from "./landing-parts";
 import "./landing.css";
 
 // ─── copy ─────────────────────────────────────────────────────────────────────
@@ -149,10 +149,11 @@ export default function Login() {
   const report = reportData?.report ?? null;
   const team = report?.team ?? null;
 
-  const wideClips = showcase?.clips ?? [];
-  const heroClip = wideClips[0];
+  // Branded copies only: the page says every clip carries the pitch's badge.
+  const branded = brandedClips(showcase);
+  const heroClip = branded.wide[0];
   const reduceMotion = useReducedMotion();
-  const storyClip = (showcase?.socialClips ?? []).find((clip) => clip.aspectRatio === "9:16");
+  const storyClip = branded.tall[0];
   const clipCount = showcase?.counts.clips ?? null;
   const returnRate = showcase?.returnRatePercent ?? null;
   const salesWhatsapp = showcase?.salesWhatsapp ?? null;
@@ -315,7 +316,7 @@ export default function Login() {
                 </div>
               ) : (
                 <div className="lp-media">
-                  <LoopVideo clip={wideClips[1] ?? wideClips[0]} fallback={playersImage} />
+                  <LoopVideo clip={branded.wide[1] ?? branded.wide[0]} fallback={playersImage} />
                 </div>
               )}
             </div>
