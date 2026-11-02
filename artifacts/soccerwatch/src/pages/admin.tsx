@@ -2452,6 +2452,7 @@ function AcademiesTab() {
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const [form, setForm] = useState({ name: "", contactPhone: "", fieldId: 0, daysOfWeek: [] as string[], description: "", logoUrl: "", introVideoUrl: null as string | null, cameraIds: [] as string[] });
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
 
   // Per-academy recording data
@@ -2486,6 +2487,13 @@ function AcademiesTab() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const firstFieldId = fields[0]?.id;
+    if (editing === "new" && !form.fieldId && firstFieldId) {
+      setForm((current) => current.fieldId ? current : { ...current, fieldId: firstFieldId });
+    }
+  }, [editing, fields, form.fieldId]);
 
   useEffect(() => {
     apiFetch("/admin/clip-intro")
@@ -2568,18 +2576,21 @@ function AcademiesTab() {
   };
 
   const startNew = () => {
+    setSaveError(null);
     setEditing("new");
     setForm({ name: "", contactPhone: "", fieldId: fields[0]?.id ?? 0, daysOfWeek: [], description: "", logoUrl: "", introVideoUrl: null, cameraIds: [] });
   };
 
   const startEdit = (a: AdminAcademy) => {
+    setSaveError(null);
     setEditing(a.id);
     setForm({ name: a.name, contactPhone: a.contactPhone ?? "", fieldId: a.fieldId, daysOfWeek: a.daysOfWeek, description: a.description ?? "", logoUrl: a.logoUrl ?? "", introVideoUrl: a.introVideoUrl ?? null, cameraIds: a.cameraIds ?? [] });
   };
 
-  const cancelEdit = () => { setEditing(null); };
+  const cancelEdit = () => { setEditing(null); setSaveError(null); };
 
   const toggleDay = (day: string) => {
+    setSaveError(null);
     setForm((f) => ({
       ...f,
       daysOfWeek: f.daysOfWeek.includes(day)
@@ -2589,12 +2600,21 @@ function AcademiesTab() {
   };
 
   const saveAcademy = async () => {
-    if (!form.name.trim() || !form.fieldId) return;
+    setSaveError(null);
+    const fieldId = form.fieldId || fields[0]?.id || 0;
+    if (!form.name.trim()) {
+      setSaveError("Enter an academy name before saving.");
+      return;
+    }
+    if (!fieldId) {
+      setSaveError("Add a field before saving an academy.");
+      return;
+    }
     setSaving(true);
     try {
       const body = {
         name: form.name.trim(),
-        fieldId: form.fieldId,
+        fieldId,
         daysOfWeek: form.daysOfWeek,
         description: form.description.trim() || null,
         logoUrl: form.logoUrl.trim() || null,
@@ -2609,8 +2629,11 @@ function AcademiesTab() {
         setAcademies((p) => p.map((a) => a.id === editing ? updated : a));
       }
       cancelEdit();
-    } catch { /* silent */ }
-    setSaving(false);
+    } catch (error) {
+      setSaveError(adminRequestErrorMessage(error, "Could not save academy"));
+    } finally {
+      setSaving(false);
+    }
   };
 
   const deleteAcademy = async (id: number, name: string) => {
@@ -2720,8 +2743,9 @@ function AcademiesTab() {
           form={form}
           fields={fields}
           saving={saving}
+          saveError={saveError}
           onToggleDay={toggleDay}
-          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+          onChange={(patch) => { setSaveError(null); setForm((f) => ({ ...f, ...patch })); }}
           onSave={saveAcademy}
           onCancel={cancelEdit}
           title="New Academy"
@@ -2812,9 +2836,10 @@ function AcademiesTab() {
                       form={form}
                       fields={fields}
                       saving={saving}
+                      saveError={saveError}
                       academyId={academy.id}
                       onToggleDay={toggleDay}
-                      onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+                      onChange={(patch) => { setSaveError(null); setForm((f) => ({ ...f, ...patch })); }}
                       onSave={saveAcademy}
                       onCancel={cancelEdit}
                       title="Edit Academy"
@@ -2966,6 +2991,7 @@ function AcademyForm({
   form,
   fields,
   saving,
+  saveError,
   academyId,
   onToggleDay,
   onChange,
@@ -2976,6 +3002,7 @@ function AcademyForm({
   form: { name: string; contactPhone: string; fieldId: number; daysOfWeek: string[]; description: string; logoUrl: string; introVideoUrl: string | null; cameraIds: string[] };
   fields: AdminField[];
   saving: boolean;
+  saveError: string | null;
   academyId?: number;
   onToggleDay: (day: string) => void;
   onChange: (patch: Partial<typeof form>) => void;
@@ -3168,10 +3195,16 @@ function AcademyForm({
           onChange={(e) => onChange({ fieldId: Number(e.target.value) })}
           className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary appearance-none"
         >
+          <option value={0} disabled>Choose a field…</option>
           {fields.map((f) => (
             <option key={f.id} value={f.id}>{f.name} — {f.location}</option>
           ))}
         </select>
+        {!form.fieldId && (
+          <p className="mt-1 text-xs text-amber-300" role="status">
+            {fields.length ? "Choose a field before saving." : "Add a field before saving an academy."}
+          </p>
+        )}
       </div>
       <div>
         <label className="text-xs text-zinc-400 mb-2 block">Days of Week</label>
@@ -3238,8 +3271,9 @@ function AcademyForm({
       </div>
       <div className="flex gap-2">
         <button
+          type="button"
           onClick={onSave}
-          disabled={saving || !form.name.trim()}
+          disabled={saving || !form.name.trim() || !form.fieldId}
           className="flex-1 flex items-center justify-center gap-2 bg-primary text-black font-bold py-2.5 rounded-xl text-sm disabled:opacity-50"
         >
           <Save className="w-4 h-4" />
@@ -3252,6 +3286,7 @@ function AcademyForm({
           Cancel
         </button>
       </div>
+      {saveError && <p className="text-sm text-red-300" role="alert">{saveError}</p>}
     </div>
   );
 }
