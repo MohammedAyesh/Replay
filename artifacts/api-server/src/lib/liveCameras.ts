@@ -20,3 +20,14 @@ export function parseVarControlCamera(value: string | string[] | undefined): "ca
   const match = /^(?:camera|cam)([1-3])$/.exec(camera ?? "");
   return match && parseLiveCamera(`camera${match[1]}`) ? `cam${match[1]}` as "cam1" | "cam2" | "cam3" : null;
 }
+/**
+ * The configured live alias ("camera1") for a camera id in either form a field or a
+ * booking may store: "camera1" (owner pitches) or "cam1" (some academy pitches).
+ * Null when the camera is not configured for live.
+ */
+export function liveCameraAlias(value: string | null | undefined): string | null {
+  const direct = parseLiveCamera(value ?? undefined);
+  if (direct) return direct;
+  const control = parseVarControlCamera(value ?? undefined);
+  return control ? parseLiveCamera(`camera${control.slice(3)}`) : null;
+}

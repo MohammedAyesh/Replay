@@ -318,3 +318,36 @@ describe("match live clip control contract", () => {
     expect(vi.mocked(controlFetch).mock.calls[1]?.[0]).toMatch(/^\/live\/ballpath\/camera1\?/);
   });
 });
+describe("match live status camera ids", () => {
+  const liveWindow = { variants: { hls: { live: true, newestAgeSec: 2 } } };
+  function mockVps1() {
+    vi.mocked(controlFetch).mockImplementation(async (path: string) => (
+      path.startsWith("/var/")
+        ? { ok: true, status: 200, body: liveWindow }
+        : { ok: true, status: 200, body: { on: false, state: "off" } }
+    ));
+  }
+
+  it("treats a pitch camera stored as cam1 like camera1", async () => {
+    await db.update(fieldsTable).set({ cameraId: "cam1" }).where(eq(fieldsTable.id, fieldId));
+    try {
+      mockVps1();
+      const res = await request(app).get(`/api/matches/${matchCode}/live/status`).expect(200);
+      expect(res.body.live).toBe(true);
+      expect(vi.mocked(controlFetch).mock.calls.some(([path]) => path === "/var/cam1/window")).toBe(true);
+    } finally {
+      await db.update(fieldsTable).set({ cameraId: "camera1" }).where(eq(fieldsTable.id, fieldId));
+    }
+  });
+
+  it("falls back to the booking's own camera when the pitch has none", async () => {
+    await db.update(fieldsTable).set({ cameraId: null }).where(eq(fieldsTable.id, fieldId));
+    try {
+      mockVps1();
+      const res = await request(app).get(`/api/matches/${matchCode}/live/status`).expect(200);
+      expect(res.body.live).toBe(true);
+    } finally {
+      await db.update(fieldsTable).set({ cameraId: "camera1" }).where(eq(fieldsTable.id, fieldId));
+    }
+  });
+});
