@@ -184,6 +184,10 @@ export type CreativeData = {
   };
   player?: { name?: string | null; number?: number | null; squad?: string; position?: string; photo?: MediaSource };
   stats?: Record<string, string | number>;
+  /** The picture or footage the template's main slot shows (layers with src {type:"binding", path:"media"}). */
+  media?: MediaSource;
+  /** Extra pictures/footage for multi-slot templates: media2, media3 … via path "more.0", "more.1". */
+  more?: MediaSource[];
   custom?: Record<string, string>;
 };
 

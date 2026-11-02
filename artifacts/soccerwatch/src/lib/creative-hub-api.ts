@@ -125,3 +125,35 @@ export function useCreativeBrand(academyId: number) {
     queryFn: () => call<CreativeBrandInfo>(creativePath(academyId, "/brand")),
   });
 }
+
+// ── Contracts between sections (server side built by the section named) ─────
+
+/**
+ * GET …/creative/sessions/:sessionId/data → CreativeData for a match or
+ * training (score, opponent, squad, date, scorers…), names already filtered by
+ * the academy's setting. Server: For you (routes/academyCreativeForYou.ts).
+ */
+export function useCreativeSessionData(academyId: number, sessionId: number | null) {
+  return useQuery({
+    queryKey: [...creativeKeys.all(academyId), "session-data", sessionId ?? 0],
+    enabled: sessionId !== null,
+    queryFn: () => call<{ data: import("@workspace/api-zod").CreativeData }>(creativePath(academyId, `/sessions/${sessionId}/data`)).then((r) => r.data),
+  });
+}
+
+/**
+ * POST …/creative/projects/:id/render → { project } with renderStatus queued /
+ * rendering / done. Stills usually come back done; videos are polled with
+ * useCreativeProject until done or failed, then project.outputUrl is served.
+ * Server: Engine (routes/academyCreativeRender.ts).
+ */
+export function useRenderCreativeProject(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => call<{ project: CreativeProject }>(creativePath(academyId, `/projects/${id}/render`), { method: "POST" }).then((r) => r.project),
+    onSuccess: (project) => {
+      qc.setQueryData(creativeKeys.project(academyId, project.id), project);
+      void qc.invalidateQueries({ queryKey: ["creative", academyId, "projects"] });
+    },
+  });
+}
