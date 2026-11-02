@@ -1528,6 +1528,8 @@ type VarStatus = {
   panAvailable: boolean;
   startUtc: string | null;
   endUtc: string | null;
+  /** vps1's private Bunny copy of the VAR feed. Live is only ever played from here. */
+  cdnUrl?: string | null;
   error?: string | null;
 };
 
@@ -1551,29 +1553,8 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
   const [statusError, setStatusError] = useState<string | null>(null);
   const [frameMs, setFrameMs] = useState<number | null>(null);
   const [seekUtcMs, setSeekUtcMs] = useState<number | null>(null);
-  const [ballFollow, setBallFollow] = useState(false);
   const [processing, setProcessing] = useState<MatchLiveClipProgress | null>(null);
   const [processingId, setProcessingId] = useState<number | null>(null);
-  const [playbackQuality, setPlaybackQuality] = useState<"hd" | "data-saver">(() => {
-    try {
-      return localStorage.getItem("replay-var-playback-quality") === "data-saver" ? "data-saver" : "hd";
-    } catch {
-      return "hd";
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("replay-var-playback-quality", playbackQuality);
-    } catch {
-      // Keep the choice for the current page if browser storage is unavailable.
-    }
-  }, [playbackQuality]);
-
-  const useDataSaverFallback = useCallback(() => {
-    setPlaybackQuality("data-saver");
-  }, []);
-
   useEffect(() => {
     if (preview) return;
     let cancelled = false;
@@ -1622,7 +1603,7 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
         code: room.code,
         at: Date.now(),
         draft,
-        useBallPan: ballFollow,
+        useBallPan: false,
       }));
     } catch {
       // The clip remains in the editor if session storage is unavailable.
@@ -1630,7 +1611,7 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
     const redirectPath = `/m/${room.code}`;
     const authPath = isGuest ? "/sign-up" : "/sign-in";
     setLocation(`${authPath}?redirect_url=${encodeURIComponent(redirectPath)}`);
-  }, [ballFollow, isGuest, room.code, setLocation]);
+  }, [isGuest, room.code, setLocation]);
 
   useEffect(() => {
     if (authLoading || !user || isGuest) return;
@@ -1740,9 +1721,9 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
       }
       : undefined
   ), [status?.live, windowEndUtcMs, windowStartUtcMs]);
-  const livePath = `${apiBase}/matches/${encodeURIComponent(room.code)}/live`;
-  const playerSrc = `${livePath}/${ballFollow ? "pan" : playbackQuality === "hd" ? "hevc" : "hls"}/playlist.m3u8`;
-  const hlsFallbackSrc = `${livePath}/hls/playlist.m3u8`;
+  // Live plays straight from Bunny (vps1's private VAR copy), never relayed through
+  // the app: one H.264 quality, no ball-follow view.
+  const playerSrc = status?.cdnUrl ?? null;
   const clipFinished = processing?.liveClipStatus === "ready" || processing?.liveClipStatus === "failed";
   const processingLabel = processing?.liveClipStatus === "ready"
     ? (processing.exportStatus === "done"
@@ -1752,13 +1733,11 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
 
   return (
     <>
-      {status?.live && liveDvr ? (
+      {status?.live && liveDvr && playerSrc ? (
         <>
           <div className="-mx-4">
             <ClipPlayer
               src={playerSrc}
-              fallbackSrc={!ballFollow && playbackQuality === "hd" ? hlsFallbackSrc : undefined}
-              onFallback={useDataSaverFallback}
               title={room.title || room.field.name}
               source={{ kind: "bunny", videoId: `live:${room.code}` }}
               liveCameraId={room.field.name}
@@ -1767,41 +1746,11 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
               layout="inline"
               canSave={Boolean(user) && !isGuest}
               onRequireAuth={requireAuth}
-              onSave={(draft) => saveLiveClip(draft, ballFollow)}
+              onSave={(draft) => saveLiveClip(draft, false)}
               seekToUtcMs={seekUtcMs}
             />
           </div>
-          {!ballFollow && (
-            <div role="group" aria-label="VAR playback quality" className="mt-2 flex justify-center gap-2">
-              {(["hd", "data-saver"] as const).map((quality) => (
-                <button
-                  key={quality}
-                  type="button"
-                  aria-pressed={playbackQuality === quality}
-                  onClick={() => setPlaybackQuality(quality)}
-                  className={cn(
-                    "min-h-10 rounded-full border px-4 text-xs font-semibold transition-colors",
-                    playbackQuality === quality
-                      ? "border-floodlight bg-floodlight/10 text-floodlight"
-                      : "border-line text-muted-text",
-                  )}
-                >
-                  {quality === "hd" ? "HD" : "Data saver"}
-                </button>
-              ))}
-            </div>
-          )}
           <p className="text-center text-[11px] text-muted-text">{copy.varBehind}</p>
-          {status.panAvailable && (
-            <button
-              type="button"
-              aria-pressed={ballFollow}
-              onClick={() => setBallFollow((value) => !value)}
-              className={cn("min-h-11 rounded-full border px-4 text-sm font-semibold", ballFollow ? "border-turf bg-turf/10 text-turf" : "border-line text-text")}
-            >
-              {ballFollow ? "Ball-follow view on" : "Enable ball-follow view"}
-            </button>
-          )}
         </>
       ) : (
         <Card>

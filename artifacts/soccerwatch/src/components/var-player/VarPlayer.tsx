@@ -586,7 +586,8 @@ export function VarPlayer({
               pokeControls();
             }}
           />
-          {hevcSupported && (
+          {/* The quality choice needs an HEVC source; Bunny-only callers pass none. */}
+          {hevcSupported && hevcSrc && (
             <div className="var-player-control-group">
               <span>{copy.quality}</span>
               {(["hls", "hevc"] as const).map((nextVariant) => (

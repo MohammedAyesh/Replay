@@ -150,12 +150,11 @@ export default function OwnerVar() {
         </section>
       ) : null}
 
-      {open && (
+      {/* Live plays only from Bunny (vps1's private VAR copy), never relayed by the app. */}
+      {open && statusState.status?.cdnUrl && (
         <div className="p-3 sm:p-5">
           <VarPlayer
-            fallbackSrc={`${basePath}/api/owner/requests/${requestId}/var/hls/playlist.m3u8`}
-            src={statusState.status?.cdnUrl ?? `${basePath}/api/owner/requests/${requestId}/var/hls/playlist.m3u8`}
-            hevcSrc={`${basePath}/api/owner/requests/${requestId}/var/hls/playlist.m3u8`}
+            src={statusState.status.cdnUrl}
             title={statusState.status?.fieldName ?? "VAR"}
             marks={markTicks}
             minStartUtcMs={minStartUtcMs}

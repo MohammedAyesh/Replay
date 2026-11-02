@@ -13,7 +13,7 @@ import {
   GetMatchLiveClipStatusResponse,
 } from "@workspace/api-zod";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
-import { LIVE_CAMERA_UPSTREAM, liveCameraAlias } from "../lib/liveCameras";
+import { LIVE_CAMERA_UPSTREAM, liveCameraAlias, varCdnUrl } from "../lib/liveCameras";
 import { loadRoomByCode, matchPhase, matchWindow, normalizeCode } from "../lib/matchRooms";
 import { logger } from "../lib/logger";
 import { controlFetch, controlResponse } from "./contabo";
@@ -220,25 +220,32 @@ async function readLiveStatus(ctx: MatchLiveContext) {
       live: false,
       varActive: false,
       panAvailable: false,
+      cdnUrl: null,
       startUtc: window.varOpensAt,
       endUtc: window.varClosesAt,
       error: null,
     };
   }
 
+  // Viewers play vps1's private Bunny copy of the VAR feed (replay-bunnyvar@<cam>,
+  // replayjo.b-cdn.net/var/<cam>/<secret>/index.m3u8), never a stream relayed through
+  // this server: relaying every playlist and segment from vps1 stalled for seconds at a
+  // time. The copy is the H.264 feed only, trimmed to the current VAR session, so there
+  // is no HD (HEVC) or ball-follow choice here.
   const varPath = encodeURIComponent(varCamera(camera.controlCamera));
-  const [windowResult, panResult] = await Promise.all([
+  const [windowResult, stateResult] = await Promise.all([
     controlFetch(`/var/${varPath}/window`, {}, 30_000),
-    controlFetch(`/livepan/status/${encodeURIComponent(camera.controlCamera)}`, {}, 15_000),
+    controlFetch(`/var/${varPath}/state`, {}, 15_000),
   ]);
   const summary = windowResult.ok ? summaryFromWindow(windowResult.body) : { live: false, newestAgeSec: null };
-  const varActive = isWithinLiveWindow(ctx) && windowResult.ok && summary.live;
-  const panAvailable = panResult.ok && panIsReady(panResult.body);
+  const cdnUrl = stateResult.ok ? varCdnUrl(record(stateResult.body).cdnUrl) : null;
+  const varActive = isWithinLiveWindow(ctx) && windowResult.ok && summary.live && cdnUrl !== null;
   return {
     matchCode: ctx.room.code,
     live: varActive,
     varActive,
-    panAvailable,
+    panAvailable: false,
+    cdnUrl: varActive ? cdnUrl : null,
     startUtc: window.varOpensAt,
     endUtc: window.varClosesAt,
     error: !windowResult.ok

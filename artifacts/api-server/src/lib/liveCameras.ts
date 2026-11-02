@@ -31,3 +31,10 @@ export function liveCameraAlias(value: string | null | undefined): string | null
   const control = parseVarControlCamera(value ?? undefined);
   return control ? parseLiveCamera(`camera${control.slice(3)}`) : null;
 }
+
+/** vps1's private Bunny VAR playlist, accepted only in its exact published shape. */
+export function varCdnUrl(value: unknown): string | null {
+  return typeof value === "string" && /^https:\/\/[a-z0-9.-]+\.b-cdn\.net\/var\/cam\d+\/[a-f0-9]{32}\/index\.m3u8$/i.test(value)
+    ? value
+    : null;
+}

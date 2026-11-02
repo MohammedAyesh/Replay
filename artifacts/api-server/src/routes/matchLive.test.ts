@@ -320,11 +320,12 @@ describe("match live clip control contract", () => {
 });
 describe("match live status camera ids", () => {
   const liveWindow = { variants: { hls: { live: true, newestAgeSec: 2 } } };
+  const cdnUrl = "https://replayjo.b-cdn.net/var/cam1/0123456789abcdef0123456789abcdef/index.m3u8";
   function mockVps1() {
     vi.mocked(controlFetch).mockImplementation(async (path: string) => (
-      path.startsWith("/var/")
+      path.endsWith("/window")
         ? { ok: true, status: 200, body: liveWindow }
-        : { ok: true, status: 200, body: { on: false, state: "off" } }
+        : { ok: true, status: 200, body: { on: true, live: true, cdnUrl } }
     ));
   }
 
@@ -334,6 +335,7 @@ describe("match live status camera ids", () => {
       mockVps1();
       const res = await request(app).get(`/api/matches/${matchCode}/live/status`).expect(200);
       expect(res.body.live).toBe(true);
+      expect(res.body.cdnUrl).toBe(cdnUrl);
       expect(vi.mocked(controlFetch).mock.calls.some(([path]) => path === "/var/cam1/window")).toBe(true);
     } finally {
       await db.update(fieldsTable).set({ cameraId: "camera1" }).where(eq(fieldsTable.id, fieldId));
@@ -349,5 +351,19 @@ describe("match live status camera ids", () => {
     } finally {
       await db.update(fieldsTable).set({ cameraId: "camera1" }).where(eq(fieldsTable.id, fieldId));
     }
+  });
+});
+
+describe("match live plays only from Bunny", () => {
+  it("is not live when vps1 has no Bunny copy, even with a fresh feed", async () => {
+    vi.mocked(controlFetch).mockImplementation(async (path: string) => (
+      path.endsWith("/window")
+        ? { ok: true, status: 200, body: { variants: { hls: { live: true, newestAgeSec: 2 } } } }
+        : { ok: true, status: 200, body: { on: true, live: true, cdnUrl: null } }
+    ));
+    const res = await request(app).get(`/api/matches/${matchCode}/live/status`).expect(200);
+    expect(res.body.live).toBe(false);
+    expect(res.body.cdnUrl).toBeNull();
+    expect(res.body.panAvailable).toBe(false);
   });
 });

@@ -126,36 +126,34 @@ describe("academy live session access and status", () => {
     await setBooking(-3 * 60 * 60_000, -2 * 60 * 60_000);
     expect((await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body.status).toBe("ended");
   });
-  it("distinguishes a fresh live playlist from a stale one without exposing control credentials", async () => {
+  it("hands out vps1's Bunny VAR copy when live, and nothing when the feed is stale", async () => {
     await setBooking(-30 * 60_000, 30 * 60_000);
-    const playlist = (pdt: string) => `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PROGRAM-DATE-TIME:${pdt}\n#EXTINF:4,\nseg/a.ts\n`;
-    vi.mocked(controlFetch).mockResolvedValueOnce({ ok: true, status: 200, body: playlist(new Date().toISOString()) } as never);
+    const cdnUrl = "https://replayjo.b-cdn.net/var/cam1/0123456789abcdef0123456789abcdef/index.m3u8";
+    const vps1 = (live: boolean, url: unknown = cdnUrl) => vi.mocked(controlFetch).mockImplementation(async (path: string) => (
+      String(path).endsWith("/window")
+        ? { ok: true, status: 200, body: { variants: { hls: { live, newestAgeSec: live ? 2 : 3600 } } } }
+        : { ok: true, status: 200, body: { cdnUrl: url } }
+    ) as never);
+    vps1(true);
     const live = await request(app).get(consoleStatus()).set(auth(memberId)).expect(200);
     expect(live.body.status).toBe("live");
+    expect(live.body.playlistPath).toBe(cdnUrl);
     expect(JSON.stringify(live.body)).not.toContain(secret);
-    expect(live.body.playlistPath).not.toContain(secret);
-    vi.mocked(controlFetch).mockResolvedValueOnce({ ok: true, status: 200, body: playlist(new Date(Date.now() - 60 * 60_000).toISOString()) } as never);
-    expect((await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body.status).toBe("not_live");
+    const family = await request(app).get(familyStatus()).set(auth(guardianId)).expect(200);
+    expect(family.body.playlistPath).toBe(cdnUrl);
     expect(vi.mocked(controlFetch).mock.calls.every(([url]) => !String(url).includes(secret))).toBe(true);
-  });
-  it("returns real /api playlist and segment URLs for both surfaces", async () => {
-    await setBooking(-30 * 60_000, 30 * 60_000);
-    const fresh = () => ({ ok: true, status: 200, body: `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PROGRAM-DATE-TIME:${new Date().toISOString()}\n#EXTINF:4,\nseg/a.ts\n` });
-    vi.mocked(controlFetch).mockResolvedValueOnce(fresh() as never);
-    const consoleBody = (await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body;
-    expect(consoleBody.playlistPath).toBe(`/api/academy/console/academies/${academyId}/sessions/${sessionId}/live/playlist.m3u8`);
-    vi.mocked(controlFetch).mockResolvedValueOnce(fresh() as never);
-    const familyBody = (await request(app).get(familyStatus()).set(auth(guardianId)).expect(200)).body;
-    expect(familyBody.playlistPath).toBe(`/api/academy/family/sessions/${sessionId}/live/playlist.m3u8`);
-    for (const path of [consoleBody.playlistPath, familyBody.playlistPath]) expect(path).not.toContain(":");
 
-    const upstream = `#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PROGRAM-DATE-TIME:${new Date().toISOString()}\n#EXTINF:4,\nseg/a.ts\n`;
-    vi.mocked(controlResponse).mockResolvedValueOnce(new Response(upstream) as never);
-    const consolePlaylist = await request(app).get(consoleBody.playlistPath).set(auth(memberId)).expect(200);
-    expect(consolePlaylist.text).toContain(`\n/api/academy/console/academies/${academyId}/sessions/${sessionId}/live/seg/a.ts`);
-    vi.mocked(controlResponse).mockResolvedValueOnce(new Response(upstream) as never);
-    const familyPlaylist = await request(app).get(familyBody.playlistPath).set(auth(guardianId)).expect(200);
-    expect(familyPlaylist.text).toContain(`\n/api/academy/family/sessions/${sessionId}/live/seg/a.ts`);
+    vps1(false);
+    const stale = (await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body;
+    expect(stale.status).toBe("not_live");
+    expect(stale.playlistPath).toBeNull();
+
+    // Anything but the exact published Bunny shape is never handed to a browser.
+    vps1(true, "http://169.58.73.17:8080/var/cam1/hls/playlist.m3u8");
+    const odd = (await request(app).get(consoleStatus()).set(auth(memberId)).expect(200)).body;
+    expect(odd.status).toBe("not_live");
+    expect(odd.playlistPath).toBeNull();
+    vi.mocked(controlFetch).mockReset();
   });
 
   it("serves only segments the session's trimmed playlist lists", async () => {

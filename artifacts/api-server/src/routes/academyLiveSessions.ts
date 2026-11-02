@@ -8,7 +8,7 @@ import { getLocalUserRecord } from "../lib/clerkUserBridge";
 import { requireAcademyConsoleUser } from "../lib/academyAccess";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { describeLive, parseLiveManifest } from "../lib/liveManifest";
-import { parseLiveCamera, parseVarControlCamera } from "../lib/liveCameras";
+import { parseLiveCamera, parseVarControlCamera, varCdnUrl } from "../lib/liveCameras";
 import { canViewPinnedAcademyRecording } from "../lib/publicFootage";
 import { liveSegmentNames, pipeLiveSegment, rewriteLivePlaylist } from "../lib/liveHlsProxy";
 import { controlFetch, controlResponse } from "./contabo";
@@ -153,25 +153,33 @@ async function statusResponse(session: SessionLive, sessionId: number, base: str
   if (!window) return baseResponse;
   if (!camera) return { ...baseResponse, status: "not_live", message: "No camera is assigned to this academy." };
   const now = Date.now();
-  const playlistPath = `${base}/playlist.m3u8`;
-  if (now < window.start.getTime()) return { ...baseResponse, status: "upcoming", playlistPath, message: "Live viewing opens shortly before the booking." };
+  if (now < window.start.getTime()) return { ...baseResponse, status: "upcoming", message: "Live viewing opens shortly before the booking." };
   if (now > window.end.getTime()) return { ...baseResponse, status: "ended", playlistPath: null, message: "The live viewing window has ended." };
-  const path = `/var/${encodeURIComponent(camera.control)}/hls/playlist.m3u8`;
+  // Viewers play vps1's private Bunny copy of the VAR feed, never a stream relayed
+  // through this server. The copy starts when VAR opens, 3 min before the booking.
   try {
-    const upstream = await controlFetch(path, {}, 15_000);
-    if (!upstream.ok || typeof upstream.body !== "string") {
-      return { ...baseResponse, status: "not_live", playlistPath, message: "The camera stream is not available right now." };
+    const camPath = encodeURIComponent(camera.control);
+    const [windowResult, stateResult] = await Promise.all([
+      controlFetch(`/var/${camPath}/window`, {}, 15_000),
+      controlFetch(`/var/${camPath}/state`, {}, 15_000),
+    ]);
+    if (!windowResult.ok || !stateResult.ok) {
+      return { ...baseResponse, status: "not_live", message: "The camera stream is not available right now." };
     }
-    const live = describeLive(parseLiveManifest(upstream.body), new Date());
+    const hls = (windowResult.body && typeof windowResult.body === "object"
+      ? (windowResult.body as { variants?: { hls?: { live?: unknown } } }).variants?.hls
+      : undefined);
+    const cdnUrl = varCdnUrl((stateResult.body as { cdnUrl?: unknown } | null)?.cdnUrl);
+    const live = hls?.live === true && cdnUrl !== null;
     return {
       ...baseResponse,
-      status: live.live ? "live" : live.reason === "ended" ? "ended" : "not_live",
-      playlistPath: live.live ? playlistPath : null,
-      message: live.live ? "Live now" : live.reason === "ended" ? "The camera stream has ended." : "Waiting for the camera stream.",
+      status: live ? "live" : "not_live",
+      playlistPath: live ? cdnUrl : null,
+      message: live ? "Live now" : "Waiting for the camera stream.",
     };
   } catch (error) {
     logger.warn({ error, sessionId }, "Academy live status check failed");
-    return { ...baseResponse, status: "not_live", playlistPath, message: "Live status is temporarily unavailable." };
+    return { ...baseResponse, status: "not_live", message: "Live status is temporarily unavailable." };
   }
 }
 

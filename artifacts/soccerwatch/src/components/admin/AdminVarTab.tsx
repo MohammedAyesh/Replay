@@ -290,11 +290,10 @@ function VarCameraCard({ camera }: { camera: Camera }) {
             {since && <p className="flex items-center gap-1.5 text-xs text-muted-text"><Clock className="h-3.5 w-3.5" />{copy.startedAt(since)}</p>}
             {until && <p className="flex items-center gap-1.5 text-xs text-muted-text"><Clock className="h-3.5 w-3.5" />{copy.until(until)}</p>}
 
-            {showPlayer ? (
+            {/* Live plays only from Bunny (vps1's private VAR copy), never relayed by the app. */}
+            {showPlayer && state?.cdnUrl ? (
               <VarPlayer
-                src={state?.cdnUrl ?? `${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
-                fallbackSrc={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
-                hevcSrc={`${basePath}/api/admin/var/${camera}/hls/playlist.m3u8`}
+                src={state.cdnUrl}
                 title={`${copy.camera(cameraNumber(camera))} · VAR`}
               />
             ) : (
