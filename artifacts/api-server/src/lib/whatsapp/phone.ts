@@ -44,8 +44,15 @@ export function chatIdForPhone(phone: string): string {
 /** Phone from a WAHA chat id ("962791234567@c.us", "962791234567@s.whatsapp.net"). */
 export function phoneFromChatId(chatId: string | null | undefined): string | null {
   if (!chatId) return null;
+  // "@lid" is WhatsApp's private linked id, not a phone number: resolve it with lidFromChatId + WAHA.
+  if (isLid(chatId)) return null;
   const local = chatId.split("@")[0]?.split(":")[0] ?? "";
   return /^\d{8,15}$/.test(local) ? local : null;
+}
+
+/** WhatsApp hides many senders behind a linked id ("123456789012345@lid") instead of their number. */
+export function isLid(chatId: string | null | undefined): boolean {
+  return typeof chatId === "string" && /@lid$/i.test(chatId.trim());
 }
 
 /** "962791234567" → "+962 79 123 4567" for display. */

@@ -11,7 +11,7 @@ import { logger } from "../logger";
 import { upsertContact } from "./contacts";
 import { recordAdLead } from "../meta/leads";
 import { findAdReferral } from "../meta/referral";
-import { phoneFromChatId } from "./phone";
+import { isLid, phoneFromChatId } from "./phone";
 import type { WhatsappLocale } from "./templates";
 import {
   REPLAY_SESSION,
@@ -21,6 +21,7 @@ import {
   bareMessageId,
   checkNumber,
   getSession,
+  phoneForLid,
   sendText,
   wahaConfigured,
 } from "./waha";
@@ -356,6 +357,32 @@ const STATUS_RANK: Record<string, number> = { queued: 0, sending: 1, sent: 2, de
 const STOP_WORDS = new Set(["stop", "unsubscribe", "ايقاف", "إيقاف", "الغاء", "إلغاء", "توقف", "وقف"]);
 const START_WORDS = new Set(["start", "subscribe", "تفعيل", "اشتراك"]);
 
+/**
+ * The other side's phone number. WhatsApp often names the sender by a linked id ("…@lid")
+ * instead of the number; the engine's raw message usually carries the number as well
+ * (SenderAlt / RecipientAlt), and otherwise WAHA's lid map knows it.
+ */
+export async function phoneForChat(session: string, chatId: string, payload: Record<string, unknown>, fromMe: boolean): Promise<string | null> {
+  const direct = phoneFromChatId(chatId);
+  if (direct) return direct;
+  if (!isLid(chatId)) return null;
+  const data = (payload._data ?? {}) as Record<string, unknown>;
+  const info = (data.Info ?? data.info ?? {}) as Record<string, unknown>;
+  const alternatives = fromMe
+    ? [info.RecipientAlt, info.ChatAlt, data.to, (data.key as { remoteJidAlt?: unknown } | undefined)?.remoteJidAlt]
+    : [info.SenderAlt, info.ChatAlt, (data.key as { remoteJidAlt?: unknown; participantAlt?: unknown } | undefined)?.remoteJidAlt, data.from];
+  for (const alt of alternatives) {
+    const phone = typeof alt === "string" ? phoneFromChatId(alt) : null;
+    if (phone) return phone;
+  }
+  try {
+    return await phoneForLid(session, chatId);
+  } catch (error) {
+    logger.warn({ session, error: (error as Error).message }, "Looking up a WhatsApp linked id failed");
+    return null;
+  }
+}
+
 /** Which academy a webhook belongs to, from its session name. Replay's shared number has none. */
 function academyForSession(session: string | undefined): number | null {
   return academyIdFromSessionName(session);
@@ -407,8 +434,11 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
     const fromMe = payload.fromMe === true;
     const other = fromMe ? to : from;
     if (other.endsWith("@g.us") || other.includes("status@broadcast") || other.endsWith("@newsletter")) return;
-    const phone = phoneFromChatId(other);
-    if (!phone) return;
+    const phone = await phoneForChat(session, other, payload, fromMe);
+    if (!phone) {
+      if (!fromMe) logger.warn({ session, chat: other }, "WhatsApp message from a number we couldn't resolve; dropped");
+      return;
+    }
     const body = typeof payload.body === "string" ? payload.body : "";
     const waMessageId = bareMessageId(typeof payload.id === "string" ? payload.id : null);
     if (waMessageId) {

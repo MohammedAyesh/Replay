@@ -32,6 +32,8 @@ describe("normalizePhone", () => {
     expect(phoneFromChatId(chatIdForPhone("962791234567"))).toBe("962791234567");
     expect(phoneFromChatId("962791234567:12@s.whatsapp.net")).toBe("962791234567");
     expect(phoneFromChatId("12036302@g.us")).toBe("12036302");
+    // A linked id is not a phone number.
+    expect(phoneFromChatId("99988877766655@lid")).toBeNull();
     expect(formatPhoneForDisplay("962791234567")).toBe("+962 79 123 4567");
   });
 });

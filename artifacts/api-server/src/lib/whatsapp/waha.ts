@@ -236,6 +236,35 @@ export async function requestPairingCode(name: string, phone: string): Promise<s
   return raw.code;
 }
 
+const lidCache = new Map<string, string>();
+
+/**
+ * The phone number behind a linked id ("…@lid"), from the session's own mapping. Null when
+ * WhatsApp hasn't shared it with this number.
+ */
+export async function phoneForLid(session: string, lid: string): Promise<string | null> {
+  const key = `${session}|${lid}`;
+  const cached = lidCache.get(key);
+  if (cached) return cached;
+  try {
+    const raw = await wahaRequest<{ lid?: string; pn?: string | null }>(
+      "GET",
+      `/api/${encodeURIComponent(session)}/lids/${encodeURIComponent(lid)}`,
+      undefined,
+      { timeoutMs: 6_000 },
+    );
+    const pn = typeof raw?.pn === "string" ? raw.pn : null;
+    const local = pn?.split("@")[0]?.split(":")[0] ?? "";
+    if (!/^\d{8,15}$/.test(local)) return null;
+    if (lidCache.size > 5000) lidCache.clear();
+    lidCache.set(key, local);
+    return local;
+  } catch (error) {
+    if (error instanceof WahaError && (error.status === 404 || error.status === 400)) return null;
+    throw error;
+  }
+}
+
 /** WhatsApp chat id for a number, or null when the number has no WhatsApp account. */
 export async function checkNumber(session: string, phone: string): Promise<string | null> {
   const raw = await wahaRequest<{ numberExists?: boolean; chatId?: string }>(

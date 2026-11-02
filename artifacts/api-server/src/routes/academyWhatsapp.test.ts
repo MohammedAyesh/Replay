@@ -56,6 +56,7 @@ vi.mock("../lib/whatsapp/waha", async (importOriginal) => {
     getQrDataUrl: vi.fn(async () => "data:image/png;base64,AAAA"),
     requestPairingCode: vi.fn(async () => "ABCD-EFGH"),
     logoutSession: vi.fn(async () => undefined),
+    phoneForLid: vi.fn(async (_session: string, lid: string) => (lid === "55500011122233@lid" ? "962795550077" : null)),
   };
 });
 
@@ -337,6 +338,24 @@ describe("chats and people", () => {
     expect(thread.body.messages).toHaveLength(1);
     const again = await request(app).get(`${base()}/chats`).set(auth(coachId)).expect(200);
     expect(again.body.find((c: { phone: string }) => c.phone === "962795550001").unread).toBe(0);
+  });
+
+  it("files replies whose sender WhatsApp names by a linked id (@lid), on the academy's number and on Replay's", async () => {
+    // The raw message carries the number (SenderAlt).
+    await hook({ event: "message.any", session: `academy-${academyId}`, payload: { id: "IN-LID-1", from: "99988877766655@lid", fromMe: false, body: "Is there training today?", _data: { Info: { SenderAlt: "962795550066@s.whatsapp.net" } } } });
+    // Only the linked id: WAHA's lid map gives the number.
+    await hook({ event: "message.any", session: `academy-${academyId}`, payload: { id: "IN-LID-2", from: "55500011122233@lid", fromMe: false, body: "Thanks!" } });
+    // A linked id nobody can resolve is not filed under a made-up number.
+    await hook({ event: "message.any", session: `academy-${academyId}`, payload: { id: "IN-LID-3", from: "11122233344455@lid", fromMe: false, body: "?" } });
+    const rows = await messages();
+    expect(rows.filter((m) => m.waMessageId === "IN-LID-1").map((m) => m.phone)).toEqual(["962795550066"]);
+    expect(rows.filter((m) => m.waMessageId === "IN-LID-2").map((m) => m.phone)).toEqual(["962795550077"]);
+    expect(rows.some((m) => m.waMessageId === "IN-LID-3" || m.phone === "11122233344455")).toBe(false);
+
+    // Replay's shared number: a reply from a linked id reaches the academy that last messaged that number.
+    await db.insert(academyWhatsappMessagesTable).values({ academyId, direction: "out", kind: "test", phone: "962795550077", body: "hello", status: "read", senderSession: "replay" });
+    await hook({ event: "message.any", session: "replay", payload: { id: "IN-LID-4", from: "55500011122233@lid", fromMe: false, body: "Got it" } });
+    expect((await messages()).find((m) => m.waMessageId === "IN-LID-4")).toMatchObject({ academyId, direction: "in", phone: "962795550077" });
   });
 
   it("keeps what the owner typed on the phone, but not what the app sent", async () => {
