@@ -89,6 +89,7 @@ import {
   syncAcademySessionFootageAfterTimeChange,
 } from "../lib/academyFootage";
 import { logger } from "../lib/logger";
+import { loadSessionSnapshot, onRegistrationApproved, onSessionCancelled, onSessionChanged, onSessionCreated } from "../lib/whatsapp/automations";
 
 const router: IRouter = Router();
 const ROLE_ORDER = ["owner", "coach"] as const;
@@ -913,7 +914,7 @@ router.post(
           reviewedBy: user.id,
         })
         .where(eq(academyRegistrationsTable.id, registrationId));
-      return { kind: "approved" as const, playerId: player.id };
+      return { kind: "approved" as const, playerId: player.id, registration };
     });
 
     if (result.kind === "missing") {
@@ -924,6 +925,13 @@ router.post(
       res.status(409).json({ error: "Registration is no longer pending" });
       return;
     }
+    await onRegistrationApproved(academyId, {
+      id: result.registration.id,
+      guardianName: result.registration.guardianName,
+      guardianPhone: result.registration.guardianPhone,
+      playerName: result.registration.playerName,
+      createdPlayerId: result.playerId,
+    });
     const [summary] = await academyPlayerSummaries(academyId, result.playerId);
     res.json(ApproveAcademyConsoleRegistrationResponse.parse(summary));
   },
@@ -1475,6 +1483,7 @@ router.post("/academy/console/academies/:academyId/sessions", async (req, res): 
       logger.warn({ academyId, sessionId: created.id, error: noteError }, "Could not save academy footage booking note");
     }
   }
+  await onSessionCreated(academyId, created.id);
   const [summary] = await academySessionSummaries(academyId, created.id);
   res.status(201).json(CreateAcademyConsoleSessionResponse.parse(summary));
 });
@@ -1592,6 +1601,7 @@ router.patch(
       res.status(400).json({ error: "At least one session field is required" });
       return;
     }
+    const beforeChange = await loadSessionSnapshot(academyId, sessionId);
     const [updated] = await db
       .update(academySessionsTable)
       .set(updates)
@@ -1620,6 +1630,7 @@ router.patch(
       }
     }
 
+    await onSessionChanged(academyId, beforeChange, sessionId);
     const [summary] = await academySessionSummaries(academyId, sessionId);
     res.json(UpdateAcademyConsoleSessionResponse.parse(summary));
   },
@@ -1649,6 +1660,7 @@ router.delete(
       return;
     }
 
+    const cancelledSnapshot = await loadSessionSnapshot(academyId, sessionId);
     try {
       await cancelScheduledAcademyFootageForSession(academyId, sessionId);
     } catch (error) {
@@ -1666,6 +1678,7 @@ router.delete(
       return;
     }
 
+    await onSessionCancelled(cancelledSnapshot);
     res.status(204).send();
   },
 );

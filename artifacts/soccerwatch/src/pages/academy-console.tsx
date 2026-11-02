@@ -12,6 +12,7 @@ import {
   LayoutDashboard,
   Menu,
   Megaphone,
+  MessageCircle,
   PanelLeft,
   Pencil,
   Plus,
@@ -74,6 +75,8 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
+import { AcademyWhatsappSection } from "@/components/academy-console/whatsapp-section";
+import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
 import { AcademyPlayersSection } from "@/components/academy-console/players-section";
 import { AcademySessionsSection } from "@/components/academy-console/sessions-section";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
@@ -86,7 +89,7 @@ import { AcademyRegistrationsSection } from "@/components/academy-console/regist
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -164,6 +167,7 @@ function AcademyConsoleSidebar({
 }) {
   const { t, locale, setLocale } = useTranslation();
   const labels = t.academyConsole;
+  const whatsappCopy = useWhatsappCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
   const items: Array<{ id: ConsoleSection; label: string; icon: typeof LayoutDashboard; ownerOnly?: boolean }> = [
     { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
@@ -175,6 +179,7 @@ function AcademyConsoleSidebar({
     { id: "recordings", label: labels.recordings, icon: Video },
     { id: "fees", label: labels.feesPayments, icon: ReceiptText, ownerOnly: true },
     { id: "announcements", label: labels.announcements, icon: Megaphone },
+    { id: "whatsapp", label: whatsappCopy.nav, icon: MessageCircle },
   ];
 
   return (
@@ -760,7 +765,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -840,6 +845,8 @@ export default function AcademyConsole() {
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyFeesPaymentsSection academyId={activeAcademyId} />
           ) : section === "announcements" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyAnnouncementsSection academyId={activeAcademyId} />
+          ) : section === "whatsapp" ? (
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyWhatsappSection academyId={activeAcademyId} />
           ) : <AcademyConsoleSkeleton />}
         </div>
       </main>

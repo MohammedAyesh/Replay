@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
 import SettingsTab from "@/components/admin/SettingsTab";
 import DemoLeadsTab from "@/components/admin/DemoLeadsTab";
+import WhatsappTab from "@/components/admin/WhatsappTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
 import BrandingTab from "@/components/admin/BrandingTab";
 import { WeeklyHighlightsTab } from "@/components/admin/WeeklyHighlightsTab";
@@ -53,7 +54,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads" | "weekly-highlights";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads" | "weekly-highlights" | "whatsapp";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -7095,6 +7096,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   settings: { label: "Settings", render: () => <SettingsTab /> },
   "demo-leads": { label: "Demo leads", render: () => <DemoLeadsTab /> },
   "weekly-highlights": { label: "Weekly highlights", render: () => <WeeklyHighlightsTab /> },
+  whatsapp: { label: "WhatsApp", render: () => <WhatsappTab /> },
 };
 
 const TAB_ORDER = Object.keys(TABS) as Tab[];
