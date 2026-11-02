@@ -107,3 +107,21 @@ export function useDeleteCreativeProject(academyId: number) {
     onSuccess: () => qc.invalidateQueries({ queryKey: creativeKeys.all(academyId) }),
   });
 }
+
+export type CreativeBrandInfo = {
+  brand: import("@workspace/api-zod").CreativeBrand;
+  /** API path or absolute URL; pass through apiUrl() when it starts with /api/. */
+  crestUrl: string | null;
+  showPlayerNames: boolean;
+  instagram: string | null;
+  phone: string | null;
+};
+
+/** The academy's look for previews: what @primary, @accent, … resolve to, and the crest. */
+export function useCreativeBrand(academyId: number) {
+  return useQuery({
+    queryKey: [...creativeKeys.all(academyId), "brand"],
+    staleTime: 60_000,
+    queryFn: () => call<CreativeBrandInfo>(creativePath(academyId, "/brand")),
+  });
+}

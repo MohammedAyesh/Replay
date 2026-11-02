@@ -1,8 +1,11 @@
+import fs from "fs";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { academyCreativeProjectsTable, db } from "@workspace/db";
-import { CREATIVE_STATUSES, CREATIVE_STYLES, sceneSchema } from "@workspace/api-zod";
+import { academyCreativeProjectsTable, brandingProfilesTable, db } from "@workspace/db";
+import { CREATIVE_STATUSES, CREATIVE_STYLES, sceneSchema, type CreativeBrand } from "@workspace/api-zod";
+import { displayPhone, instagramHandle } from "../lib/academyOwner";
+import { namesAllowed, studioLook } from "./academyStudio";
 import { CREATIVE_BASE, creativeOwner, loadCreativeProject, publicProject } from "../lib/creative/projects";
 
 /**
@@ -36,6 +39,46 @@ const patchBody = z.object({
   scene: sceneSchema.optional(),
   data: z.record(z.unknown()).nullish(),
   status: z.enum(CREATIVE_STATUSES).optional(),
+});
+
+/**
+ * GET …/creative/brand — what scene tokens resolve to (@primary, @accent, …),
+ * the crest URL, contact lines and whether players' names may be shown.
+ */
+router.get(`${base}/brand`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  const temps: string[] = [];
+  try {
+    const [look, showNames, profileRows] = await Promise.all([
+      studioLook(access, temps),
+      namesAllowed(access.academyId),
+      db.select({ crestUrl: brandingProfilesTable.crestUrl, updatedAt: brandingProfilesTable.updatedAt }).from(brandingProfilesTable)
+        .where(and(eq(brandingProfilesTable.scopeType, "academy"), eq(brandingProfilesTable.scopeId, access.academyId))),
+    ]);
+    const profile = profileRows[0];
+    const brand: CreativeBrand = {
+      primary: look.primaryColor,
+      accent: look.accentColor ?? "#D4FF4F",
+      ink: "#0B0F1A",
+      paper: "#FFFFFF",
+      muted: "#8A93A6",
+      nameEn: look.nameEn,
+      nameAr: look.nameAr,
+    };
+    const crestUrl = profile?.crestUrl
+      ? `/api/academy/console/academies/${access.academyId}/branding/crest?v=${encodeURIComponent(profile.updatedAt.toISOString())}`
+      : access.academy.logoUrl ?? null;
+    res.json({
+      brand,
+      crestUrl,
+      showPlayerNames: showNames,
+      instagram: look.instagram ?? instagramHandle(access.academy.instagramUrl),
+      phone: look.bookingPhone ?? displayPhone(access.academy.whatsappPhone) ?? access.academy.contactPhone ?? null,
+    });
+  } finally {
+    for (const t of temps) fs.unlink(t, () => {});
+  }
 });
 
 router.get(`${base}/projects`, async (req, res): Promise<void> => {
