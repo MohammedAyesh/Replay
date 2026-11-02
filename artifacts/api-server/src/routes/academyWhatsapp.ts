@@ -688,8 +688,29 @@ async function requireAdmin(req: Request, res: Response): Promise<AcademyConsole
   return user;
 }
 
-router.get("/admin/whatsapp", async (req, res): Promise<void> => {
+router.get("/admin/whatsapp", async (req, res, next): Promise<void> => {
   if (!(await requireAdmin(req, res))) return;
+  try {
+    await adminOverview(res);
+  } catch (error) {
+    logger.error({ error: (error as Error)?.message }, "Admin WhatsApp overview failed");
+    if (!res.headersSent) res.status(500).json({ error: describeDbError(error) });
+    else next(error);
+  }
+});
+
+/** "relation ... does not exist" means the publish skipped the database review. */
+function describeDbError(error: unknown): string {
+  const message = (error as Error)?.message ?? String(error);
+  const cause = (error as { cause?: { message?: string; code?: string } })?.cause;
+  const text = `${message} ${cause?.message ?? ""}`;
+  if (/does not exist/i.test(text) || cause?.code === "42P01") {
+    return "The WhatsApp tables are missing from this database. Run the schema push and publish with the database review.";
+  }
+  return message.slice(0, 300);
+}
+
+async function adminOverview(res: Response): Promise<void> {
   let version: Record<string, unknown> | null = null;
   let sessions: WahaSession[] = [];
   let error: string | null = null;
@@ -737,7 +758,7 @@ router.get("/admin/whatsapp", async (req, res): Promise<void> => {
       ...(volume.find((v) => v.academyId === a.academyId) ?? { sent7d: 0, failed7d: 0, queued: 0 }),
     })),
   });
-});
+}
 
 router.post("/admin/whatsapp/replay/connect", async (req, res): Promise<void> => {
   if (!(await requireAdmin(req, res))) return;
@@ -791,9 +812,15 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
     return;
   }
   const started = Date.now();
-  const scheduled = await runScheduledAutomations();
-  const dispatched = await dispatchQueue({ budgetMs: Math.max(10_000, 50_000 - (Date.now() - started)) });
-  res.json({ scheduled, dispatched, ms: Date.now() - started });
+  try {
+    const scheduled = await runScheduledAutomations();
+    const dispatched = await dispatchQueue({ budgetMs: Math.max(10_000, 50_000 - (Date.now() - started)) });
+    res.json({ scheduled, dispatched, ms: Date.now() - started });
+  } catch (error) {
+    // vps1 logs this body: say what broke (e.g. a table missing after a publish).
+    logger.error({ error: (error as Error)?.message }, "WhatsApp tick failed");
+    res.status(500).json({ error: describeDbError(error) });
+  }
 });
 
 /** Express gives this route the raw body (see app.ts) so the HMAC is checked over exact bytes. */

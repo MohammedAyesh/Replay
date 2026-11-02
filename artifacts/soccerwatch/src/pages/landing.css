@@ -463,6 +463,21 @@
   border-radius: 36px;
 }
 
+/* a screenshot of the real app */
+.lp-shot {
+  margin: 0;
+}
+
+.lp-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 24px;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4), inset 0 0 0 1px var(--lp-line);
+  outline: 1px solid var(--lp-line);
+  outline-offset: -1px;
+}
+
 /* the match-in-numbers card */
 .lp-stats {
   padding: 28px;

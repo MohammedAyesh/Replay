@@ -5,7 +5,9 @@
 import { useEffect, useRef } from "react";
 import { useReducedMotion } from "framer-motion";
 
-import { withBase, type DemoClip, type DemoReport } from "@/pages/demo/data";
+import statsShotEn from "@/assets/app-match-stats-en.webp";
+import statsShotAr from "@/assets/app-match-stats-ar.webp";
+import { withBase, type DemoClip } from "@/pages/demo/data";
 
 export const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -106,54 +108,16 @@ export function brandedClips(showcase: { clips?: DemoClip[]; socialClips?: DemoC
   };
 }
 
-export function formatLongDate(iso: string, rtl: boolean): string {
-  const parsed = new Date(`${iso}T12:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return iso;
-  return new Intl.DateTimeFormat(rtl ? "ar-JO-u-nu-latn" : "en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(parsed);
-}
-
-export type StatsLabels = {
-  possession: string;
-  goals: string;
-  shots: string;
-  passes: string;
-  dribbles: string;
-  note: (date: string) => string;
-};
-
 /**
- * Team numbers from the demo's real, anonymised match. Rows where both teams
- * have 0 are left out: a 0–0 row says nothing. Null when there is no report.
+ * A screenshot of the real app's team stats (match 76P7TR, Jordan Galaxy,
+ * 26 Oct 2026; team numbers only, no names), in the page's language.
+ * Re-take with a real match page when the report's design changes.
  */
-export function MatchStatsCard({ report, labels, rtl }: { report: DemoReport | null; labels: StatsLabels; rtl: boolean }) {
-  const team = report?.team;
-  if (!report || !team) return null;
-  const rows = ([
-    [labels.goals, team.goals],
-    [labels.shots, team.shots],
-    [labels.passes, team.passesCompleted],
-    [labels.dribbles, team.dribblesWon],
-  ] as const).filter(([, pair]) => pair[0] + pair[1] > 0);
+export function AppShot({ lang, caption }: { lang: "en" | "ar"; caption: string }) {
   return (
-    <figure className="lp-stats" style={{ margin: 0 }}>
-      <div className="lp-stats-row">
-        <b>{team.possessionPercent[0]}%</b>
-        <span>{labels.possession}</span>
-        <b>{team.possessionPercent[1]}%</b>
-      </div>
-      <div className="lp-bar" aria-hidden="true">
-        {/* kit colours can be near-black, so the bar uses the brand pair */}
-        <i style={{ width: `${team.possessionPercent[0]}%`, background: "var(--replay-floodlight)" }} />
-        <i style={{ width: `${team.possessionPercent[1]}%`, background: "var(--replay-violet)" }} />
-      </div>
-      {rows.map(([label, pair]) => (
-        <div className="lp-stats-row" key={label}>
-          <b>{pair[0]}</b>
-          <span>{label}</span>
-          <b>{pair[1]}</b>
-        </div>
-      ))}
-      <figcaption className="lp-stats-note">{labels.note(formatLongDate(report.date, rtl))}</figcaption>
+    <figure className="lp-shot">
+      <img src={lang === "ar" ? statsShotAr : statsShotEn} alt={caption} width={720} height={636} loading="lazy" />
+      <figcaption className="lp-stats-note">{caption}</figcaption>
     </figure>
   );
 }
