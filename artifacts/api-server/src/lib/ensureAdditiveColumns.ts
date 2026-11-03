@@ -409,7 +409,7 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
 /** Checks that only ever widen what's allowed (0054: academy managers). */
 const WIDENED_CHECKS: Array<{ table: string; name: string; mustContain: string; definition: string }> = [
   { table: "academy_members", name: "academy_members_role_check", mustContain: "'manager'", definition: `CHECK ("role" in ('owner', 'manager', 'coach'))` },
-  // 0064_creative_wide_format.sql: 16:9 clip videos.
+  // 0065_creative_wide_format.sql: 16:9 clip videos.
   { table: "academy_creative_projects", name: "academy_creative_projects_format_check", mustContain: "'wide'", definition: `CHECK ("format" in ('post', 'square', 'story', 'wide'))` },
 ];
 
