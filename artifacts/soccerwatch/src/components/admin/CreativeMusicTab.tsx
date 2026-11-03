@@ -7,8 +7,9 @@ import type { MusicTrack } from "@/lib/creative-hub-music-api";
  * hub (video soundtracks). Upload a track (any licence you hold; write it in
  * Licence), set title / artist / mood / BPM, listen, hide or show it. Hidden
  * tracks leave every academy's list and stop playing in new exports.
- * Bundled tracks ("Replay original (generated)") come from
- * scripts/creative-music/generate.py and are seeded on boot.
+ * Bundled tracks come from scripts/creative-music/generate.py ("Replay
+ * original (generated)") and scripts/creative-music/import_cc0.py (CC0 tracks
+ * from OpenGameArt, source page in the licence), and are seeded on boot.
  * API: GET/POST /admin/creative/music, PATCH /admin/creative/music/:id, GET …/:id/file.
  */
 

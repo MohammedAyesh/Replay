@@ -116,19 +116,24 @@ describe("Replay's bundled library", () => {
     }
   });
 
-  it("ships 6–8 generated tracks of 30–60 s, every mood covered, each seeded once", async () => {
+  it("ships 6–8 generated tracks of 30–60 s plus CC0 tracks with their source, every mood covered, each seeded once", async () => {
     const lib = JSON.parse(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "../../../assets/creative/music/library.json"), "utf8")) as { tracks: Array<{ key: string; mood: string; license: string }> };
-    expect(lib.tracks.length).toBeGreaterThanOrEqual(6);
-    expect(lib.tracks.length).toBeLessThanOrEqual(8);
-    expect(new Set(lib.tracks.map((t) => t.mood))).toEqual(new Set(MUSIC_MOODS));
-    for (const t of lib.tracks) expect(t.license).toBe(MUSIC_LICENSES.generated);
+    const generated = lib.tracks.filter((t) => t.key.startsWith("replay/"));
+    const cc0 = lib.tracks.filter((t) => t.key.startsWith("cc0/"));
+    expect(generated.length + cc0.length).toBe(lib.tracks.length);
+    expect(generated.length).toBeGreaterThanOrEqual(6);
+    expect(generated.length).toBeLessThanOrEqual(8);
+    expect(new Set(generated.map((t) => t.mood))).toEqual(new Set(MUSIC_MOODS));
+    for (const t of generated) expect(t.license).toBe(MUSIC_LICENSES.generated);
+    for (const t of cc0) expect(t.license).toMatch(/^CC0 1\.0 \(public domain\) — .+ via OpenGameArt: https:\/\/opengameart\.org\/content\//);
     await seedReplayMusic();
     expect(await seedReplayMusic()).toBe(0);
     const rows = await db.select().from(creativeMusicTracksTable).where(inArray(creativeMusicTracksTable.key, lib.tracks.map((t) => t.key)));
     expect(rows).toHaveLength(lib.tracks.length);
     for (const r of rows) {
-      expect(r.durationMs).toBeGreaterThanOrEqual(30_000);
-      expect(r.durationMs).toBeLessThanOrEqual(60_000);
+      const isGenerated = r.key!.startsWith("replay/");
+      expect(r.durationMs).toBeGreaterThanOrEqual(isGenerated ? 30_000 : 20_000);
+      expect(r.durationMs).toBeLessThanOrEqual(isGenerated ? 60_000 : 91_000);
       // Mastered loud but not clipped: about -14 LUFS.
       expect(r.loudnessLufs).toBeGreaterThan(-16);
       expect(r.loudnessLufs).toBeLessThan(-12);
