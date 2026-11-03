@@ -129,8 +129,8 @@ const en = {
   plateLayer: "Background artwork",
 
   // Format
-  formats: { post: "Post", square: "Square", story: "Story" },
-  formatSizes: { post: "4:5 · feed", square: "1:1 · feed", story: "9:16 · stories & reels" },
+  formats: { post: "Post", square: "Square", story: "Story", wide: "Wide" },
+  formatSizes: { post: "4:5 · feed", square: "1:1 · feed", story: "9:16 · stories & reels", wide: "16:9 · YouTube & WhatsApp" },
   formatHint: "Everything moves to fit the new size. Check it after.",
   designedFor: "Designed for this size",
 
@@ -293,8 +293,8 @@ const ar: typeof en = {
   tintStrength: "قوة اللون",
   plateLayer: "رسمة الخلفية",
 
-  formats: { post: "بوست", square: "مربع", story: "ستوري" },
-  formatSizes: { post: "4:5 · الصفحة", square: "1:1 · الصفحة", story: "9:16 · ستوري وريلز" },
+  formats: { post: "بوست", square: "مربع", story: "ستوري", wide: "عريض" },
+  formatSizes: { post: "4:5 · الصفحة", square: "1:1 · الصفحة", story: "9:16 · ستوري وريلز", wide: "16:9 · يوتيوب وواتساب" },
   formatHint: "كل إشي بتحرّك ليزبط عالمقاس الجديد. تأكد منه بعدين.",
   designedFor: "مصمم لهالمقاس",
 

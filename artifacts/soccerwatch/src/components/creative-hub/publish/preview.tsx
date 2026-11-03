@@ -19,9 +19,9 @@ export const isVideoProject = (p: Pick<CreativeProject, "kind" | "outputMime">) 
 export function PublishPreview({ academyId, project, brand }: { academyId: number; project: CreativeProject; brand: CreativeBrand | undefined }) {
   const copy = useCreativePublishCopy();
   const [ref, width] = useWidth<HTMLDivElement>();
-  const ratio = project.format === "story" ? 1920 / 1080 : project.format === "square" ? 1 : 1350 / 1080;
-  // Keep a 9:16 story from filling a whole phone screen.
-  const maxWidth = project.format === "story" ? 300 : 420;
+  const ratio = project.format === "story" ? 1920 / 1080 : project.format === "square" ? 1 : project.format === "wide" ? 1080 / 1920 : 1350 / 1080;
+  // Keep a 9:16 story from filling a whole phone screen; a 16:9 clip may be wider.
+  const maxWidth = project.format === "story" ? 300 : project.format === "wide" ? 640 : 420;
   const shown = Math.min(width || maxWidth, maxWidth);
   const data = (project.data ?? undefined) as CreativeData | undefined;
   const src = project.outputUrl ? `${apiUrl(project.outputUrl)}${project.renderedAt ? `?v=${encodeURIComponent(project.renderedAt)}` : ""}` : null;

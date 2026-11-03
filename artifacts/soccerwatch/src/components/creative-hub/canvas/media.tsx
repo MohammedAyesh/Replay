@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Film, ImageIcon } from "lucide-react";
-import type { SceneLayer } from "@workspace/api-zod";
+import { framingWindow, type SceneLayer } from "@workspace/api-zod";
+import { framedVideoStyle } from "@/lib/creative-framing";
 import { sourceTimeAt, videoParts } from "./layout";
 import { roundRectPath } from "./shapes";
 
@@ -78,6 +79,24 @@ export function VideoView({ layer, url, timeMs, playing }: { layer: VideoLayer; 
     }
   }, [timeMs, playing, parts, url, layer.startMs]);
 
+  // A framed layer: a moving window of the panorama fills the box. Set on the
+  // element each frame (not through React) so the camera moves smoothly.
+  const framing = layer.framing;
+  const boxAspect = layer.w > 0 && layer.h > 0 ? layer.w / layer.h : 16 / 9;
+  useEffect(() => {
+    const v = ref.current;
+    if (!v || !framing) return;
+    let raf = 0;
+    const place = () => {
+      raf = requestAnimationFrame(place);
+      if (!v.videoWidth || !v.videoHeight) return;
+      const win = framingWindow(framing, v.currentTime * 1000, v.videoWidth / v.videoHeight, boxAspect);
+      Object.assign(v.style, framedVideoStyle(win));
+    };
+    raf = requestAnimationFrame(place);
+    return () => cancelAnimationFrame(raf);
+  }, [framing, boxAspect, url]);
+
   if (!url || failed === url) return <MediaPlaceholder layer={layer} />;
   return (
     <div className="absolute inset-0 overflow-hidden">
@@ -89,8 +108,8 @@ export function VideoView({ layer, url, timeMs, playing }: { layer: VideoLayer; 
           const at = sourceTimeAt(parts, timeMs - (layer.startMs ?? 0));
           e.currentTarget.currentTime = at.srcMs / 1000;
         }}
-        className="pointer-events-none h-full w-full select-none"
-        style={{ objectFit: layer.fit ?? "cover", objectPosition: "center" }} />
+        className={framing ? "pointer-events-none select-none" : "pointer-events-none h-full w-full select-none"}
+        style={framing ? { position: "absolute", maxWidth: "none" } : { objectFit: layer.fit ?? "cover", objectPosition: "center" }} />
     </div>
   );
 }

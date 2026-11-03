@@ -2,6 +2,7 @@ import { createCanvas, type Canvas, type Image, type SKRSContext2D } from "@napi
 import {
   CREATIVE_FORMATS,
   fillText,
+  framingWindow,
   layerVisibleAt,
   resolveColor,
   resolveSource,
@@ -227,7 +228,12 @@ function drawTextLayer(ctx: SKRSContext2D, layer: Extract<SceneLayer, { kind: "t
 
 function drawPicture(ctx: SKRSContext2D, layer: MediaLayer, img: Image | Canvas): void {
   const { w, h } = layer;
-  const r = fitRect(layer.fit ?? "cover", img.width, img.height, w, h);
+  let r = fitRect(layer.fit ?? "cover", img.width, img.height, w, h);
+  // A framed video draws the camera's window at its trim point (the frame the resolver fetched).
+  if (layer.kind === "video" && layer.framing?.keys.length) {
+    const win = framingWindow(layer.framing, layer.trimInMs ?? 0, img.width / img.height, w / h);
+    r = { sx: win.x * img.width, sy: win.y * img.height, sw: win.w * img.width, sh: win.h * img.height, dx: 0, dy: 0, dw: w, dh: h };
+  }
   ctx.save();
   const radius = layer.kind === "image" ? layer.radius ?? 0 : 0;
   if (radius > 0) {

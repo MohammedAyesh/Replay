@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CREATIVE_FORMATS,
+  TEMPLATE_FORMATS,
   CREATIVE_STYLES,
   CREATIVE_TEMPLATES,
   buildTemplateScene,
@@ -16,7 +17,8 @@ const KEYS = [
   "pricing", "newgroup", "talk", "training", "welcome", "getwell", "staff", "alumni", "tournament", "poll", "map", "manifesto",
   "kickoff", "goalflash", "halftime", "livescore", "countdown", "callup", "matchstats",
 ];
-const FORMATS = Object.keys(CREATIVE_FORMATS) as Array<keyof typeof CREATIVE_FORMATS>;
+// Templates are drawn for these; 16:9 ("wide") is for clip videos only.
+const FORMATS = TEMPLATE_FORMATS;
 const LOCALES = ["en", "ar"] as const;
 const ARABIC = /[؀-ۿ]/;
 const LATIN = /[A-Za-z]/;

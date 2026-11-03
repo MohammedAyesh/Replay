@@ -62,7 +62,7 @@ export type EditorAction =
   | { type: "removeLayer"; id: string }
   | { type: "duplicateLayer"; id: string; newId?: string }
   | { type: "moveLayer"; id: string; to: "up" | "down" | "top" | "bottom" | number }
-  | { type: "updateScene"; change: Partial<Pick<Scene, "durationMs" | "background" | "music">>; key?: string; at?: number }
+  | { type: "updateScene"; change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding">>; key?: string; at?: number }
   | { type: "setFormat"; format: CreativeFormat }
   | { type: "setStyle"; style: CreativeStyle }
   | { type: "setPlate"; change: PlateChange; key?: string; at?: number }
@@ -210,6 +210,10 @@ export function uniqueLayerId(scene: Scene, base: string): string {
 }
 
 export const canvasHeight = (format: CreativeFormat) => CREATIVE_FORMATS[format].h;
+/** Every format is 1080 wide except the 16:9 clip format. */
+export const canvasWidth = (format: CreativeFormat) => CREATIVE_FORMATS[format].w;
+/** Height over width. */
+export const canvasRatio = (format: CreativeFormat) => CREATIVE_FORMATS[format].h / CREATIVE_FORMATS[format].w;
 
 // ── New layers ──────────────────────────────────────────────────────────────
 
@@ -234,12 +238,13 @@ export function newShapeLayer(scene: Scene, shape: ShapeLayer["shape"]): ShapeLa
 
 export function newMediaLayer(scene: Scene, kind: "image" | "video", src: MediaSource, durationMs?: number): MediaLayer {
   const h = canvasHeight(scene.format);
+  const W = canvasWidth(scene.format);
   const base = { id: uniqueLayerId(scene, kind === "video" ? "video" : src.type === "crest" ? "crest" : "picture"), src };
   if (src.type === "crest") return { ...base, kind: "image", fit: "contain", x: 440, y: 60, w: 200, h: 200 };
   if (kind === "image") return { ...base, kind: "image", fit: "cover", x: 140, y: Math.round(h / 2 - 300), w: 800, h: 600, radius: 24 };
   const span = src.type === "recording" ? Math.max(0, src.toMs - src.fromMs) : durationMs;
   return {
-    ...base, kind: "video", fit: "cover", x: 0, y: 0, w: CANVAS_W, h,
+    ...base, kind: "video", fit: "cover", x: 0, y: 0, w: W, h,
     trimInMs: 0, ...(span ? { trimOutMs: span } : {}), speed: 1, muted: false,
   };
 }
@@ -289,15 +294,36 @@ export function setPlate(scene: Scene, change: PlateChange, build: typeof buildT
 // ── Format: proportional re-layout ──────────────────────────────────────────
 
 /**
- * Re-lay a scene onto another format (all are 1080 wide, only the height
- * changes). Full-bleed layers stretch to cover the new canvas; edge-anchored
+ * Re-lay a scene onto another format (the portrait ones are all 1080 wide, so
+ * only the height changes; the 16:9 one is 1920 wide and is scaled across). Full-bleed layers stretch to cover the new canvas; edge-anchored
  * layers stay on their edge; everything else keeps its relative vertical
  * position, shrinks when the canvas gets shorter, and is kept inside the canvas.
  */
 export function changeFormat(scene: Scene, format: CreativeFormat): Scene {
   if (scene.format === format) return scene;
-  const H0 = canvasHeight(scene.format);
-  const H1 = canvasHeight(format);
+  // Work on a 1080-wide copy (the 16:9 format is 1920 wide), re-lay its height, scale back out.
+  const k0 = CANVAS_W / canvasWidth(scene.format);
+  const k1 = canvasWidth(format) / CANVAS_W;
+  const H0 = canvasHeight(scene.format) * k0;
+  const H1 = canvasHeight(format) / k1;
+  const relaid = relayHeight(scaleScene(scene, k0), H0, H1);
+  return { ...scaleScene(relaid, k1), format };
+}
+
+/** Every layer (and text size) scaled by k about the top-left. */
+function scaleScene(scene: Scene, k: number): Scene {
+  if (k === 1) return scene;
+  const layers = scene.layers.map((layer): SceneLayer => {
+    const out = { ...layer, x: round(layer.x * k), y: round(layer.y * k), w: round(layer.w * k), h: round(layer.h * k) } as SceneLayer;
+    if (out.kind === "text") out.size = clamp(round(out.size * k), 6, 600);
+    return out;
+  });
+  return { ...scene, layers };
+}
+
+/** Re-lay a 1080-wide scene from a canvas H0 tall onto one H1 tall (the rules above). */
+function relayHeight(scene: Scene, H0: number, H1: number): Scene {
+  if (Math.abs(H0 - H1) < 0.5) return scene;
   const k = H1 / H0;
   const s = k < 1 ? Math.sqrt(k) : 1;
   const layers = scene.layers.map((layer): SceneLayer => {
@@ -320,7 +346,7 @@ export function changeFormat(scene: Scene, format: CreativeFormat): Scene {
     if (out.kind === "text" && s !== 1) out.size = clamp(round(out.size * Math.min(s, h / layer.h)), 6, 600);
     return out;
   });
-  return { ...scene, format, layers };
+  return { ...scene, layers };
 }
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));

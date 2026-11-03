@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import type { CreativeBrand, CreativeData, Scene } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
-import { canvasHeight } from "@/lib/creative-editor-state";
+import { canvasRatio } from "@/lib/creative-editor-state";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { SceneCanvas, type SceneCanvasProps } from "../scene-canvas";
 import { IconButton } from "./controls";
@@ -25,7 +25,7 @@ export function PreviewDialog({ open, onOpenChange, scene, brand, data, mediaUrl
   useMusicPreview(open ? music : null, scene.music, scene.durationMs, timeMs, open && playing);
   const vw = typeof window === "undefined" ? 400 : window.innerWidth;
   const vh = typeof window === "undefined" ? 800 : window.innerHeight;
-  const width = Math.floor(Math.min(420, vw - 48, (vh * 0.72 * 1080) / canvasHeight(scene.format)));
+  const width = Math.floor(Math.min(420, vw - 48, (vh * 0.72) / canvasRatio(scene.format)));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

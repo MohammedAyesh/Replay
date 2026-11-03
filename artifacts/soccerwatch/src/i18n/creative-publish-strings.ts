@@ -18,7 +18,7 @@ const en = {
   },
   backToEditor: "Back to editor",
   untitled: "Untitled",
-  formats: { post: "Post 4:5", square: "Square", story: "Story 9:16" },
+  formats: { post: "Post 4:5", square: "Square", story: "Story 9:16", wide: "Wide 16:9" },
   kinds: { image: "Picture", video: "Video" },
   render: {
     render: "Render",
@@ -142,7 +142,7 @@ const ar: typeof en = {
   },
   backToEditor: "ارجع للتعديل",
   untitled: "بلا عنوان",
-  formats: { post: "بوست 4:5", square: "مربّع", story: "ستوري 9:16" },
+  formats: { post: "بوست 4:5", square: "مربّع", story: "ستوري 9:16", wide: "عريض 16:9" },
   kinds: { image: "صورة", video: "فيديو" },
   render: {
     render: "جهّزه",

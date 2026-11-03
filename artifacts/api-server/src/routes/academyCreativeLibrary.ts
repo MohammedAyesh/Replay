@@ -2,7 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
-import { academyAdMediaTable, db } from "@workspace/db";
+import { eq, like, or } from "drizzle-orm";
+import { z } from "zod";
+import { academyAdMediaTable, db, recordingsTable } from "@workspace/db";
+import { academyClip, academyRecording } from "../lib/creative/renderMedia";
+import { clipSpan } from "../lib/creative/clipSpan";
+import { centreFraming, clipFallback, framingFor } from "../lib/creative/framing";
+import { extractBunnyVideoId } from "../lib/publicFootage";
 import { CREATIVE_BASE, creativeOwner, projectIdParam } from "../lib/creative/projects";
 import { parseLibraryFilters } from "../lib/creative/library";
 import { libraryClips, libraryMatches, libraryPlayerMedia, libraryPlayers, librarySessionMoments, libraryUpload, libraryUploads } from "../lib/creative/libraryData";
@@ -98,6 +104,58 @@ router.get(`${base}/clips`, async (req, res): Promise<void> => {
     failed(res, error, "Creative library: clips failed");
   }
 });
+
+const framingBody = z.object({
+  src: z.union([
+    z.object({ type: z.literal("recording"), recordingId: z.number().int().positive(), fromMs: z.number().min(0), toMs: z.number().min(0) }),
+    z.object({ type: z.literal("clip"), clipId: z.number().int().positive() }),
+  ]),
+});
+
+/**
+ * POST …/creative/library/framing  { src: recording window | clip }
+ * A camera following the ball through it (keys relative to the source's start),
+ * else the clip's own camera path, else the middle. Also says where a clip sits
+ * in its recording, so the editor can move its start and end.
+ */
+router.post(`${base}/framing`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  const body = framingBody.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Pick a clip or a moment" }); return; }
+  try {
+    const src = body.data.src;
+    if (src.type === "recording") {
+      if (src.toMs <= src.fromMs || src.toMs - src.fromMs > 10 * 60_000) { res.status(400).json({ error: "That stretch is too long" }); return; }
+      const rec = await academyRecording(access.academyId, src.recordingId);
+      if (!rec) { res.status(404).json({ error: "Not found" }); return; }
+      res.json(await framingFor(rec.id, src.fromMs, src.toMs));
+      return;
+    }
+    const clip = await academyClip(access.academyId, src.clipId);
+    if (!clip) { res.status(404).json({ error: "Not found" }); return; }
+    const span = await clipSpan(clip);
+    if (!span) { res.json({ ...centre(), window: null }); return; }
+    const recordingId = clip.sourceRecordingId ?? (await recordingOfVideo(clip.videoId));
+    const answer = await framingFor(recordingId && (await academyRecording(access.academyId, recordingId)) ? recordingId : null,
+      span.startSec * 1000, span.endSec * 1000, clipFallback(clip, span.endSec - span.startSec));
+    res.json({
+      ...answer,
+      // The clip's stretch of its recording: "Make a video" starts from this window, so its start and end can move.
+      window: recordingId ? { recordingId, fromMs: Math.round(span.startSec * 1000), toMs: Math.round(span.endSec * 1000) } : null,
+    });
+  } catch (error) {
+    failed(res, error, "Creative library: framing failed");
+  }
+});
+
+const centre = () => ({ framing: centreFraming(), source: "centre" as const, coverage: 0 });
+
+async function recordingOfVideo(videoId: string): Promise<number | null> {
+  const rows = await db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl }).from(recordingsTable)
+    .where(or(like(recordingsTable.videoUrl, `%/${videoId}/%`), eq(recordingsTable.videoUrl, videoId))).limit(5);
+  return rows.find((r) => extractBunnyVideoId(r.videoUrl)?.toLowerCase() === videoId.toLowerCase())?.id ?? null;
+}
 
 router.get(`${base}/uploads`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);

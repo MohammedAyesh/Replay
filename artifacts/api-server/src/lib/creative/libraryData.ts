@@ -34,6 +34,7 @@ import {
   type TrackingManifest,
 } from "@workspace/db";
 import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { clipSpans } from "./clipSpan";
 import { academyPlayerPhotosTable, usersTable } from "@workspace/db";
 import { photoView } from "../academyPlayerPhotos";
 import { logger } from "../logger";
@@ -326,17 +327,19 @@ async function savedMoments(
   const playerByUser = new Map<number, SessionPlayer>();
   for (const p of players.values()) if (p.userId) playerByUser.set(p.userId, p);
   const out: LibraryMoment[] = [];
+  const spans = await clipSpans(rows, (c) => byId.get(rows.find((r) => r.id === c.id)?.sourceRecordingId ?? 0)?.duration);
   for (const clip of rows) {
     if (clip.hiddenReason || clip.isHidden || clip.videoId.startsWith("live:")) continue;
     // Made under this academy, or by one of its people (a player with an account, a coach).
     if (clip.academyId !== academyId && !memberIds.has(clip.userId) && !playerByUser.has(clip.userId)) continue;
     const rec = clip.sourceRecordingId ? byId.get(clip.sourceRecordingId) : undefined;
     if (!rec) continue;
-    const w = savedClipWindow(rec.recordingId, Number(clip.startTime), Number(clip.endTime), clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null);
+    const span = spans.get(clip.id);
+    const w = span ? savedClipWindow(rec.recordingId, span.startSec, span.endSec, span.thumbSec) : null;
     if (!w) continue;
     const manifest = manifests.get(rec.recordingId) ?? null;
     const kickOff = (manifest?.provenance as { matchWindow?: { startSeconds?: number } } | undefined)?.matchWindow?.startSeconds ?? 0;
-    const tracking = Number(clip.startTime) - (manifest?.videoStartSeconds ?? 0);
+    const tracking = span!.startSec - (manifest?.videoStartSeconds ?? 0);
     const who = playerByUser.get(clip.userId);
     const player = who ? taggedPlayer(who, showNames) : null;
     const window: RecordingWindow = { recordingId: w.recordingId, fromMs: w.fromMs, toMs: w.toMs };
@@ -347,7 +350,7 @@ async function savedMoments(
       window,
       atMs: w.atMs,
       durationMs: w.toMs - w.fromMs,
-      minute: manifest ? matchMinute(tracking, kickOff) : Math.floor(Number(clip.startTime) / 60) + 1,
+      minute: manifest ? matchMinute(tracking, kickOff) : Math.floor(span!.startSec / 60) + 1,
       player,
       ours: who ? true : null,
       ownGoal: false,
@@ -421,6 +424,7 @@ export async function libraryClips(academyId: number, f: LibraryFilters, showNam
   const ownBy = new Map(own.map((o) => [o.recordingId, o]));
   const seen = new Set<number>();
   const clips = [];
+  const spans = await clipSpans(rows.map((r) => r.clip));
   for (const { clip } of rows) {
     if (seen.has(clip.id) || clip.hiddenReason === "deleted") continue;
     seen.add(clip.id);
@@ -429,10 +433,11 @@ export async function libraryClips(academyId: number, f: LibraryFilters, showNam
     const link = clip.sourceRecordingId ? ownBy.get(clip.sourceRecordingId) : undefined;
     if (f.squadId && link?.squadId !== f.squadId) continue;
     const isLive = clip.videoId.startsWith("live:");
-    const start = Number(clip.startTime);
-    const end = Number(clip.endTime);
-    const thumbTime = clip.thumbnailTime != null ? Number(clip.thumbnailTime) : start;
-    const w = link ? savedClipWindow(link.recordingId, start, end, thumbTime) : null;
+    const span = spans.get(clip.id) ?? null;
+    const start = span?.startSec ?? 0;
+    const end = span?.endSec ?? 0;
+    const thumbTime = span?.thumbSec ?? start;
+    const w = link && span ? savedClipWindow(link.recordingId, start, end, thumbTime) : null;
     clips.push({
       clipId: clip.id,
       title: showNames ? clip.title.slice(0, 80) : null,
@@ -591,12 +596,14 @@ export async function libraryPlayerMedia(academyId: number, playerId: number, sh
       .where(and(eq(userClipsTable.academyId, academyId), eq(userClipsTable.userId, p.userId), eq(userClipsTable.isHidden, false)))
       .orderBy(desc(userClipsTable.createdAt), desc(userClipsTable.id)).limit(60)
     : [];
+  const playerSpans = await clipSpans(clipRows);
   const clips = clipRows
     .filter((c) => !c.hiddenReason && !c.videoId.startsWith("live:") && academyClipStatus(c) !== "expired")
     .map((clip) => {
-      const start = Number(clip.startTime);
-      const end = Number(clip.endTime);
-      const thumbTime = clip.thumbnailTime != null ? Number(clip.thumbnailTime) : start;
+      const span = playerSpans.get(clip.id) ?? null;
+      const start = span?.startSec ?? 0;
+      const end = span?.endSec ?? 0;
+      const thumbTime = span?.thumbSec ?? start;
       return {
         clipId: clip.id,
         title: showNames ? clip.title.slice(0, 80) : null,

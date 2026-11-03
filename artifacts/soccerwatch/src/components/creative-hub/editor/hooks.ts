@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { canvasHeight } from "@/lib/creative-editor-state";
+import { canvasRatio } from "@/lib/creative-editor-state";
 import type { CreativeFormat } from "@workspace/api-zod";
 
 /** Advance a playhead while playing, looping at the end. */
@@ -39,7 +39,7 @@ export function useFitWidth(format: CreativeFormat, { phoneVh = 0.56, desktopVh 
     window.addEventListener("resize", measure);
     return () => { ro.disconnect(); window.removeEventListener("resize", measure); };
   }, []);
-  const ratio = canvasHeight(format) / 1080;
+  const ratio = canvasRatio(format);
   const byHeight = (box.vh * (box.wide ? desktopVh : phoneVh)) / ratio;
   const width = Math.max(160, Math.floor(Math.min(box.w, byHeight, max)));
   return { ref, width };

@@ -6,11 +6,12 @@ import { academyCreativeProjectsTable, db, type AcademyCreativeProject } from "@
 import { sceneForData, sceneSchema, type Scene } from "@workspace/api-zod";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { logger } from "../logger";
-import { renderScenePng } from "./render";
+import { renderScenePng, sceneSize } from "./render";
 import { CreativeRenderError, creativeImageResolver, creativeVideoResolver, loadCreativeContext, serverData } from "./renderMedia";
 import { resolveSceneMusic } from "./music";
 import { deleteOutput, storeOutput } from "./renderStore";
 import { renderSceneMp4 } from "./renderVideo";
+import { creativeBranding } from "./renderBranding";
 
 /**
  * Creative hub engine: render jobs.
@@ -107,7 +108,9 @@ async function runVideo(access: AcademyOwnerAccess, row: AcademyCreativeProject,
       const data = serverData(access, ctx, row.data);
       // Replay's tracks or this academy's own, nothing else (resolveSceneMusic checks).
       const music = await resolveSceneMusic(access.academyId, scene.music, temps);
+      const branding = await creativeBranding(access.academyId, scene, sceneSize(scene), temps);
       await renderSceneMp4({
+        branding,
         scene: sceneForData(scene, data), brand: ctx.brand, data,
         images: creativeImageResolver(access.academyId, ctx.look),
         videos: creativeVideoResolver(access.academyId, dir, temps),

@@ -13,6 +13,8 @@ import {
   type SceneLayer,
 } from "@workspace/api-zod";
 import { EXPORT_ENCODE_ARGS } from "../ffmpegExport";
+import { applyEndScreen, type EndScreenJob } from "../clipBranding/endScreenVideo";
+import { logger } from "../logger";
 import { renderScenePng, sceneSize, type ConcreteSource, type SceneRenderOptions } from "./render";
 import { ENTER_MS, SLIDE_PX, videoParts } from "./renderLayout";
 
@@ -210,6 +212,48 @@ function entranceXY(enter: SceneLayer["enter"], startMs: number, x: string, y: s
 const fadeIn = (enter: SceneLayer["enter"], startMs: number) =>
   enter && enter !== "none" ? `,fade=t=in:st=${sec(startMs)}:d=${sec(ENTER_MS)}:alpha=1` : "";
 
+/** Keys thinned to at most `max`, keeping both ends (an ffmpeg expression nests one level per key). */
+export function thinKeys(keys: ReadonlyArray<readonly [number, number, number]>, max = 48): Array<[number, number, number]> {
+  const sorted = [...keys].sort((a, b) => a[0] - b[0]).map((k) => [k[0], k[1], k[2]] as [number, number, number]);
+  if (sorted.length <= max) return sorted;
+  const out: Array<[number, number, number]> = [];
+  for (let i = 0; i < max; i++) out.push(sorted[Math.round((i * (sorted.length - 1)) / (max - 1))]);
+  return out;
+}
+
+/**
+ * A piecewise-linear ffmpeg expression in t (seconds into the file) through
+ * points [file seconds, value]: holds before the first and after the last.
+ */
+export function piecewise(points: Array<[number, number]>): string {
+  const v = (n: number) => n.toFixed(4);
+  if (points.length === 1) return v(points[0][1]);
+  let expr = v(points[points.length - 1][1]);
+  for (let i = points.length - 2; i >= 0; i--) {
+    const [t0, a] = points[i];
+    const [t1, b] = points[i + 1];
+    const seg = t1 > t0 ? `${v(a)}+(${v(b - a)})*(t-${t0.toFixed(3)})/${(t1 - t0).toFixed(3)}` : v(b);
+    expr = `if(lt(t,${t1.toFixed(3)}),${seg},${expr})`;
+  }
+  return `if(lt(t,${points[0][0].toFixed(3)}),${v(points[0][1])},${expr})`;
+}
+
+/**
+ * The crop for a framed layer: a window of the box's shape, `zoom` of the
+ * source's width (fitted inside the frame), centred on the keys, kept inside.
+ * Applied to the input before any trim, so t is the file's own clock.
+ */
+export function framingCrop(framing: NonNullable<VideoLayer["framing"]>, boxW: number, boxH: number, zeroAtSec: number): string {
+  const A = boxW / boxH;
+  const keys = thinKeys(framing.keys);
+  const at = (ms: number) => zeroAtSec + ms / 1000;
+  const cx = piecewise(keys.map((k) => [at(k[0]), k[1]]));
+  const cy = piecewise(keys.map((k) => [at(k[0]), k[2]]));
+  const w = `trunc(min(iw*${framing.zoom.toFixed(4)},ih*${A.toFixed(6)})/2)*2`;
+  const h = `trunc(ow/${A.toFixed(6)}/2)*2`;
+  return `crop=w='${w}':h='${h}':x='clip((${cx})*iw-ow/2,0,iw-ow)':y='clip((${cy})*ih-oh/2,0,ih-oh)'`;
+}
+
 /** The whole ffmpeg command for a planned scene (pure: no files are touched). */
 export function buildFfmpegArgs(opts: {
   scene: Scene;
@@ -249,9 +293,15 @@ export function buildFfmpegArgs(opts: {
     const bh = Math.max(2, Math.round(layer.h));
     // Each stretch of source at its own speed, then joined.
     const vparts = parts.map((_, i) => `v${n}_${i}`);
-    if (parts.length > 1) filters.push(`[${k}:v]split=${parts.length}${vparts.map((p) => `[${p}in]`).join("")}`);
+    // A framed layer: the moving window of the panorama, cut out before anything else.
+    let input0 = `[${k}:v]`;
+    if (layer.framing?.keys.length) {
+      filters.push(`${input0}${framingCrop(layer.framing, bw, bh, file.zeroAtSec)}[f${n}]`);
+      input0 = `[f${n}]`;
+    }
+    if (parts.length > 1) filters.push(`${input0}split=${parts.length}${vparts.map((p) => `[${p}in]`).join("")}`);
     parts.forEach((p, i) => {
-      const src = parts.length > 1 ? `[${vparts[i]}in]` : `[${k}:v]`;
+      const src = parts.length > 1 ? `[${vparts[i]}in]` : input0;
       filters.push(`${src}trim=start=${(file.zeroAtSec + p.srcFrom / 1000).toFixed(3)}:end=${(file.zeroAtSec + p.srcTo / 1000).toFixed(3)},setpts=(PTS-STARTPTS)/${p.speed.toFixed(6)}[${vparts[i]}]`);
     });
     const joined = `v${n}j`;
@@ -345,6 +395,8 @@ export type VideoRenderOptions = Omit<SceneRenderOptions, "t" | "include" | "bac
   music?: { path: string; loudnessLufs: number | null } | null;
   musicPath?: string | null;
   signal?: AbortSignal;
+  /** The venue's mark over everything, and its sign-off card after the scene (renderBranding). */
+  branding?: { overlayPath: string | null; endScreen: EndScreenJob | null } | null;
 };
 
 /** Render a video scene to `opts.out`. */
@@ -391,6 +443,9 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
     }
   }
 
+  // The venue's mark sits on top of everything, for the whole scene.
+  if (opts.branding?.overlayPath) tracks.push({ type: "png", path: opts.branding.overlayPath, fromMs: 0, toMs: D });
+
   // 3. One ffmpeg pass.
   const args = buildFfmpegArgs({
     scene,
@@ -400,5 +455,21 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
     out: opts.out,
   });
   await runFfmpeg(args, opts.signal);
+
+  // 4. The sign-off card after the scene, over its held last frame. Without it the video still stands.
+  const card = opts.branding?.endScreen;
+  if (card) {
+    try {
+      const { w, h } = sceneSize(scene);
+      const withCard = await applyEndScreen({ mainPath: opts.out, dims: { w, h }, job: card, start: D / 1000, encode: EXPORT_ENCODE_ARGS, hasAudio: true });
+      await fs.promises.rename(withCard, opts.out).catch(async () => {
+        await fs.promises.copyFile(withCard, opts.out);
+        await fs.promises.rm(withCard, { force: true });
+      });
+      return { durationMs: D + Math.round(card.seconds * 1000) };
+    } catch (error) {
+      logger.warn({ error: (error as Error).message }, "Creative render: end card left out");
+    }
+  }
   return { durationMs: D };
 }

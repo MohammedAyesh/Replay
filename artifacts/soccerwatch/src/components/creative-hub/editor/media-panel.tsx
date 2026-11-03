@@ -1,13 +1,18 @@
-import { Film, ImagePlus, Replace, Shield } from "lucide-react";
+import { useState } from "react";
+import { Crosshair, Film, ImagePlus, Replace, Shield } from "lucide-react";
+import { useCreativeFramerCopy } from "@/i18n/creative-framer-strings";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
 import { newMediaLayer, type MediaLayer } from "@/lib/creative-editor-state";
 import { Button } from "@/components/ui/button";
 import { Chip, NumberSlider, Section, Toggle, panelEmpty } from "./controls";
 import { LayerCommon } from "./layer-common";
 import type { EditorApi } from "./editor-api";
+import { CameraDialog, framerFootage } from "./camera-dialog";
 
 export function MediaPanel({ ed }: { ed: EditorApi }) {
   const copy = useCreativeEditorCopy();
+  const framerCopy = useCreativeFramerCopy();
+  const [cameraOpen, setCameraOpen] = useState(false);
   const layer = ed.selected && (ed.selected.kind === "image" || ed.selected.kind === "video") ? (ed.selected as MediaLayer) : null;
 
   const adders = (
@@ -56,7 +61,14 @@ export function MediaPanel({ ed }: { ed: EditorApi }) {
             <Replace className="h-4 w-4" />{copy.replace}
           </Button>
         </div>
-        {layer.src.type === "binding" ? <p className="text-xs text-muted-text">{copy.slotEmpty}</p> : null}
+        {layer.kind === "video" && framerFootage(ed, layer) ? (
+          <>
+            <Button type="button" variant="outline" className="min-h-10 w-full rounded-xl" onClick={() => setCameraOpen(true)} data-testid="editor-camera">
+              <Crosshair className="h-4 w-4" />{framerCopy.title}
+            </Button>
+            <CameraDialog ed={ed} layer={layer} open={cameraOpen} onOpenChange={setCameraOpen} />
+          </>
+        ) : layer.src.type === "binding" ? <p className="text-xs text-muted-text">{copy.slotEmpty}</p> : null}
         {layer.kind === "image" && layer.src.type !== "crest" ? (
           <Button type="button" variant="outline" className="min-h-10 w-full rounded-xl" onClick={() => ed.update(layer.id, { src: { type: "crest" }, fit: "contain" })}>
             <Shield className="h-4 w-4" />{copy.useCrest}

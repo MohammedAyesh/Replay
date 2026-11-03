@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { clipSpan } from "./clipSpan";
 import { venueClip, venueRecording } from "./venueLibrary";
 import fs from "node:fs";
 import path from "node:path";
@@ -312,8 +313,9 @@ export function creativeImageResolver(academyId: number, look: Pick<BrandLook, "
       case "clip": {
         const clip = await academyClip(academyId, src.clipId);
         if (!clip || clip.videoId.startsWith("live:")) return null;
-        const start = Number(clip.startTime);
-        const at = layer.kind === "video" ? start + trimSec : clip.thumbnailTime != null ? Number(clip.thumbnailTime) : start;
+        const span = await clipSpan(clip);
+        if (!span) return null;
+        const at = layer.kind === "video" ? span.startSec + trimSec : span.thumbSec ?? span.startSec;
         return bunnyThumb(clip.videoId, at);
       }
       case "recording":
@@ -412,9 +414,10 @@ export function creativeVideoResolver(academyId: number, workDir: string, temps:
         case "clip": {
           const clip = await academyClip(academyId, src.clipId);
           if (!clip) throw new CreativeRenderError("A clip in this design is no longer available. Pick another one.");
-          const start = Number(clip.startTime);
-          const end = Number(clip.endTime);
-          if (!clip.videoId.startsWith("live:") && isBunnyConfigured()) {
+          const clipped = clip.videoId.startsWith("live:") ? null : await clipSpan(clip);
+          const start = clipped?.startSec ?? 0;
+          const end = clipped?.endSec ?? 0;
+          if (clipped && isBunnyConfigured()) {
             const from = start + need.fromMs / 1000;
             const to = Math.min(end, start + (need.fromMs + span) / 1000) + 0.5;
             const w = await fetchWindow(getBunnyPlaybackUrl(clip.videoId), from, to, workDir);
@@ -520,9 +523,11 @@ export async function browserMedia(
     case "clip": {
       const clip = await academyClip(academyId, src.clipId);
       if (!clip || clip.videoId.startsWith("live:") || !isBunnyConfigured()) return null;
-      const start = Number(clip.startTime);
-      const end = Number(clip.endTime);
-      if (want === "still") return { redirect: getBunnyProxiedThumbnailUrl(clip.videoId, clip.thumbnailTime != null ? Number(clip.thumbnailTime) : start) };
+      const span = await clipSpan(clip);
+      if (!span) return null;
+      const start = span.startSec;
+      const end = span.endSec;
+      if (want === "still") return { redirect: getBunnyProxiedThumbnailUrl(clip.videoId, span.thumbSec ?? start) };
       return windowVideo(clip.sourceRecordingId, getBunnyPlaybackUrl(clip.videoId), start, Math.min(end, start + MAX_BROWSER_WINDOW_MS / 1000));
     }
     case "recording":

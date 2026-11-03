@@ -34,6 +34,7 @@ import libraryRouter from "./academyCreativeLibrary";
 import studioRouter from "./academyStudio";
 import { academyClip, academyRecording } from "../lib/creative/renderMedia";
 import { clipOrigin } from "../lib/creative/venueLibrary";
+import { rememberBall } from "../lib/creative/framing";
 
 const tag = Date.now();
 let app: Express;
@@ -177,6 +178,28 @@ describe("a field's creative library", () => {
     expect(auto).toMatchObject({ origin: "auto", creator: { name: "Replay", role: "replay" } });
     expect(manual).toMatchObject({ origin: "player", creator: { name: "Yazan", role: "player" } });
     expect(res.body.clips.some((c: { id: number }) => c.id === clip.other)).toBe(false);
+  });
+
+  it("follows the ball through a clip or a moment, and says where a clip sits in its recording", async () => {
+    // Clip "Top corner" is 0.40–0.41 of a 90-minute video: 2160–2214 s. The ball crosses the pitch meanwhile.
+    rememberBall(recordingId, Array.from({ length: 300 }, (_, i) => [2150 + i * 0.25, 0.1 + (0.8 * i) / 300, 0.55] as [number, number, number]));
+    const fromClip = await request(app).post(lib("/framing")).set(auth(ownerId)).send({ src: { type: "clip", clipId: clip.manual } }).expect(200);
+    expect(fromClip.body).toMatchObject({ source: "ball", window: { recordingId, fromMs: 2_160_000, toMs: 2_214_000 } });
+    expect(fromClip.body.framing.keys[0][0]).toBe(0);
+    expect(fromClip.body.framing.keys.at(-1)[0]).toBe(54_000);
+    const fromMoment = await request(app).post(lib("/framing")).set(auth(ownerId))
+      .send({ src: { type: "recording", recordingId, fromMs: 2_150_000, toMs: 2_170_000 } }).expect(200);
+    expect(fromMoment.body.source).toBe("ball");
+    expect(fromMoment.body.framing.keys[0][1]).toBeLessThan(0.2);
+    // No ball data: the middle of the pitch.
+    const plain = await request(app).post(lib("/framing")).set(auth(ownerId))
+      .send({ src: { type: "recording", recordingId: secondPitchRecordingId, fromMs: 0, toMs: 10_000 } }).expect(200);
+    expect(plain.body.source).toBe("centre");
+    await request(app).post(lib("/framing")).set(auth(ownerId)).send({ src: { type: "recording", recordingId: otherRecordingId, fromMs: 0, toMs: 10_000 } }).expect(404);
+    await request(app).post(lib("/framing")).set(auth(ownerId)).send({ src: { type: "clip", clipId: clip.other } }).expect(404);
+    // The clip list gives the clip's real length (54 s), not its share of the video.
+    const list = await request(app).get(lib("/clips")).set(auth(ownerId)).expect(200);
+    expect(list.body.clips.find((c: { clipId: number }) => c.clipId === clip.manual)).toMatchObject({ durationMs: 54_000, window: { recordingId, fromMs: 2_160_000, toMs: 2_214_000 } });
   });
 
   it("keeps it to the field's owner", async () => {

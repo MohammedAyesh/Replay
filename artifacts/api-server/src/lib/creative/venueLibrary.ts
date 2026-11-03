@@ -30,6 +30,7 @@ import {
 } from "@workspace/db";
 import type { MediaSource } from "@workspace/api-zod";
 import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { clipSpans } from "./clipSpan";
 import { logger } from "../logger";
 import { academyClipStatus } from "../userClipExportState";
 import { extractBunnyVideoId } from "../publicFootage";
@@ -246,12 +247,14 @@ export async function venueRecordingMoments(fieldIds: number[], recordingId: num
   const manifest = analysis.manifest;
   const kickOff = (manifest?.provenance as { matchWindow?: { startSeconds?: number } } | undefined)?.matchWindow?.startSeconds ?? 0;
   const saved: LibraryMoment[] = [];
+  const spans = await clipSpans(clipRows, () => rec.duration);
   for (const clip of clipRows) {
     if (clip.hiddenReason || clip.videoId.startsWith("live:")) continue;
-    const w = savedClipWindow(rec.id, Number(clip.startTime), Number(clip.endTime), clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null);
+    const span = spans.get(clip.id);
+    const w = span ? savedClipWindow(rec.id, span.startSec, span.endSec, span.thumbSec) : null;
     if (!w) continue;
     const window: RecordingWindow = { recordingId: w.recordingId, fromMs: w.fromMs, toMs: w.toMs };
-    const tracking = Number(clip.startTime) - (manifest?.videoStartSeconds ?? 0);
+    const tracking = span!.startSec - (manifest?.videoStartSeconds ?? 0);
     saved.push({
       id: `saved:${clip.id}`,
       type: "saved",
@@ -259,7 +262,7 @@ export async function venueRecordingMoments(fieldIds: number[], recordingId: num
       window,
       atMs: w.atMs,
       durationMs: w.toMs - w.fromMs,
-      minute: manifest ? matchMinute(tracking, kickOff) : Math.floor(Number(clip.startTime) / 60) + 1,
+      minute: manifest ? matchMinute(tracking, kickOff) : Math.floor(span!.startSec / 60) + 1,
       player: null,
       ours: null,
       ownGoal: false,
@@ -334,6 +337,7 @@ export async function venueLibraryClips(academyId: number, fieldIds: number[], f
   };
   const clips = [];
   const counts = { all: 0, auto: 0, player: 0 };
+  const spans = await clipSpans(rows.map((r) => r.clip), (c) => rows.find((r) => r.clip.id === c.id)?.recording?.duration);
   for (const { clip, creatorName, recording, origin: o } of rows) {
     const status = academyClipStatus(clip);
     if (status === "expired") continue;
@@ -341,10 +345,11 @@ export async function venueLibraryClips(academyId: number, fieldIds: number[], f
     counts[o]++;
     if (origin && o !== origin) continue;
     const isLive = clip.videoId.startsWith("live:");
-    const start = Number(clip.startTime);
-    const end = Number(clip.endTime);
-    const thumbTime = clip.thumbnailTime != null ? Number(clip.thumbnailTime) : start;
-    const w = recording ? savedClipWindow(recording.id, start, end, thumbTime) : null;
+    const span = spans.get(clip.id) ?? null;
+    const start = span?.startSec ?? 0;
+    const end = span?.endSec ?? 0;
+    const thumbTime = span?.thumbSec ?? start;
+    const w = recording && span ? savedClipWindow(recording.id, start, end, thumbTime) : null;
     const name = firstNameOf(creatorName);
     clips.push({
       clipId: clip.id,

@@ -9,7 +9,7 @@ export type EditorApi = {
   select: (id: string | null) => void;
   /** Change one layer. Changes with the same `key` close together become one undo step. */
   update: (id: string, change: LayerChange, key?: string) => void;
-  updateScene: (change: Partial<Pick<Scene, "durationMs" | "background" | "music">>, key?: string) => void;
+  updateScene: (change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding">>, key?: string) => void;
   /** Add a layer on top and select it. */
   add: (layer: SceneLayer) => void;
   remove: (id: string) => void;

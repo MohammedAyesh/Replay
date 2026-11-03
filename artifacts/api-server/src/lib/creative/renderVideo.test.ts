@@ -182,6 +182,103 @@ describe("video renderer", () => {
     expect(frameAt(out, 1.5, 540, 1300)[0]).toBeGreaterThan(200);
   }, 60_000);
 
+  it("frames panoramic footage with a moving 16:9 camera (framing keys), in the 1920×1080 wide format", async () => {
+    // A 32:9 "panorama": red left third, green middle third, blue right third. Source time 0 is 1 s into the file.
+    const pano = path.join(work, "pano.mp4");
+    execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "color=c=green:s=1920x540:r=30:d=5",
+      "-vf", "drawbox=x=0:y=0:w=640:h=540:color=red:t=fill,drawbox=x=1280:y=0:w=640:h=540:color=blue:t=fill",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", pano]);
+    const scene: Scene = {
+      v: 1, format: "wide", durationMs: 3000, background: "#000000", locale: "en",
+      layers: [{
+        id: "vid", kind: "video", src: { type: "recording", recordingId: 1, fromMs: 0, toMs: 3000 }, x: 0, y: 0, w: 1920, h: 1080, fit: "cover",
+        trimInMs: 0, speed: 1, muted: true,
+        framing: { zoom: 0.3, keys: [[0, 0.15, 0.5], [600, 0.15, 0.5], [2400, 0.85, 0.5]], mode: "ball" },
+      }],
+    };
+    const out = path.join(work, "framed.mp4");
+    await renderSceneMp4({
+      scene, brand: BRAND, data: {},
+      videos: async () => ({ path: pano, zeroAtSec: 1, durationMs: 3000, hasAudio: false }),
+      workDir: work, out,
+    });
+    const v = probe(out).streams.find((s) => s.codec_type === "video");
+    expect(v).toMatchObject({ width: 1920, height: 1080 });
+    // At the start the camera is on the red third (no green anywhere across the frame), at the end on the blue one.
+    const start = [frameAt(out, 0.2, 100, 540), frameAt(out, 0.2, 960, 540), frameAt(out, 0.2, 1800, 540)];
+    for (const px of start) expect(px[0]).toBeGreaterThan(180);
+    const end = [frameAt(out, 2.8, 100, 540), frameAt(out, 2.8, 960, 540), frameAt(out, 2.8, 1800, 540)];
+    for (const px of end) expect(px[2]).toBeGreaterThan(180);
+    // Halfway the window straddles the middle third.
+    expect(frameAt(out, 1.5, 960, 540)[1]).toBeGreaterThan(90);
+  }, 60_000);
+
+  it("makes 9:16 videos: a vertical camera filling the frame, or a 16:9 band between black bars", async () => {
+    const pano = path.join(work, "pano916.mp4");
+    execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y",
+      "-f", "lavfi", "-i", "color=c=green:s=1920x540:r=30:d=4",
+      "-vf", "drawbox=x=0:y=0:w=640:h=540:color=red:t=fill,drawbox=x=1280:y=0:w=640:h=540:color=blue:t=fill",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", pano]);
+    const videos = async () => ({ path: pano, zeroAtSec: 0, durationMs: 2000, hasAudio: false });
+    const layer = { id: "vid", kind: "video" as const, src: { type: "recording" as const, recordingId: 1, fromMs: 0, toMs: 2000 }, fit: "cover" as const, trimInMs: 0, speed: 1, muted: true };
+    // Full-screen vertical: a narrow window on the red third fills the whole 1080×1920 frame.
+    const tall = path.join(work, "tall.mp4");
+    await renderSceneMp4({
+      scene: { v: 1, format: "story", durationMs: 1500, background: "#000000", locale: "en",
+        layers: [{ ...layer, x: 0, y: 0, w: 1080, h: 1920, framing: { zoom: 0.158, keys: [[0, 0.12, 0.5]] } }] },
+      brand: BRAND, data: {}, videos, workDir: work, out: tall,
+    });
+    expect(probe(tall).streams.find((s) => s.codec_type === "video")).toMatchObject({ width: 1080, height: 1920 });
+    for (const [x, y] of [[60, 60], [540, 960], [1020, 1860]]) expect(frameAt(tall, 0.5, x, y)[0]).toBeGreaterThan(180);
+    // With bars: the 16:9 camera as a 1080×608 band across the middle, black above and below.
+    const bars = path.join(work, "bars.mp4");
+    await renderSceneMp4({
+      scene: { v: 1, format: "story", durationMs: 1500, background: "#000000", locale: "en",
+        layers: [{ ...layer, x: 0, y: 656, w: 1080, h: 608, framing: { zoom: 0.5, keys: [[0, 0.5, 0.5]] } }] },
+      brand: BRAND, data: {}, videos, workDir: work, out: bars,
+    });
+    expect(Math.max(...frameAt(bars, 0.5, 540, 200))).toBeLessThan(30);
+    expect(Math.max(...frameAt(bars, 0.5, 540, 1750))).toBeLessThan(30);
+    // The band shows half the panorama: red, green and blue thirds' edges — green in the middle, red/blue at the sides.
+    expect(frameAt(bars, 0.5, 540, 960)[1]).toBeGreaterThan(90);
+    expect(frameAt(bars, 0.5, 30, 960)[0]).toBeGreaterThan(180);
+    expect(frameAt(bars, 0.5, 1050, 960)[2]).toBeGreaterThan(180);
+  }, 60_000);
+
+  it("puts the venue's mark over the video and its sign-off card after it", async () => {
+    const src = path.join(work, "plain.mp4");
+    execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=green:s=640x360:r=30:d=3",
+      "-c:v", "libx264", "-pix_fmt", "yuv420p", src]);
+    // The "mark": a white square in the top-left corner of an otherwise clear 1920×1080 PNG.
+    const mark = path.join(work, "mark.png");
+    execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y",
+      "-filter_complex", "color=c=black@0.0:s=1920x1080,format=rgba[b];color=c=white:s=200x200,format=rgba[w];[b][w]overlay=40:40:format=auto,format=rgba",
+      "-frames:v", "1", mark]);
+    const scene: Scene = {
+      v: 1, format: "wide", durationMs: 2000, background: "#000000", locale: "en",
+      layers: [{ id: "vid", kind: "video", src: { type: "clip", clipId: 1 }, x: 0, y: 0, w: 1920, h: 1080, fit: "cover", trimInMs: 0, speed: 1, muted: true }],
+    };
+    const out = path.join(work, "branded.mp4");
+    const look = { nameEn: "Jordan Galaxy", nameAr: null, taglineAr: null, primaryColor: "#F4CF1F", accentColor: null, bookingPhone: null, instagram: null, crest: null, isAcademy: false };
+    const done = await renderSceneMp4({
+      scene, brand: BRAND, data: {},
+      videos: async () => ({ path: src, zeroAtSec: 0, durationMs: 3000, hasAudio: false }),
+      workDir: work, out,
+      branding: { overlayPath: mark, endScreen: { spec: { kind: "signOff", look, dateLabel: null, link: "https://replayjo.com/v/galaxy" }, seconds: 2.5, blur: 14, dim: 0.45 } },
+    });
+    expect(done.durationMs).toBe(4500);
+    const duration = Number(probe(out).format.duration);
+    expect(duration).toBeGreaterThan(4.3);
+    expect(duration).toBeLessThan(4.7);
+    // The mark over the footage; the footage itself elsewhere.
+    expect(Math.min(...frameAt(out, 1, 100, 100))).toBeGreaterThan(200);
+    expect(frameAt(out, 1, 960, 900)[1]).toBeGreaterThan(90);
+    // The card after it is not the plain green footage any more.
+    const card = frameAt(out, 4.0, 960, 540);
+    expect(card[1] > 90 && card[0] < 60 && card[2] < 60).toBe(false);
+  }, 90_000);
+
   it("renders a scene with a soundtrack: looped from its start point, faded, ducked under the footage, at the scene's length", async () => {
     // 3 s of "music" (a 220 Hz tone) so a 7 s scene has to loop it; footage: 2 s of a 1 kHz tone from 2 s to 4 s.
     const song = path.join(work, "song.m4a");

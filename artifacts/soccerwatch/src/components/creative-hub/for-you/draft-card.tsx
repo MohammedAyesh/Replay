@@ -10,7 +10,7 @@ import type { ForYouDraft, ForYouFixture } from "@/lib/creative-hub-foryou-api";
 import { SceneCanvas } from "../scene-canvas";
 import { whyLine } from "./why";
 
-const RATIO = { post: 1350 / 1080, square: 1, story: 1920 / 1080 } as const;
+const RATIO = { post: 1350 / 1080, square: 1, story: 1920 / 1080, wide: 1080 / 1920 } as const;
 
 /** Width of an element, kept up to date. */
 function useWidth<T extends HTMLElement>(): [React.RefCallback<T>, number] {

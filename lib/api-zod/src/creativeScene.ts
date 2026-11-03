@@ -16,8 +16,13 @@ export const CREATIVE_FORMATS = {
   post: { w: 1080, h: 1350 },
   square: { w: 1080, h: 1080 },
   story: { w: 1080, h: 1920 },
+  /** 16:9 for a clip (YouTube, WhatsApp, a feed video). Not a template format: clips start here directly. */
+  wide: { w: 1920, h: 1080 },
 } as const;
 export type CreativeFormat = keyof typeof CREATIVE_FORMATS;
+export const CREATIVE_FORMAT_KEYS = ["post", "square", "story", "wide"] as const;
+/** The formats templates are drawn for. */
+export const TEMPLATE_FORMATS = ["post", "square", "story"] as const;
 
 /**
  * Visual families. Two flashy, two subdued, one for kids, plus two photo-led
@@ -112,6 +117,72 @@ export type LayerTint = z.infer<typeof tintSchema>;
 /** A tint with its colour resolved to #RRGGBB and its defaults filled. */
 export type ResolvedTint = { color: string; mode: TintMode; amount: number };
 
+/**
+ * A camera on panoramic footage.
+ *   zoom   the window's width as a share of the source's width (0.5 on the
+ *          32:9 panorama is a full-height 16:9 window)
+ *   keys   [source ms, centre x, centre y]: where the window is centred, as
+ *          shares of the source frame, at that time into the source (the same
+ *          clock as trimInMs). Between keys it moves in a straight line; before
+ *          the first and after the last it holds.
+ *   mode   how the keys were made: following the ball, or by hand
+ * The window has the box's shape and is kept inside the frame.
+ */
+export const framingSchema = z.object({
+  zoom: z.number().min(0.1).max(1),
+  keys: z.array(z.tuple([z.number().min(0), z.number().min(0).max(1), z.number().min(0).max(1)])).min(1).max(600),
+  mode: z.enum(["ball", "manual"]).optional(),
+});
+export type Framing = z.infer<typeof framingSchema>;
+
+/** Where the framing is centred at `ms` into the source. */
+export function framingCentre(framing: Pick<Framing, "keys">, ms: number): [number, number] {
+  const keys = framing.keys;
+  if (!keys.length) return [0.5, 0.5];
+  if (ms <= keys[0][0]) return [keys[0][1], keys[0][2]];
+  const last = keys[keys.length - 1];
+  if (ms >= last[0]) return [last[1], last[2]];
+  let lo = 0, hi = keys.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (keys[mid][0] <= ms) lo = mid; else hi = mid; }
+  const a = keys[lo], b = keys[hi];
+  const f = b[0] > a[0] ? (ms - a[0]) / (b[0] - a[0]) : 0;
+  return [a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+
+/**
+ * The window's size, as shares of the source: the box's shape, `zoom` of the
+ * source's width, shrunk to fit when it would be taller than the source.
+ */
+export function framingSize(zoom: number, sourceAspect: number, boxAspect: number): { w: number; h: number } {
+  let w = Math.max(0.02, Math.min(1, zoom));
+  let h = (w * sourceAspect) / boxAspect;
+  if (h > 1) { w = boxAspect / sourceAspect; h = 1; }
+  if (w > 1) { h = h / w; w = 1; }
+  return { w, h };
+}
+
+/** The part of the source (x, y, w, h as shares) that fills the box at `ms` into the source. */
+export function framingWindow(framing: Framing, ms: number, sourceAspect: number, boxAspect: number): { x: number; y: number; w: number; h: number } {
+  const { w, h } = framingSize(framing.zoom, sourceAspect, boxAspect);
+  const [cx, cy] = framingCentre(framing, ms);
+  const x = Math.max(0, Math.min(1 - w, cx - w / 2));
+  const y = Math.max(0, Math.min(1 - h, cy - h / 2));
+  return { x, y, w, h };
+}
+
+/** The panorama's shape (3840×1080). */
+export const PANORAMA_ASPECT = 32 / 9;
+
+/**
+ * The venue's branding on a video: its mark over the footage (`overlay`) and
+ * its sign-off card after it (`endCard`). Absent: no branding.
+ */
+export const sceneBrandingSchema = z.object({
+  overlay: z.boolean().default(true),
+  endCard: z.boolean().default(true),
+});
+export type SceneBranding = z.infer<typeof sceneBrandingSchema>;
+
 export const sceneLayerSchema = z.discriminatedUnion("kind", [
   z.object({
     ...baseLayer,
@@ -127,6 +198,11 @@ export const sceneLayerSchema = z.discriminatedUnion("kind", [
     muted: z.boolean().default(false),
     /** Crop follows a tracked player (match analysis track id). */
     followTrackId: z.number().int().optional(),
+    /**
+     * A moving camera on panoramic footage: which part of the source fills the
+     * box at each moment (see framingWindow). Absent: the whole source, by `fit`.
+     */
+    framing: framingSchema.optional(),
   }),
   z.object({
     ...baseLayer,
@@ -212,7 +288,7 @@ export const MAX_SCENE_LAYERS = 200;
 
 export const sceneSchema = z.object({
   v: z.literal(1),
-  format: z.enum(["post", "square", "story"]),
+  format: z.enum(CREATIVE_FORMAT_KEYS),
   /** Present for video scenes; a still has no duration. */
   durationMs: z.number().min(500).max(180_000).optional(),
   background: colorSchema.default("@paper"),
@@ -223,6 +299,8 @@ export const sceneSchema = z.object({
   /** Which template and style this came from (for re-styling). */
   template: z.object({ key: z.string().max(80), style: z.enum(CREATIVE_STYLES) }).optional(),
   locale: z.enum(["en", "ar"]).default("ar"),
+  /** Video scenes: the venue's mark and sign-off card (see sceneBrandingSchema). */
+  branding: sceneBrandingSchema.optional(),
 });
 export type Scene = z.infer<typeof sceneSchema>;
 
@@ -284,6 +362,7 @@ export function parsePlateKey(key: string): { style: string; n: number } | null 
 
 /** Plate files to try for a format, best first. */
 export function plateAspects(format: CreativeFormat | undefined): PlateAspect[] {
+  // A wide frame takes the post plate with cover (there is no landscape plate).
   return format === "story" ? ["story", "post"] : ["post", "story"];
 }
 

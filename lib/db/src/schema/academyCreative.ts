@@ -41,7 +41,7 @@ export const academyCreativeProjectsTable = pgTable("academy_creative_projects",
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("academy_creative_projects_kind_check", sql`${table.kind} in ('image', 'video')`),
-  check("academy_creative_projects_format_check", sql`${table.format} in ('post', 'square', 'story')`),
+  check("academy_creative_projects_format_check", sql`${table.format} in ('post', 'square', 'story', 'wide')`),
   check("academy_creative_projects_status_check", sql`${table.status} in ('draft', 'ready', 'scheduled', 'published', 'skipped')`),
   check("academy_creative_projects_origin_check", sql`${table.origin} in ('auto', 'manual')`),
   check("academy_creative_projects_render_status_check", sql`${table.renderStatus} in ('none', 'queued', 'rendering', 'done', 'failed')`),

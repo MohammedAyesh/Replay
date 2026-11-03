@@ -8,6 +8,7 @@ import {
   type CreativeFormat,
   type CreativeStyle,
   type MediaSource,
+  type Scene,
   type SceneLayer,
   type TemplateCategory,
 } from "@workspace/api-zod";
@@ -119,7 +120,7 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
         title: projectTitle(title, data, active),
         templateKey: key,
         style,
-        scene: buildTemplateScene(key, style, format, postLocale),
+        scene: withSeedCamera(buildTemplateScene(key, style, format, postLocale), active),
         data,
         sourceSessionId: sessionId,
       });
@@ -215,4 +216,23 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
       {!active ? <p className="text-xs text-muted-text">{copy.sampleNote}</p> : null}
     </section>
   );
+}
+
+/**
+ * Footage that came through the clip framer keeps its camera: the template's
+ * main video slot (src {{media}}) gets the framing, the scene the branding.
+ */
+function withSeedCamera(scene: Scene, seed: TemplateSeed | null): Scene {
+  if (!seed || (seed.type !== "clip" && seed.type !== "recording")) return scene;
+  const { framing, branding } = seed;
+  if (framing === undefined && !branding) return scene;
+  return {
+    ...scene,
+    ...(branding ? { branding } : {}),
+    layers: scene.layers.map((l) => {
+      if (l.kind !== "video" || l.src.type !== "binding" || l.src.path !== "media") return l;
+      const { framing: _old, ...rest } = l;
+      return framing ? { ...rest, framing } : rest;
+    }),
+  };
 }

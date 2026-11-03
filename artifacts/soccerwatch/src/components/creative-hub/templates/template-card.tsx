@@ -26,7 +26,7 @@ export function TemplateCard({
   labels: { video: string; seconds: (n: number) => string; creating: string; open: string };
 }) {
   const [ref, seen] = useSeen<HTMLButtonElement>();
-  const ratio = scene.format === "story" ? 1920 / 1080 : scene.format === "square" ? 1 : 1350 / 1080;
+  const ratio = scene.format === "story" ? 1920 / 1080 : scene.format === "square" ? 1 : scene.format === "wide" ? 1080 / 1920 : 1350 / 1080;
   return (
     <div className="min-w-0" data-testid={`creative-template-${meta.key}`}>
       <button ref={ref} type="button" onClick={onOpen} disabled={disabled} aria-label={labels.open}
