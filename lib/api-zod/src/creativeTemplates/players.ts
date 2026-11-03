@@ -44,17 +44,25 @@ export type TileLook = {
   gap?: number;
   /** How tall the bar is, as a share of the tile (default 0.2). */
   barShare?: number;
-  /** Where the number sits when there is a photo: beside the figure (default) or centred behind it. */
-  numberAt?: "side" | "behind";
+  /**
+   * Where the number sits when there is a photo: beside the figure (default),
+   * centred behind it, or in a round badge at the tile's top corner, drawn
+   * over the figure so a head never covers it.
+   */
+  numberAt?: "side" | "behind" | "badge";
+  /** The badge's disc and ring (numberAt "badge"). */
+  badge?: { fill: string; ring?: string; color: string };
+  /** A fixed number of columns (default: whatever makes tiles about 3:4). */
+  cols?: number;
   /** The style's text function (a pack's typefaces); default kit.text. */
   text?: (c: Ctx, id: string, value: string, b: Box, o: TextOpts) => unknown;
 };
 
 /** Tiles for n players in a region: as many columns as make portrait tiles (about 3:4), the last row centred. */
-export function tileGrid(n: number, region: Box, gap = 18): Box[] {
+export function tileGrid(n: number, region: Box, gap = 18, fixedCols?: number): Box[] {
   if (n <= 0) return [];
   let best: { cols: number; w: number; h: number; score: number } | null = null;
-  for (let cols = 2; cols <= 5; cols += 1) {
+  for (let cols = fixedCols ?? 2; cols <= (fixedCols ?? 5); cols += 1) {
     const rows = Math.ceil(n / cols);
     const w = (region.w - (cols - 1) * gap) / cols;
     const hAvail = (region.h - (rows - 1) * gap) / rows;
@@ -95,7 +103,7 @@ export function rowsOrTiles(c: Ctx, k: Content, region: Box, look: TileLook, dra
 
 export function playerTiles(c: Ctx, k: Content, region: Box, look: TileLook): void {
   const rows = k.rows ?? [];
-  const tiles = tileGrid(rows.length, region, look.gap ?? 18);
+  const tiles = tileGrid(rows.length, region, look.gap ?? 18, look.cols);
   tiles.forEach((t, i) => playerTile(c, `row-${i + 1}`, t, rows[i], i, look));
 }
 
@@ -120,7 +128,8 @@ function playerTile(c: Ctx, id: string, t: Box, row: [string, string, string], i
     font: n.font, weight: n.weight ?? 800, color: n.color, num: true, fit: true, italic: n.italic,
     ...(n.opacity !== undefined ? { opacity: n.opacity } : {}), ...(n.stroke ? { stroke: n.stroke } : {}), ...(n.shadow ? { shadow: n.shadow } : {}),
   };
-  c.only(has, () => {
+  const badge = look.numberAt === "badge";
+  if (!badge) c.only(has, () => {
     const behind = look.numberAt === "behind";
     const nb: Box = behind
       ? { x: back.x, y: back.y + back.h * 0.02, w: back.w, h: back.h * 0.62 }
@@ -143,9 +152,18 @@ function playerTile(c: Ctx, id: string, t: Box, row: [string, string, string], i
     ellipse(c, `${id}-shadow`, { x: t.x + t.w * 0.22, y: bar.y - 12, w: t.w * 0.56, h: 24 }, { fill: shadow, opacity: 0.32 });
   });
   // Off-centre towards the far side when the number stands beside the figure.
-  const fw = Math.min(t.w * 1.1, (t.h - barH * 0.6) * 1.05);
-  const shift = look.numberAt === "behind" ? 0 : t.w * 0.1;
+  const fw = badge ? Math.min(t.w * 0.96, (t.h - barH * 0.6) * 0.95) : Math.min(t.w * 1.1, (t.h - barH * 0.6) * 1.05);
+  const shift = look.numberAt === "behind" || badge ? 0 : t.w * 0.1;
   image(c, `${id}-photo`, { type: "binding", path: photo }, { x: Math.min(t.x + (t.w - fw) / 2 + shift, c.W - fw), y: t.y, w: fw, h: t.h - barH + Math.round(barH * 0.4) }, { fit: "contain", when: cutout, name: `Player ${i + 1} cut-out` });
+
+  // The badge: over the photo, inside the tile's top corner.
+  if (badge) c.only(has, () => {
+    const b = look.badge ?? { fill: "@accent", color: "#0D1F5C" };
+    const d = Math.round(Math.max(56, Math.min(t.w * 0.34, back.h * 0.4, 110)));
+    const disc: Box = { x: t.x + 8, y: back.y + 8, w: d, h: d };
+    ellipse(c, `${id}-num-bg`, disc, { fill: b.fill, ...(b.ring ? { stroke: { color: b.ring, width: Math.max(3, Math.round(d * 0.06)) } } : {}) });
+    tx(c, `${id}-num`, row[0], { x: disc.x + d * 0.1, y: disc.y + d * 0.2, w: d * 0.8, h: d * 0.62 }, { ...numOpts, color: b.color, shadow: undefined, stroke: undefined, size: Math.round(d * 0.52), align: "center", lh: 1 });
+  });
 
   look.bar(c, `${id}-bar`, bar, i);
   const nm = look.name;

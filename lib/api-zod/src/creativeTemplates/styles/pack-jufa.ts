@@ -208,10 +208,36 @@ function photo(c: Ctx, id: string, b: Box, m: Mode, o: { path?: string; rot?: nu
   if (b.h < 160) return false;
   const f = m.night ? 8 : 14;
   const rot = o.rot ?? 0;
-  if (!m.night) rect(c, `${id}-drop`, { x: b.x - f, y: b.y - f + 18, w: b.w + 2 * f, h: b.h + 2 * f }, { fill: NAVY, opacity: 0.12, radius: 40 + f, rotation: rot });
-  rect(c, `${id}-frame`, { x: b.x - f, y: b.y - f, w: b.w + 2 * f, h: b.h + 2 * f }, { fill: m.frame, radius: 40 + f, rotation: rot });
-  media(c, id, b, { radius: 40, path: o.path, name: "Photo", rotation: rot });
-  if (m.night) rect(c, `${id}-fade`, { x: b.x, y: b.y + Math.round(b.h * 0.5), w: b.w, h: b.h - Math.round(b.h * 0.5) }, { gradient: { from: NAVY_CLEAR, to: "#0D1F5CD9" }, radius: 40, rotation: rot });
+  const path = o.path ?? "media";
+  const outer: Box = { x: b.x - f, y: b.y - f, w: b.w + 2 * f, h: b.h + 2 * f };
+  if (!m.night) rect(c, `${id}-drop`, { ...outer, y: outer.y + 18 }, { fill: NAVY, opacity: 0.12, radius: 40 + f, rotation: rot });
+  // With a picture: the fat frame around it. Without one (no photo of the player
+  // and no action shot), an empty white frame looked broken: the space becomes
+  // a brand card instead, the academy's colour with its crest and two rings.
+  c.only([{ path }], () => {
+    rect(c, `${id}-frame`, outer, { fill: m.frame, radius: 40 + f, rotation: rot });
+    media(c, id, b, { radius: 40, path: o.path, name: "Photo", rotation: rot });
+    if (m.night) rect(c, `${id}-fade`, { x: b.x, y: b.y + Math.round(b.h * 0.5), w: b.w, h: b.h - Math.round(b.h * 0.5) }, { gradient: { from: NAVY_CLEAR, to: "#0D1F5CD9" }, radius: 40, rotation: rot });
+  });
+  c.only([{ path, not: true }], () => {
+    rect(c, `${id}-empty`, outer, m.night
+      ? { fill: GLASS, radius: 40 + f, rotation: rot, stroke: { color: GLASS_EDGE, width: 2 } }
+      : { gradient: { from: "@primary", to: NAVY, angle: 160 }, radius: 40 + f, rotation: rot });
+    // A halo the player's cut-out stands in front of; everything stays inside the frame.
+    const d = Math.round(Math.min(outer.w * 0.8, outer.h * 0.86));
+    ellipse(c, `${id}-empty-halo`, { x: outer.x + (outer.w - d) / 2, y: outer.y + (outer.h - d) / 2, w: d, h: d }, { fill: "@accent", opacity: 0.16 });
+    const d2 = Math.round(d * 0.7);
+    ellipse(c, `${id}-empty-ring`, { x: outer.x + (outer.w - d2) / 2, y: outer.y + (outer.h - d2) / 2, w: d2, h: d2 }, { fill: CLEAR, stroke: { color: "@accent", width: 6 }, opacity: 0.5 });
+    // The crest: large and centred when there is no picture at all, small in the corner behind a player.
+    c.only([{ path: "player.photo", not: true }], () => {
+      const cs = Math.round(Math.min(outer.h * 0.5, outer.w * 0.42));
+      crest(c, `${id}-empty-crest`, { x: outer.x + (outer.w - cs) / 2, y: outer.y + (outer.h - cs) / 2, w: cs, h: cs }, { rotation: rot });
+    });
+    c.only([{ path: "player.photo" }], () => {
+      const cs = Math.round(Math.min(outer.h * 0.2, 120));
+      crest(c, `${id}-empty-mark`, { x: outer.x + 28, y: outer.y + 28, w: cs, h: cs }, { rotation: rot });
+    });
+  });
   return true;
 }
 
@@ -459,7 +485,9 @@ function tileLook(m: Mode): TileLook {
   return {
     backdrop: (c, id, b, i) => {
       rect(c, id, b, m.night ? { fill: GLASS, radius: 32, stroke: { color: GLASS_EDGE, width: 2 } } : { fill: WHITE, radius: 32, stroke: { color: NAVY, width: 4 } });
-      ellipse(c, `${id}-dot`, { x: b.x + b.w * 0.14, y: b.y + b.h * 0.12, w: b.w * 0.72, h: b.w * 0.72 }, { fill: i % 2 ? "@accent" : "@primary", opacity: m.night ? 0.5 : 0.9 });
+      // A disc behind the figure, sized to the tile so it never spills out of a short tile.
+      const d = Math.round(Math.min(b.w * 0.72, b.h * 0.86));
+      ellipse(c, `${id}-dot`, { x: b.x + (b.w - d) / 2, y: b.y + (b.h - d) / 2, w: d, h: d }, { fill: i % 2 ? "@accent" : "@primary", opacity: m.night ? 0.5 : 0.9 });
     },
     bar: (c, id, b) => rect(c, id, b, { fill: m.night ? WHITE : NAVY, radius: b.h / 2 }),
     num: { font: "display", color: m.num, weight: 800, shadow: { color: m.numShadow, blur: 0, x: 0, y: 6 } },
@@ -467,6 +495,11 @@ function tileLook(m: Mode): TileLook {
     pos: { font: "display", color: m.night ? "@primary" : "@accent", weight: 800 },
     shadow: NAVY,
     cardRadius: 26,
+    // Three across, the number on a neon badge over the photo: two-digit
+    // numbers used to sit beside the figure and run into the players' heads.
+    cols: 3,
+    numberAt: "badge",
+    badge: { fill: "@accent", ring: WHITE, color: NAVY },
     text: (c, id, value, b, o) => tx(c, id, value, b, o),
   };
 }

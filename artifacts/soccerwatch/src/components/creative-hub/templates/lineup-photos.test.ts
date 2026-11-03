@@ -64,3 +64,47 @@ describe("starting data: player photos follow the names rule", () => {
     expect(startingData({ key: "lineup", locale: "en", academy: { ...academy, showPlayerNames: true }, seed: null }).photos).toBeUndefined();
   });
 });
+
+describe("JUFA pack with player photos (pictures, never numbers only)", () => {
+  type B = { x: number; y: number; w: number; h: number };
+  const box = (l: { x: number; y: number; w: number; h: number }): B => ({ x: l.x, y: l.y, w: l.w, h: l.h });
+  const overlap = (a: B, b: B) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const inside = (a: B, b: B) => a.x >= b.x - 1 && a.y >= b.y - 1 && a.x + a.w <= b.x + b.w + 1 && a.y + a.h <= b.y + b.h + 1;
+
+  for (const format of ["post", "story", "square"] as const) for (const locale of ["en", "ar"] as const) {
+    it(`call-up ${format}/${locale}: three across, every number on its own badge inside its own tile`, () => {
+      const scene = sceneForData(buildTemplateScene("callup", "jufa", format, locale), { photos: photos(9) });
+      const layer = (id: string) => scene.layers.find((l) => l.id === id)!;
+      const tiles = Array.from({ length: 9 }, (_, i) => box(layer(`row-${i + 1}-tile`)));
+      // Three columns: three distinct tile rows.
+      expect(new Set(tiles.map((t) => Math.round(t.y))).size).toBe(3);
+      for (let i = 0; i < 9; i++) {
+        const num = box(layer(`row-${i + 1}-num`));
+        const badge = box(layer(`row-${i + 1}-num-bg`));
+        expect(inside(num, badge), `#${i + 1} text in badge`).toBe(true);
+        // The badge stays inside the tile's column and never touches another tile.
+        tiles.forEach((t, j) => { if (j !== i) expect(overlap(badge, t), `badge ${i + 1} vs tile ${j + 1}`).toBe(false); });
+        // Drawn over the player's cut-out.
+        const ids = scene.layers.map((l) => l.id);
+        expect(ids.indexOf(`row-${i + 1}-num-bg`)).toBeGreaterThan(ids.indexOf(`row-${i + 1}-photo`));
+      }
+    });
+  }
+
+  for (const format of ["post", "story", "square"] as const) {
+    it(`player of the match ${format}: a player's picture without an action shot gets a brand backdrop, not an empty white frame`, () => {
+      const data: CreativeData = { player: { number: 10, photo: { type: "player", playerId: 1, cutout: true } } };
+      const scene = sceneForData(buildTemplateScene("potm", "jufa", format, "en"), data);
+      const ids = scene.layers.map((l) => l.id);
+      expect(ids).not.toContain("photo-frame");
+      expect(ids).toContain("photo-empty");
+      expect(ids).toContain("player-photo");
+      const frame = box(scene.layers.find((l) => l.id === "photo-empty")!);
+      for (const l of scene.layers.filter((x) => x.id.startsWith("photo-empty-"))) expect(inside(box(l), frame), l.id).toBe(true);
+      // With an action shot the frame comes back and the backdrop goes.
+      const withShot = sceneForData(buildTemplateScene("potm", "jufa", format, "en"), { ...data, media: { type: "upload", mediaId: 1 } }).layers.map((l) => l.id);
+      expect(withShot).toContain("photo-frame");
+      expect(withShot.some((id) => id.startsWith("photo-empty"))).toBe(false);
+    });
+  }
+});
