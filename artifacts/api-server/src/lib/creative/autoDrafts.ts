@@ -12,6 +12,17 @@ import {
 } from "@workspace/api-zod";
 import { logger } from "../logger";
 import { academyPack } from "./packs";
+import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic } from "./music";
+
+/** Replay's library for drafts' default soundtracks; empty when it can't be read (drafts are made without music). */
+async function replayLibraryForDrafts() {
+  try {
+    await ensureReplayMusic();
+    return await replayLibrary();
+  } catch {
+    return [];
+  }
+}
 import {
   academyCreativeProfile,
   buildSessionData,
@@ -497,8 +508,11 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     locale,
     callups,
   });
-  const rows = plans.map((p) => materializeDraft(p, academyId, style)).filter((r): r is DraftRow => r !== null);
-  if (!rows.length) return 0;
+  const made = plans.map((p) => materializeDraft(p, academyId, style)).filter((r): r is DraftRow => r !== null);
+  if (!made.length) return 0;
+  // Video drafts get their template's default soundtrack, as a manager's own would.
+  const library = made.some((r) => r.kind === "video") ? await replayLibraryForDrafts() : [];
+  const rows = await Promise.all(made.map(async (r) => (r.kind === "video" ? { ...r, scene: await sceneWithDefaultMusic(r.scene as Scene, r.templateKey, library) } : r)));
   const inserted = await db.insert(academyCreativeProjectsTable).values(rows)
     .onConflictDoNothing({
       target: [academyCreativeProjectsTable.academyId, academyCreativeProjectsTable.originKey],

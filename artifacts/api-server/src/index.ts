@@ -7,6 +7,7 @@ import { backfillMatchRooms } from "./lib/matchRooms";
 import { refreshStaleMatchStatsCaches } from "./lib/matchStatsCacheJobs";
 import { warmDemoBrandingPreviews } from "./routes/demoBranding";
 import { ensureAdditiveColumns } from "./lib/ensureAdditiveColumns";
+import { ensureReplayMusic } from "./lib/creative/music";
 
 attachPostgresIdleErrorListener(pool, logger);
 
@@ -30,6 +31,9 @@ try {
 } catch (error) {
   logger.error({ error }, "Startup column check failed");
 }
+
+// Replay's bundled music library (assets/creative/music/library.json): rows it doesn't have yet.
+void ensureReplayMusic().then((added) => { if (added) logger.info({ added }, "Creative music: seeded Replay's library"); });
 
 app.listen(port, (err) => {
   if (err) {

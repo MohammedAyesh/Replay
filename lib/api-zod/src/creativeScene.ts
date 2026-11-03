@@ -183,6 +183,30 @@ export const sceneLayerSchema = z.discriminatedUnion("kind", [
 export type SceneLayer = z.infer<typeof sceneLayerSchema>;
 export type SceneLayerKind = SceneLayer["kind"];
 
+/**
+ * A video scene's soundtrack (creative_music_tracks, 0063).
+ *
+ *   trackId   a row of creative_music_tracks: Replay's library or the academy's own upload
+ *   trackKey  a bundled file by key (assets/creative/music/<key>.m4a); kept for designs saved
+ *             before the library existed. trackId wins when both are set.
+ *   volume    0..1, applied after the track is brought to a common loudness
+ *   startMs   where in the track the scene starts (the track loops when it is shorter than the scene)
+ *   fadeInMs / fadeOutMs  at the scene's start / end
+ *   duck      lower the music while unmuted footage has sound (voices, the crowd)
+ *
+ * Neither trackId nor trackKey: no music.
+ */
+export const sceneMusicSchema = z.object({
+  trackKey: z.string().max(80).optional(),
+  trackId: z.number().int().positive().optional(),
+  volume: z.number().min(0).max(1).default(0.6),
+  startMs: z.number().min(0).max(600_000).optional(),
+  fadeInMs: z.number().min(0).max(10_000).optional(),
+  fadeOutMs: z.number().min(0).max(10_000).optional(),
+  duck: z.boolean().optional(),
+});
+export type SceneMusic = z.infer<typeof sceneMusicSchema>;
+
 /** A line-up carries two versions of each row (photo tile and numbers-only), so scenes may be large. */
 export const MAX_SCENE_LAYERS = 200;
 
@@ -194,8 +218,8 @@ export const sceneSchema = z.object({
   background: colorSchema.default("@paper"),
   /** Bottom to top. */
   layers: z.array(sceneLayerSchema).max(MAX_SCENE_LAYERS),
-  /** Optional soundtrack from Replay's library. */
-  music: z.object({ trackKey: z.string().max(80), volume: z.number().min(0).max(1).default(0.6) }).optional(),
+  /** Optional soundtrack: a track of Replay's library or the academy's own (see sceneMusicSchema). */
+  music: sceneMusicSchema.optional(),
   /** Which template and style this came from (for re-styling). */
   template: z.object({ key: z.string().max(80), style: z.enum(CREATIVE_STYLES) }).optional(),
   locale: z.enum(["en", "ar"]).default("ar"),

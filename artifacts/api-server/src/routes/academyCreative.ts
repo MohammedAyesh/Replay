@@ -8,6 +8,7 @@ import { displayPhone, instagramHandle } from "../lib/academyOwner";
 import { namesAllowed, studioLook } from "./academyStudio";
 import { CREATIVE_BASE, creativeOwner, loadCreativeProject, publicProject } from "../lib/creative/projects";
 import { academyPack, publicPack, styleAllowedFor } from "../lib/creative/packs";
+import { sceneWithDefaultMusic } from "../lib/creative/music";
 
 /**
  * Academy console → Creative hub: projects (owner only).
@@ -119,14 +120,17 @@ router.post(`${base}/projects`, async (req, res): Promise<void> => {
   if (!parsed.success) { res.status(400).json({ error: "Invalid project", issues: parsed.error.issues.slice(0, 5) }); return; }
   const b = parsed.data;
   if (refuseForeignPack(access.academy, [b.style, b.scene.template?.style], res)) return;
+  const templateKey = b.templateKey ?? b.scene.template?.key ?? null;
+  // A video template starts with a track of its mood from Replay's library (none when the library has none).
+  const scene = await sceneWithDefaultMusic(b.scene, templateKey);
   const [row] = await db.insert(academyCreativeProjectsTable).values({
     academyId: access.academyId,
     kind: b.kind ?? (b.scene.durationMs ? "video" : "image"),
     format: b.scene.format,
     title: b.title,
-    templateKey: b.templateKey ?? b.scene.template?.key ?? null,
+    templateKey,
     style: b.style ?? b.scene.template?.style ?? null,
-    scene: b.scene,
+    scene,
     data: b.data ?? null,
     sourceSessionId: b.sourceSessionId ?? null,
     createdBy: access.user.id,

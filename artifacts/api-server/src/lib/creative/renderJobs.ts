@@ -7,7 +7,8 @@ import { sceneForData, sceneSchema, type Scene } from "@workspace/api-zod";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { logger } from "../logger";
 import { renderScenePng } from "./render";
-import { CreativeRenderError, creativeImageResolver, creativeVideoResolver, loadCreativeContext, musicPath, serverData } from "./renderMedia";
+import { CreativeRenderError, creativeImageResolver, creativeVideoResolver, loadCreativeContext, serverData } from "./renderMedia";
+import { resolveSceneMusic } from "./music";
 import { deleteOutput, storeOutput } from "./renderStore";
 import { renderSceneMp4 } from "./renderVideo";
 
@@ -104,11 +105,13 @@ async function runVideo(access: AcademyOwnerAccess, row: AcademyCreativeProject,
       const out = path.join(dir, "out.mp4");
       const started = Date.now();
       const data = serverData(access, ctx, row.data);
+      // Replay's tracks or this academy's own, nothing else (resolveSceneMusic checks).
+      const music = await resolveSceneMusic(access.academyId, scene.music, temps);
       await renderSceneMp4({
         scene: sceneForData(scene, data), brand: ctx.brand, data,
         images: creativeImageResolver(access.academyId, ctx.look),
         videos: creativeVideoResolver(access.academyId, dir, temps),
-        musicPath: musicPath(scene.music?.trackKey),
+        music,
         workDir: dir, out,
       });
       const outputPath = await storeOutput(access.academyId, row.id, out, "mp4");

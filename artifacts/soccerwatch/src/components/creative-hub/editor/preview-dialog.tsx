@@ -8,10 +8,13 @@ import { SceneCanvas, type SceneCanvasProps } from "../scene-canvas";
 import { IconButton } from "./controls";
 import { usePlayback } from "./hooks";
 import { formatMs } from "./timeline";
+import { useMusicPreview, type MusicPreviewSource } from "./use-music-preview";
 
 /** The design as it will export: no selection, plays from the start for videos. */
-export function PreviewDialog({ open, onOpenChange, scene, brand, data, mediaUrl }: {
+export function PreviewDialog({ open, onOpenChange, scene, brand, data, mediaUrl, music = null }: {
   open: boolean; onOpenChange: (o: boolean) => void; scene: Scene; brand: CreativeBrand; data: CreativeData; mediaUrl: SceneCanvasProps["mediaUrl"];
+  /** The soundtrack's file, when the scene has music: it plays with the preview. */
+  music?: MusicPreviewSource | null;
 }) {
   const copy = useCreativeEditorCopy();
   const [timeMs, setTimeMs] = useState(0);
@@ -19,6 +22,7 @@ export function PreviewDialog({ open, onOpenChange, scene, brand, data, mediaUrl
   const isVideo = scene.durationMs !== undefined;
   useEffect(() => { if (open) { setTimeMs(0); setPlaying(isVideo); } else setPlaying(false); }, [open, isVideo]);
   usePlayback(scene.durationMs, open && playing, setTimeMs);
+  useMusicPreview(open ? music : null, scene.music, scene.durationMs, timeMs, open && playing);
   const vw = typeof window === "undefined" ? 400 : window.innerWidth;
   const vh = typeof window === "undefined" ? 800 : window.innerHeight;
   const width = Math.floor(Math.min(420, vw - 48, (vh * 0.72 * 1080) / canvasHeight(scene.format)));

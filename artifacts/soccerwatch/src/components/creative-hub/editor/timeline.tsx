@@ -1,7 +1,9 @@
 import { useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { Pause, Play, Scissors } from "lucide-react";
+import { Music2, Pause, Play, Plus, Scissors } from "lucide-react";
 import type { SceneLayer } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
+import { useCreativeMusicCopy } from "@/i18n/creative-music-strings";
+import { laneBars } from "@/lib/creative-music";
 import { dragWindow, layerWindow, videoPlayMs, videoSourceMs, type VideoLayer } from "@/lib/creative-editor-state";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -21,8 +23,11 @@ const BAR_COLOR: Record<SceneLayer["kind"], string> = {
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2, 4];
 const SLOW_SPEEDS = [0.25, 0.5, 0.75];
 
-/** Under the canvas for video scenes: playhead, one track per layer, and the selected video's trim / speed / slow motion. */
-export function Timeline({ ed }: { ed: EditorApi }) {
+/** The soundtrack's lane: what the scene plays of it (from the start point, looping). Tapping it opens Music. */
+export type MusicLane = { title: string | null; peaks: number[]; trackMs: number; startMs: number; active: boolean; onOpen: () => void };
+
+/** Under the canvas for video scenes: playhead, one track per layer, the music lane, and the selected video's trim / speed / slow motion. */
+export function Timeline({ ed, music }: { ed: EditorApi; music?: MusicLane }) {
   const copy = useCreativeEditorCopy();
   const duration = ed.scene.durationMs ?? 0;
   const layers = [...ed.scene.layers].reverse();
@@ -58,6 +63,7 @@ export function Timeline({ ed }: { ed: EditorApi }) {
         {layers.map((layer) => (
           <Track key={layer.id} ed={ed} layer={layer} duration={duration} pct={pct} />
         ))}
+        {music ? <MusicTrackLane lane={music} ed={ed} duration={duration} pct={pct} /> : null}
       </div>
       <p className="text-[11px] text-muted-text">{copy.barHint}</p>
 
@@ -109,6 +115,32 @@ function Track({ ed, layer, duration, pct }: { ed: EditorApi; layer: SceneLayer;
         </div>
         <span className="pointer-events-none absolute inset-y-0 w-0.5 bg-floodlight" style={{ left: pct(Math.min(ed.timeMs, duration)) }} aria-hidden />
       </div>
+    </div>
+  );
+}
+
+function MusicTrackLane({ lane, ed, duration, pct }: { lane: MusicLane; ed: EditorApi; duration: number; pct: (ms: number) => string }) {
+  const copy = useCreativeMusicCopy();
+  const has = !!lane.title && lane.trackMs > 0;
+  const bars = has ? laneBars(lane.peaks, lane.trackMs, lane.startMs, duration, 64) : [];
+  return (
+    <div className="flex items-center gap-2" data-testid="editor-track-music">
+      <button type="button" onClick={lane.onOpen}
+        className={cn("flex w-20 shrink-0 items-center gap-1 truncate text-start text-[11px]", lane.active ? "font-semibold text-text" : "text-muted-text")}>
+        <Music2 className="h-3 w-3 shrink-0" aria-hidden /><span className="truncate">{copy.lane}</span>
+      </button>
+      <button type="button" onClick={lane.onOpen} aria-label={has ? lane.title! : copy.laneEmpty}
+        className={cn("relative h-8 flex-1 overflow-hidden rounded-md", has ? "bg-raised" : "border border-dashed border-line")}>
+        {has ? (
+          <span className={cn("absolute inset-y-1 inset-x-0 flex items-center gap-px rounded-md bg-sky-500/25 px-1", lane.active && "ring-2 ring-text")}>
+            {bars.map((v, i) => <span key={i} aria-hidden className="flex-1 rounded-full bg-sky-400/90" style={{ height: `${Math.round(v * 100)}%`, minWidth: 1 }} />)}
+            <bdi dir="auto" className="pointer-events-none absolute start-2 top-1/2 max-w-[70%] -translate-y-1/2 truncate rounded bg-void/70 px-1.5 text-[10px] font-semibold text-text">{lane.title}</bdi>
+          </span>
+        ) : (
+          <span className="flex h-full items-center justify-center gap-1 text-[11px] text-muted-text"><Plus className="h-3 w-3" aria-hidden />{copy.laneEmpty}</span>
+        )}
+        <span className="pointer-events-none absolute inset-y-0 w-0.5 bg-floodlight" style={{ left: pct(Math.min(ed.timeMs, duration)) }} aria-hidden />
+      </button>
     </div>
   );
 }

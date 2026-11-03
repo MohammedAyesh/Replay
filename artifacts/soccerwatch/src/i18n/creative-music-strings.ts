@@ -1,0 +1,136 @@
+import type { MusicMood } from "@workspace/api-zod";
+import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
+
+/**
+ * Academy console → Creative hub → Editor → Music. English is the type;
+ * Arabic is Ammani, as across the console. Track titles are the library's own
+ * and are not translated.
+ */
+const en = {
+  tool: "Music",
+  onlyVideo: "Music goes on videos. Pick a video template to add a soundtrack.",
+  library: "Replay library",
+  ours: "Our music",
+  allMoods: "All",
+  moods: { hype: "Hype", epic: "Epic", chill: "Chill", fun: "Fun", emotional: "Emotional", cinematic: "Cinematic" } as Record<MusicMood, string>,
+  loading: "Loading music…",
+  loadError: "Couldn't load the music.",
+  retry: "Try again",
+  noneInMood: "No tracks with this mood yet.",
+  noOwn: "You haven't uploaded any music yet.",
+  upload: "Upload music",
+  play: "Play",
+  pause: "Pause",
+  use: "Use",
+  using: "In use",
+  remove: "Remove music",
+  deleteTrack: "Delete from our music",
+  deleteConfirm: "Delete this track? Designs using it will export without music.",
+  current: "Soundtrack",
+  noMusic: "No music on this video yet. Pick a track below.",
+  missingTrack: "This track isn't available any more. Pick another one.",
+  startHint: "Drag on the waveform to choose where the music starts.",
+  startsAt: "Starts at",
+  loops: "The track is shorter than the video, so it repeats.",
+  volume: "Volume",
+  fadeIn: "Fade in",
+  fadeOut: "Fade out",
+  duck: "Lower music under voices",
+  duckHint: "When a clip has sound (the coach, the crowd), the music dips under it.",
+  seconds: "s",
+  lane: "Music",
+  laneEmpty: "Add music",
+  by: (artist: string) => `by ${artist}`,
+  bpm: (n: number) => `${n} BPM`,
+
+  // Upload
+  uploadTitle: "Upload music",
+  uploadHint: "MP3, M4A, AAC or WAV, up to 20 MB and 10 minutes.",
+  chooseFile: "Choose a file",
+  changeFile: "Change file",
+  title: "Title",
+  titlePlaceholder: "Name of the track",
+  artist: "Artist",
+  artistPlaceholder: "Optional",
+  mood: "Mood",
+  bpmLabel: "BPM",
+  bpmPlaceholder: "Optional",
+  rights: "I own this music or have the rights to use it",
+  rightsHint: "Posts with music you don't have rights to can be muted or taken down by Instagram and Facebook.",
+  rightsRequired: "Tick the box to confirm you have the rights to this music.",
+  tooBig: "That file is over 20 MB.",
+  wrongType: "Use an MP3, M4A, AAC or WAV file.",
+  uploading: "Uploading…",
+  save: "Upload",
+  cancel: "Cancel",
+  uploaded: "Added to our music.",
+};
+
+const ar: typeof en = {
+  tool: "موسيقى",
+  onlyVideo: "الموسيقى بتنحط عالفيديو. اختار قالب فيديو عشان تضيف موسيقى.",
+  library: "مكتبة ريبلاي",
+  ours: "موسيقانا",
+  allMoods: "الكل",
+  moods: { hype: "حماس", epic: "ملحمي", chill: "رايق", fun: "مرِح", emotional: "مؤثّر", cinematic: "سينمائي" },
+  loading: "عم نجيب الموسيقى…",
+  loadError: "ما قدرنا نجيب الموسيقى.",
+  retry: "جرّب كمان مرة",
+  noneInMood: "لسّا ما في موسيقى من هالنوع.",
+  noOwn: "لسّا ما رفعت أي موسيقى.",
+  upload: "ارفع موسيقى",
+  play: "شغّل",
+  pause: "وقّف",
+  use: "استعملها",
+  using: "مستعملة",
+  remove: "شيل الموسيقى",
+  deleteTrack: "امسحها من موسيقانا",
+  deleteConfirm: "أكيد بدك تمسحها؟ التصاميم اللي فيها رح تطلع بدون موسيقى.",
+  current: "موسيقى الفيديو",
+  noMusic: "لسّا ما في موسيقى عهالفيديو. اختار وحدة من تحت.",
+  missingTrack: "هالموسيقى ما عادت موجودة. اختار غيرها.",
+  startHint: "اسحب عالموجة عشان تختار من وين تبلّش الموسيقى.",
+  startsAt: "بتبلّش من",
+  loops: "الموسيقى أقصر من الفيديو، فبتعيد حالها.",
+  volume: "الصوت",
+  fadeIn: "تعلى بالتدريج",
+  fadeOut: "تخفت بالآخر",
+  duck: "وطّي الموسيقى لما حدا يحكي",
+  duckHint: "لما الكليب فيه صوت (الكابتن، الجمهور)، الموسيقى بتوطى تحته.",
+  seconds: "ث",
+  lane: "موسيقى",
+  laneEmpty: "ضيف موسيقى",
+  by: (artist: string) => `لـ ${artist}`,
+  bpm: (n: number) => `${n} BPM`,
+
+  uploadTitle: "ارفع موسيقى",
+  uploadHint: "MP3 أو M4A أو AAC أو WAV، لحد 20 ميغا و10 دقايق.",
+  chooseFile: "اختار ملف",
+  changeFile: "غيّر الملف",
+  title: "الاسم",
+  titlePlaceholder: "اسم الموسيقى",
+  artist: "الفنان",
+  artistPlaceholder: "اختياري",
+  mood: "النوع",
+  bpmLabel: "BPM",
+  bpmPlaceholder: "اختياري",
+  rights: "الموسيقى إلنا أو معنا حق نستعملها",
+  rightsHint: "إنستغرام وفيسبوك ممكن يكتموا صوت البوست أو ينزّلوه إذا الموسيقى مش إلك.",
+  rightsRequired: "علّم عالمربع عشان تأكد إنه معك حق تستعمل هالموسيقى.",
+  tooBig: "الملف أكبر من 20 ميغا.",
+  wrongType: "استعمل ملف MP3 أو M4A أو AAC أو WAV.",
+  uploading: "عم نرفع…",
+  save: "ارفع",
+  cancel: "إلغاء",
+  uploaded: "انضافت لموسيقانا.",
+};
+
+export type CreativeMusicStrings = typeof en;
+
+export function useCreativeMusicCopy(): CreativeMusicStrings & { locale: "ar" | "en" } {
+  const { locale } = useLocale();
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
+}
+
+export const creativeMusicStrings = { en, ar };

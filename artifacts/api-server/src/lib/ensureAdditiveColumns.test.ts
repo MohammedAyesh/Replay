@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_PACK_COLUMN, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -41,6 +41,21 @@ describe("ensureAdditiveColumns", () => {
     expect(idx[0]?.def).toMatch(/UNIQUE INDEX .* \(player_id\) WHERE is_primary/);
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0062_academy_player_photos.sql", import.meta.url), "utf8");
     for (const statement of PLAYER_PHOTOS_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates creative_music_tracks (0063) with its scope rules, as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "creative_music_tracks"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(1);
+    const { rows: cols } = await pool.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name = 'creative_music_tracks' ORDER BY column_name`);
+    expect(cols.map((c) => c.column_name)).toEqual([
+      "academy_id", "artist", "bpm", "created_at", "created_by", "duration_ms", "id", "key", "license", "loudness_lufs", "mime", "mood", "path", "scope", "status", "title", "waveform",
+    ]);
+    // A Replay track has no academy; an academy track must name one.
+    await expect(pool.query(`INSERT INTO creative_music_tracks (scope, academy_id, title, mood, duration_ms, path, license) VALUES ('academy', null, 'x', 'fun', 1000, 'p', 'l')`)).rejects.toThrow();
+    await expect(pool.query(`INSERT INTO creative_music_tracks (scope, title, mood, duration_ms, path, license) VALUES ('replay', 'x', 'loud', 1000, 'p', 'l')`)).rejects.toThrow();
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0063_creative_music.sql", import.meta.url), "utf8");
+    for (const statement of CREATIVE_MUSIC_STATEMENTS) expect(migration).toContain(`${statement};`);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 });

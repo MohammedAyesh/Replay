@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Palette, Redo2,
+  ArrowLeft, ArrowRight, Check, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Music, Palette, Redo2,
   Shapes, Smartphone, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import {
@@ -15,6 +15,8 @@ import {
   useCreativeBrand, useCreativeProject, useUpdateCreativeProject, type CreativeBrandInfo, type CreativeProject,
 } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
+import { musicFileUrl, useCreativeMusic } from "@/lib/creative-hub-music-api";
+import { sceneTrack } from "@/lib/creative-music";
 import { apiUrl } from "@/lib/academy-studio-api";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -28,6 +30,8 @@ import { FormatPanel } from "./editor/format-panel";
 import { useFitWidth, usePlayback } from "./editor/hooks";
 import { LayersPanel, layerTitle } from "./editor/layers-panel";
 import { MediaPanel } from "./editor/media-panel";
+import { MusicPanel } from "./editor/music-panel";
+import { useMusicPreview, type MusicPreviewSource } from "./editor/use-music-preview";
 import { PreviewDialog } from "./editor/preview-dialog";
 import { ShapesPanel } from "./editor/shapes-panel";
 import { StylePanel } from "./editor/style-panel";
@@ -35,11 +39,13 @@ import { TextPanel } from "./editor/text-panel";
 import { Timeline } from "./editor/timeline";
 import { useAutosave, type SaveStatus } from "./editor/use-autosave";
 
-type Tool = "text" | "media" | "shapes" | "layers" | "style" | "format" | "data";
+type Tool = "text" | "media" | "music" | "shapes" | "layers" | "style" | "format" | "data";
 const TOOLS: Array<{ id: Tool; icon: typeof Type }> = [
   { id: "text", icon: Type }, { id: "media", icon: Image }, { id: "shapes", icon: Shapes }, { id: "layers", icon: Layers },
   { id: "style", icon: Palette }, { id: "format", icon: Smartphone }, { id: "data", icon: Database },
 ];
+/** Videos get Music after Media. */
+const VIDEO_TOOLS: Array<{ id: Tool; icon: typeof Type }> = [TOOLS[0]!, TOOLS[1]!, { id: "music", icon: Music }, ...TOOLS.slice(2)];
 const TOOL_FOR_KIND: Record<SceneLayer["kind"], Tool> = { text: "text", image: "media", video: "media", shape: "shapes" };
 
 /** Replay's own palette, used only if the academy's brand fails to load. */
@@ -106,6 +112,16 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   useEffect(() => { if (selectedId && !selected) setSelectedId(null); }, [selectedId, selected]);
   useEffect(() => { if (scene.durationMs !== undefined && timeMs > scene.durationMs) setTimeMs(0); }, [scene.durationMs, timeMs]);
   usePlayback(scene.durationMs, playing, setTimeMs);
+  useEffect(() => { if (!isVideo && tool === "music") setTool("media"); }, [isVideo, tool]);
+
+  // ── Soundtrack: plays with the editor's clock (and in Preview) ──────────
+  const musicTracks = useCreativeMusic(academyId, isVideo);
+  const musicTrack = isVideo ? sceneTrack(scene.music, musicTracks.data) : null;
+  const musicSource = useMemo<MusicPreviewSource | null>(
+    () => (musicTrack ? { url: musicFileUrl(musicTrack), trackMs: musicTrack.durationMs, loudnessLufs: musicTrack.loudnessLufs } : null),
+    [musicTrack?.trackId, musicTrack?.durationMs, musicTrack?.loudnessLufs], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  useMusicPreview(musicSource, scene.music, scene.durationMs, timeMs, playing && !previewOpen);
 
   // ── Autosave ────────────────────────────────────────────────────────────
   const { status, flush } = useAutosave(
@@ -197,10 +213,12 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const tools = isVideo ? VIDEO_TOOLS : TOOLS;
   const goPublish = async () => { setPlaying(false); await flush(); nav.openInPublish(project.id); };
 
   const panel = tool === "text" ? <TextPanel ed={ed} />
     : tool === "media" ? <MediaPanel ed={ed} />
+    : tool === "music" ? <MusicPanel ed={ed} />
     : tool === "shapes" ? <ShapesPanel ed={ed} />
     : tool === "layers" ? <LayersPanel ed={ed} />
     : tool === "style" ? <StylePanel ed={ed} />
@@ -248,13 +266,19 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
               <IconButton label={copy.deselect} onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></IconButton>
             </div>
           ) : null}
-          {isVideo ? <Timeline ed={ed} /> : null}
+          {isVideo ? (
+            <Timeline ed={ed} music={{
+              title: musicTrack?.title ?? null, peaks: musicTrack?.waveform ?? [], trackMs: musicTrack?.durationMs ?? 0,
+              startMs: scene.music?.startMs ?? 0, active: tool === "music", onOpen: () => setTool("music"),
+            }} />
+          ) : null}
         </div>
 
         {/* Tools: side panel on desktop, panel above a sticky bottom toolbar on phones */}
         <aside className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-4">
-          <nav className="hidden grid-cols-7 gap-1 rounded-2xl border border-line bg-surface p-1 lg:grid" aria-label={copy.toolbar}>
-            {TOOLS.map(({ id, icon: Icon }) => <ToolButton key={id} id={id} icon={Icon} active={tool === id} onClick={() => setTool(id)} label={copy.tools[id]} />)}
+          <nav className="hidden gap-1 rounded-2xl border border-line bg-surface p-1 lg:grid" aria-label={copy.toolbar}
+            style={{ gridTemplateColumns: `repeat(${tools.length}, minmax(0, 1fr))` }}>
+            {tools.map(({ id, icon: Icon }) => <ToolButton key={id} id={id} icon={Icon} active={tool === id} onClick={() => setTool(id)} label={copy.tools[id]} />)}
           </nav>
           <div className="rounded-2xl border border-line bg-surface p-4 lg:max-h-[calc(100vh-12rem)] lg:overflow-y-auto" data-testid={`editor-panel-${tool}`}>
             <h2 className="mb-3 font-display text-base font-bold text-text">{copy.tools[tool]}</h2>
@@ -265,14 +289,14 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
 
       <nav className="sticky bottom-0 z-20 -mx-1 flex gap-1 overflow-x-auto border-t border-line bg-void/95 px-1 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-1 backdrop-blur lg:hidden"
         aria-label={copy.toolbar} data-testid="editor-toolbar">
-        {TOOLS.map(({ id, icon: Icon }) => <ToolButton key={id} id={id} icon={Icon} active={tool === id} onClick={() => setTool(id)} label={copy.tools[id]} />)}
+        {tools.map(({ id, icon: Icon }) => <ToolButton key={id} id={id} icon={Icon} active={tool === id} onClick={() => setTool(id)} label={copy.tools[id]} />)}
       </nav>
 
       {picker ? (
         <LibraryPicker academyId={academyId} accept={picker.accept}
           onPick={(src, meta) => { picker.onPick(src, meta); setPicker(null); }} onClose={() => setPicker(null)} />
       ) : null}
-      <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} scene={scene} brand={brand} data={viewData} mediaUrl={mediaUrl} />
+      <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} scene={scene} brand={brand} data={viewData} mediaUrl={mediaUrl} music={musicSource} />
     </div>
   );
 }

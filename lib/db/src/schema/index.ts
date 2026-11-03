@@ -59,3 +59,4 @@ export * from "./weeklyHighlights";
 export * from "./academySocial";
 export * from "./academyCreative";
 export * from "./venues";
+export * from "./creativeMusic";

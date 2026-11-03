@@ -2,7 +2,11 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  hasMusic,
   layerVisibleAt,
+  musicFades,
+  musicLoudnessGainDb,
+  MUSIC_TARGET_LUFS,
   resolveColor,
   resolveSource,
   type Scene,
@@ -26,7 +30,9 @@ import { ENTER_MS, SLIDE_PX, videoParts } from "./renderLayout";
  * Z-order is exactly the scene's.
  *
  * Audio: each footage layer that is not muted and has sound, at its speed,
- * delayed to its start; the optional soundtrack; or silence, so the file
+ * delayed to its start; the optional soundtrack (see musicFilters: from its
+ * start point, looped, brought to MUSIC_TARGET_LUFS, at its volume, faded, and
+ * ducked under the footage's sound when asked); or silence, so the file
  * always has an AAC track (Instagram and WhatsApp want one).
  */
 
@@ -113,6 +119,84 @@ export type Track =
   | { type: "video"; layer: VideoLayer; file: VideoSourceFile };
 
 const sec = (ms: number) => (ms / 1000).toFixed(3);
+
+/** How the soundtrack goes into the mix (from the scene's music and the resolved file). */
+export type MusicMix = {
+  path: string;
+  /** Measured integrated loudness; null = measure while mixing (loudnorm). */
+  loudnessLufs: number | null;
+  volume: number;
+  startMs: number;
+  fadeInMs: number;
+  fadeOutMs: number;
+  duck: boolean;
+};
+
+/** The mix for a scene's music and its file, or null when there is no music. */
+export function musicMixFor(scene: Scene, file: { path: string; loudnessLufs: number | null } | null): MusicMix | null {
+  const m = scene.music;
+  if (!file || !hasMusic(m)) return null;
+  const D = scene.durationMs ?? 0;
+  const { inMs, outMs } = musicFades(m, D);
+  return {
+    path: file.path,
+    loudnessLufs: file.loudnessLufs,
+    volume: Math.max(0, Math.min(1, m.volume ?? 0.6)),
+    startMs: Math.max(0, m.startMs ?? 0),
+    fadeInMs: inMs,
+    fadeOutMs: outMs,
+    duck: !!m.duck,
+  };
+}
+
+/** Sidechain settings for "lower music under voices": about 10 dB down while the footage is loud, back within half a second. */
+export const DUCK = { threshold: 0.02, ratio: 8, attackMs: 20, releaseMs: 500 } as const;
+
+/**
+ * The soundtrack's filter chain (pure): input `k` (opened with -stream_loop -1,
+ * so it repeats for ever) cut to the scene from its start point, made stereo
+ * 44.1 kHz, gained to MUSIC_TARGET_LUFS (a fixed gain from the measured
+ * loudness, else loudnorm), its volume, then the fades. Output label `out`.
+ */
+export function musicFilters(k: number, mix: MusicMix, durationMs: number, out = "am"): string[] {
+  const D = Math.max(0, durationMs);
+  const chain = [
+    `atrim=start=${sec(mix.startMs)}:end=${sec(mix.startMs + D)}`,
+    "asetpts=PTS-STARTPTS",
+    "aresample=44100",
+    "aformat=sample_fmts=fltp:channel_layouts=stereo",
+  ];
+  const gain = musicLoudnessGainDb(mix.loudnessLufs);
+  if (gain === null) chain.push(`loudnorm=I=${MUSIC_TARGET_LUFS}:TP=-1.5:LRA=11`, "aresample=44100");
+  else if (Math.abs(gain) >= 0.05) chain.push(`volume=${gain.toFixed(2)}dB`);
+  chain.push(`volume=${mix.volume.toFixed(3)}`);
+  if (mix.fadeInMs > 0) chain.push(`afade=t=in:st=0:d=${sec(mix.fadeInMs)}`);
+  if (mix.fadeOutMs > 0) chain.push(`afade=t=out:st=${sec(Math.max(0, D - mix.fadeOutMs))}:d=${sec(mix.fadeOutMs)}`);
+  return [`[${k}:a]${chain.join(",")}[${out}]`];
+}
+
+/**
+ * Footage sound and music into [aout] (pure). With duck, the footage's sound
+ * (padded to the scene) keys a sidechain compressor on the music; otherwise
+ * everything is summed. A limiter keeps the sum under -1 dBFS.
+ */
+export function audioMixFilters(footage: string[], music: string | null, duck: boolean, durationMs: number): string[] {
+  const all = [...footage, ...(music ? [music] : [])];
+  if (!all.length) return [];
+  const limit = music ? ",alimiter=limit=0.891:level=false" : "";
+  if (music && duck && footage.length) {
+    const voice = footage.length > 1
+      ? `${footage.map((a) => `[${a}]`).join("")}amix=inputs=${footage.length}:duration=longest:normalize=0,apad=whole_dur=${sec(durationMs)}[voice]`
+      : `[${footage[0]}]apad=whole_dur=${sec(durationMs)}[voice]`;
+    return [
+      voice,
+      `[voice]asplit=2[voicemix][voicekey]`,
+      `[${music}][voicekey]sidechaincompress=threshold=${DUCK.threshold}:ratio=${DUCK.ratio}:attack=${DUCK.attackMs}:release=${DUCK.releaseMs}[${music}d]`,
+      `[voicemix][${music}d]amix=inputs=2:duration=first:normalize=0${limit}[aout]`,
+    ];
+  }
+  return [`${all.map((a) => `[${a}]`).join("")}amix=inputs=${all.length}:duration=longest:normalize=0,apad${limit}[aout]`];
+}
 const hexColor = (c: string) => `0x${c.replace(/^#/, "").slice(0, 6)}`;
 
 /** Overlay x/y expressions for an entrance starting at `startMs` (slides move in over ENTER_MS). */
@@ -131,6 +215,8 @@ export function buildFfmpegArgs(opts: {
   scene: Scene;
   backgroundHex: string;
   tracks: Track[];
+  /** The soundtrack; `musicPath` is the older form (a file, mixed with the scene's music settings and no measured loudness). */
+  music?: MusicMix | null;
   musicPath?: string | null;
   out: string;
 }): string[] {
@@ -198,16 +284,17 @@ export function buildFfmpegArgs(opts: {
     }
   });
 
-  if (opts.musicPath) {
+  const music = opts.music ?? (opts.musicPath
+    ? musicMixFor({ ...scene, music: { volume: 0.6, ...scene.music, trackKey: scene.music?.trackKey ?? "file" } }, { path: opts.musicPath, loudnessLufs: null })
+    : null);
+  if (music) {
     const k = input++;
-    inputs.push("-stream_loop", "-1", "-i", opts.musicPath);
-    const vol = scene.music?.volume ?? 0.6;
-    filters.push(`[${k}:a]atrim=end=${sec(D)},volume=${vol.toFixed(3)},aresample=44100,aformat=channel_layouts=stereo[am]`);
-    audio.push("am");
+    inputs.push("-stream_loop", "-1", "-i", music.path);
+    filters.push(...musicFilters(k, music, D, "am"));
   }
   let audioMap: string;
-  if (audio.length) {
-    filters.push(`${audio.map((a) => `[${a}]`).join("")}amix=inputs=${audio.length}:duration=longest:normalize=0,apad[aout]`);
+  if (audio.length || music) {
+    filters.push(...audioMixFilters(audio, music ? "am" : null, !!music?.duck, D));
     audioMap = "[aout]";
   } else {
     const k = input++;
@@ -254,6 +341,8 @@ export type VideoRenderOptions = Omit<SceneRenderOptions, "t" | "include" | "bac
   workDir: string;
   /** Where the MP4 goes. */
   out: string;
+  /** The soundtrack's file (resolved by the caller for the academy); its settings are the scene's music. */
+  music?: { path: string; loudnessLufs: number | null } | null;
   musicPath?: string | null;
   signal?: AbortSignal;
 };
@@ -307,7 +396,7 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
     scene,
     backgroundHex: resolveColor(scene.background, opts.brand, "#000000"),
     tracks,
-    musicPath: opts.musicPath ?? null,
+    music: musicMixFor(scene, opts.music ?? (opts.musicPath ? { path: opts.musicPath, loudnessLufs: null } : null)),
     out: opts.out,
   });
   await runFfmpeg(args, opts.signal);

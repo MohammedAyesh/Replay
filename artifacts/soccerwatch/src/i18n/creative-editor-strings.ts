@@ -27,7 +27,7 @@ const en = {
   previewTitle: "Preview",
   previewHint: "This is how it will look when it's exported.",
 
-  tools: { text: "Text", media: "Media", shapes: "Shapes", layers: "Layers", style: "Style", format: "Size", data: "Details" },
+  tools: { text: "Text", media: "Media", music: "Music", shapes: "Shapes", layers: "Layers", style: "Style", format: "Size", data: "Details" },
   toolbar: "Editing tools",
   canvasLabel: "Design canvas",
   nothingSelected: "Tap something on the design to edit it.",
@@ -198,7 +198,7 @@ const ar: typeof en = {
   previewTitle: "معاينة",
   previewHint: "هيك رح يطلع لما تصدّره.",
 
-  tools: { text: "نص", media: "صور وفيديو", shapes: "أشكال", layers: "الطبقات", style: "الستايل", format: "المقاس", data: "التفاصيل" },
+  tools: { text: "نص", media: "صور وفيديو", music: "موسيقى", shapes: "أشكال", layers: "الطبقات", style: "الستايل", format: "المقاس", data: "التفاصيل" },
   toolbar: "أدوات التعديل",
   canvasLabel: "التصميم",
   nothingSelected: "اكبس على أي إشي بالتصميم عشان تعدّله.",

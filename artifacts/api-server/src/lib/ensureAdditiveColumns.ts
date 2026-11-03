@@ -21,6 +21,25 @@ export const PLAYER_PHOTOS_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "academy_player_photos_primary_unique" ON "academy_player_photos" ("player_id") WHERE "is_primary"`,
 ];
 
+/** 0063: the Creative hub music library. Exported for the test that compares it with the migration file. */
+export const CREATIVE_MUSIC_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "creative_music_tracks" (
+  "id" serial PRIMARY KEY,
+  "scope" text NOT NULL,
+  "academy_id" integer CONSTRAINT "creative_music_tracks_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "key" text, "title" text NOT NULL, "artist" text, "mood" text NOT NULL, "bpm" integer,
+  "duration_ms" integer NOT NULL, "path" text NOT NULL, "mime" text DEFAULT 'audio/mp4' NOT NULL,
+  "loudness_lufs" real, "waveform" jsonb, "license" text NOT NULL, "status" text DEFAULT 'active' NOT NULL,
+  "created_by" integer CONSTRAINT "creative_music_tracks_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "creative_music_tracks_scope_check" CHECK ("scope" in ('replay', 'academy')),
+  CONSTRAINT "creative_music_tracks_scope_academy_check" CHECK (("scope" = 'replay' and "academy_id" is null) or ("scope" = 'academy' and "academy_id" is not null)),
+  CONSTRAINT "creative_music_tracks_mood_check" CHECK ("mood" in ('hype', 'epic', 'chill', 'fun', 'emotional', 'cinematic')),
+  CONSTRAINT "creative_music_tracks_status_check" CHECK ("status" in ('active', 'hidden')))`,
+  `CREATE INDEX IF NOT EXISTS "creative_music_tracks_academy_idx" ON "creative_music_tracks" ("academy_id", "created_at")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "creative_music_tracks_key_unique" ON "creative_music_tracks" ("key") WHERE "key" is not null`,
+];
+
 /**
  * Additive, idempotent schema the code depends on. If a publish reaches a database that
  * never got it (the push ran on dev only), every `select *` on those tables fails with
@@ -363,6 +382,11 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   {
     table: "academy_player_photos",
     statements: PLAYER_PHOTOS_STATEMENTS,
+  },
+  // 0063_creative_music.sql (the statements are the migration's, one per statement)
+  {
+    table: "creative_music_tracks",
+    statements: CREATIVE_MUSIC_STATEMENTS,
   },
 ];
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { CalendarClock, Clock, Facebook, Instagram, Sparkles } from "lucide-react";
-import type { CreativeData } from "@workspace/api-zod";
+import { CalendarClock, Clock, Facebook, Instagram, Music2, Sparkles } from "lucide-react";
+import { hasMusic, type CreativeData } from "@workspace/api-zod";
 import { fill, useCreativePublishCopy } from "@/i18n/creative-publish-strings";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -127,6 +127,11 @@ export function SocialCard({ academyId, project, channels, ready, thumb }: {
         </label>
       )}
       {!later && isVideoProject(project) && <p className="text-xs text-muted-text">{copy.social.videoQueued}</p>}
+      {isVideoProject(project) && hasMusic(project.scene.music) && (
+        <p className="flex items-start gap-1.5 text-xs text-muted-text" data-testid="publish-music-note">
+          <Music2 className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{copy.social.musicNote}
+        </p>
+      )}
       {done && <Notice tone="ok">{done}</Notice>}
       {error && !open && <Notice tone="error">{error}</Notice>}
       <PrimaryButton disabled={!valid} onClick={() => { setError(null); setDone(null); setAgain(false); setOpen(true); }} data-testid="button-review-social">

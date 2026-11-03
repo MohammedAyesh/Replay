@@ -58,6 +58,7 @@ const en = {
     review: "Review and post",
     reviewSchedule: "Review and schedule",
     videoQueued: "Videos go out within a minute or two: Instagram needs time to process them.",
+    musicNote: "Music your academy uploaded must be yours to use: Instagram and Facebook may mute copyrighted audio.",
   },
   whatsapp: {
     title: "WhatsApp",
@@ -181,6 +182,7 @@ const ar: typeof en = {
     review: "راجِع وانشر",
     reviewSchedule: "راجِع وجدوِل",
     videoQueued: "الفيديو بنزل خلال دقيقة أو ثنتين: إنستغرام بدّه وقت يجهّزه.",
+    musicNote: "الموسيقى اللي رفعتوها لازم تكون إلكم أو معكم حق فيها: إنستغرام وفيسبوك ممكن يكتموا الصوت المحمي.",
   },
   whatsapp: {
     title: "واتساب",
