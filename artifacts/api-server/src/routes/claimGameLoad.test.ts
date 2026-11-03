@@ -120,14 +120,14 @@ describe("summaryInPlaySpans", () => {
 });
 
 describe("GET /claim-match/game", () => {
-  it("answers from the summary without waiting for the segments", async () => {
+  it("answers from the summary without reading the segments", async () => {
     mocks.begin.mockResolvedValue(context({ segments: [summarySegment(0, [{ start: 1, end: 4 }]), summarySegment(1, [])] }));
-    // The background prefetch never finishes: the response must not wait on it.
-    mocks.withSegments.mockReturnValue(new Promise(() => {}));
     const response = await request(appFor()).get("/api/recordings/42/claim-match/game");
     expect(response.status).toBe(200);
     expect(response.body.inPlaySpans).toEqual([[1, 4]]);
     expect(mocks.begin.mock.calls[0][2]).toEqual({ includeSegments: false });
+    // Not even in the background: parsing a game blocks the whole server.
+    expect(mocks.withSegments).not.toHaveBeenCalled();
     expect(mocks.db.execute).not.toHaveBeenCalled();
   });
 

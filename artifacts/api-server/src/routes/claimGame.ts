@@ -346,14 +346,9 @@ router.get("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   // 2-hour recording) and kept the /find intro on "Loading" for 7-9 s.
   const ctx = await begin(req, res, { includeSegments: false });
   if (!ctx) return;
-  // The page's first save with parts needs the full tracking. Start reading
-  // it into the shared cache now, while the player reads the intro, instead
-  // of making that first answer wait for it.
-  if (!ctx.segmentsLoaded) {
-    void withSegments(ctx).catch((error) => {
-      console.error("[claim-game] segment prefetch failed", { recordingId: ctx.recordingId, error });
-    });
-  }
+  // No background read of the full tracking here. It was tried (2026-11-02)
+  // and parsing a whole game blocks Node's event loop: every request on the
+  // instance, for every user, stalled 3-4 s each time /find opened a match.
   const [row] = await db
     .select({
       gameState: claimMatchProgressTable.gameState,
