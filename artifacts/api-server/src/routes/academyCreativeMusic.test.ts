@@ -350,3 +350,29 @@ describe("Creative music: template music in /admin", () => {
     expect((await request(app).get(url(academyA, "/recommendations")).set(auth(outsider))).status).toBe(403);
   });
 });
+
+describe("Creative music: field owners get the same music as academies", () => {
+  it("a field's owner lists the library, sees recommendations, uploads its own track and gets music on a goal video", async () => {
+    await db.delete(creativeTemplateMusicTable);
+    const [u] = await db.insert(usersTable).values({ name: `Field owner ${tag}`, email: `music-field-owner-${tag}@test.local` }).returning({ id: usersTable.id });
+    const [fieldRow] = await db.insert(fieldsTable).values({ name: `Music field ${tag}`, cameraId: "camera2" }).returning({ id: fieldsTable.id });
+    const [venue] = await db.insert(academiesTable).values({ name: `Pitch Club ${tag}`, fieldId: fieldRow.id, kind: "venue" }).returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: venue.id, userId: u.id, role: "owner" });
+
+    const lib = await request(app).get(url(venue.id)).set(auth(u.id)).expect(200);
+    expect(lib.body.tracks.some((t: { scope: string }) => t.scope === "replay")).toBe(true);
+    const recs = await request(app).get(url(venue.id, "/recommendations")).set(auth(u.id)).expect(200);
+    expect(Object.keys(recs.body.templates)).toHaveLength(31);
+
+    const up = await uploadAs(u.id, venue.id, { title: "Our pitch anthem", mood: "hype", rights: "true" });
+    expect(up.status).toBe(201);
+    expect((await request(app).get(url(venue.id, `/${up.body.track.trackId}/file`)).set(auth(u.id))).status).toBe(200);
+    // Another academy can't use the field's own track.
+    expect((await request(app).get(url(academyA, `/${up.body.track.trackId}/file`)).set(auth(ownerA))).status).toBe(404);
+
+    const res = await request(app).post(`/api/academy/console/academies/${venue.id}/creative/projects`).set(auth(u.id))
+      .send({ scene: buildTemplateScene("goal", "broadcast", "story", "en") }).expect(201);
+    const [track] = await db.select().from(creativeMusicTracksTable).where(eq(creativeMusicTracksTable.id, res.body.project.scene.music.trackId));
+    expect(track).toMatchObject({ scope: "replay", key: "cc0/energetic-electro-tune" });
+  });
+});
