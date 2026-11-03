@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -11,7 +11,9 @@ describe("ensureAdditiveColumns", () => {
     await pool.query(`DROP TABLE IF EXISTS "academy_ad_templates"`);
     await pool.query(`ALTER TABLE "academy_members" DROP CONSTRAINT "academy_members_role_check"`);
     await pool.query(`ALTER TABLE "academy_members" ADD CONSTRAINT "academy_members_role_check" CHECK ("role" in ('owner', 'coach')) NOT VALID`);
-    expect(await ensureAdditiveColumns(pool)).toBe(5);
+    // A pushed database has the 0068 tables but never the People stage trigger: boot installs it.
+    await pool.query(`DROP TRIGGER IF EXISTS "academy_contacts_stage_events" ON "academy_contacts"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(6);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
     const { rows } = await pool.query(`SELECT table_name, column_name FROM information_schema.columns WHERE (table_name = 'academies' AND column_name IN ('website_url','latitude')) OR (table_name = 'academy_ad_requests' AND column_name = 'cards') OR (table_name = 'academy_ad_templates' AND column_name = 'variants')`);
     expect(rows).toHaveLength(4);
@@ -66,6 +68,30 @@ describe("ensureAdditiveColumns", () => {
     expect(rows.map((r) => r.column_name).filter((c) => /lat|lon|gps|location/.test(c))).toEqual([]);
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0067_academy_phone_media.sql", import.meta.url), "utf8");
     for (const statement of PHONE_MEDIA_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates the value-report tables and the People stage trigger (0068), as the migration says", async () => {
+    await pool.query(`DROP TRIGGER IF EXISTS "academy_contacts_stage_events" ON "academy_contacts"`);
+    for (const t of ["academy_contact_stage_events", "academy_value_report_shares"]) await pool.query(`DROP TABLE IF EXISTS "${t}"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(3);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0068_academy_value_report.sql", import.meta.url), "utf8");
+    for (const statement of [...STAGE_EVENTS_STATEMENTS, ...REPORT_SHARES_STATEMENTS, ...STAGE_TRIGGER_STATEMENTS]) expect(migration).toContain(`${statement};`);
+    // Every stage or kind change of a contact is written, whichever code path made it.
+    const { rows: [f] } = await pool.query<{ id: number }>(`INSERT INTO fields (name, camera_id) VALUES ('Stage field', 'stage-' || floor(random()*1e9)::text) RETURNING id`);
+    const { rows: [a] } = await pool.query<{ id: number }>(`INSERT INTO academies (name, field_id) VALUES ('Stage test', $1) RETURNING id`, [f.id]);
+    const { rows: [c] } = await pool.query<{ id: number }>(`INSERT INTO academy_contacts (academy_id, phone, kind, stage) VALUES ($1, '+962790000001', 'lead', 'new') RETURNING id`, [a.id]);
+    await pool.query(`UPDATE academy_contacts SET stage = 'trial' WHERE id = $1`, [c.id]);
+    await pool.query(`UPDATE academy_contacts SET name = 'x' WHERE id = $1`, [c.id]);
+    await pool.query(`UPDATE academy_contacts SET stage = 'joined', kind = 'parent' WHERE id = $1`, [c.id]);
+    const { rows: ev } = await pool.query(`SELECT from_stage, to_stage, from_kind, to_kind FROM academy_contact_stage_events WHERE contact_id = $1 ORDER BY id`, [c.id]);
+    expect(ev).toEqual([
+      { from_stage: null, to_stage: "new", from_kind: null, to_kind: "lead" },
+      { from_stage: "new", to_stage: "trial", from_kind: "lead", to_kind: "lead" },
+      { from_stage: "trial", to_stage: "joined", from_kind: "lead", to_kind: "parent" },
+    ]);
+    await pool.query(`DELETE FROM academies WHERE id = $1`, [a.id]);
+    await pool.query(`DELETE FROM fields WHERE id = $1`, [f.id]);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 

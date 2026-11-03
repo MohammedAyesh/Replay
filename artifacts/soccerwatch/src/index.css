@@ -2451,3 +2451,8 @@ kbd { display: inline-grid; min-width: 18px; height: 18px; margin: 0 2px; paddin
 @media (prefers-reduced-motion: reduce) {
   .tile-arc, .tile-grow, .tile-grow-x, .tile-draw, .tile-fade { animation: none; }
 }
+
+/* The monthly value report prints on white (Download PDF). */
+@media print {
+  html, body { background: #fff !important; }
+}

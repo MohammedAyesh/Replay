@@ -119,6 +119,51 @@ export const PHONE_MEDIA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "academy_phone_media_session_idx" ON "academy_phone_media" ("session_id")`
 ];
 
+/** 0068: the value report. Exported for the test that compares them with the migration file. */
+export const STAGE_EVENTS_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academy_contact_stage_events" (
+  "id" serial PRIMARY KEY,
+  "academy_id" integer NOT NULL CONSTRAINT "academy_contact_stage_events_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "contact_id" integer NOT NULL CONSTRAINT "academy_contact_stage_events_contact_id_academy_contacts_id_fk" REFERENCES "academy_contacts"("id") ON DELETE CASCADE,
+  "from_stage" text, "to_stage" text, "from_kind" text, "to_kind" text,
+  "at" timestamp with time zone DEFAULT now() NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS "academy_contact_stage_events_academy_idx" ON "academy_contact_stage_events" ("academy_id", "at")`,
+  `CREATE INDEX IF NOT EXISTS "academy_contact_stage_events_contact_idx" ON "academy_contact_stage_events" ("contact_id")`
+];
+
+export const REPORT_SHARES_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academy_value_report_shares" (
+  "id" serial PRIMARY KEY,
+  "academy_id" integer NOT NULL CONSTRAINT "academy_value_report_shares_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "month" text NOT NULL, "token" text NOT NULL,
+  "created_by" integer CONSTRAINT "academy_value_report_shares_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL, "revoked_at" timestamp with time zone,
+  CONSTRAINT "academy_value_report_shares_token_unique" UNIQUE("token"),
+  CONSTRAINT "academy_value_report_shares_month_check" CHECK ("month" ~ '^[0-9]{4}-[0-9]{2}$'),
+  CONSTRAINT "academy_value_report_shares_token_check" CHECK ("token" ~ '^[0-9a-f]{32}$'))`
+];
+
+/**
+ * 0068: the trigger that writes academy_contact_stage_events on every stage or
+ * kind change of a People contact. Not a Drizzle object, so the publish review
+ * never sees it: it is installed here, at boot, idempotently.
+ */
+export const STAGE_TRIGGER_STATEMENTS = [
+  `CREATE OR REPLACE FUNCTION replay_contact_stage_event() RETURNS trigger AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.kind = 'lead' OR NEW.stage IS NOT NULL THEN
+      INSERT INTO academy_contact_stage_events (academy_id, contact_id, from_stage, to_stage, from_kind, to_kind) VALUES (NEW.academy_id, NEW.id, NULL, NEW.stage, NULL, NEW.kind);
+    END IF;
+  ELSIF NEW.stage IS DISTINCT FROM OLD.stage OR NEW.kind IS DISTINCT FROM OLD.kind THEN
+    INSERT INTO academy_contact_stage_events (academy_id, contact_id, from_stage, to_stage, from_kind, to_kind) VALUES (NEW.academy_id, NEW.id, OLD.stage, NEW.stage, OLD.kind, NEW.kind);
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql`,
+  `DROP TRIGGER IF EXISTS "academy_contacts_stage_events" ON "academy_contacts"`,
+  `CREATE TRIGGER "academy_contacts_stage_events" AFTER INSERT OR UPDATE OF "stage", "kind" ON "academy_contacts" FOR EACH ROW EXECUTE FUNCTION replay_contact_stage_event()`,
+];
+
 /**
  * Additive, idempotent schema the code depends on. If a publish reaches a database that
  * never got it (the push ran on dev only), every `select *` on those tables fails with
@@ -481,6 +526,9 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   { table: "academy_player_clips", statements: PLAYER_CLIPS_STATEMENTS },
   // 0067_academy_phone_media.sql
   { table: "academy_phone_media", statements: PHONE_MEDIA_STATEMENTS },
+  // 0068_academy_value_report.sql
+  { table: "academy_contact_stage_events", statements: STAGE_EVENTS_STATEMENTS },
+  { table: "academy_value_report_shares", statements: REPORT_SHARES_STATEMENTS },
 ];
 
 /** Checks that only ever widen what's allowed (0054: academy managers). */
@@ -510,6 +558,15 @@ export async function ensureAdditiveColumns(pool: Pool): Promise<number> {
     if (!tables.has(c.table) || have.has(`${c.table}.${c.column}`)) continue;
     await pool.query(`ALTER TABLE "${c.table}" ADD COLUMN IF NOT EXISTS "${c.column}" ${c.type}`);
     added += 1;
+  }
+  // The People stage trigger (0068): installed once the events table exists, when missing.
+  const { rows: trigTables } = await pool.query(`SELECT to_regclass('academy_contacts') AS c, to_regclass('academy_contact_stage_events') AS e`);
+  if (trigTables[0]?.c && trigTables[0]?.e) {
+    const { rows: trig } = await pool.query(`SELECT 1 FROM pg_trigger WHERE tgname = 'academy_contacts_stage_events'`);
+    if (!trig.length) {
+      for (const sql of STAGE_TRIGGER_STATEMENTS) await pool.query(sql);
+      added += 1;
+    }
   }
   for (const c of WIDENED_CHECKS) {
     if (!tables.has(c.table)) continue;

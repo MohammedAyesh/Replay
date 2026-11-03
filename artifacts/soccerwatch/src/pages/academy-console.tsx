@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useLocation } from "wouter";
 import {
   ArrowLeft,
+  BarChart3,
   ArrowRight,
   CalendarDays,
   ChevronDown,
@@ -115,10 +116,12 @@ import { AcademyRecordingsSection } from "@/components/academy-console/recording
 import { AcademyAnnouncementsSection } from "@/components/academy-console/announcements-section";
 import { AcademyFeesPaymentsSection } from "@/components/academy-console/fees-payments-section";
 import { AcademyRegistrationsSection } from "@/components/academy-console/registrations-section";
+import { AcademyValueReportSection } from "@/components/academy-console/value-report";
+import { useValueReportCopy } from "@/i18n/value-report-strings";
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "creative" | "team";
+type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "creative" | "team" | "report";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -207,9 +210,11 @@ function AcademyConsoleSidebar({
   const creativeCopy = useCreativeCopy();
   const teamCopy = useTeamCopy();
   const socialCopy = useSocialCopy();
+  const reportCopy = useValueReportCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
   const items: Array<{ id: ConsoleSection; label: string; icon: typeof LayoutDashboard; ownerOnly?: boolean }> = [
     { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
+    { id: "report", label: reportCopy.nav, icon: BarChart3, ownerOnly: true },
     { id: "squads", label: labels.squads, icon: Users },
     { id: "players", label: labels.players, icon: UserRound },
     { id: "registrations", label: labels.registrations.title, icon: UserRoundPlus },
@@ -797,8 +802,8 @@ export default function AcademyConsole() {
   // What the owner lets this member see and run (Academy console → Team). Until it loads,
   // fall back to the role alone.
   const myAccess = useMyAcademyAccess(activeAcademyId);
-  const OWNER_ONLY: ConsoleSection[] = ["fees", "social", "ads", "branding", "studio", "creative", "team"];
-  const canSee = (s: ConsoleSection) => isOwner || (s !== "team" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
+  const OWNER_ONLY: ConsoleSection[] = ["report", "fees", "social", "ads", "branding", "studio", "creative", "team"];
+  const canSee = (s: ConsoleSection) => isOwner || (s !== "team" && s !== "report" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
   const manages = (s: ConsoleSection) => isOwner || Boolean(myAccess.data?.manages.includes(s));
   const canManageChats = isOwner || Boolean(myAccess.data?.permissions.includes("chats.manage"));
 
@@ -815,7 +820,7 @@ export default function AcademyConsole() {
     // Decide only once the membership (and, for staff, their access) has loaded; deciding earlier
     // bounced every owner-only deep link such as /academy/team to the dashboard.
     if (!activeMembership || (!isOwner && myAccess.isLoading)) return;
-    if (section === "team" ? !isOwner : !canSee(section)) setSection("dashboard");
+    if (section === "team" || section === "report" ? !isOwner : !canSee(section)) setSection("dashboard");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMembership, isOwner, section, myAccess.data, myAccess.isLoading]);
 
@@ -828,7 +833,7 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "social", "profile", "branding", "studio", "creative", "team"].includes(pathSection)) {
+    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "social", "profile", "branding", "studio", "creative", "team", "report"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -874,7 +879,7 @@ export default function AcademyConsole() {
 
   return (
     <div className="flex min-h-[100dvh] w-full bg-void text-text" dir={locale === "ar" ? "rtl" : "ltr"} data-testid="academy-console">
-      <aside className="hidden w-72 shrink-0 border-e border-line md:block"><AcademyConsoleSidebar {...sidebarProps} /></aside>
+      <aside className="hidden w-72 shrink-0 border-e border-line md:block print:hidden"><AcademyConsoleSidebar {...sidebarProps} /></aside>
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetContent side={locale === "ar" ? "right" : "left"} className="w-[min(88vw,20rem)] border-line bg-surface p-0 [&>button]:hidden">
           <SheetHeader className="sr-only"><SheetTitle>{t.academyConsole.navigation}</SheetTitle><SheetDescription>{t.academyConsole.mobileDescription}</SheetDescription></SheetHeader>
@@ -882,7 +887,7 @@ export default function AcademyConsole() {
         </SheetContent>
       </Sheet>
       <main className="min-w-0 flex-1 bg-void">
-        <header className="sticky top-0 z-20 flex min-h-20 items-center justify-end border-b border-line bg-void/90 px-5 backdrop-blur-md md:px-8" data-testid="academy-console-header">
+        <header className="sticky top-0 z-20 flex min-h-20 print:hidden items-center justify-end border-b border-line bg-void/90 px-5 backdrop-blur-md md:px-8" data-testid="academy-console-header">
           <Button type="button" variant="ghost" size="icon" className="absolute start-5 text-muted-text md:hidden" onClick={() => setMobileOpen(true)} data-testid="button-open-academy-menu">
             <Menu className="h-5 w-5" aria-hidden="true" /><span className="sr-only">{t.academyConsole.openMenu}</span>
           </Button>
@@ -893,6 +898,8 @@ export default function AcademyConsole() {
             dashboardQuery.isLoading ? <AcademyConsoleSkeleton /> :
               dashboardQuery.isError || !dashboardQuery.data ? <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted-text" data-testid="academy-dashboard-error">{t.academyConsole.dashboardError}</div> :
                 <Dashboard dashboard={dashboardQuery.data} isOwner={manages("dashboard")} />
+          ) : section === "report" ? (
+            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyValueReportSection academyId={activeAcademyId} />
           ) : section === "squads" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <SquadsSection academyId={activeAcademyId} />
           ) : section === "players" ? (

@@ -63,3 +63,4 @@ export * from "./creativeMusic";
 export * from "./creativeTemplateMusic";
 export * from "./academyFeatures";
 export * from "./academyPhoneMedia";
+export * from "./academyValueReports";
