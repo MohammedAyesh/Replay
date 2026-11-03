@@ -847,8 +847,13 @@ type ParsedWorkerBundle = NonNullable<ReturnType<typeof parseZipBundleDetailed>[
  * FFmpeg, which subtracts start_time) already count from the first frame, so
  * storing it put every box 1.48 s off the players (recordings 401, 403-405).
  * A real kick-off is the time the operator typed, minutes into the video.
+ *
+ * Raised from 2 to 30 s on 2026-11-03: with Early Play on, a worker can read
+ * Bunny's interim rendition before the final encode lands. Rec 410's read
+ * 5.404 s (the final one reads 1.479 s), was stored as a kick-off, and moved
+ * every overlay and moment clip 5.4 s late.
  */
-const STREAM_START_TIME_MAX_SECONDS = 2;
+const STREAM_START_TIME_MAX_SECONDS = 30;
 
 function parseWorkerBundle(buffer: Buffer, videoStartSeconds: unknown) {
   const parsed = parseZipBundleDetailed(buffer);

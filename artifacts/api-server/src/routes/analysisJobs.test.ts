@@ -846,6 +846,23 @@ describe("the bundle the worker sends back", () => {
     expect(bundle.manifest.videoStartSeconds).toBe(0);
   });
 
+  it("does not store an Early Play interim stream start as a kick-off either", async () => {
+    // Rec 410 (2026-11-03): read while Bunny still served the interim Early
+    // Play rendition, the stream reported 5.404 s; the final encode reads 1.479.
+    const id = await claimAJob();
+    await request(app).put(`/api/worker/analysis/${id}/bundle`)
+      .set("x-worker-key", KEY)
+      .field("workerId", "w1")
+      .field("recordingId", String(recA))
+      .field("videoStartSeconds", "5.404")
+      .attach("bundle", bundleZip(0), "idbundle.zip")
+      .expect(200);
+
+    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recA));
+    expect(bundle.manifest.videoStartSeconds).toBe(0);
+  });
+
   it("refuses a recording that is not part of the job", async () => {
     const id = await claimAJob();
     const res = await request(app).put(`/api/worker/analysis/${id}/bundle`)
