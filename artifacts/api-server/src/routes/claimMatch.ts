@@ -84,7 +84,7 @@ import {
   voteMatchRosterShirtNumber,
 } from "../lib/matchRoster";
 import { parseJerseySidecar, type JerseySidecar } from "../lib/jerseySidecar";
-import { ensureClaimMomentUserClip, parseRecordingDuration } from "./userClips";
+import { ensureClaimMomentUserClip, isSoftDeletedClip, parseRecordingDuration, queueUserClipExport } from "./userClips";
 import {
   deleteClaimSegment,
   readClaimSegment,
@@ -1378,6 +1378,124 @@ async function claimClipCleanupCandidates(recordingId: number) {
     return untouched ? [{ id: clip.id, userId, momentId: earned.id }] : [];
   });
 }
+
+/** A claim moment's clip window and framing for one videoStartSeconds (the ensureClaimMomentUserClip rule). */
+export function claimMomentClipWindow(
+  momentSeconds: number,
+  follow: FollowPoint[] | undefined,
+  videoStart: number,
+  duration: number,
+  aspect: number,
+): { startTime: number; endTime: number; cropPath: ReturnType<typeof followCrop> } | null {
+  if (!(duration > 0)) return null;
+  const start = Math.max(0, momentSeconds - 8 + videoStart);
+  const end = Math.min(duration, momentSeconds + 8 + videoStart);
+  if (!(end > start)) return null;
+  const startTime = Math.max(0, Math.min(1, start / duration));
+  const endTime = Math.max(startTime, Math.min(1, end / duration));
+  return { startTime, endTime, cropPath: followCrop(follow, videoStart, start, end, aspect || 3840 / 1080) };
+}
+
+/**
+ * Which moment clips a videoStartSeconds correction should move (2026-11-03,
+ * rec 410: the worker sent Bunny's interim Early Play start of 5.404 s, so every
+ * moment clip was cut 5.4 s late). A clip moves only while its window is still
+ * exactly the one made under the old start: a clip the player re-cut, or one
+ * already made under the new start, is left alone. Soft-deleted clips stay put.
+ */
+export function planClaimClipRealign(input: {
+  links: Array<{ userId: number; clip: { id: string; momentSeconds: number; follow?: FollowPoint[]; userClipId?: number } }>;
+  clips: Array<{ id: number; startTime: string; endTime: string; hiddenReason?: string | null }>;
+  duration: number;
+  aspect: number;
+  fromVideoStart: number;
+  toVideoStart: number;
+}) {
+  const byId = new Map(input.clips.map((clip) => [clip.id, clip]));
+  const moves: Array<{ clipId: number; userId: number; momentId: string; from: [number, number]; to: [number, number]; cropPath: ReturnType<typeof followCrop> }> = [];
+  const skipped: Array<{ clipId: number; momentId: string; reason: string }> = [];
+  for (const { userId, clip: earned } of input.links) {
+    const clip = earned.userClipId ? byId.get(earned.userClipId) : undefined;
+    if (!clip) continue;
+    if (isSoftDeletedClip(clip)) { skipped.push({ clipId: clip.id, momentId: earned.id, reason: "deleted" }); continue; }
+    const before = claimMomentClipWindow(earned.momentSeconds, earned.follow, input.fromVideoStart, input.duration, input.aspect);
+    const after = claimMomentClipWindow(earned.momentSeconds, earned.follow, input.toVideoStart, input.duration, input.aspect);
+    if (!before || !after) { skipped.push({ clipId: clip.id, momentId: earned.id, reason: "no window" }); continue; }
+    const s = Number(clip.startTime), e = Number(clip.endTime);
+    if (Math.abs(s - after.startTime) < 0.00001 && Math.abs(e - after.endTime) < 0.00001) {
+      skipped.push({ clipId: clip.id, momentId: earned.id, reason: "already aligned" }); continue;
+    }
+    if (!(Math.abs(s - before.startTime) < 0.00001 && Math.abs(e - before.endTime) < 0.00001)) {
+      skipped.push({ clipId: clip.id, momentId: earned.id, reason: "window changed by hand" }); continue;
+    }
+    moves.push({ clipId: clip.id, userId, momentId: earned.id, from: [s, e], to: [after.startTime, after.endTime], cropPath: after.cropPath });
+  }
+  return { moves, skipped };
+}
+
+router.post("/admin/recordings/:recordingId/claim-clips/realign", async (req, res): Promise<void> => {
+  if (!await requireAdmin(req)) {
+    unauthenticatedResponse(res, req, "Administrator account required");
+    return;
+  }
+  const recordingId = parseId(req.params.recordingId);
+  const fromVideoStart = Number(req.body?.fromVideoStartSeconds);
+  const dryRun = req.body?.dryRun !== false;
+  if (!recordingId || !Number.isFinite(fromVideoStart) || fromVideoStart < 0) {
+    res.status(400).json({ error: "A valid recording ID and fromVideoStartSeconds (the start the clips were cut with) are required" });
+    return;
+  }
+  const [recording, bundle] = await Promise.all([
+    db.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId)).then((rows) => rows[0]),
+    db.select({ manifest: recordingTrackingBundlesTable.manifest })
+      .from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recordingId))
+      .then((rows) => rows[0]),
+  ]);
+  if (!recording || !bundle) {
+    res.status(404).json({ error: "Recording or tracking bundle not found" });
+    return;
+  }
+  const manifest = bundle.manifest as TrackingManifest;
+  const toVideoStart = manifest.videoStartSeconds ?? 0;
+  const duration = parseRecordingDuration(recording.duration) || manifest.duration;
+  const aspect = manifest.width > 0 && manifest.height > 0 ? manifest.width / manifest.height : 3840 / 1080;
+  const progress = await db.select().from(claimMatchProgressTable)
+    .where(eq(claimMatchProgressTable.recordingId, recordingId));
+  const links = progress.flatMap((row) => (row.earnedClips ?? [])
+    .filter((clip) => clip.userClipId)
+    .map((clip) => ({ userId: row.userId, clip })));
+  const clipIds = [...new Set(links.map(({ clip }) => clip.userClipId!).filter(Number.isInteger))];
+  const clips = clipIds.length
+    ? await db.select().from(userClipsTable).where(inArray(userClipsTable.id, clipIds))
+    : [];
+  const plan = planClaimClipRealign({ links, clips, duration, aspect, fromVideoStart, toVideoStart });
+  const queued: Array<{ clipId: number; exportStatus: string | null }> = [];
+  if (!dryRun) {
+    for (const move of plan.moves) {
+      const [row] = await db.update(userClipsTable)
+        .set({
+          startTime: String(move.to[0]),
+          endTime: String(move.to[1]),
+          cropPath: move.cropPath,
+          exportStatus: null,
+          exportedUrl: null,
+          posterPath: null,
+          posterAtSec: null,
+        })
+        .where(eq(userClipsTable.id, move.clipId))
+        .returning();
+      if (!row) continue;
+      try {
+        queued.push({ clipId: row.id, exportStatus: await queueUserClipExport(row) });
+      } catch (error) {
+        logger.warn({ error, clipId: row.id }, "Could not queue the realigned claim clip export");
+        queued.push({ clipId: row.id, exportStatus: "error" });
+      }
+    }
+  }
+  res.json({ recordingId, dryRun, fromVideoStart, toVideoStart, moves: plan.moves.map(({ cropPath: _c, ...m }) => m), skipped: plan.skipped, queued });
+});
 
 router.get("/admin/recordings/:recordingId/claim-clips-cleanup", async (req, res): Promise<void> => {
   if (!await requireAdmin(req)) {
