@@ -5,6 +5,7 @@ import { CREATIVE_BASE, creativeOwner, loadCreativeProject, projectIdParam, publ
 import { FOR_YOU, ensureAutoDrafts, groupOf, inFeed, parseOriginKey } from "../lib/creative/autoDrafts";
 import { academyCreativeProfile, buildSessionData, loadSessionFacts, type CreativeLocale } from "../lib/creative/sessionData";
 import { logger } from "../lib/logger";
+import { CalendarBody, loadCalendar, saveCalendar } from "../lib/marketing/calendar";
 import { ammanDayLabel, ammanTime } from "./academyStudio";
 
 /**
@@ -13,6 +14,8 @@ import { ammanDayLabel, ammanTime } from "./academyStudio";
  *   GET  …/creative/sessions/:sessionId/data  CreativeData for one session
  *   GET  …/creative/for-you                   drafts Replay prepared + fixtures coming up
  *   POST …/creative/for-you/:projectId/skip   not interested: the draft never comes back
+ *   GET  …/creative/content-calendar          the weekly calendar (which kind of post on which day)
+ *   PUT  …/creative/content-calendar          change it ({ slots: null } = the default week)
  *
  * Drafts are made lazily here, at most once per academy per 10 minutes (see
  * lib/creative/autoDrafts.ts).
@@ -130,6 +133,20 @@ router.post(`${base}/for-you/:projectId/skip`, async (req, res): Promise<void> =
   if (!updated) { res.status(404).json({ error: "Not found" }); return; }
   logger.debug({ academyId: access.academyId, projectId: row.id }, "Creative hub: draft skipped");
   res.json({ project: publicProject(updated) });
+});
+
+router.get(`${base}/content-calendar`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  res.json(await loadCalendar(access.academyId));
+});
+
+router.put(`${base}/content-calendar`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  const body = CalendarBody.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Invalid calendar" }); return; }
+  res.json(await saveCalendar(access.academyId, body.data.slots));
 });
 
 export default router;

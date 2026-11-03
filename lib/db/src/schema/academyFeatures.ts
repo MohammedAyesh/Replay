@@ -44,6 +44,8 @@ export const academyFeatureSettingsTable = pgTable("academy_feature_settings", {
   publicPostsPerMonth: integer("public_posts_per_month").notNull().default(1),
   /** One private clip per analysed match he played in. */
   privateClipPerMatch: boolean("private_clip_per_match").notNull().default(true),
+  /** The weekly content calendar (0069): [{ day: 0–6, kind }]; null = the default week. */
+  contentCalendar: jsonb("content_calendar"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("academy_feature_settings_posts_check", sql`${table.publicPostsPerMonth} between 0 and 8`),

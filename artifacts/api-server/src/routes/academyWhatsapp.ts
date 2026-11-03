@@ -27,6 +27,7 @@ import { logger } from "../lib/logger";
 import { staffAccessFor } from "../lib/academyPermissions";
 import { runScheduledAutomations } from "../lib/whatsapp/automations";
 import { maybePrepareRecentClips } from "../lib/featured/sweep";
+import { sweepTrialFollowUps } from "../lib/marketing/trials";
 import { maybeSyncMetaAds } from "../lib/meta/sync";
 import { maybeRunSocial } from "../lib/social/posts";
 import {
@@ -857,7 +858,12 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
       logger.warn({ error: (error as Error)?.message }, "Private clip sweep failed");
       return "failed" as const;
     });
-    res.json({ scheduled, venues, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, playerClips, ms: Date.now() - started });
+    // Trial follow-ups that are due (queued now, sent on the next dispatch).
+    const trialFollowUps = await sweepTrialFollowUps().catch((error) => {
+      logger.warn({ error: (error as Error)?.message }, "Trial follow-up sweep failed");
+      return "failed" as const;
+    });
+    res.json({ scheduled, venues, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, playerClips, trialFollowUps, ms: Date.now() - started });
   } catch (error) {
     // vps1 logs this body: say what broke (e.g. a table missing after a publish).
     logger.error({ error: (error as Error)?.message }, "WhatsApp tick failed");
@@ -961,6 +967,9 @@ function contactView(
     tags: Array.isArray(c.tags) ? (c.tags as string[]) : [],
     notes: c.notes,
     players,
+    referredByContactId: c.referredByContactId ?? null,
+    referralNote: c.referralNote ?? null,
+    trialSessionId: c.trialSessionId ?? null,
     createdAt: c.createdAt,
   };
 }
@@ -1852,6 +1861,9 @@ router.get("/academy/console/academies/:academyId/contacts", async (req, res): P
     tags: c.tags,
     notes: c.notes,
     players: c.players,
+    referredByContactId: c.referredByContactId ?? null,
+    referralNote: c.referralNote ?? null,
+    trialSessionId: c.trialSessionId ?? null,
     lastMessageAt: c.lastMessageAt,
     optedOut: optOuts.has(c.phone),
     blocked: Boolean(c.blockedAt),
@@ -1868,7 +1880,17 @@ const ContactBody = z.object({
   tags: Tags.optional(),
   notes: z.string().max(4000).nullable().optional(),
   links: z.array(z.object({ playerId: z.number().int().positive(), relationship: z.enum(RELATIONSHIPS) })).max(20).optional(),
+  /** The family that told them about the academy, and what the referrer gets ("10% off December"). */
+  referredByContactId: z.number().int().positive().nullable().optional(),
+  referralNote: z.string().trim().max(200).nullable().optional(),
 });
+
+/** A referrer must be someone else in the same academy. */
+async function referrerOk(academyId: number, contactId: number | null, referrerId: number | null | undefined): Promise<boolean> {
+  if (referrerId === undefined || referrerId === null) return true;
+  if (referrerId === contactId) return false;
+  return Boolean(await contactInAcademy(academyId, referrerId));
+}
 
 async function playerInAcademy(academyId: number, playerId: number): Promise<boolean> {
   const [row] = await db.select({ id: academyPlayersTable.id }).from(academyPlayersTable)
@@ -1911,6 +1933,10 @@ router.post("/academy/console/academies/:academyId/contacts", async (req, res): 
       return;
     }
   }
+  if (!(await referrerOk(access.academyId, null, body.data.referredByContactId))) {
+    res.status(400).json({ error: "The referrer isn't in People", code: "bad_referrer" });
+    return;
+  }
   const contact = await upsertContact(access.academyId, phone, { source: "manual" });
   const kind = body.data.kind ?? (body.data.links?.length ? (body.data.links.some((l) => l.relationship === "self") ? "player" : "parent") : contact.kind);
   await db.update(academyContactsTable).set({
@@ -1919,6 +1945,8 @@ router.post("/academy/console/academies/:academyId/contacts", async (req, res): 
     stage: body.data.stage !== undefined ? body.data.stage : kind === "lead" ? (contact.stage ?? "new") : contact.stage,
     ...(body.data.tags ? { tags: body.data.tags } : {}),
     ...(body.data.notes !== undefined ? { notes: body.data.notes } : {}),
+    ...(body.data.referredByContactId !== undefined && body.data.referredByContactId !== contact.id ? { referredByContactId: body.data.referredByContactId } : {}),
+    ...(body.data.referralNote !== undefined ? { referralNote: body.data.referralNote || null } : {}),
     updatedAt: new Date(),
   }).where(eq(academyContactsTable.id, contact.id));
   for (const link of body.data.links ?? []) await linkContactToPlayer(contact.id, link.playerId, link.relationship, true);
@@ -1939,8 +1967,14 @@ router.patch("/academy/console/academies/:academyId/contacts/:contactId", async 
     res.status(400).json({ error: body.error.message });
     return;
   }
+  if (!(await referrerOk(access.academyId, contact.id, body.data.referredByContactId))) {
+    res.status(400).json({ error: "The referrer isn't in People", code: "bad_referrer" });
+    return;
+  }
   const nextKind = body.data.kind ?? contact.kind;
   await db.update(academyContactsTable).set({
+    ...(body.data.referredByContactId !== undefined ? { referredByContactId: body.data.referredByContactId } : {}),
+    ...(body.data.referralNote !== undefined ? { referralNote: body.data.referralNote || null } : {}),
     ...(body.data.name !== undefined ? { name: body.data.name || null } : {}),
     ...(body.data.kind ? { kind: body.data.kind } : {}),
     ...(body.data.stage !== undefined

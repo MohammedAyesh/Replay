@@ -143,6 +143,29 @@ export const REPORT_SHARES_STATEMENTS = [
   CONSTRAINT "academy_value_report_shares_token_check" CHECK ("token" ~ '^[0-9a-f]{32}$'))`
 ];
 
+/** 0069: trial clips. Exported for the test that compares them with the migration file. */
+export const TRIAL_CLIPS_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academy_trial_clips" (
+  "id" serial PRIMARY KEY,
+  "academy_id" integer NOT NULL CONSTRAINT "academy_trial_clips_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "contact_id" integer NOT NULL CONSTRAINT "academy_trial_clips_contact_id_academy_contacts_id_fk" REFERENCES "academy_contacts"("id") ON DELETE CASCADE,
+  "session_id" integer CONSTRAINT "academy_trial_clips_session_id_academy_sessions_id_fk" REFERENCES "academy_sessions"("id") ON DELETE SET NULL,
+  "recording_id" integer CONSTRAINT "academy_trial_clips_recording_id_recordings_id_fk" REFERENCES "recordings"("id") ON DELETE SET NULL,
+  "user_clip_id" integer CONSTRAINT "academy_trial_clips_user_clip_id_user_clips_id_fk" REFERENCES "user_clips"("id") ON DELETE SET NULL,
+  "token" text NOT NULL, "child_name" text, "moment_seconds" real NOT NULL,
+  "status" text DEFAULT 'prepared' NOT NULL,
+  "sent_at" timestamp with time zone, "opened_at" timestamp with time zone,
+  "follow_up_status" text, "follow_up_at" timestamp with time zone,
+  "created_by" integer CONSTRAINT "academy_trial_clips_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "academy_trial_clips_token_unique" UNIQUE("token"),
+  CONSTRAINT "academy_trial_clips_token_check" CHECK ("token" ~ '^[0-9a-f]{32}$'),
+  CONSTRAINT "academy_trial_clips_status_check" CHECK ("status" in ('prepared', 'sent', 'failed')),
+  CONSTRAINT "academy_trial_clips_follow_up_check" CHECK ("follow_up_status" is null or "follow_up_status" in ('pending', 'sent', 'skipped')))`,
+  `CREATE INDEX IF NOT EXISTS "academy_trial_clips_academy_idx" ON "academy_trial_clips" ("academy_id", "created_at")`,
+  `CREATE INDEX IF NOT EXISTS "academy_trial_clips_follow_up_idx" ON "academy_trial_clips" ("follow_up_status", "follow_up_at")`
+];
+
 /**
  * 0068: the trigger that writes academy_contact_stage_events on every stage or
  * kind change of a People contact. Not a Drizzle object, so the publish review
@@ -171,8 +194,14 @@ END $$ LANGUAGE plpgsql`,
  * Only ADD COLUMN IF NOT EXISTS of nullable/defaulted columns and CREATE TABLE IF NOT
  * EXISTS belong here: nothing that drops, renames or rewrites data.
  */
-const COLUMNS: Array<{ table: string; column: string; type: string }> = [
+export const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   // 0052_academy_profile.sql
+  // 0069_marketing_practices.sql
+  { table: "academies", column: "google_review_url", type: "text" },
+  { table: "academy_contacts", column: "referred_by_contact_id", type: `integer CONSTRAINT "academy_contacts_referred_by_contact_id_academy_contacts_id_fk" REFERENCES "academy_contacts"("id") ON DELETE SET NULL` },
+  { table: "academy_contacts", column: "referral_note", type: "text" },
+  { table: "academy_contacts", column: "trial_session_id", type: `integer CONSTRAINT "academy_contacts_trial_session_id_academy_sessions_id_fk" REFERENCES "academy_sessions"("id") ON DELETE SET NULL` },
+  { table: "academy_feature_settings", column: "content_calendar", type: "jsonb" },
   // 0066_every_child_appears.sql
   { table: "academy_players", column: "public_posts_consent", type: "boolean DEFAULT false NOT NULL" },
   { table: "academy_players", column: "public_posts_consent_at", type: "timestamp with time zone" },
@@ -529,6 +558,8 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   // 0068_academy_value_report.sql
   { table: "academy_contact_stage_events", statements: STAGE_EVENTS_STATEMENTS },
   { table: "academy_value_report_shares", statements: REPORT_SHARES_STATEMENTS },
+  // 0069_marketing_practices.sql
+  { table: "academy_trial_clips", statements: TRIAL_CLIPS_STATEMENTS },
 ];
 
 /** Checks that only ever widen what's allowed (0054: academy managers). */
@@ -545,13 +576,22 @@ export async function ensureAdditiveColumns(pool: Pool): Promise<number> {
     `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1)`,
     [names],
   );
-  const tables = new Set(rows.map((r) => r.table_name));
-  const have = new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
+  let tables = new Set(rows.map((r) => r.table_name));
+  let have = new Set(rows.map((r) => `${r.table_name}.${r.column_name}`));
   let added = 0;
   for (const t of TABLES) {
     if (tables.has(t.table)) continue;
     for (const sql of t.statements) await pool.query(sql);
     added += 1;
+  }
+  if (added) {
+    // A table created just now from an older migration still needs the columns later ones added.
+    const { rows: now } = await pool.query<{ table_name: string; column_name: string }>(
+      `SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ANY($1)`,
+      [names],
+    );
+    tables = new Set(now.map((r) => r.table_name));
+    have = new Set(now.map((r) => `${r.table_name}.${r.column_name}`));
   }
   for (const c of COLUMNS) {
     // A table the publish never created can't take a column; its own feature fails alone.

@@ -135,6 +135,8 @@ export function useSendClips(academyId: number, sessionId: number) {
 /** A family's clip page (no account). */
 export type KidClip = {
   firstName: string;
+  /** A trial child's clip (People → Trial sessions), not a squad player's. */
+  trial?: boolean;
   academy: { name: string; nameAr: string | null } | null;
   match: { startsAt: string; opponent: string | null } | null;
   momentKind: string | null;

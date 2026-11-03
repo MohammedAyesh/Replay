@@ -51,6 +51,7 @@ async function profileView(academy: Academy, isOwner: boolean) {
     instagramUrl: academy.instagramUrl ?? null,
     facebookUrl: academy.facebookUrl ?? null,
     websiteUrl: academy.websiteUrl ?? null,
+    googleReviewUrl: academy.googleReviewUrl ?? null,
     field: field ? { name: field.name, location: field.location ?? null, latitude: field.latitude ?? null, longitude: field.longitude ?? null } : null,
     canEdit: isOwner,
   };
@@ -88,6 +89,7 @@ const ProfileBody = z.object({
   instagramUrl: optionalText(200),
   facebookUrl: optionalText(200),
   websiteUrl: optionalText(200),
+  googleReviewUrl: z.string().trim().max(300).nullable().optional(),
 });
 
 router.get("/academy/console/academies/:academyId/profile", async (req, res): Promise<void> => {
@@ -116,6 +118,9 @@ router.put("/academy/console/academies/:academyId/profile", async (req, res): Pr
   if (data.instagramUrl && !instagram) errors.instagramUrl = "invalid_link";
   if (data.facebookUrl && !facebook) errors.facebookUrl = "invalid_link";
   if (data.websiteUrl && !website) errors.websiteUrl = "invalid_link";
+  // Undefined leaves the review link as it is (older clients don't send it).
+  const review = data.googleReviewUrl === undefined ? undefined : socialUrl(data.googleReviewUrl || null, null);
+  if (data.googleReviewUrl && !review) errors.googleReviewUrl = "invalid_link";
   const hasLat = data.latitude !== null && data.latitude !== undefined;
   const hasLng = data.longitude !== null && data.longitude !== undefined;
   if (hasLat !== hasLng) errors.location = "incomplete_location";
@@ -134,6 +139,7 @@ router.put("/academy/console/academies/:academyId/profile", async (req, res): Pr
     instagramUrl: instagram,
     facebookUrl: facebook,
     websiteUrl: website,
+    ...(review !== undefined ? { googleReviewUrl: review } : {}),
   }).where(eq(academiesTable.id, allowed.academyId)).returning();
   if (!academy) { res.status(404).json({ error: "Academy not found" }); return; }
   res.json(await profileView(academy, true));

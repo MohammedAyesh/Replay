@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
 import { Link2, Loader2, Trash2, UserRound, X } from "lucide-react";
 import { usePeopleCopy } from "@/i18n/people-strings";
+import { useMarketingCopy } from "@/i18n/marketing-strings";
 import {
   CONTACT_KINDS,
   LEAD_STAGES,
@@ -9,6 +10,7 @@ import {
   useDeleteContact,
   useLinkContact,
   useUnlinkContact,
+  useContacts,
   useUpdateContact,
   useWhatsappOverview,
   type Contact,
@@ -135,6 +137,8 @@ export function ContactEditor({
   isOwner?: boolean;
 }) {
   const copy = usePeopleCopy();
+  const marketing = useMarketingCopy();
+  const everyone = useContacts(academyId);
   const create = useCreateContact(academyId);
   const update = useUpdateContact(academyId);
   const remove = useDeleteContact(academyId);
@@ -145,6 +149,8 @@ export function ContactEditor({
   const [stage, setStage] = useState<LeadStage | "">(contact?.stage ?? "");
   const [tags, setTags] = useState<string[]>(contact?.tags ?? []);
   const [notes, setNotes] = useState(contact?.notes ?? "");
+  const [referredBy, setReferredBy] = useState<number | null>(contact?.referredByContactId ?? null);
+  const [referralNote, setReferralNote] = useState(contact?.referralNote ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
@@ -154,6 +160,8 @@ export function ContactEditor({
     setStage(contact?.stage ?? "");
     setTags(contact?.tags ?? []);
     setNotes(contact?.notes ?? "");
+    setReferredBy(contact?.referredByContactId ?? null);
+    setReferralNote(contact?.referralNote ?? "");
     setSaved(false);
   }, [contact?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -162,7 +170,9 @@ export function ContactEditor({
     || contact.kind !== kind
     || (contact.stage ?? "") !== stage
     || JSON.stringify(contact.tags) !== JSON.stringify(tags)
-    || (contact.notes ?? "") !== notes, [contact, name, kind, stage, tags, notes]);
+    || (contact.notes ?? "") !== notes
+    || (contact.referredByContactId ?? null) !== referredBy
+    || (contact.referralNote ?? "") !== referralNote, [contact, name, kind, stage, tags, notes, referredBy, referralNote]);
 
   const save = async () => {
     setError(null);
@@ -173,6 +183,8 @@ export function ContactEditor({
       stage: kind === "lead" ? (stage || "new") as LeadStage : (stage || null) as LeadStage | null,
       tags,
       notes: notes.trim() || null,
+      referredByContactId: referredBy,
+      referralNote: referralNote.trim() || null,
     };
     try {
       const result = contact
@@ -228,6 +240,22 @@ export function ContactEditor({
         <Label htmlFor="contact-notes">{copy.contact.notes}</Label>
         <Textarea id="contact-notes" dir="auto" rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} className="resize-y" />
       </div>
+
+      {(kind === "lead" || kind === "parent" || kind === "player") && (
+        <div className="grid gap-3 sm:grid-cols-2" data-testid="contact-referral">
+          <div className="space-y-1.5">
+            <Label htmlFor="contact-referred-by">{marketing.referral.by}</Label>
+            <select id="contact-referred-by" value={referredBy ?? ""} onChange={(e) => setReferredBy(e.target.value ? Number(e.target.value) : null)} className={selectClass}>
+              <option value="">{marketing.referral.none}</option>
+              {(everyone.data ?? []).filter((c) => c.id !== contact?.id && (c.kind === "parent" || c.kind === "player")).map((c) => <option key={c.id} value={c.id}>{c.name || c.display}</option>)}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="contact-referral-note">{marketing.referral.note}</Label>
+            <Input id="contact-referral-note" dir="auto" value={referralNote} disabled={!referredBy} placeholder={marketing.referral.notePlaceholder} onChange={(e) => setReferralNote(e.target.value)} className="min-h-10" />
+          </div>
+        </div>
+      )}
 
       {error && <p className="text-sm text-red-400" role="alert">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">

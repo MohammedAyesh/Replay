@@ -17,6 +17,8 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { cn } from "@/lib/utils";
 import { useConsoleKind } from "@/lib/console-kind";
 import { ContactEditor, RelationshipChips } from "./contact-editor";
+import { TrialsCard } from "./trials-card";
+import { useMarketingCopy } from "@/i18n/marketing-strings";
 
 type Segment = "all" | "lead" | "parent" | "player" | "coach" | "unknown";
 const SEGMENTS: Segment[] = ["all", "lead", "parent", "player", "coach", "unknown"];
@@ -51,6 +53,7 @@ function matchesSegment(contact: Contact, segment: Segment) {
 
 export function AcademyPeopleSection({ academyId, isOwner, onOpenChat }: { academyId: number; isOwner: boolean; onOpenChat: (phone: string) => void }) {
   const copy = usePeopleCopy();
+  const marketing = useMarketingCopy();
   const contacts = useContacts(academyId);
   const updateContact = useUpdateContact(academyId);
   const [segment, setSegment] = useState<Segment>("all");
@@ -79,6 +82,12 @@ export function AcademyPeopleSection({ academyId, isOwner, onOpenChat }: { acade
     });
   }, [all, segment, stage, tag, query]);
 
+  const byId = useMemo(() => new Map(all.map((c) => [c.id, c])), [all]);
+  const referrals = useMemo(() => {
+    const n = new Map<number, number>();
+    for (const c of all) if (c.referredByContactId) n.set(c.referredByContactId, (n.get(c.referredByContactId) ?? 0) + 1);
+    return n;
+  }, [all]);
   const editingContact = editing && editing !== "new" ? all.find((c) => c.id === editing.id) ?? editing : null;
   const toggle = (id: number) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const allVisibleSelected = list.length > 0 && list.every((c) => selected.includes(c.id));
@@ -117,6 +126,8 @@ export function AcademyPeopleSection({ academyId, isOwner, onOpenChat }: { acade
           ))}
         </div>
       )}
+
+      {kind !== "venue" && (segment === "lead" || segment === "all") && <TrialsCard academyId={academyId} hideWhenEmpty={segment === "all"} />}
 
       <div className="flex flex-col gap-2 sm:flex-row">
         <div className="relative flex-1">
@@ -161,6 +172,12 @@ export function AcademyPeopleSection({ academyId, isOwner, onOpenChat }: { acade
                         </span>
                         <span className="mt-0.5 block text-xs text-muted-text" dir="ltr">{c.display}</span>
                         <RelationshipChips contact={c} className="mt-1" />
+                        {(c.referredByContactId || referrals.get(c.id)) ? (
+                          <span className="mt-1 flex flex-wrap gap-1.5 text-[11px]" data-testid={`referral-${c.id}`}>
+                            {c.referredByContactId && byId.get(c.referredByContactId) && <span className="rounded-full bg-turf/10 px-2 py-0.5 text-turf" dir="auto">{marketing.referral.chip(byId.get(c.referredByContactId)!.name || byId.get(c.referredByContactId)!.display)}{c.referralNote ? ` · ${c.referralNote}` : ""}</span>}
+                            {referrals.get(c.id) ? <span className="rounded-full bg-raised px-2 py-0.5 text-muted-text">{marketing.referral.count(referrals.get(c.id)!)}</span> : null}
+                          </span>
+                        ) : null}
                         {c.notes && <span className="mt-1 line-clamp-1 block text-xs text-muted-text" dir="auto">{c.notes}</span>}
                       </button>
                       <div className="flex shrink-0 flex-col items-end gap-1.5">

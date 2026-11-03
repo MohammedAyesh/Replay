@@ -297,6 +297,11 @@ export async function onFeePaid(academyId: number, fee: { id: number; playerId: 
 // ─── Footage ─────────────────────────────────────────────────────────────────
 
 export async function onFootageReady(academyId: number, sessionId: number, recordingId: number): Promise<void> {
+  await safely("review_request", async () => {
+    const session = await loadSessionSnapshot(academyId, sessionId);
+    if (!session || Date.now() - session.startsAt.getTime() > 7 * 86_400_000) return;
+    await queueReviewRequests(academyId, session);
+  });
   await safely("footage_ready", async () => {
     const session = await loadSessionSnapshot(academyId, sessionId);
     if (!session) return;
@@ -312,6 +317,39 @@ export async function onFootageReady(academyId: number, sessionId: number, recor
       (phone) => `a${academyId}:foot${recordingId}:s${sessionId}:${phone}`,
     );
   });
+}
+
+// ─── Review requests ─────────────────────────────────────────────────────────
+
+/** Academic terms in Jordan as the academies run them: Sep–Dec, Jan–Apr, May–Aug. */
+export function reviewTerm(at: Date): string {
+  const [y, m] = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Amman", year: "numeric", month: "2-digit" }).format(at).split("-").map(Number);
+  return m >= 9 ? `${y}-sep` : m >= 5 ? `${y}-may` : `${y}-jan`;
+}
+
+/** 7 pm in Amman on the day after `at` (Jordan is UTC+3 all year). */
+export function nextDaySevenPm(at: Date): Date {
+  const [y, m, d] = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Amman", year: "numeric", month: "2-digit", day: "2-digit" }).format(at).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1, 19 - 3, 0, 0));
+}
+
+/**
+ * The Google review request, after a match video is ready: to the families of
+ * the squad, the next day at 7 pm, once per family per term. Off by default.
+ */
+export async function queueReviewRequests(academyId: number, session: SessionSnapshot, now = new Date()): Promise<number> {
+  const ctx = await automationContext(academyId, "review_request");
+  if (!ctx) return 0;
+  const [academy] = await db.select({ url: academiesTable.googleReviewUrl }).from(academiesTable).where(eq(academiesTable.id, academyId));
+  if (!academy?.url) return 0;
+  const term = reviewTerm(now);
+  return queueMerged(
+    ctx,
+    sessionScope(session),
+    () => ({ link: academy.url! }),
+    (phone) => `a${academyId}:review:${term}:${phone}`,
+    { scheduledFor: nextDaySevenPm(now) },
+  );
 }
 
 // ─── Registrations ───────────────────────────────────────────────────────────

@@ -304,6 +304,11 @@ export type Contact = {
   players: ContactPlayerLink[];
   lastMessageAt?: string | null;
   optedOut?: boolean;
+  /** The family that told them about the academy, and what the referrer gets. */
+  referredByContactId?: number | null;
+  referralNote?: string | null;
+  /** The session their child comes to try (People → Trial sessions). */
+  trialSessionId?: number | null;
   createdAt: string;
 };
 
@@ -599,6 +604,8 @@ export type ContactInput = {
   tags?: string[];
   notes?: string | null;
   links?: Array<{ playerId: number; relationship: Relationship }>;
+  referredByContactId?: number | null;
+  referralNote?: string | null;
 };
 
 export function useCreateContact(academyId: number) {

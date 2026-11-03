@@ -1,6 +1,7 @@
 import { useParams } from "wouter";
 import { Loader2, Lock } from "lucide-react";
 import { useFeaturedCopy } from "@/i18n/featured-strings";
+import { useMarketingCopy } from "@/i18n/marketing-strings";
 import { useLocale } from "@/i18n/context";
 import { apiUrl } from "@/lib/academy-studio-api";
 import { useKidClip } from "@/lib/academy-featured-api";
@@ -12,6 +13,7 @@ import { useKidClip } from "@/lib/academy-featured-api";
 export default function KidClipPage() {
   const { token = "" } = useParams<{ token: string }>();
   const copy = useFeaturedCopy();
+  const marketing = useMarketingCopy();
   const { setLocale } = useLocale();
   const clip = useKidClip(token);
   const t = copy.page;
@@ -37,9 +39,9 @@ export default function KidClipPage() {
         : (
           <>
             <header className="space-y-1">
-              <p className="text-sm text-muted-text">{t.from(academy)}{date ? ` · ${date}` : ""}</p>
-              <h1 className="font-display text-3xl font-bold" dir="auto">{t.title(clip.data.firstName)}</h1>
-              <p className="text-sm text-text">{copy.clips.moment(clip.data.momentKind)}{note ? ` — ${note}` : ""}</p>
+              <p className="text-sm text-muted-text">{clip.data.trial ? marketing.kidTrial(academy) : t.from(academy)}{date ? ` · ${date}` : ""}</p>
+              <h1 className="font-display text-3xl font-bold" dir="auto">{clip.data.firstName ? t.title(clip.data.firstName) : marketing.kidTrialNoName}</h1>
+              {!clip.data.trial && <p className="text-sm text-text">{copy.clips.moment(clip.data.momentKind)}{note ? ` — ${note}` : ""}</p>}
             </header>
             {clip.data.ready
               ? <video src={apiUrl(`/kc/${token}/video`)} controls playsInline autoPlay muted className="aspect-video w-full rounded-2xl bg-black" data-testid="kid-clip-video" />

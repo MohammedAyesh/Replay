@@ -25,6 +25,9 @@ export type AutomationKey =
   | "player_clip"
   | "registration_received"
   | "registration_approved"
+  | "trial_clip"
+  | "trial_follow_up"
+  | "review_request"
   | "announcement";
 
 export type TimingUnit = "hoursBefore" | "daysBefore" | "daysAfter";
@@ -188,6 +191,43 @@ export const AUTOMATIONS: AutomationDefinition[] = [
     },
   },
   {
+    // A trial child's moment from the session he tried, to the number that asked (lib/marketing/trials.ts).
+    key: "trial_clip",
+    allowedAudiences: [],
+    defaultAudiences: [],
+    timing: null,
+    placeholders: [...COMMON, "player", "day", "date", "link"],
+    template: {
+      ar: "أهلاً {name} 👋\nهاي لقطة {player} من الحصة التجريبية مع {academy} يوم {day} {date}:\n{link}",
+      en: "Hi {name} 👋\nHere's {player} in action at the trial session with {academy} on {day} {date}:\n{link}",
+    },
+  },
+  {
+    // Days after the trial clip, unless People already shows the family joined or lost.
+    key: "trial_follow_up",
+    allowedAudiences: [],
+    defaultAudiences: [],
+    timing: { unit: "daysAfter", default: 2, min: 1, max: 7 },
+    placeholders: [...COMMON, "player", "link"],
+    template: {
+      ar: "أهلاً {name} 👋\nإن شاء الله {player} انبسط بالحصة التجريبية. إذا حابين تسجّلوه بـ {academy}، سجّلوا من هون:\n{link}\nأو ردّوا علينا هون وبنساعدكم.",
+      en: "Hi {name} 👋\nWe hope {player} enjoyed the trial session. If you'd like to join {academy}, register here:\n{link}\nOr just reply here and we'll help.",
+    },
+  },
+  {
+    // The day after a match video is ready, at 7 pm Amman; at most once per family per term (Sep–Dec, Jan–Apr, May–Aug).
+    // Off until the owner turns it on, and only with a Google review link in Profile.
+    key: "review_request",
+    allowedAudiences: ["parents"],
+    defaultAudiences: ["parents"],
+    timing: null,
+    placeholders: [...COMMON, "player", "link"],
+    template: {
+      ar: "{academy} ⭐\nإذا مبسوطين من شغلنا مع {player}، مراجعة منكم على جوجل بتفرق معنا كتير:\n{link}\nشكراً إلكم!",
+      en: "{academy} ⭐\nIf you're happy with how {player} is doing, a Google review from you would mean a lot to us:\n{link}\nThank you!",
+    },
+  },
+  {
     key: "announcement",
     allowedAudiences: ["parents", "players", "coaches"],
     defaultAudiences: ["parents", "players"],
@@ -226,7 +266,7 @@ export type EffectiveAutomation = {
  * Announcements default to on (the owner still ticks "also send on WhatsApp" per
  * announcement); every other automation is off until the owner turns it on.
  */
-const DEFAULT_ENABLED: Partial<Record<AutomationKey, boolean>> = { announcement: true, player_clip: true };
+const DEFAULT_ENABLED: Partial<Record<AutomationKey, boolean>> = { announcement: true, player_clip: true, trial_clip: true, trial_follow_up: true };
 
 export function effectiveAutomation(
   def: AutomationDefinition,

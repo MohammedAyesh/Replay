@@ -39,6 +39,8 @@ export type AcademyProfile = {
   instagramUrl: string | null;
   facebookUrl: string | null;
   websiteUrl: string | null;
+  /** The Google review link, for the review request message. */
+  googleReviewUrl: string | null;
   field: { name: string; location: string | null; latitude: number | null; longitude: number | null } | null;
   canEdit: boolean;
 };

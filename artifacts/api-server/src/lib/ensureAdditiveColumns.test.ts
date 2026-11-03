@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -49,7 +49,8 @@ describe("ensureAdditiveColumns", () => {
   it("adds public-post consent and the every-child tables (0066), as the migration says", async () => {
     for (const t of ["academy_player_clips", "academy_player_features", "academy_feature_settings"]) await pool.query(`DROP TABLE IF EXISTS "${t}"`);
     await pool.query(`ALTER TABLE "academy_players" DROP COLUMN IF EXISTS "public_posts_consent", DROP COLUMN IF EXISTS "public_posts_consent_at"`);
-    expect(await ensureAdditiveColumns(pool)).toBe(5);
+    // Three tables, the two consent columns, and 0069's calendar column on the table made just now.
+    expect(await ensureAdditiveColumns(pool)).toBe(6);
     const { rows } = await pool.query<{ column_name: string; column_default: string | null }>(`SELECT column_name, column_default FROM information_schema.columns WHERE table_name = 'academy_players' AND column_name LIKE 'public_posts%' ORDER BY column_name`);
     expect(rows.map((r) => r.column_name)).toEqual(["public_posts_consent", "public_posts_consent_at"]);
     expect(rows[0].column_default).toBe("false");
@@ -92,6 +93,22 @@ describe("ensureAdditiveColumns", () => {
     ]);
     await pool.query(`DELETE FROM academies WHERE id = $1`, [a.id]);
     await pool.query(`DELETE FROM fields WHERE id = $1`, [f.id]);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("adds the marketing-practice columns and academy_trial_clips (0069), as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "academy_trial_clips"`);
+    await pool.query(`ALTER TABLE "academy_contacts" DROP COLUMN IF EXISTS "referred_by_contact_id", DROP COLUMN IF EXISTS "referral_note", DROP COLUMN IF EXISTS "trial_session_id"`);
+    await pool.query(`ALTER TABLE "academies" DROP COLUMN IF EXISTS "google_review_url"`);
+    await pool.query(`ALTER TABLE "academy_feature_settings" DROP COLUMN IF EXISTS "content_calendar"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(6);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0069_marketing_practices.sql", import.meta.url), "utf8");
+    for (const statement of TRIAL_CLIPS_STATEMENTS) expect(migration).toContain(`${statement};`);
+    for (const c of COLUMNS.filter((x) => ["google_review_url", "referred_by_contact_id", "referral_note", "trial_session_id", "content_calendar"].includes(x.column))) {
+      expect(migration).toContain(`ALTER TABLE "${c.table}" ADD COLUMN IF NOT EXISTS "${c.column}" ${c.type};`);
+    }
+    const { rows } = await pool.query<{ conname: string }>(`SELECT conname FROM pg_constraint WHERE conname IN ('academy_contacts_referred_by_contact_id_academy_contacts_id_fk', 'academy_contacts_trial_session_id_academy_sessions_id_fk') ORDER BY conname`);
+    expect(rows).toHaveLength(2);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 

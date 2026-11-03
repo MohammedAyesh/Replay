@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   check,
   index,
@@ -15,6 +16,7 @@ import {
 import { academiesTable } from "./academies";
 import { academyPlayersTable } from "./academyPlayers";
 import { academySquadsTable } from "./academySquads";
+import { academySessionsTable } from "./academySessions";
 import { usersTable } from "./users";
 
 /**
@@ -178,6 +180,12 @@ export const academyContactsTable = pgTable("academy_contacts", {
   avatarCheckedAt: timestamp("avatar_checked_at", { withTimezone: true }),
   /** They are typing (or recording) until this time. */
   typingUntil: timestamp("typing_until", { withTimezone: true }),
+  /** The family that told them about the academy (0069). */
+  referredByContactId: integer("referred_by_contact_id").references((): AnyPgColumn => academyContactsTable.id, { onDelete: "set null" }),
+  /** What the referrer gets, in the owner's words ("10% off December"). */
+  referralNote: text("referral_note"),
+  /** The session their child comes to try (0069); the trial clip is cut from its video. */
+  trialSessionId: integer("trial_session_id").references(() => academySessionsTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

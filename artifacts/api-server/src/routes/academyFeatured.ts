@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { academiesTable, academyPlayerClipsTable, academyPlayersTable, academySessionsTable, db, userClipsTable } from "@workspace/db";
+import { academiesTable, academyPlayerClipsTable, academyPlayersTable, academySessionsTable, academyTrialClipsTable, db, userClipsTable } from "@workspace/db";
 import { getClipExportCdnUrl } from "../lib/bunny";
 import { fetchExportObject, probeExportObject } from "../lib/backupExport";
 import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
@@ -125,7 +125,17 @@ router.post(`${base}/matches/:sessionId/private-clips/send`, async (req, res): P
 
 const TOKEN = /^[0-9a-f]{32}$/;
 
-async function clipByToken(req: Request, res: Response) {
+type ClipByToken = {
+  kind: "player" | "trial";
+  clip: { id: number; academyId: number; sessionId: number | null; momentKind: string | null; note: unknown; openedAt: Date | null };
+  playerName: string;
+  exportStatus: string | null;
+  exportedUrl: string | null;
+  userClipId: number | null;
+};
+
+/** A player's clip from a match, or a trial child's clip (lib/marketing/trials.ts): both open at /kc/<token>. */
+async function clipByToken(req: Request, res: Response): Promise<ClipByToken | null> {
   const token = String(req.params.token ?? "");
   if (!TOKEN.test(token)) { res.status(404).json({ error: "Not found" }); return null; }
   const [row] = await db.select({
@@ -139,8 +149,27 @@ async function clipByToken(req: Request, res: Response) {
     .leftJoin(userClipsTable, eq(userClipsTable.id, academyPlayerClipsTable.userClipId))
     .where(and(eq(academyPlayerClipsTable.token, token)));
   // A prepared clip the owner has not sent yet is not the family's yet.
-  if (!row || row.clip.status !== "sent") { res.status(404).json({ error: "Not found" }); return null; }
-  return row;
+  if (row) {
+    if (row.clip.status !== "sent") { res.status(404).json({ error: "Not found" }); return null; }
+    return { kind: "player", ...row };
+  }
+  const [trial] = await db.select({
+    clip: academyTrialClipsTable,
+    exportStatus: userClipsTable.exportStatus,
+    exportedUrl: userClipsTable.exportedUrl,
+    userClipId: userClipsTable.id,
+  }).from(academyTrialClipsTable)
+    .leftJoin(userClipsTable, eq(userClipsTable.id, academyTrialClipsTable.userClipId))
+    .where(eq(academyTrialClipsTable.token, token));
+  if (!trial || trial.clip.status !== "sent") { res.status(404).json({ error: "Not found" }); return null; }
+  return {
+    kind: "trial",
+    clip: { id: trial.clip.id, academyId: trial.clip.academyId, sessionId: trial.clip.sessionId, momentKind: null, note: null, openedAt: trial.clip.openedAt },
+    playerName: trial.clip.childName ?? "",
+    exportStatus: trial.exportStatus,
+    exportedUrl: trial.exportedUrl,
+    userClipId: trial.userClipId,
+  };
 }
 
 router.get("/kc/:token", async (req, res): Promise<void> => {
@@ -149,12 +178,13 @@ router.get("/kc/:token", async (req, res): Promise<void> => {
   if (!row) return;
   const [[academy], [session]] = await Promise.all([
     db.select({ name: academiesTable.name, nameAr: academiesTable.nameAr, logoUrl: academiesTable.logoUrl }).from(academiesTable).where(eq(academiesTable.id, row.clip.academyId)),
-    db.select({ startsAt: academySessionsTable.startsAt, opponent: academySessionsTable.opponent }).from(academySessionsTable).where(eq(academySessionsTable.id, row.clip.sessionId)),
+    row.clip.sessionId ? db.select({ startsAt: academySessionsTable.startsAt, opponent: academySessionsTable.opponent }).from(academySessionsTable).where(eq(academySessionsTable.id, row.clip.sessionId)) : Promise.resolve([]),
   ]);
   res.json({
     firstName: row.playerName.trim().split(/\s+/)[0] ?? "",
     academy: academy ? { name: academy.name, nameAr: academy.nameAr } : null,
     match: session ? { startsAt: session.startsAt.toISOString(), opponent: session.opponent } : null,
+    trial: row.kind === "trial",
     momentKind: row.clip.momentKind,
     note: row.clip.note ?? null,
     ready: row.exportStatus === "done" && Boolean(row.exportedUrl),
@@ -170,7 +200,8 @@ router.get("/kc/:token/video", async (req, res): Promise<void> => {
     return;
   }
   if (!row.clip.openedAt) {
-    await db.update(academyPlayerClipsTable).set({ openedAt: new Date() }).where(eq(academyPlayerClipsTable.id, row.clip.id)).catch(() => {});
+    const table = row.kind === "trial" ? academyTrialClipsTable : academyPlayerClipsTable;
+    await db.update(table).set({ openedAt: new Date() }).where(eq(table.id, row.clip.id)).catch(() => {});
   }
   const url = getClipExportCdnUrl(row.userClipId, row.exportedUrl);
   if (url) {

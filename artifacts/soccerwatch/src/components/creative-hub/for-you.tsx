@@ -6,6 +6,7 @@ import { useForYouCopy } from "@/i18n/creative-foryou-strings";
 import { useCreativeBrand } from "@/lib/creative-hub-api";
 import { useForYou, useSkipForYouDraft, type ForYouDraft, type ForYouGroup } from "@/lib/creative-hub-foryou-api";
 import { DraftCard, DraftSkeleton, FixtureCard } from "./for-you/draft-card";
+import { WeekPlan } from "./for-you/week-plan";
 import type { SectionProps, TemplateSeed } from "./types";
 
 const GROUPS: ForYouGroup[] = ["after", "upcoming", "week"];
@@ -76,6 +77,7 @@ export function CreativeForYou({ academyId, nav }: SectionProps & { seed?: Templ
   return (
     <div className="space-y-6" data-testid="creative-for-you">
       <p className="text-sm text-muted-text">{copy.intro}</p>
+      <WeekPlan academyId={academyId} drafts={feed.data?.drafts ?? []} onOpen={(id) => nav.openInEditor(id)} />
       {GROUPS.map((group) => {
         const drafts = groups[group];
         const extra = group === "upcoming" ? fixtures : [];

@@ -26,6 +26,8 @@ export const academiesTable = pgTable("academies", {
   instagramUrl: text("instagram_url"),
   facebookUrl: text("facebook_url"),
   websiteUrl: text("website_url"),
+  /** The academy's Google review link, for the review-request message (0069). */
+  googleReviewUrl: text("google_review_url"),
   /** Bunny Storage CDN URL of this academy's branding intro clip, prepended to exports and playback of its clips. */
   introVideoUrl: text("intro_video_url"),
   joinCode: text("join_code"),

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, ExternalLink, Facebook, Globe, ImagePlus, Instagram, Loader2, LocateFixed, MapPin, Trash2 } from "lucide-react";
+import { Check, ExternalLink, Facebook, Globe, Star, ImagePlus, Instagram, Loader2, LocateFixed, MapPin, Trash2 } from "lucide-react";
 import { useProfileCopy } from "@/i18n/profile-strings";
+import { useMarketingCopy } from "@/i18n/marketing-strings";
 import {
   ProfileError,
   formatPhone,
@@ -33,6 +34,7 @@ function toForm(p: AcademyProfile): Form {
     instagramUrl: p.instagramUrl ?? "",
     facebookUrl: p.facebookUrl ?? "",
     websiteUrl: p.websiteUrl ?? "",
+    googleReviewUrl: p.googleReviewUrl ?? "",
   };
 }
 
@@ -51,6 +53,7 @@ function toInput(f: Form): ProfileInput {
     instagramUrl: f.instagramUrl.trim() || null,
     facebookUrl: f.facebookUrl.trim() || null,
     websiteUrl: f.websiteUrl.trim() || null,
+    googleReviewUrl: f.googleReviewUrl.trim() || null,
   };
 }
 
@@ -82,6 +85,7 @@ function Field({ id, label, hint, error, children }: { id: string; label: string
 /** Academy console → Profile: name, logo, contact, location and links, edited by the owner. */
 export function AcademyProfileSection({ academyId }: { academyId: number }) {
   const copy = useProfileCopy();
+  const marketing = useMarketingCopy();
   const query = useAcademyProfile(academyId);
   const save = useSaveAcademyProfile(academyId);
   const logo = useAcademyLogo(academyId);
@@ -275,6 +279,11 @@ export function AcademyProfileSection({ academyId }: { academyId: number }) {
           <Field id="profile-website" label={copy.website} error={errorFor("websiteUrl")}>
             <div className="relative"><Globe className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-text" />
               <Input id="profile-website" dir="ltr" className="ps-9" placeholder="youracademy.jo" value={form.websiteUrl} onChange={(e) => set({ websiteUrl: e.target.value })} /></div>
+          </Field>
+          <Field id="profile-google-review" label={marketing.review.label} error={errorFor("googleReviewUrl")}>
+            <div className="relative"><Star className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-text" />
+              <Input id="profile-google-review" dir="ltr" className="ps-9" placeholder="g.page/r/…/review" value={form.googleReviewUrl} onChange={(e) => set({ googleReviewUrl: e.target.value })} data-testid="input-google-review" /></div>
+            <p className="mt-1 text-xs text-muted-text">{marketing.review.hint}</p>
           </Field>
         </Card>
       </fieldset>
