@@ -2,6 +2,7 @@ import type { CreativeData, CreativeFormat, CreativeStyle, Scene, SceneLayer } f
 import { DEFINITIONS, sampleFor } from "./creativeTemplates/content";
 import { buildScene, plateLayer } from "./creativeTemplates/build";
 export { packPlate } from "./creativeTemplates/build";
+export { AUTOPILOT_AWARD_KEYS, AUTOPILOT_TEMPLATE_KEYS, awardTemplateKey, awardTitle } from "./creativeTemplates/content";
 import { STYLE_KITS } from "./creativeTemplates/styles";
 
 /**

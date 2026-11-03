@@ -29,6 +29,7 @@ import {
 import { domainAllowed } from "../lib/venues/domains";
 import { balanceOf, cancelQuote, changeQuote, policyOf, requirement, rulesSummary } from "../lib/venues/rules";
 import { bookingByReference, verifyCardPayment } from "../lib/venues/payments";
+import { consentMode, consentQuestion } from "../lib/venues/igConsent";
 
 /**
  * A field's public booking website: replayjo.com/v/<slug>, or the field's own domain (the
@@ -103,6 +104,11 @@ async function site(venue: Venue) {
       allowChanges: policy.allowChanges && policy.maxChanges > 0,
     },
     rules: { en: rulesSummary(policy, "en"), ar: rulesSummary(policy, "ar") },
+    /** ask: the form asks the captain; owner/off: it doesn't. Under-18 is offered whenever posting can happen. */
+    instagram: {
+      mode: consentMode(s.igConsentMode),
+      question: { en: consentQuestion(venue.name, "en"), ar: consentQuestion(venue.nameAr || venue.name, "ar") },
+    },
     today: ammanLocal(new Date()).slice(0, 10),
   };
 }
@@ -175,6 +181,10 @@ const bookSchema = z.object({
   phone: z.string().trim().min(7).max(30),
   teamName: z.string().trim().max(80).optional(),
   payWith: z.enum(["cliq", "card", "field"]),
+  /** The captain's answer to "Allow <field> to post a highlight…" (asked only when the field's mode is ask). */
+  igConsent: z.boolean().optional(),
+  /** Players under 18 in this match: never posted. */
+  under18: z.boolean().optional(),
   /** A hidden field people don't fill in; bots do. */
   website: z.string().max(0).optional(),
 });
@@ -200,6 +210,8 @@ router.post("/venue-site/:slug/bookings", async (req, res): Promise<void> => {
       teamName: body.data.teamName ?? null,
       source: "website",
       payWith: body.data.payWith,
+      igConsent: consentMode(venue.settings.igConsentMode) === "ask" ? body.data.igConsent ?? null : undefined,
+      under18: body.data.under18 ?? false,
       notify: true,
     });
     res.status(201).json(await publicBooking(venue, booking.reference));

@@ -51,6 +51,8 @@ export type Content = {
   /** Whether the main picture slot is used. */
   media: boolean;
   video?: { variant: "goal" | "talk" | "training" | "duo"; durationMs: number; captions?: string[] };
+  /** A video's line under the crest on its end card (the Instagram autopilot's booking number). */
+  endLine?: string;
   academy: string;
 };
 
@@ -753,14 +755,94 @@ const DEFS: Def[] = [
 /** Templates that read the academy's crest name line. */
 export const DEFINITIONS = DEFS;
 
+// ── Instagram autopilot (field console) ─────────────────────────────────────
+//
+// Kept out of the catalogue (DEFINITIONS): a field's autopilot makes these on its own, from a
+// booking's clip or a weekly award, in the field's brand. Each award is its own template.
+
+const AWARD_TITLES: Record<string, { en: string; ar: string }> = {
+  goal: { en: "Goal of the week", ar: "جول الأسبوع" },
+  dribble: { en: "Dribble of the week", ar: "مراوغة الأسبوع" },
+  shot: { en: "Shot of the week", ar: "تسديدة الأسبوع" },
+  save: { en: "Save of the week", ar: "تصدّي الأسبوع" },
+  fastest: { en: "Fastest player of the week", ar: "أسرع لاعب بالأسبوع" },
+};
+
+export const AUTOPILOT_AWARD_KEYS = ["goal", "dribble", "shot", "save", "fastest"] as const;
+export const awardTemplateKey = (category: string) => `ig-award-${category}`;
+export const AUTOPILOT_TEMPLATE_KEYS = ["ig-booking-clip", "ig-award-nominees", ...AUTOPILOT_AWARD_KEYS.map(awardTemplateKey)];
+export function awardTitle(category: string, ar: boolean): string {
+  const t = AWARD_TITLES[category];
+  return t ? (ar ? t.ar : t.en) : category;
+}
+
+const STORY_ONLY: CreativeFormat[] = ["story"];
+const meetLine = "{{match.date}} · {{match.time}}";
+
+const AUTOPILOT_DEFS: Def[] = [
+  {
+    key: "ig-booking-clip", category: "results", title: { en: "Booking highlight", ar: "لقطة من الحجز" }, formats: STORY_ONLY,
+    content: (ar) => ({
+      arch: "video",
+      kicker: "{{custom.kicker}}",
+      headline: "{{custom.headline}}",
+      meta: [meetLine, "{{match.place}}"],
+      pills: [],
+      media: true,
+      video: { variant: "training", durationMs: 15000 },
+      endLine: "{{custom.endLine}}",
+    }),
+    sample: (ar) => ({
+      academy: academy(ar), match: match(ar), media: photo("goal-clip"),
+      custom: { kicker: ar ? "من ملاعبنا" : "On our pitch", headline: ar ? "جووول" : "Goal!", endLine: ar ? "حجز JG-4F7K2Q" : "Booking JG-4F7K2Q" },
+    }),
+  },
+  {
+    key: "ig-award-nominees", category: "players", title: { en: "Award nominees", ar: "المرشحين للجائزة" }, formats: STORY_ONLY,
+    content: (ar) => ({
+      arch: "promo",
+      kicker: "{{custom.award}}",
+      headline: ar ? "صوّتوا هلّق" : "Vote now",
+      sub: "{{custom.nominees}}",
+      meta: ["{{custom.closes}}"],
+      pills: ["{{custom.count}}"],
+      cta: ar ? "صوّتوا على تطبيق ريبلاي" : "Vote in the Replay app",
+      badge: ar ? "ترشيحات" : "Nominees",
+      media: true,
+    }),
+    sample: (ar) => ({
+      academy: academy(ar), media: photo("goal-clip"),
+      custom: { award: awardTitle("goal", ar), nominees: ar ? "4 أجوال من ماتشات الأسبوع" : "4 goals from this week's games", closes: ar ? "التصويت لآخر يوم الثلاثا" : "Voting closes Tuesday", count: ar ? "4 مرشحين" : "4 nominees" },
+    }),
+  },
+  ...AUTOPILOT_AWARD_KEYS.map((category): Def => ({
+    key: awardTemplateKey(category), category: "players", title: AWARD_TITLES[category], formats: STORY_ONLY,
+    content: (ar) => ({
+      arch: "video",
+      kicker: awardTitle(category, ar),
+      headline: category === "fastest" ? "{{custom.speed}}" : ar ? "الفايز" : "The winner",
+      meta: [meetLine, "{{match.place}}"],
+      pills: [],
+      badge: ar ? "الفايز" : "Winner",
+      media: true,
+      video: { variant: "training", durationMs: 15000 },
+      endLine: "{{custom.endLine}}",
+    }),
+    sample: (ar) => ({
+      academy: academy(ar), match: match(ar), media: photo("goal-clip"),
+      custom: { speed: ar ? "24.9 كم/س" : "24.9 km/h", endLine: ar ? "حجز JG-4F7K2Q" : "Booking JG-4F7K2Q" },
+    }),
+  })),
+];
+
 export function contentFor(key: string, locale: Locale): Content | null {
-  const def = DEFS.find((d) => d.key === key);
+  const def = DEFS.find((d) => d.key === key) ?? AUTOPILOT_DEFS.find((d) => d.key === key);
   if (!def) return null;
   return { ...def.content(locale === "ar"), key, academy: "{{academy.name}}" };
 }
 
 export function sampleFor(key: string, locale: Locale): CreativeData {
-  const def = DEFS.find((d) => d.key === key);
+  const def = DEFS.find((d) => d.key === key) ?? AUTOPILOT_DEFS.find((d) => d.key === key);
   const ar = locale === "ar";
   return def ? def.sample(ar) : { academy: academy(ar) };
 }

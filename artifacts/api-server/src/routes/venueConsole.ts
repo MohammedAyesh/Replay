@@ -44,6 +44,7 @@ import {
   type Venue,
 } from "../lib/venues/store";
 import { agentApiKey } from "../lib/venues/agent";
+import { consentMode } from "../lib/venues/igConsent";
 import { checkDomain, setDomain, sitesIp } from "../lib/venues/domains";
 import { sealCardConfig } from "../lib/venues/payments";
 
@@ -189,7 +190,8 @@ router.get(`${base}/bookings`, async (req, res): Promise<void> => {
     statuses?.length ? inArray(venueBookingsTable.status, statuses) : sql`true`,
   )).orderBy(asc(venueBookingsTable.startsAt)).limit(2000);
   const pitches = await listPitches(a.venue.id);
-  res.json({ from, to, bookings: rows.map((b) => bookingView(b, new Map(pitches.map((p) => [p.id, p])))), pitches: pitches.map((p) => pitchView(p)) });
+  // The front desk's booking forms follow the field's Instagram consent mode (set by Replay).
+  res.json({ from, to, bookings: rows.map((b) => bookingView(b, new Map(pitches.map((p) => [p.id, p])))), pitches: pitches.map((p) => pitchView(p)), igConsentMode: consentMode(a.venue.settings.igConsentMode) });
 });
 
 /** Payments waiting on someone: receipts to check and held bookings, oldest first. */
@@ -226,6 +228,9 @@ const newBookingSchema = z.object({
   amountFils: z.number().int().min(0).max(10_000_000).nullable().optional(),
   paid: z.boolean().optional(),
   notify: z.boolean().optional(),
+  /** Instagram consent from the front desk (ask: the captain's answer; owner: "no" marks a refusal). */
+  igConsent: z.boolean().nullable().optional(),
+  under18: z.boolean().optional(),
 });
 
 router.post(`${base}/bookings`, async (req, res): Promise<void> => {
@@ -257,6 +262,9 @@ const editSchema = z.object({
   customerPhone: z.string().trim().max(30).nullable().optional(),
   teamName: z.string().trim().max(80).nullable().optional(),
   notes: z.string().trim().max(1000).nullable().optional(),
+  /** The front desk's Instagram answer for this booking; null clears it (not asked). */
+  igConsent: z.enum(["yes", "no"]).nullable().optional(),
+  under18: z.boolean().optional(),
 });
 
 router.patch(`${base}/bookings/:bookingId`, async (req, res): Promise<void> => {
@@ -275,6 +283,12 @@ router.patch(`${base}/bookings/:bookingId`, async (req, res): Promise<void> => {
     if (body.data.customerName !== undefined) patch.customerName = body.data.customerName || null;
     if (body.data.teamName !== undefined) patch.teamName = body.data.teamName || null;
     if (body.data.notes !== undefined) patch.notes = body.data.notes || null;
+    if (body.data.igConsent !== undefined) {
+      patch.igConsent = body.data.igConsent;
+      patch.igConsentSource = body.data.igConsent ? "staff" : null;
+      patch.igConsentAt = body.data.igConsent ? new Date() : null;
+    }
+    if (body.data.under18 !== undefined) patch.under18 = body.data.under18;
     if (body.data.customerPhone !== undefined) {
       const phone = body.data.customerPhone ? normalizePhone(body.data.customerPhone) : null;
       if (body.data.customerPhone && !phone) { res.status(400).json({ error: "That phone number doesn't look right" }); return; }

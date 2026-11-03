@@ -102,10 +102,30 @@ export const venueSettingsTable = pgTable("venue_settings", {
   domainStatus: text("domain_status").notNull().default("none"),
   domainCheckedAt: timestamp("domain_checked_at", { withTimezone: true }),
   domainError: text("domain_error"),
+  /**
+   * Instagram consent (Admin → Field consoles, admin only; the owner sees it):
+   * ask   — Replay asks the captain in every booking flow; the answer is on the booking.
+   * owner — the field collects consent itself (signage, its own terms, the front desk);
+   *         bookings count as consented unless the front desk marks one "no".
+   * off   — nothing from this field is posted. The default.
+   */
+  igConsentMode: text("ig_consent_mode").notNull().default("off"),
+  igConsentSince: timestamp("ig_consent_since", { withTimezone: true }),
+  igConsentBy: integer("ig_consent_by").references(() => usersTable.id, { onDelete: "set null" }),
+  /** Owner mode: the field's own consent wording, pasted by the admin. */
+  igConsentWording: text("ig_consent_wording"),
+  /** Instagram autopilot on for this field (the owner's switch; posts only within the consent mode). */
+  igAutopilot: boolean("ig_autopilot").notNull().default(false),
+  /** approve: every post waits for the owner's OK. auto: posts go out at their slot. */
+  igPublishMode: text("ig_publish_mode").notNull().default("approve"),
+  /** Calendar times: { storyEveryHours, reelTimes: ["HH:MM"], quietFrom, quietTo, … } (lib/venues/igCalendar.ts). */
+  igSlots: jsonb("ig_slots").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("venue_settings_slug_unique").on(table.slug),
+  check("venue_settings_ig_consent_mode_check", sql`${table.igConsentMode} in ('ask', 'owner', 'off')`),
+  check("venue_settings_ig_publish_mode_check", sql`${table.igPublishMode} in ('approve', 'auto')`),
   uniqueIndex("venue_settings_custom_domain_unique").on(table.customDomain).where(sql`${table.customDomain} is not null`),
   check("venue_settings_money_to_check", sql`${table.moneyTo} in ('venue', 'replay')`),
   check("venue_settings_deposit_mode_check", sql`${table.depositMode} in ('full', 'deposit', 'none')`),
@@ -191,6 +211,13 @@ export const venueBookingsTable = pgTable("venue_bookings", {
   cancelledBy: text("cancelled_by"),
   cardRef: text("card_ref"),
   cardUrl: text("card_url"),
+  /** Instagram: yes / no as the captain or the front desk answered; null when nobody was asked. */
+  igConsent: text("ig_consent"),
+  /** captain_web · captain_whatsapp · staff · owner_default · removal (a player asked to take it down) */
+  igConsentSource: text("ig_consent_source"),
+  igConsentAt: timestamp("ig_consent_at", { withTimezone: true }),
+  /** Players under 18 in this booking: never posted, whatever the consent. */
+  under18: boolean("under_18").notNull().default(false),
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   paidAt: timestamp("paid_at", { withTimezone: true }),
   paidBy: integer("paid_by").references(() => usersTable.id, { onDelete: "set null" }),
@@ -209,6 +236,7 @@ export const venueBookingsTable = pgTable("venue_bookings", {
   check("venue_bookings_pay_with_check", sql`${table.payWith} in ('cliq', 'field', 'card', 'none')`),
   check("venue_bookings_money_to_check", sql`${table.moneyTo} in ('venue', 'replay')`),
   check("venue_bookings_source_check", sql`${table.source} in ('console', 'whatsapp', 'website', 'app')`),
+  check("venue_bookings_ig_consent_check", sql`${table.igConsent} is null or ${table.igConsent} in ('yes', 'no')`),
 ]);
 
 /** The booking agent's memory of one WhatsApp chat: the booking it is putting together, the menu step, and when it last spoke. */

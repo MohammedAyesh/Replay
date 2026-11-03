@@ -59,6 +59,7 @@ export * from "./weeklyHighlights";
 export * from "./academySocial";
 export * from "./academyCreative";
 export * from "./venues";
+export * from "./venueInstagram";
 export * from "./creativeMusic";
 export * from "./creativeTemplateMusic";
 export * from "./academyFeatures";

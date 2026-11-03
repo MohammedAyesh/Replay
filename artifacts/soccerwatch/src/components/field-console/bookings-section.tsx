@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useVenueCopy } from "@/i18n/venue-strings";
+import { useInstagramCopy } from "@/i18n/instagram-strings";
 import { cn } from "@/lib/utils";
 import {
   ApiError,
@@ -156,8 +157,8 @@ export function BookingsSection({ venueId, onOpenChat, initial }: { venueId: num
         </details>
       )}
 
-      {draft && <NewBookingDialog venueId={venueId} pitches={pitches} draft={draft} onClose={() => setDraft(null)} onCreated={(d) => { setDate(d); setDraft(null); }} />}
-      {open && <BookingSheet venueId={venueId} booking={open} pitches={pitches} onClose={() => setOpenId(null)} onOpenChat={onOpenChat} />}
+      {draft && <NewBookingDialog venueId={venueId} pitches={pitches} draft={draft} consentMode={bookings.data?.igConsentMode ?? "off"} onClose={() => setDraft(null)} onCreated={(d) => { setDate(d); setDraft(null); }} />}
+      {open && <BookingSheet venueId={venueId} booking={open} pitches={pitches} consentMode={bookings.data?.igConsentMode ?? "off"} onClose={() => setOpenId(null)} onOpenChat={onOpenChat} />}
     </section>
   );
 }
@@ -243,8 +244,12 @@ function WaitingList({ bookings, onOpen }: { bookings: Booking[]; onOpen: (id: n
 
 const LENGTHS = [60, 90, 120, 150, 180];
 
-function NewBookingDialog({ venueId, pitches, draft, onClose, onCreated }: { venueId: number; pitches: Pitch[]; draft: Draft; onClose: () => void; onCreated: (date: string) => void }) {
+function NewBookingDialog({ venueId, pitches, draft, consentMode, onClose, onCreated }: { venueId: number; pitches: Pitch[]; draft: Draft; consentMode: "ask" | "owner" | "off"; onClose: () => void; onCreated: (date: string) => void }) {
   const copy = useVenueCopy();
+  const ig = useInstagramCopy();
+  // ask: the front desk records the captain's answer (off until he says yes); owner: yes unless he refused.
+  const [igConsent, setIgConsent] = useState(consentMode === "owner");
+  const [under18, setUnder18] = useState(false);
   const create = useCreateBooking(venueId);
   const crossesMidnight = draft.time.startsWith("+");
   const [pitchId, setPitchId] = useState(draft.pitchId);
@@ -276,6 +281,7 @@ function NewBookingDialog({ venueId, pitches, draft, onClose, onCreated }: { ven
         amountFils: how === "none" ? 0 : price ? filsFromJod(price) : null,
         repeatWeeks: weeks,
         notify: notify && Boolean(phone),
+        ...(consentMode !== "off" ? { igConsent, under18 } : {}),
       });
       onCreated(draft.date);
     } catch {
@@ -331,6 +337,18 @@ function NewBookingDialog({ venueId, pitches, draft, onClose, onCreated }: { ven
           </div>
           <div className="space-y-1.5"><Label>{copy.bookings.notes}</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} maxLength={1000} dir="auto" /></div>
           {phone && <label className="flex items-center justify-between gap-3 text-sm text-text">{copy.bookings.notify}<Switch checked={notify} onCheckedChange={setNotify} /></label>}
+          {consentMode !== "off" && (
+            <div className="space-y-3 rounded-xl border border-line bg-raised/50 p-3" data-testid="booking-instagram">
+              <label className="flex items-start justify-between gap-3 text-sm text-text">
+                <span>{consentMode === "ask" ? ig.booking.consentAsk : ig.booking.consentOwner}<span className="mt-0.5 block text-xs text-muted-text">{consentMode === "ask" ? ig.booking.consentAskHint : ig.booking.consentOwnerHint}</span></span>
+                <Switch checked={igConsent} onCheckedChange={setIgConsent} data-testid="switch-booking-ig-consent" />
+              </label>
+              <label className="flex items-start justify-between gap-3 text-sm text-text">
+                <span>{ig.booking.under18}<span className="mt-0.5 block text-xs text-muted-text">{ig.booking.under18Hint}</span></span>
+                <Switch checked={under18} onCheckedChange={setUnder18} data-testid="switch-booking-under18" />
+              </label>
+            </div>
+          )}
           {create.error && <p className="text-sm text-red-400" role="alert">{create.error instanceof ApiError && create.error.code === "taken" ? copy.bookings.taken : create.error.message}</p>}
           <Button type="submit" disabled={create.isPending} className="min-h-12 w-full rounded-xl bg-floodlight font-bold text-void" data-testid="button-create-booking">
             {create.isPending ? copy.bookings.creating : copy.bookings.create}
@@ -341,8 +359,9 @@ function NewBookingDialog({ venueId, pitches, draft, onClose, onCreated }: { ven
   );
 }
 
-function BookingSheet({ venueId, booking, pitches, onClose, onOpenChat }: { venueId: number; booking: Booking; pitches: Pitch[]; onClose: () => void; onOpenChat: (phone: string) => void }) {
+function BookingSheet({ venueId, booking, pitches, consentMode, onClose, onOpenChat }: { venueId: number; booking: Booking; pitches: Pitch[]; consentMode: "ask" | "owner" | "off"; onClose: () => void; onOpenChat: (phone: string) => void }) {
   const copy = useVenueCopy();
+  const ig = useInstagramCopy();
   const action = useBookingAction(venueId);
   const edit = useEditBooking(venueId);
   const [cancelling, setCancelling] = useState(false);
@@ -374,7 +393,22 @@ function BookingSheet({ venueId, booking, pitches, onClose, onOpenChat }: { venu
           <Pill kind={booking.paymentStatus}>{copy.payment[booking.paymentStatus]}</Pill>
           <Pill kind="source">{copy.source[booking.source]}</Pill>
           {booking.seriesId && <Pill kind="series">↻</Pill>}
+          {consentMode !== "off" && <Pill kind={booking.igConsent === "yes" ? "confirmed" : booking.igConsent === "no" ? "no_show" : "unpaid"}>{booking.igConsent === "yes" ? ig.booking.consentYes : booking.igConsent === "no" ? ig.booking.consentNo : ig.booking.consentUnknown}</Pill>}
+          {booking.under18 && <Pill kind="no_show">{ig.booking.under18Pill}</Pill>}
         </div>
+
+        {consentMode !== "off" && (
+          <div className="mt-4 space-y-3 rounded-xl border border-line bg-raised/50 p-3" data-testid="sheet-instagram">
+            <label className="flex items-start justify-between gap-3 text-sm text-text">
+              <span>{consentMode === "ask" ? ig.booking.consentAsk : ig.booking.consentOwner}<span className="mt-0.5 block text-xs text-muted-text">{consentMode === "ask" ? ig.booking.consentAskHint : ig.booking.consentOwnerHint}</span></span>
+              <Switch checked={booking.igConsent === "yes"} disabled={edit.isPending || booking.igConsentSource === "removal"} onCheckedChange={(v) => edit.mutate({ id: booking.id, igConsent: v ? "yes" : "no" })} />
+            </label>
+            <label className="flex items-start justify-between gap-3 text-sm text-text">
+              <span>{ig.booking.under18}<span className="mt-0.5 block text-xs text-muted-text">{ig.booking.under18Hint}</span></span>
+              <Switch checked={Boolean(booking.under18)} disabled={edit.isPending} onCheckedChange={(v) => edit.mutate({ id: booking.id, under18: v })} />
+            </label>
+          </div>
+        )}
 
         <dl className="mt-5 grid grid-cols-2 gap-3 text-sm">
           <div><dt className="text-xs text-muted-text">{copy.bookings.reference}</dt><dd className="font-mono font-bold">{booking.reference}</dd></div>

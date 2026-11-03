@@ -181,6 +181,8 @@ export function sectionForPath(path: string): { academyId: number; section: Cons
     const venueMap: Record<string, ConsoleSection> = {
       dashboard: "dashboard", bookings: "bookings", availability: "bookings", customers: "people",
       pitches: "pitches", payments: "payments", agent: "agent", website: "website",
+      // The Instagram autopilot posts in the field's name: it is the Social section's.
+      instagram: "social",
     };
     return { academyId, section: venueMap[second ?? ""] ?? null };
   }

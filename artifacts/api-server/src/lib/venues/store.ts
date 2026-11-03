@@ -52,6 +52,7 @@ import {
   type OpeningHours,
 } from "./core";
 import { balanceOf, cancelQuote, changeQuote, noShowQuote, policyOf, requirement, type History, type Policy } from "./rules";
+import { consentForNewBooking, consentMode } from "./igConsent";
 import {
   cancelledMessage,
   changedMessage,
@@ -295,6 +296,13 @@ export type NewBooking = {
   teamName?: string | null;
   notes?: string | null;
   source: "console" | "whatsapp" | "website" | "app";
+  /**
+   * Instagram: the captain's answer (site, WhatsApp) or the front desk's switch. Undefined: not
+   * asked. What is stored depends on the field's consent mode (igConsent.consentForNewBooking).
+   */
+  igConsent?: boolean | null;
+  /** Players under 18 in this booking: it is never posted. */
+  under18?: boolean;
   /** cliq / card: pay online first (held). field: pay at the field. none: staff booking, nothing to collect online. */
   payWith: "cliq" | "card" | "field" | "none";
   staff?: boolean;
@@ -332,6 +340,7 @@ export async function createBookings(venue: Venue, input: NewBooking): Promise<V
   }
 
   const seriesId = weeks > 1 ? randomBytes(8).toString("hex") : null;
+  const ig = consentForNewBooking(consentMode(s.igConsentMode), { answer: input.igConsent, source: input.source });
   const created: VenueBooking[] = [];
   const now = nowWallMinute();
   for (let w = 0; w < weeks; w += 1) {
@@ -403,6 +412,10 @@ export async function createBookings(venue: Venue, input: NewBooking): Promise<V
         paidAt: input.paid ? new Date() : null,
         paidBy: input.paid ? input.createdBy ?? null : null,
         createdBy: input.createdBy ?? null,
+        igConsent: ig.igConsent,
+        igConsentSource: ig.igConsentSource,
+        igConsentAt: ig.igConsent ? new Date() : null,
+        under18: Boolean(input.under18),
       }).returning();
       return inserted;
     });
@@ -910,6 +923,9 @@ export function bookingView(b: VenueBooking, pitches?: Map<number, VenuePitch>) 
     receiptCheck: b.receiptCheck,
     cardUrl: b.cardUrl,
     cancelReason: b.cancelReason,
+    igConsent: b.igConsent,
+    igConsentSource: b.igConsentSource,
+    under18: b.under18,
     createdAt: b.createdAt.toISOString(),
   };
 }
@@ -993,6 +1009,9 @@ export function settingsView(s: VenueSettings, options: { admin?: boolean } = {}
     domainCheckedAt: s.domainCheckedAt?.toISOString() ?? null,
     domainError: s.domainError,
     siteUrl: `${publicBaseUrl()}/v/${s.slug}`,
+    /** Instagram consent (set by Replay in Admin); the owner sees it, the booking forms follow it. */
+    igConsentMode: consentMode(s.igConsentMode),
+    igConsentWording: s.igConsentWording,
     ...(options.admin ? {} : {}),
   };
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -139,6 +139,18 @@ describe("ensureAdditiveColumns", () => {
     await pool.query(`DELETE FROM creative_template_music WHERE template_key = 't-0064'`);
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0064_creative_template_music.sql", import.meta.url), "utf8");
     for (const statement of CREATIVE_TEMPLATE_MUSIC_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("adds the Instagram autopilot's tables and columns (0070), as the migration says", async () => {
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0070_venue_instagram_autopilot.sql", import.meta.url), "utf8");
+    for (const statement of VENUE_IG_STATEMENTS) expect(migration).toContain(`${statement};`);
+    await pool.query(`DROP TABLE IF EXISTS "venue_ig_removals"`);
+    await pool.query(`ALTER TABLE "venue_bookings" DROP COLUMN IF EXISTS "under_18"`);
+    await pool.query(`ALTER TABLE "venue_settings" DROP COLUMN IF EXISTS "ig_consent_mode"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(3);
+    const { rows } = await pool.query<{ column_default: string }>(`SELECT column_default FROM information_schema.columns WHERE table_name = 'venue_settings' AND column_name = 'ig_consent_mode'`);
+    expect(rows[0].column_default).toContain("'off'");
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 });

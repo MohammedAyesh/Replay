@@ -14,6 +14,8 @@ export const recordingsTable = pgTable("recordings", {
   videoUrl: text("video_url").notNull().default(""),
   highlightMoment: text("highlight_moment"),
   isVisible: boolean("is_visible").notNull().default(false),
+  /** The video's picture is not level (a tilted encode, like rec 401): its metres and speeds are not trusted. */
+  cameraTilted: boolean("camera_tilted").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

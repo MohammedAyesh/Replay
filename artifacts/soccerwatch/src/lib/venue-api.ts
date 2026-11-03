@@ -75,6 +75,9 @@ export type Booking = {
   };
   cardUrl: string | null;
   cancelReason: string | null;
+  igConsent?: "yes" | "no" | null;
+  igConsentSource?: string | null;
+  under18?: boolean;
   createdAt: string;
   venueName?: string;
   venueId?: number;
@@ -199,7 +202,7 @@ export function useVenueDashboard(venueId: number) {
 export function useBookings(venueId: number, from: string, to: string) {
   return useQuery({
     queryKey: ["venue", venueId, "bookings", from, to],
-    queryFn: () => venueCall<{ from: string; to: string; bookings: Booking[]; pitches: Pitch[] }>(`${v(venueId)}/bookings?from=${from}&to=${to}`),
+    queryFn: () => venueCall<{ from: string; to: string; bookings: Booking[]; pitches: Pitch[]; igConsentMode?: "ask" | "owner" | "off" }>(`${v(venueId)}/bookings?from=${from}&to=${to}`),
     refetchInterval: 30_000,
   });
 }
@@ -220,6 +223,8 @@ function useInvalidate(venueId: number) {
 export type NewBooking = {
   pitchId: number; startLocal: string; minutes: number; customerName?: string | null; customerPhone?: string | null; teamName?: string | null; notes?: string | null;
   payWith: "none" | "field" | "cliq" | "card"; repeatWeeks?: number; amountFils?: number | null; paid?: boolean; notify?: boolean;
+  /** Instagram consent from the front desk; under-18 is never posted. */
+  igConsent?: boolean | null; under18?: boolean;
 };
 
 export function useCreateBooking(venueId: number) {
@@ -230,7 +235,7 @@ export function useCreateBooking(venueId: number) {
 export function useEditBooking(venueId: number) {
   const refresh = useInvalidate(venueId);
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: number } & Partial<NewBooking>) => venueCall<{ booking: Booking }>(`${v(venueId)}/bookings/${id}`, { method: "PATCH", ...json(body) }),
+    mutationFn: ({ id, ...body }: { id: number } & Partial<Omit<NewBooking, "igConsent">> & { igConsent?: "yes" | "no" | null }) => venueCall<{ booking: Booking }>(`${v(venueId)}/bookings/${id}`, { method: "PATCH", ...json(body) }),
     onSuccess: refresh,
   });
 }

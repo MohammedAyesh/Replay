@@ -58,12 +58,16 @@ import SimpleDemo from "@/pages/demo/SimpleDemo";
 import AcademyConsole from "@/pages/academy-console";
 import FieldConsole from "@/pages/field-console";
 import VenueSitePage from "@/pages/venue-site";
+import VenueAwardsPage from "@/pages/venue-awards";
 import AcademyJoinPage from "@/pages/academy-join";
 import AcademyFamilyPage from "@/pages/academy-family";
 import AcademyMatchPage from "@/pages/academy-match";
 import AcademyInvitePage from "@/pages/academy-invite";
 import WeeklyHighlightPage from "@/pages/weekly-highlight";
 
+const InstagramDevPreview = import.meta.env.DEV
+  ? lazy(() => import("@/pages/instagram-dev-preview"))
+  : null;
 const MatchReportDevPreview = import.meta.env.DEV
   ? lazy(() => import("@/pages/match-report-dev-preview"))
   : null;
@@ -618,6 +622,7 @@ function AppRouter() {
         <Route path="/academy/*?" component={AcademyConsole} />
         <Route path="/field/*?" component={FieldConsole} />
         <Route path="/v/:slug" component={VenueSitePage} />
+        <Route path="/awards/:slug" component={VenueAwardsPage} />
         <Route path="/account/blocked" component={BlockedPlayers} />
         <Route path="/owner"><Owner /></Route>
         <Route path="/owner/var/:requestId"><OwnerVar /></Route>
@@ -627,6 +632,11 @@ function AppRouter() {
         {MatchReportDevPreview && (
           <Route path="/__dev/match-report">
             <Suspense fallback={null}><MatchReportDevPreview /></Suspense>
+          </Route>
+        )}
+        {InstagramDevPreview && (
+          <Route path="/__dev/instagram">
+            <Suspense fallback={null}><InstagramDevPreview /></Suspense>
           </Route>
         )}
         {EarlyPlayDevPreview && (

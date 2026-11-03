@@ -1,5 +1,5 @@
 import type { Content } from "./content";
-import { ellipse, video, type Box, type Ctx, type Timing } from "./kit";
+import { ellipse, text, video, type Box, type Ctx, type Timing } from "./kit";
 
 /** Something to place in a vertical stack: its height, the gap after it and how to draw it at y. */
 export type StackItem = { h: number; gap?: number; draw: (y: number) => void } | null | undefined | false | "" | 0;
@@ -93,6 +93,14 @@ export function composeVideo(c: Ctx, k: Content, skin: VideoSkin): number {
       skin.title(c, k, { startMs: 800, endMs: endAt, enter: "slide-up" });
   }
   skin.end(c, k, { startMs: endAt, endMs: d, enter: "fade" });
+  // The autopilot's line under the crest (a booking number), the same in every style: a dark
+  // pill reads on any end card, light or dark.
+  if (has(k.endLine)) {
+    text(c, "end-booking", k.endLine, { x: c.M, y: Math.round(c.H / 2 + 330), w: c.CW, h: 72 }, {
+      size: 46, font: "condensed", weight: 700, color: "#FFFFFF", align: "center", fit: true, upper: true, ls: 2,
+      bg: { color: "#0B0F1AE6", padding: 18, radius: 14 }, startMs: endAt, endMs: d, enter: "fade",
+    });
+  }
   return d;
 }
 

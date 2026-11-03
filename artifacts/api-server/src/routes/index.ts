@@ -82,6 +82,7 @@ import weeklyHighlightsRouter from "./weeklyHighlights";
 import venueConsoleRouter from "./venueConsole";
 import venuePublicRouter from "./venuePublic";
 import venueAdminRouter from "./venueAdmin";
+import venueInstagramRouter from "./venueInstagram";
 import consoleHomeRouter from "./consoleHome";
 
 const router: IRouter = Router();
@@ -171,5 +172,6 @@ router.use(venueConsoleRouter);
 router.use(consoleHomeRouter);
 router.use(venuePublicRouter);
 router.use(venueAdminRouter);
+router.use(venueInstagramRouter);
 
 export default router;

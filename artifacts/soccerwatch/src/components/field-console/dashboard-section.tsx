@@ -5,7 +5,7 @@ import { useVenueCopy } from "@/i18n/venue-strings";
 import { clock, jod, useVenueDashboard } from "@/lib/venue-api";
 import { Card, ErrorText, Pill, Skeleton, Stat } from "./shared";
 
-export type FieldSection = "dashboard" | "footage" | "bookings" | "customers" | "chats" | "people" | "agent" | "whatsapp" | "pitches" | "payments" | "website" | "ads" | "social" | "creative" | "studio" | "branding" | "profile" | "team";
+export type FieldSection = "dashboard" | "footage" | "bookings" | "customers" | "chats" | "people" | "agent" | "whatsapp" | "pitches" | "payments" | "website" | "ads" | "social" | "instagram" | "creative" | "studio" | "branding" | "profile" | "team";
 
 export function DashboardSection({ venueId, onNavigate }: { venueId: number; onNavigate: (s: FieldSection) => void }) {
   const copy = useVenueCopy();

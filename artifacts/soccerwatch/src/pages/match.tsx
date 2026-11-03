@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { InstagramMatchCard } from "@/components/match/InstagramMatchCard";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { usePageBack } from "@/lib/use-page-back";
 import { AnimatePresence } from "framer-motion";
@@ -637,6 +638,7 @@ function Overview({ room, copy, colors, names, now, inviteText, onShare, findRec
       {post && room.canManage && <ScoreEditor room={room} copy={copy} colors={colors} names={names} />}
       {post && room.vote.winners.length > 0 && <MotmBanner room={room} copy={copy} />}
       {post && <MatchCompetitionAwardsRow room={room} copy={copy} />}
+      {post && <InstagramMatchCard code={room.code} />}
       {post && room.vote.open && room.isMember && room.vote.myVote === null && (
         <Card className="border-violet/40 bg-violet/10">
           <p className="text-sm font-bold">{copy.vote}</p>

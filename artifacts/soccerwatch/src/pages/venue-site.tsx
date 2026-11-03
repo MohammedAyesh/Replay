@@ -20,6 +20,8 @@ type Site = {
   pitches: Array<{ id: number; name: string; nameAr: string | null; size: string; surface: string | null; indoor: boolean; pricePerHourFils: number; priceRules: PriceRule[]; imageUrl: string | null; hasCamera: boolean }>;
   payment: { cliq: boolean; card: boolean; field: boolean; depositMode: string; depositFils: number; depositPercent?: number; cancelHours: number; perPlayer?: boolean; allowChanges?: boolean };
   rules?: { en: string[]; ar: string[] };
+  /** Instagram consent: ask = the form asks the captain; owner / off = it doesn't. */
+  instagram?: { mode: "ask" | "owner" | "off"; question: { en: string; ar: string } };
   today: string;
 };
 type Slot = { startLocal: string; options: Array<{ minutes: number; priceFils: number; available: boolean }> };
@@ -452,6 +454,9 @@ function DetailsForm({ site, locale, slug, accent, pitchId, minutes, chosen, onB
   const methods = ([allowed.cliq && "cliq", allowed.card && "card", allowed.field && "field"].filter(Boolean)) as Array<"cliq" | "card" | "field">;
   const [team, setTeam] = useState("");
   const [trap, setTrap] = useState("");
+  const igMode = site.instagram?.mode ?? "off";
+  const [igConsent, setIgConsent] = useState(false);
+  const [under18, setUnder18] = useState(false);
   const [payWith, setPayWith] = useState<"cliq" | "card" | "field">(methods[0] ?? "field");
   useEffect(() => { if (methods.length && !methods.includes(payWith)) setPayWith(methods[0]); }, [methods.join(","), payWith]); // eslint-disable-line react-hooks/exhaustive-deps
   const depositFils = quote ? quote.onlineDueFils : site.payment.depositPercent ? Math.round((chosen.priceFils * site.payment.depositPercent) / 100) : Math.min(chosen.priceFils, site.payment.depositFils);
@@ -467,7 +472,7 @@ function DetailsForm({ site, locale, slug, accent, pitchId, minutes, chosen, onB
       const r = await fetch(`${apiBase}/venue-site/${slug}/bookings`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ pitchId, startLocal: chosen.startLocal, minutes, name, phone, teamName: team || undefined, payWith, ...(trap ? { website: trap } : {}) }),
+        body: JSON.stringify({ pitchId, startLocal: chosen.startLocal, minutes, name, phone, teamName: team || undefined, payWith, ...(igMode === "ask" ? { igConsent } : {}), ...(igMode !== "off" ? { under18 } : {}), ...(trap ? { website: trap } : {}) }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error((data as { error?: string }).error ?? t.error);
@@ -516,6 +521,20 @@ function DetailsForm({ site, locale, slug, accent, pitchId, minutes, chosen, onB
           </div>
           {payWith !== "field" && depositFils > 0 && depositFils < chosen.priceFils && <p className="mt-2 text-xs text-white/60">{t.deposit(jod(depositFils, locale))}</p>}
           {quote?.reason === "rule" && quote.minimumOnlineFils > 0 && <p className="mt-2 text-xs font-semibold" style={{ color: accent }} data-testid="venue-first-pay">{t.firstPay(jod(quote.minimumOnlineFils, locale))}</p>}
+        </div>
+      )}
+      {igMode !== "off" && (
+        <div className="space-y-2 rounded-2xl border border-white/10 p-3 text-sm" data-testid="venue-instagram">
+          {igMode === "ask" && site.instagram && (
+            <label className="flex items-start gap-3">
+              <input type="checkbox" checked={igConsent} onChange={(e) => setIgConsent(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0" style={{ accentColor: accent }} data-testid="venue-ig-consent" />
+              <span>{site.instagram.question[locale]}</span>
+            </label>
+          )}
+          <label className="flex items-start gap-3 text-white/75">
+            <input type="checkbox" checked={under18} onChange={(e) => setUnder18(e.target.checked)} className="mt-0.5 h-5 w-5 shrink-0" style={{ accentColor: accent }} data-testid="venue-under18" />
+            <span>{locale === "ar" ? "في لاعبين تحت 18 سنة" : "Some players are under 18"}</span>
+          </label>
         </div>
       )}
       {quote?.blocked && <p className="text-sm text-[#FF8A73]" role="alert">{t.blocked}</p>}

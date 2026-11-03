@@ -90,6 +90,7 @@ import {
 } from "../lib/whatsapp/waha";
 
 import { runVenueTick } from "../lib/venues/store";
+import { runIgAutopilotTick } from "../lib/venues/igAutopilot";
 const router: IRouter = Router();
 
 export function rawParam(value: string | string[] | undefined): string {
@@ -847,6 +848,11 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
     const dispatched = await dispatchQueue({ budgetMs: Math.max(10_000, 50_000 - (Date.now() - started)) });
     // The same tick keeps Replay's Meta ad numbers fresh (at most hourly; never fails the tick).
     const meta = await maybeSyncMetaAds();
+    // Fields' Instagram autopilot: booking clips and awards onto the calendar, rendered, handed to publishing.
+    const instagram = await runIgAutopilotTick().catch((error) => {
+      logger.warn({ error: (error as Error)?.message }, "Instagram autopilot tick failed");
+      return "failed" as const;
+    });
     // Scheduled Instagram/Facebook posts go out; post and account numbers refresh hourly.
     const social = await maybeRunSocial().catch((error) => {
       logger.warn({ error: (error as Error)?.message }, "Social tick failed");
@@ -863,7 +869,7 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
       logger.warn({ error: (error as Error)?.message }, "Trial follow-up sweep failed");
       return "failed" as const;
     });
-    res.json({ scheduled, venues, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, playerClips, trialFollowUps, ms: Date.now() - started });
+    res.json({ scheduled, venues, dispatched, meta: typeof meta === "string" ? meta : "synced", instagram, social, webhooks, playerClips, trialFollowUps, ms: Date.now() - started });
   } catch (error) {
     // vps1 logs this body: say what broke (e.g. a table missing after a publish).
     logger.error({ error: (error as Error)?.message }, "WhatsApp tick failed");

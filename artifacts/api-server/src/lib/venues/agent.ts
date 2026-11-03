@@ -1,7 +1,7 @@
 /**
  * The WhatsApp booking agent of a field (Field console → Booking agent).
  *
- *   menu — numbered menus: book (day → pitch → length → time → name → how to pay), my bookings
+ *   menu — numbered menus: book (day → pitch → length → time → name → [Instagram consent, ask mode] → how to pay), my bookings
  *          and cancelling, prices and hours, location, talk to someone.
  *   ai   — Claude reads free text in Ammani Arabic or English and books through the same
  *          functions (check_availability, create_booking, my_bookings, cancel_booking,
@@ -31,6 +31,7 @@ import { mediaUrl, type WhatsappContent } from "../whatsapp/media";
 import { setTyping } from "../whatsapp/waha";
 import { addDays, ammanLocal, formatJod, normaliseDurations, normaliseHours, normaliseRules, openingWindow, wallMinutes, wallString } from "./core";
 import { dayLabel, durationLabel, receiptReceivedMessage, timeLabel, type Locale } from "./messages";
+import { consentMode, consentQuestion } from "./igConsent";
 import {
   VenueError,
   availability,
@@ -49,8 +50,8 @@ import {
 } from "./store";
 import { cancelQuote, changeQuote, policyOf, rulesSummary } from "./rules";
 
-type MenuStep = "menu" | "day" | "pitch" | "length" | "time" | "name" | "pay" | "cancel" | "manage" | "confirm_cancel";
-type Draft = { date?: string; pitchId?: number; minutes?: number; startLocal?: string; name?: string; options?: string[]; bookingId?: number; moveId?: number };
+type MenuStep = "menu" | "day" | "pitch" | "length" | "time" | "name" | "consent" | "pay" | "cancel" | "manage" | "confirm_cancel";
+type Draft = { date?: string; pitchId?: number; minutes?: number; startLocal?: string; name?: string; igConsent?: boolean; options?: string[]; bookingId?: number; moveId?: number };
 type ThreadState = { step?: MenuStep | null; draft?: Draft; menuAt?: number; nudgedAt?: number; locale?: Locale };
 
 const HUMAN_KINDS = ["chat", "phone"];
@@ -293,6 +294,8 @@ const T = {
     perHour: "بالساعة",
     noLocation: "اسألنا هون وبنبعتلك اللوكيشن.",
     error: "صار خطأ، جرّب كمان مرة أو اكتب 5 لتحكي مع حدا.",
+    yes: "أيوه",
+    no: "لأ",
   },
   en: {
     menu: (venue: string, name: string | null) => `Hi${name ? ` ${name}` : ""}, welcome to ${venue} ⚽\nReply with a number:\n1️⃣ Book a pitch\n2️⃣ My bookings\n3️⃣ Prices & hours\n4️⃣ Location\n5️⃣ Talk to someone`,
@@ -329,6 +332,8 @@ const T = {
     perHour: "an hour",
     noLocation: "Ask us here and we'll send the location.",
     error: "Something went wrong. Try again, or reply 5 to talk to someone.",
+    yes: "Yes",
+    no: "No",
   },
 };
 
@@ -370,7 +375,7 @@ async function runMenu(venue: Venue, threadId: number, state: ThreadState, phone
   const options = draft.options ?? [];
   if (pick === null || pick < 1 || pick > options.length) {
     if (step === "name" && body.trim().length >= 2) {
-      return askPay(venue, threadId, phone, locale, { ...draft, name: body.trim().slice(0, 60) });
+      return afterName(venue, threadId, phone, locale, { ...draft, name: body.trim().slice(0, 60) });
     }
     await reply(venue, phone, t.nudge);
     return;
@@ -394,10 +399,11 @@ async function runMenu(venue: Venue, threadId: number, state: ThreadState, phone
     }
     if (step === "time") {
       const next = { ...draft, startLocal: value };
-      if (pushName && pushName.trim().length >= 2) return askPay(venue, threadId, phone, locale, { ...next, name: pushName.trim().slice(0, 60) });
+      if (pushName && pushName.trim().length >= 2) return afterName(venue, threadId, phone, locale, { ...next, name: pushName.trim().slice(0, 60) });
       await reply(venue, phone, t.askName);
       return save({ step: "name", draft: { ...next, options: [] } });
     }
+    if (step === "consent") return askPay(venue, threadId, phone, locale, { ...draft, igConsent: value === "yes" });
     if (step === "pay") return book(venue, threadId, phone, locale, draft, value as "cliq" | "card" | "field");
     if (step === "cancel") {
       const b = await mineById(venue, phone, Number(value));
@@ -526,6 +532,15 @@ async function askManage(venue: Venue, threadId: number, phone: string, locale: 
   await saveThread(threadId, { state: { step: options.length ? "manage" : "menu", draft: { bookingId: b.id, options }, menuAt: Date.now(), locale } });
 }
 
+/** The field asks the captain about Instagram (consent mode "ask"); otherwise straight on to paying. */
+async function afterName(venue: Venue, threadId: number, phone: string, locale: Locale, draft: Draft) {
+  if (consentMode(venue.settings.igConsentMode) !== "ask" || draft.igConsent !== undefined) return askPay(venue, threadId, phone, locale, draft);
+  const t = T[locale];
+  const name = locale === "ar" ? venue.nameAr || venue.name : venue.name;
+  await reply(venue, phone, [consentQuestion(name, locale), `${num(1)} ${t.yes}`, `${num(2)} ${t.no}`].join("\n"));
+  await saveThread(threadId, { state: { step: "consent", draft: { ...draft, options: ["yes", "no"] }, menuAt: Date.now(), locale } });
+}
+
 async function askPay(venue: Venue, threadId: number, phone: string, locale: Locale, draft: Draft) {
   const t = T[locale];
   const quote = await quoteFor(venue, { phone, pitchId: draft.pitchId!, startLocal: draft.startLocal!, minutes: draft.minutes! });
@@ -549,6 +564,7 @@ async function book(venue: Venue, threadId: number, phone: string, locale: Local
       customerPhone: phone,
       source: "whatsapp",
       payWith,
+      igConsent: draft.igConsent,
       notify: true,
     });
   } catch (error) {
@@ -661,6 +677,7 @@ const TOOLS = [
         customer_name: { type: "string" },
         team_name: { type: "string" },
         pay_with: { type: "string", enum: ["cliq", "card", "field"] },
+        instagram_consent: { type: "boolean", description: "The player's answer to the Instagram question, only when the system prompt says to ask it. Never guess it." },
       },
       required: ["pitch_id", "start_local", "minutes", "customer_name", "pay_with"],
     },
@@ -709,6 +726,9 @@ async function systemPrompt(venue: Venue, locale: Locale): Promise<string> {
     `Write like a friendly Jordanian front-desk person: Ammani Arabic dialect by default, or English if the player writes English. Short WhatsApp messages, no markdown headings, at most one emoji.`,
     `Never state a free time or a price you didn't get from check_availability in this conversation. Times are Amman time; a field open past midnight lists those late times under the day it opened.`,
     `To book you need: pitch, day, kick-off time, length, a name, and how they pay. Ask only for what's missing. Confirm the details in one line before calling create_booking.`,
+    consentMode(s.igConsentMode) === "ask"
+      ? `Before create_booking also ask, word for word in their language: "${consentQuestion(venue.name, "en")}" / "${consentQuestion(venue.nameAr || venue.name, "ar")}" and pass their yes/no as instagram_consent. If they don't answer it, pass nothing: the field then won't post their match. Either answer is fine; never push.`
+      : "",
     `Ways to pay here: ${options.join(", ")}. ${options.includes("cliq") ? "For CliQ the system sends the alias and a booking code; they send the receipt photo in this chat." : ""}`,
     `The field's rules (the system enforces them; if create_booking says a payment method isn't allowed for this player, offer the methods it allows):`,
     ...rulesSummary(policyOf(s as unknown as Record<string, unknown>), "en").map((l) => `- ${l}`),
@@ -766,6 +786,7 @@ async function runTool(venue: Venue, threadId: number, phone: string, locale: Lo
         customerPhone: phone,
         source: "whatsapp",
         payWith,
+        igConsent: typeof input.instagram_consent === "boolean" ? input.instagram_consent : undefined,
         notify: true,
       });
       return { result: JSON.stringify({ ok: true, reference: b.reference, status: b.status, note: "The payment details or the confirmation were just sent to the player by the system." }), stop: true };

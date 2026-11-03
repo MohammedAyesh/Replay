@@ -11,6 +11,7 @@ import {
   Globe,
   Instagram,
   LayoutDashboard,
+  Megaphone,
   Menu,
   MessageCircle,
   MessagesSquare,
@@ -49,14 +50,16 @@ import { PitchesSection } from "@/components/field-console/pitches-section";
 import { PaymentsSection } from "@/components/field-console/payments-section";
 import { AgentSection } from "@/components/field-console/agent-section";
 import { WebsiteSection } from "@/components/field-console/website-section";
+import { InstagramSection } from "@/components/field-console/instagram-section";
+import { useInstagramCopy } from "@/i18n/instagram-strings";
 import { Skeleton } from "@/components/field-console/shared";
 import Owner from "@/pages/owner";
 import OwnerVar from "@/pages/owner-var";
 
-const SECTIONS: FieldSection[] = ["footage", "dashboard", "bookings", "customers", "chats", "people", "agent", "whatsapp", "pitches", "payments", "website", "ads", "social", "creative", "studio", "branding", "profile", "team"];
+const SECTIONS: FieldSection[] = ["footage", "dashboard", "bookings", "customers", "chats", "people", "agent", "whatsapp", "pitches", "payments", "website", "ads", "social", "instagram", "creative", "studio", "branding", "profile", "team"];
 /** Which Team permission each screen falls under (lib/academyPermissions.ts on the server). */
 const PERMISSION: Partial<Record<FieldSection, string>> = { customers: "people" };
-const OWNER_ONLY: FieldSection[] = ["footage", "pitches", "payments", "website", "ads", "social", "creative", "studio", "branding", "team"];
+const OWNER_ONLY: FieldSection[] = ["footage", "pitches", "payments", "website", "ads", "social", "instagram", "creative", "studio", "branding", "team"];
 const SESSION_KEY = "replay_field_console_venue";
 
 function readSelected(): number | null {
@@ -67,6 +70,7 @@ export default function FieldConsole() {
   const { isSignedIn, isLoading, isGuest } = useAuth();
   const { locale, setLocale } = useTranslation();
   const copy = useVenueCopy();
+  const igCopy = useInstagramCopy();
   const [location, setLocation] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [selected, setSelected] = useState<number | null>(readSelected);
@@ -93,7 +97,7 @@ export default function FieldConsole() {
   }, [location]);
 
   const canSee = (s: FieldSection) => {
-    if (s === "team" || s === "creative" || s === "footage") return isOwner;
+    if (s === "team" || s === "creative" || s === "footage" || s === "instagram") return isOwner;
     if (isOwner) return true;
     const perm = PERMISSION[s] ?? s;
     return access.data ? access.data.sections.includes(perm) : !OWNER_ONLY.includes(s);
@@ -154,6 +158,7 @@ export default function FieldConsole() {
     { label: copy.console.marketing, items: [
       { id: "ads", label: copy.nav.ads, icon: Target },
       { id: "social", label: copy.nav.social, icon: Instagram },
+      { id: "instagram", label: igCopy.nav, icon: Megaphone },
       { id: "creative", label: copy.nav.creative, icon: Sparkles },
       { id: "studio", label: copy.nav.studio, icon: Clapperboard },
     ] },
@@ -245,6 +250,7 @@ export default function FieldConsole() {
               : section === "payments" ? <PaymentsSection venueId={id} />
               : section === "website" ? <WebsiteSection venueId={id} />
               : section === "ads" ? <AcademyAdsSection academyId={id} onOpenChat={openChat} />
+              : section === "instagram" ? <InstagramSection venueId={id} />
               : section === "social" ? <AcademySocialSection academyId={id} onOpenChat={(threadId) => { setChatThread(threadId); setChatPhone(null); navigate("chats"); }} />
               : section === "creative" ? <AcademyCreativeHub academyId={id} />
               : section === "studio" ? <AcademyStudioSection academyId={id} />

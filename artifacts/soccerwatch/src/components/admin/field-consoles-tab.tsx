@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { Fragment, useState, type FormEvent } from "react";
+import { AdminConsentPanel } from "./instagram-consent-panel";
 import { useQuery } from "@tanstack/react-query";
 import { jod, useAdminVenueMutations, useAdminVenuePayments, useAdminVenues, venueCall } from "@/lib/venue-api";
 
@@ -16,6 +17,7 @@ export function FieldConsolesTab() {
   const [email, setEmail] = useState("");
   const [picked, setPicked] = useState<number[]>([]);
   const [payout, setPayout] = useState<Record<number, string>>({});
+  const [consentFor, setConsentFor] = useState<number | null>(null);
 
   const create = (e: FormEvent) => {
     e.preventDefault();
@@ -56,7 +58,8 @@ export function FieldConsolesTab() {
               <thead className="text-zinc-500"><tr><th className="p-2 text-left">Field</th><th className="p-2 text-left">Owners</th><th className="p-2 text-left">Money</th><th className="p-2 text-left">Agent</th><th className="p-2 text-left">Domain</th><th className="p-2 text-left">Bookings</th><th className="p-2 text-left">Paid to Replay</th><th className="p-2 text-left">Fee %</th><th className="p-2 text-left">Owed</th><th className="p-2" /></tr></thead>
               <tbody className="divide-y divide-zinc-800 text-zinc-300">
                 {(venues.data?.venues ?? []).map((v) => (
-                  <tr key={v.id}>
+                  <Fragment key={v.id}>
+                  <tr>
                     <td className="p-2"><a href={`/v/${v.slug}`} target="_blank" rel="noreferrer" className="font-semibold text-white underline">{v.name}</a></td>
                     <td className="p-2">{v.owners.map((o) => o.email).join(", ")}</td>
                     <td className="p-2">{v.moneyTo}</td>
@@ -72,9 +75,12 @@ export function FieldConsolesTab() {
                       <div className="flex gap-1">
                         <input placeholder="JOD" value={payout[v.id] ?? ""} onChange={(e) => setPayout({ ...payout, [v.id]: e.target.value })} className="w-16 rounded border border-zinc-700 bg-zinc-950 px-2 py-1" />
                         <button type="button" disabled={!Number(payout[v.id])} onClick={() => m.payout.mutate({ id: v.id, amountFils: Math.round(Number(payout[v.id]) * 1000) }, { onSuccess: () => setPayout({ ...payout, [v.id]: "" }) })} className="rounded border border-zinc-700 px-2 py-1 disabled:opacity-40">Paid out</button>
+                        <button type="button" onClick={() => setConsentFor(consentFor === v.id ? null : v.id)} className="rounded border border-zinc-700 px-2 py-1" data-testid={`admin-ig-consent-toggle-${v.id}`}>Instagram consent</button>
                       </div>
                     </td>
                   </tr>
+                  {consentFor === v.id && <tr><td colSpan={10} className="p-2"><AdminConsentPanel venueId={v.id} /></td></tr>}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
