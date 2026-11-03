@@ -16,11 +16,13 @@ import { requireAcademyConsoleUser, requireAcademyMembership, type AcademyConsol
 import { logger } from "../lib/logger";
 import { normalizePhone, formatPhoneForDisplay } from "../lib/whatsapp/phone";
 import { listContacts } from "../lib/whatsapp/contacts";
+import { cancelQuote, policyOf, rulesSummary } from "../lib/venues/rules";
 import { addDays, ammanLocal, isDate, isTime, normaliseDurations, normaliseHours, normaliseRules, slugify, wallMinutes } from "../lib/venues/core";
 import {
   VenueError,
   availability,
   bookingView,
+  bookingPolicy,
   cancelBooking,
   confirmWithoutPayment,
   createBookings,
@@ -30,7 +32,10 @@ import {
   listPitches,
   loadVenue,
   markPaid,
+  markNoShow,
+  moneyOf,
   moveBooking,
+  rulesView,
   notify,
   pitchView,
   settingsView,
@@ -286,8 +291,10 @@ router.patch(`${base}/bookings/:bookingId`, async (req, res): Promise<void> => {
 });
 
 const actionSchema = z.object({
-  action: z.enum(["confirm-payment", "collect-balance", "confirm-hold", "reject-receipt", "cancel", "complete", "no-show", "reopen", "resend"]),
+  action: z.enum(["confirm-payment", "collect-balance", "confirm-hold", "reject-receipt", "cancel", "complete", "no-show", "reopen", "resend", "refund-sent", "waive-fee", "fee-collected"]),
   reason: z.string().trim().max(200).optional(),
+  /** Cancel: the player asked to cancel, so the field's late-cancel fee applies. */
+  byPlayer: z.boolean().optional(),
   notify: z.boolean().optional(),
   /** Cancel every later booking of the same weekly series too. */
   series: z.boolean().optional(),
@@ -318,7 +325,15 @@ router.post(`${base}/bookings/:bookingId/action`, async (req, res): Promise<void
       [row] = await db.update(venueBookingsTable).set({ paymentStatus: "unpaid", receiptCheck: null, updatedAt: new Date(), holdExpiresAt: booking.status === "held" ? new Date(Date.now() + 30 * 60_000) : null })
         .where(eq(venueBookingsTable.id, booking.id)).returning();
     } else if (action === "cancel") {
-      row = await cancelBooking(a.venue, booking, body.data.reason || "Cancelled by the field", { notify: body.data.notify !== false });
+      if (body.data.byPlayer) {
+        // Staff recording a player's cancellation: the fee applies, and a late "ask the field" rule doesn't refuse (they are the field).
+        const quote = cancelQuote(bookingPolicy(a.venue, booking), moneyOf(booking), "player");
+        row = quote.allowed
+          ? await cancelBooking(a.venue, booking, body.data.reason || "The player cancelled", { notify: body.data.notify !== false, by: "player" })
+          : await cancelBooking(a.venue, booking, body.data.reason || "The player cancelled", { notify: body.data.notify !== false, by: "field" });
+      } else {
+        row = await cancelBooking(a.venue, booking, body.data.reason || "Cancelled by the field", { notify: body.data.notify !== false });
+      }
       if (body.data.series && booking.seriesId) {
         const later = await db.select().from(venueBookingsTable).where(and(
           eq(venueBookingsTable.seriesId, booking.seriesId), eq(venueBookingsTable.academyId, a.venue.id),
@@ -326,12 +341,28 @@ router.post(`${base}/bookings/:bookingId/action`, async (req, res): Promise<void
         ));
         for (const b of later) await cancelBooking(a.venue, b, body.data.reason || "Cancelled by the field", { notify: false });
       }
-    } else if (action === "complete" || action === "no-show") {
+    } else if (action === "complete") {
       if (booking.status === "cancelled") { res.status(409).json({ error: "This booking was cancelled" }); return; }
-      [row] = await db.update(venueBookingsTable).set({ status: action === "complete" ? "completed" : "no_show", updatedAt: new Date() }).where(eq(venueBookingsTable.id, booking.id)).returning();
+      [row] = await db.update(venueBookingsTable).set({ status: "completed", updatedAt: new Date() }).where(eq(venueBookingsTable.id, booking.id)).returning();
+    } else if (action === "no-show") {
+      row = await markNoShow(a.venue, booking);
     } else if (action === "reopen") {
       if (booking.status !== "completed" && booking.status !== "no_show") { res.status(409).json({ error: "Only a finished booking can be reopened" }); return; }
-      [row] = await db.update(venueBookingsTable).set({ status: "confirmed", updatedAt: new Date() }).where(eq(venueBookingsTable.id, booking.id)).returning();
+      // Reopening a no-show takes its no-show fee off again.
+      const fee = booking.status === "no_show" && booking.feeReason === "no_show" ? 0 : booking.feeFils;
+      [row] = await db.update(venueBookingsTable).set({ status: "confirmed", feeFils: fee, feeReason: fee ? booking.feeReason : null, updatedAt: new Date() }).where(eq(venueBookingsTable.id, booking.id)).returning();
+    } else if (action === "refund-sent") {
+      if (booking.refundDueFils <= booking.refundedFils) { res.status(409).json({ error: "Nothing to refund on this booking" }); return; }
+      [row] = await db.update(venueBookingsTable).set({ refundedFils: booking.refundDueFils, paymentStatus: booking.paidFils <= booking.refundDueFils ? "refunded" : booking.paymentStatus, updatedAt: new Date() })
+        .where(eq(venueBookingsTable.id, booking.id)).returning();
+    } else if (action === "fee-collected") {
+      if (booking.feeFils <= booking.paidFils) { res.status(409).json({ error: "Nothing owed on this booking" }); return; }
+      [row] = await db.update(venueBookingsTable).set({ paidFils: booking.feeFils, paidAt: new Date(), paidBy: a.user.id, updatedAt: new Date() }).where(eq(venueBookingsTable.id, booking.id)).returning();
+    } else if (action === "waive-fee") {
+      if (!booking.feeFils) { res.status(409).json({ error: "This booking has no fee" }); return; }
+      // Without the fee, whatever was kept for it goes back (for a cancelled booking).
+      const refund = booking.status === "cancelled" ? booking.paidFils : booking.refundDueFils;
+      [row] = await db.update(venueBookingsTable).set({ feeFils: 0, feeReason: null, refundDueFils: refund, updatedAt: new Date() }).where(eq(venueBookingsTable.id, booking.id)).returning();
     } else if (action === "resend") {
       await notify(a.venue, booking.id, booking.status === "held" ? "held" : "confirmed");
     }
@@ -368,14 +399,14 @@ router.get(`${base}/customers`, async (req, res): Promise<void> => {
   res.json({ customers: people });
 });
 
-function summarise(s: { bookings: number; lastStartLocal: string | null; nextStartLocal: string | null; spentFils: number; noShows: number; cancelled: number } | undefined, recent: number, today: string) {
+function summarise(s: { bookings: number; lastStartLocal: string | null; nextStartLocal: string | null; spentFils: number; noShows: number; cancelled: number; owedFils: number } | undefined, recent: number, today: string) {
   const bookings = s?.bookings ?? 0;
   const last = s?.lastStartLocal ?? null;
   const segment = bookings === 0 ? "lead"
     : recent >= 3 ? "regular"
     : last && last.slice(0, 10) < addDays(today, -30) && !s?.nextStartLocal ? "lapsed"
     : bookings === 1 ? "new" : "returning";
-  return { bookings, lastStartLocal: last, nextStartLocal: s?.nextStartLocal ?? null, spentFils: s?.spentFils ?? 0, noShows: s?.noShows ?? 0, cancelled: s?.cancelled ?? 0, segment };
+  return { bookings, lastStartLocal: last, nextStartLocal: s?.nextStartLocal ?? null, spentFils: s?.spentFils ?? 0, noShows: s?.noShows ?? 0, cancelled: s?.cancelled ?? 0, owedFils: s?.owedFils ?? 0, segment };
 }
 
 // ─── Pitches and booking rules ───────────────────────────────────────────────
@@ -503,8 +534,14 @@ router.get(`${base}/payments`, async (req, res): Promise<void> => {
     month: sql<number>`coalesce(sum(${venueBookingsTable.paidFils}) filter (where ${venueBookingsTable.startLocal} >= ${monthStart}), 0)::int`,
     viaReplay: sql<number>`coalesce(sum(least(${venueBookingsTable.paidFils}, ${venueBookingsTable.dueOnlineFils})) filter (where ${venueBookingsTable.moneyTo} = 'replay' and ${venueBookingsTable.payWith} in ('cliq', 'card') and ${venueBookingsTable.paymentStatus} = 'paid'), 0)::int`,
     online: sql<number>`coalesce(sum(least(${venueBookingsTable.paidFils}, ${venueBookingsTable.dueOnlineFils})) filter (where ${venueBookingsTable.startLocal} >= ${monthStart} and ${venueBookingsTable.payWith} in ('cliq', 'card') and ${venueBookingsTable.paymentStatus} = 'paid'), 0)::int`,
-    due: sql<number>`coalesce(sum(${venueBookingsTable.amountFils} - ${venueBookingsTable.paidFils}) filter (where ${venueBookingsTable.status} in ('confirmed', 'completed') and ${venueBookingsTable.startsAt} <= now()), 0)::int`,
+    due: sql<number>`coalesce(sum(greatest(0, ${venueBookingsTable.amountFils} + ${venueBookingsTable.feeFils} - ${venueBookingsTable.paidFils})) filter (where ${venueBookingsTable.status} in ('confirmed', 'completed') and ${venueBookingsTable.startsAt} <= now()), 0)::int`,
   }).from(venueBookingsTable).where(and(eq(venueBookingsTable.academyId, venueId), sql`${venueBookingsTable.status} <> 'cancelled'`));
+  const [owed] = await db.select({
+    refunds: sql<number>`coalesce(sum(greatest(0, ${venueBookingsTable.refundDueFils} - ${venueBookingsTable.refundedFils})), 0)::int`,
+    refundCount: sql<number>`count(*) filter (where ${venueBookingsTable.refundDueFils} > ${venueBookingsTable.refundedFils})::int`,
+    fees: sql<number>`coalesce(sum(greatest(0, ${venueBookingsTable.feeFils} - ${venueBookingsTable.paidFils})) filter (where ${venueBookingsTable.status} in ('cancelled', 'no_show')), 0)::int`,
+    feeCount: sql<number>`count(*) filter (where ${venueBookingsTable.status} in ('cancelled', 'no_show') and ${venueBookingsTable.feeFils} > ${venueBookingsTable.paidFils})::int`,
+  }).from(venueBookingsTable).where(eq(venueBookingsTable.academyId, venueId));
   const [paidOut] = await db.select({ n: sql<number>`coalesce(sum(${venuePayoutsTable.amountFils}), 0)::int` }).from(venuePayoutsTable).where(eq(venuePayoutsTable.academyId, venueId));
   const payouts = await db.select().from(venuePayoutsTable).where(eq(venuePayoutsTable.academyId, venueId)).orderBy(desc(venuePayoutsTable.createdAt)).limit(50);
   const fee = Math.round((totals.viaReplay * a.venue.settings.replayFeeBps) / 10_000);
@@ -514,7 +551,9 @@ router.get(`${base}/payments`, async (req, res): Promise<void> => {
       moneyTo: s.moneyTo, cliqAlias: s.cliqAlias, cliqName: s.cliqName, payAtField: s.payAtField, depositMode: s.depositMode, depositFils: s.depositFils,
       cancelHours: s.cancelHours, autoConfirmReceipts: s.autoConfirmReceipts, cardProvider: s.cardProvider, cardEnabled: s.cardEnabled, cardConfigured: s.cardConfigured,
       replayFeeBps: s.replayFeeBps,
+      ...rulesView(s),
     },
+    preview: { en: rulesSummary(policyOf(a.venue.settings as unknown as Record<string, unknown>), "en"), ar: rulesSummary(policyOf(a.venue.settings as unknown as Record<string, unknown>), "ar") },
     ledger: {
       collectedThisMonthFils: totals.month,
       onlineThisMonthFils: totals.online,
@@ -523,6 +562,10 @@ router.get(`${base}/payments`, async (req, res): Promise<void> => {
       replayFeeFils: fee,
       paidOutFils: paidOut.n,
       owedByReplayFils: Math.max(0, totals.viaReplay - fee - paidOut.n),
+      refundsToSendFils: owed.refunds,
+      refundsToSendCount: owed.refundCount,
+      feesOwedFils: owed.fees,
+      feesOwedCount: owed.feeCount,
       payouts: payouts.map((p) => ({ id: p.id, amountFils: p.amountFils, method: p.method, note: p.note, createdAt: p.createdAt.toISOString() })),
     },
   });
@@ -537,6 +580,18 @@ const paymentsSchema = z.object({
   depositFils: z.number().int().min(0).max(1_000_000).optional(),
   cancelHours: z.number().int().min(0).max(168).optional(),
   autoConfirmReceipts: z.boolean().optional(),
+  acceptCliq: z.boolean().optional(),
+  depositPercent: z.number().int().min(0).max(100).optional(),
+  newCustomerPolicy: z.enum(["same", "deposit", "full"]).optional(),
+  noShowPolicy: z.enum(["same", "deposit", "full", "block"]).optional(),
+  lateCancelMode: z.enum(["refuse", "free", "deposit", "percent", "fixed"]).optional(),
+  lateCancelValue: z.number().int().min(0).max(1_000_000).optional(),
+  noShowFeeMode: z.enum(["none", "deposit", "percent", "fixed"]).optional(),
+  noShowFeeValue: z.number().int().min(0).max(1_000_000).optional(),
+  allowChanges: z.boolean().optional(),
+  changeHours: z.number().int().min(0).max(168).optional(),
+  changeFeeFils: z.number().int().min(0).max(1_000_000).optional(),
+  maxChanges: z.number().int().min(0).max(20).optional(),
 });
 
 router.put(`${base}/payments`, async (req, res): Promise<void> => {
@@ -545,8 +600,14 @@ router.put(`${base}/payments`, async (req, res): Promise<void> => {
   const body = paymentsSchema.safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ error: "Check the payment settings" }); return; }
   const next = { ...a.venue.settings, ...body.data };
-  if (next.moneyTo === "venue" && next.depositMode !== "none" && !next.cliqAlias?.trim() && !(next.cardEnabled && next.cardConfigEnc)) {
-    if (!next.payAtField) { res.status(400).json({ error: "Add your CliQ alias, or allow paying at the field" }); return; }
+  const cliq = next.acceptCliq !== false && (next.moneyTo === "replay" || Boolean(next.cliqAlias?.trim()));
+  const card = Boolean(next.cardEnabled && next.cardConfigEnc);
+  if (!next.payAtField && !cliq && !card) { res.status(400).json({ error: "Players need at least one way to pay: CliQ, card, or cash at the field", code: "no_method" }); return; }
+  if (next.moneyTo === "venue" && next.acceptCliq !== false && next.depositMode !== "none" && !next.cliqAlias?.trim() && !card && !next.payAtField) {
+    res.status(400).json({ error: "Add your CliQ alias, or allow paying at the field" }); return;
+  }
+  if ((body.data.lateCancelMode === "percent" || body.data.noShowFeeMode === "percent") && ((body.data.lateCancelMode === "percent" && (body.data.lateCancelValue ?? next.lateCancelValue) > 100) || (body.data.noShowFeeMode === "percent" && (body.data.noShowFeeValue ?? next.noShowFeeValue) > 100))) {
+    res.status(400).json({ error: "A percentage can't be more than 100" }); return;
   }
   await db.update(venueSettingsTable).set({ ...body.data, updatedAt: new Date() }).where(eq(venueSettingsTable.academyId, a.venue.id));
   res.json({ ok: true });

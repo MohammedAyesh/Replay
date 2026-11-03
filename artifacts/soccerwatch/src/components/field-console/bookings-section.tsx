@@ -347,12 +347,14 @@ function BookingSheet({ venueId, booking, pitches, onClose, onOpenChat }: { venu
   const edit = useEditBooking(venueId);
   const [cancelling, setCancelling] = useState(false);
   const [reason, setReason] = useState("");
+  const [byPlayer, setByPlayer] = useState(false);
   const [editing, setEditing] = useState(false);
   const [pitchId, setPitchId] = useState(booking.pitchId);
   const [start, setStart] = useState(booking.startLocal.replace(" ", "T"));
   const [minutes, setMinutes] = useState(booking.minutes);
   const [notes, setNotes] = useState(booking.notes ?? "");
-  const run = (a: BookingAction, extra: { reason?: string; series?: boolean } = {}) => action.mutate({ id: booking.id, action: a, ...extra });
+  const run = (a: BookingAction, extra: { reason?: string; series?: boolean; byPlayer?: boolean } = {}) => action.mutate({ id: booking.id, action: a, ...extra }, { onSuccess: () => setCancelling(false) });
+  const ended = booking.status === "cancelled" || booking.status === "no_show";
   const live = booking.status === "held" || booking.status === "confirmed";
   const check = booking.receiptCheck;
   const mark = (ok: boolean | undefined, known: boolean) => !known ? copy.bookings.unknown : ok ? `✓ ${copy.bookings.ok}` : `✗ ${copy.bookings.notOk}`;
@@ -385,6 +387,22 @@ function BookingSheet({ venueId, booking, pitches, onClose, onOpenChat }: { venu
             <div className="col-span-2 flex items-start gap-2 rounded-xl bg-raised p-3 text-xs"><Video className="mt-0.5 h-4 w-4 shrink-0 text-turf" /><span>{booking.footageRequestId ? copy.bookings.cameraBooked : booking.footageNote}</span></div>
           )}
           {booking.notes && <div className="col-span-2 whitespace-pre-wrap text-muted-text" dir="auto">{booking.notes}</div>}
+          {booking.feeFils > 0 && (
+            <div><dt className="text-xs text-muted-text">{copy.bookings.fees}</dt><dd className="font-bold">{jod(booking.feeFils, copy.locale)}{booking.feeReason ? ` · ${copy.bookings.feeReasons[booking.feeReason] ?? ""}` : ""}</dd></div>
+          )}
+          {booking.refundDueFils > 0 && (
+            <div><dt className="text-xs text-muted-text">{copy.bookings.toRefund}</dt><dd className="font-bold text-[#FF8A73]">{jod(booking.refundDueFils, copy.locale)}</dd></div>
+          )}
+          {booking.refundedFils > 0 && (
+            <div><dt className="text-xs text-muted-text">{copy.bookings.refunded}</dt><dd>{jod(booking.refundedFils, copy.locale)}</dd></div>
+          )}
+          {(booking.depositReason !== "standard" || booking.changeCount > 0) && (
+            <div className="col-span-2 flex flex-wrap gap-1.5 text-xs">
+              {booking.depositReason !== "standard" && <Pill kind="rule">{copy.bookings.depositReasons[booking.depositReason]}</Pill>}
+              {booking.changeCount > 0 && <Pill kind="rule">{copy.bookings.moved(booking.changeCount)}</Pill>}
+            </div>
+          )}
+          {booking.cancelledBy && <div className="col-span-2 text-xs font-semibold text-muted-text">{copy.bookings.cancelledBy[booking.cancelledBy]}</div>}
           {booking.cancelReason && <div className="col-span-2 text-xs text-muted-text">{booking.cancelReason}</div>}
         </dl>
 
@@ -423,6 +441,13 @@ function BookingSheet({ venueId, booking, pitches, onClose, onOpenChat }: { venu
               <Button type="button" variant="outline" onClick={() => run("no-show")} disabled={action.isPending}>{copy.bookings.actions.noShow}</Button>
             </div>
           )}
+          {ended && booking.balanceFils > 0 && (
+            <Button type="button" onClick={() => run("fee-collected")} disabled={action.isPending} className="min-h-11 bg-floodlight font-bold text-void" data-testid="button-fee-collected">{copy.bookings.actions.feeCollected} · {jod(booking.balanceFils, copy.locale)}</Button>
+          )}
+          {booking.refundDueFils > 0 && (
+            <Button type="button" onClick={() => run("refund-sent")} disabled={action.isPending} variant="outline" className="min-h-11 border-[#FF8A73]/50 font-bold" data-testid="button-refund-sent">{copy.bookings.actions.refundSent} · {jod(booking.refundDueFils, copy.locale)}</Button>
+          )}
+          {booking.feeFils > 0 && <Button type="button" variant="ghost" onClick={() => run("waive-fee")} disabled={action.isPending}>{copy.bookings.actions.waiveFee}</Button>}
           {(booking.status === "completed" || booking.status === "no_show") && <Button type="button" variant="ghost" onClick={() => run("reopen")}>{copy.bookings.actions.reopen}</Button>}
           {booking.customerPhone && (
             <div className="grid grid-cols-2 gap-2">
@@ -447,9 +472,21 @@ function BookingSheet({ venueId, booking, pitches, onClose, onOpenChat }: { venu
           {cancelling && (
             <div className="space-y-2 rounded-xl border border-red-400/40 p-3">
               <p className="text-sm">{copy.bookings.cancelConfirm}</p>
+              {booking.customerPhone && (
+                <div className="space-y-1.5" role="radiogroup" aria-label={copy.bookings.whoCancels}>
+                  <p className="text-xs font-semibold text-muted-text">{copy.bookings.whoCancels}</p>
+                  {([false, true] as const).map((p) => (
+                    <button key={String(p)} type="button" role="radio" aria-checked={byPlayer === p} onClick={() => setByPlayer(p)}
+                      className={cn("block w-full rounded-xl border px-3 py-2 text-start", byPlayer === p ? "border-turf bg-turf/10" : "border-line bg-raised")}>
+                      <span className="block text-sm font-semibold text-text">{p ? copy.bookings.byPlayer : copy.bookings.byField}</span>
+                      <span className="block text-xs text-muted-text">{p ? copy.bookings.byPlayerHint : copy.bookings.byFieldHint}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={copy.bookings.cancelReason} dir="auto" />
               <div className="flex flex-wrap gap-2">
-                <Button type="button" className="bg-red-500 text-white hover:bg-red-500/90" onClick={() => run("cancel", { reason })}>{copy.bookings.actions.cancel}</Button>
+                <Button type="button" className="bg-red-500 text-white hover:bg-red-500/90" onClick={() => run("cancel", { reason, byPlayer })}>{copy.bookings.actions.cancel}</Button>
                 {booking.seriesId && <Button type="button" variant="outline" onClick={() => run("cancel", { reason, series: true })}>{copy.bookings.actions.cancelSeries}</Button>}
                 <Button type="button" variant="ghost" onClick={() => setCancelling(false)}>{copy.bookings.keep}</Button>
               </div>

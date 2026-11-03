@@ -18,17 +18,32 @@ type Site = {
   instagramUrl: string | null; facebookUrl: string | null; whatsappPhone: string | null; fieldId: number;
   bookingEnabled: boolean; openingHours: Record<string, { open: string; close: string } | null>; durations: number[]; maxDaysAhead: number;
   pitches: Array<{ id: number; name: string; nameAr: string | null; size: string; surface: string | null; indoor: boolean; pricePerHourFils: number; priceRules: PriceRule[]; imageUrl: string | null; hasCamera: boolean }>;
-  payment: { cliq: boolean; card: boolean; field: boolean; depositMode: string; depositFils: number; cancelHours: number };
+  payment: { cliq: boolean; card: boolean; field: boolean; depositMode: string; depositFils: number; depositPercent?: number; cancelHours: number; perPlayer?: boolean; allowChanges?: boolean };
+  rules?: { en: string[]; ar: string[] };
   today: string;
 };
 type Slot = { startLocal: string; options: Array<{ minutes: number; priceFils: number; available: boolean }> };
 type Availability = { date: string; pitches: Array<{ pitchId: number; slots: Slot[] }> };
 type BookingResult = {
   reference: string; status: string; paymentStatus: string; pitchName: string; pitchNameAr?: string | null; startLocal: string; endLocal: string;
-  amountFils: number; dueOnlineFils: number; balanceFils: number; payWith: string; cliqAlias: string | null; cliqName: string | null; cardUrl: string | null; holdExpiresAt: string | null;
+  amountFils: number; dueOnlineFils: number; balanceFils: number; feeFils?: number; refundFils?: number; payWith: string; cliqAlias: string | null; cliqName: string | null; cardUrl: string | null; holdExpiresAt: string | null;
+};
+
+type Quote = { amountFils: number; onlineDueFils: number; minimumOnlineFils: number; reason: "standard" | "rule"; methods: { cliq: boolean; card: boolean; field: boolean }; blocked: boolean };
+type Manage = {
+  booking: BookingResult; minutes: number; pitchId: number;
+  cancel: { allowed: boolean; late: boolean; feeFils: number; refundFils: number; owedFils: number; hours: number };
+  change: { allowed: boolean; reason: "ok" | "off" | "too_late" | "too_many" | "not_active"; feeFils: number; changesLeft: number; hours: number };
 };
 
 const apiBase = `${(import.meta.env.BASE_URL ?? "/").replace(/\/$/, "")}/api`;
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const r = await fetch(`${apiBase}${path}`, { method: "POST", credentials: "omit", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((data as { error?: string }).error ?? `Error ${r.status}`);
+  return data as T;
+}
 
 async function get<T>(path: string): Promise<T> {
   const r = await fetch(`${apiBase}${path}`, { credentials: "omit" });
@@ -92,6 +107,31 @@ const T = {
     minutes: (m: number) => m % 60 === 0 ? `${m / 60} h` : `${Math.floor(m / 60)} h ${m % 60}`,
     today: "Today",
     tomorrow: "Tomorrow",
+    rulesTitle: "Good to know",
+    firstPay: (v: string) => `To confirm this booking, ${v} is paid online.`,
+    blocked: "Please message us on WhatsApp to book.",
+    manage: "Manage my booking",
+    manageHint: "Change or cancel with your booking code and WhatsApp number.",
+    find: "Find my booking",
+    codePlaceholder: "Booking code",
+    cancelBooking: "Cancel booking",
+    cancelFree: "Cancelling now is free.",
+    cancelFee: (v: string) => `Cancelling now costs ${v}.`,
+    refundNote: (v: string) => `We'll refund ${v}.`,
+    owedNote: (v: string) => `${v} is still to pay.`,
+    cancelTooLate: (h: number) => `It's less than ${h} hours to kick-off. Message us on WhatsApp to cancel.`,
+    confirmCancel: "Yes, cancel it",
+    keep: "Keep it",
+    changeTime: "Change time",
+    changeFree: "Changing is free.",
+    changeFee: (v: string) => `Changing costs ${v}.`,
+    cantChange: { off: "Changes aren't taken online. Message us on WhatsApp.", too_late: "It's too close to kick-off to change online. Message us on WhatsApp.", too_many: "This booking can't be changed again online. Message us on WhatsApp.", not_active: "This booking can't be changed." } as Record<string, string>,
+    pickNewTime: "Pick a new time",
+    moved: "Moved ✅ The new time is on WhatsApp.",
+    cancelledTitle: "Cancelled. The details are on WhatsApp.",
+    fee: "Fee",
+    refund: "Refund",
+    statusLabel: { held: "Waiting for payment", confirmed: "Confirmed", cancelled: "Cancelled", completed: "Played", no_show: "Missed" } as Record<string, string>,
   },
   ar: {
     book: "احجز ملعب",
@@ -147,6 +187,31 @@ const T = {
     minutes: (m: number) => m === 60 ? "ساعة" : m === 90 ? "ساعة ونص" : m === 120 ? "ساعتين" : m % 60 === 0 ? `${m / 60} ساعات` : `${m} دقيقة`,
     today: "اليوم",
     tomorrow: "بكرا",
+    rulesTitle: "قبل ما تحجز",
+    firstPay: (v: string) => `عشان نثبّت الحجز، بتدفع ${v} أونلاين.`,
+    blocked: "احكينا عالواتساب عشان تحجز.",
+    manage: "إدارة حجزي",
+    manageHint: "غيّر أو ألغِ حجزك برقم الحجز ورقم الواتساب.",
+    find: "دوّر على حجزي",
+    codePlaceholder: "رقم الحجز",
+    cancelBooking: "ألغِ الحجز",
+    cancelFree: "الإلغاء هلأ مجاني.",
+    cancelFee: (v: string) => `الإلغاء هلأ عليه رسوم ${v}.`,
+    refundNote: (v: string) => `رح نرجعلك ${v}.`,
+    owedNote: (v: string) => `ضايل عليك ${v}.`,
+    cancelTooLate: (h: number) => `ضايل أقل من ${h} ساعات عالموعد. احكينا عالواتساب عشان تلغي.`,
+    confirmCancel: "أيوه، ألغيه",
+    keep: "خليه",
+    changeTime: "غيّر الموعد",
+    changeFree: "التغيير مجاني.",
+    changeFee: (v: string) => `التغيير عليه رسوم ${v}.`,
+    cantChange: { off: "ما بنغيّر المواعيد أونلاين. احكينا عالواتساب.", too_late: "صار قريب كثير من الموعد. احكينا عالواتساب.", too_many: "ما بتقدر تغيّر هالحجز مرة ثانية أونلاين. احكينا عالواتساب.", not_active: "ما بينفع نغيّر هالحجز." } as Record<string, string>,
+    pickNewTime: "اختار موعد جديد",
+    moved: "انغيّر الموعد ✅ التفاصيل عالواتساب.",
+    cancelledTitle: "انلغى الحجز. التفاصيل عالواتساب.",
+    fee: "رسوم",
+    refund: "مبلغ مسترجع",
+    statusLabel: { held: "بانتظار الدفع", confirmed: "مأكّد", cancelled: "ملغي", completed: "انلعب", no_show: "ما إجيت" } as Record<string, string>,
   },
 };
 
@@ -235,6 +300,7 @@ function VenueSite({ source }: { source: { slug?: string; host?: string } }) {
 
       <main className="mx-auto max-w-5xl space-y-8 px-4 pb-16">
         <BookingCard site={site} locale={locale} slug={site.slug} accent={accent} wa={site.whatsappPhone} />
+        <ManageCard site={site} locale={locale} slug={site.slug} accent={accent} />
 
         {anyCamera && (
           <section className="flex items-start gap-3 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
@@ -342,7 +408,12 @@ function BookingCard({ site, locale, slug, accent, wa }: { site: Site; locale: L
               </div>
             )}
           </Chooser>
-          <p className="text-xs text-white/45">{t.cancelPolicy(site.payment.cancelHours)}</p>
+          {site.rules?.[locale]?.length ? (
+            <div className="rounded-2xl border border-white/10 p-3" data-testid="venue-rules">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/45">{t.rulesTitle}</p>
+              <ul className="mt-1.5 space-y-1 text-xs text-white/65">{site.rules[locale].map((line) => <li key={line}>• {line}</li>)}</ul>
+            </div>
+          ) : <p className="text-xs text-white/45">{t.cancelPolicy(site.payment.cancelHours)}</p>}
         </div>
       )}
     </section>
@@ -365,12 +436,25 @@ function DetailsForm({ site, locale, slug, accent, pitchId, minutes, chosen, onB
   onBack: () => void; onDone: (r: BookingResult) => void;
 }) {
   const t = T[locale];
-  const methods = ([site.payment.cliq && "cliq", site.payment.card && "card", site.payment.field && "field"].filter(Boolean)) as Array<"cliq" | "card" | "field">;
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [quote, setQuote] = useState<Quote | null>(null);
+  // Once the number is in, ask what this player pays: a first booking may need money online.
+  useEffect(() => {
+    const digits = phone.replace(/\D/g, "");
+    if (digits.length < 9) { setQuote(null); return; }
+    const id = setTimeout(() => {
+      post<Quote>(`/venue-site/${slug}/quote`, { pitchId, startLocal: chosen.startLocal, minutes, phone }).then(setQuote).catch(() => setQuote(null));
+    }, 400);
+    return () => clearTimeout(id);
+  }, [phone, slug, pitchId, chosen.startLocal, minutes]);
+  const allowed = quote?.methods ?? { cliq: site.payment.cliq, card: site.payment.card, field: site.payment.field };
+  const methods = ([allowed.cliq && "cliq", allowed.card && "card", allowed.field && "field"].filter(Boolean)) as Array<"cliq" | "card" | "field">;
   const [team, setTeam] = useState("");
   const [trap, setTrap] = useState("");
   const [payWith, setPayWith] = useState<"cliq" | "card" | "field">(methods[0] ?? "field");
+  useEffect(() => { if (methods.length && !methods.includes(payWith)) setPayWith(methods[0]); }, [methods.join(","), payWith]); // eslint-disable-line react-hooks/exhaustive-deps
+  const depositFils = quote ? quote.onlineDueFils : site.payment.depositPercent ? Math.round((chosen.priceFils * site.payment.depositPercent) / 100) : Math.min(chosen.priceFils, site.payment.depositFils);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pitch = site.pitches.find((p) => p.id === pitchId);
@@ -430,11 +514,13 @@ function DetailsForm({ site, locale, slug, accent, pitchId, minutes, chosen, onB
               );
             })}
           </div>
-          {site.payment.depositMode === "deposit" && payWith !== "field" && <p className="mt-2 text-xs text-white/60">{t.deposit(jod(Math.min(chosen.priceFils, site.payment.depositFils), locale))}</p>}
+          {payWith !== "field" && depositFils > 0 && depositFils < chosen.priceFils && <p className="mt-2 text-xs text-white/60">{t.deposit(jod(depositFils, locale))}</p>}
+          {quote?.reason === "rule" && quote.minimumOnlineFils > 0 && <p className="mt-2 text-xs font-semibold" style={{ color: accent }} data-testid="venue-first-pay">{t.firstPay(jod(quote.minimumOnlineFils, locale))}</p>}
         </div>
       )}
+      {quote?.blocked && <p className="text-sm text-[#FF8A73]" role="alert">{t.blocked}</p>}
       {error && <p className="text-sm text-[#FF8A73]" role="alert">{error}</p>}
-      <button type="submit" disabled={busy} className="w-full rounded-2xl py-3.5 font-bold text-[#0B0F1A] disabled:opacity-60" style={{ background: accent }} data-testid="venue-submit">{busy ? t.booking : t.confirm}</button>
+      <button type="submit" disabled={busy || Boolean(quote?.blocked)} className="w-full rounded-2xl py-3.5 font-bold text-[#0B0F1A] disabled:opacity-60" style={{ background: accent }} data-testid="venue-submit">{busy ? t.booking : t.confirm}</button>
     </form>
   );
 }
@@ -474,8 +560,112 @@ function Confirmation({ result, locale, slug, accent, wa, onNew }: { result: Boo
       {r.status === "held" && r.payWith === "card" && r.cardUrl && r.paymentStatus !== "paid" && (
         <a href={r.cardUrl} className="mt-5 block rounded-2xl py-3 text-center font-bold text-[#0B0F1A]" style={{ background: accent }}>{t.payCardNow}</a>
       )}
-      {r.balanceFils > 0 && r.status !== "held" && <p className="mt-4 text-sm text-white/70">{t.atField(jod(r.balanceFils, locale))}</p>}
+      {r.balanceFils > 0 && (r.status === "confirmed" || r.status === "completed") && <p className="mt-4 text-sm text-white/70">{t.atField(jod(r.balanceFils, locale))}</p>}
       <button type="button" onClick={onNew} className="mt-6 text-sm font-semibold underline">{t.book}</button>
+    </section>
+  );
+}
+
+function ManageCard({ site, locale, slug, accent }: { site: Site; locale: Locale; slug: string; accent: string }) {
+  const t = T[locale];
+  const initial = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("manage") : null;
+  const [open, setOpen] = useState(Boolean(initial));
+  const [code, setCode] = useState(initial ?? "");
+  const [phone, setPhone] = useState("");
+  const [m, setM] = useState<Manage | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"view" | "cancel" | "change">("view");
+  const [done, setDone] = useState<string | null>(null);
+  const [date, setDate] = useState(site.today);
+  const [slots, setSlots] = useState<Availability | null>(null);
+
+  const call = async (path: string, extra: Record<string, unknown> = {}, after?: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await post<Manage>(`/venue-site/${slug}/manage${path}`, { reference: code.trim(), phone, ...extra });
+      setM(next);
+      setMode("view");
+      setDone(after ?? null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t.error);
+    } finally {
+      setBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (mode !== "change" || !m) return;
+    get<Availability>(`/venue-site/${slug}/availability?date=${date}`).then(setSlots).catch(() => setSlots(null));
+  }, [mode, date, slug, m]);
+
+  const days = Array.from({ length: Math.min(14, site.maxDaysAhead + 1) }, (_, i) => addDays(site.today, i)).filter((d) => site.openingHours[String(new Date(`${d}T00:00:00Z`).getUTCDay())]);
+  const times = m ? (slots?.pitches.find((p) => p.pitchId === m.pitchId)?.slots ?? []).flatMap((s) => s.options.filter((o) => o.minutes === m.minutes && o.available).map(() => s.startLocal)) : [];
+  const b = m?.booking;
+
+  return (
+    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:p-7" data-testid="venue-manage">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-3 text-start" aria-expanded={open}>
+        <span><span className="block font-display text-xl font-bold">{t.manage}</span><span className="mt-1 block text-sm text-white/60">{t.manageHint}</span></span>
+        <span className="text-2xl text-white/50">{open ? "−" : "+"}</span>
+      </button>
+      {open && !m && (
+        <form className="mt-4 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={(e) => { e.preventDefault(); void call(""); }}>
+          <input value={code} onChange={(e) => setCode(e.target.value.toUpperCase())} required placeholder={t.codePlaceholder} dir="ltr" className="rounded-2xl border border-white/15 bg-white/[0.04] px-4 py-3 font-mono outline-none focus:border-[var(--accent)]" aria-label={t.codePlaceholder} />
+          <input value={phone} onChange={(e) => setPhone(e.target.value)} required inputMode="tel" placeholder="07XXXXXXXX" dir="ltr" className="rounded-2xl border border-white/15 bg-white/[0.04] px-4 py-3 outline-none focus:border-[var(--accent)]" aria-label={t.phone} />
+          <button type="submit" disabled={busy} className="rounded-2xl px-5 py-3 font-bold text-[#0B0F1A] disabled:opacity-60" style={{ background: accent }}>{t.find}</button>
+        </form>
+      )}
+      {open && m && b && (
+        <div className="mt-4 space-y-4">
+          <div className="rounded-2xl border border-white/10 p-4">
+            <p className="font-bold">{locale === "ar" ? b.pitchNameAr || b.pitchName : b.pitchName} · {t.days[new Date(`${b.startLocal.slice(0, 10)}T00:00:00Z`).getUTCDay()]} {Number(b.startLocal.slice(8, 10))}/{Number(b.startLocal.slice(5, 7))} · <span dir="ltr">{clock(b.startLocal.slice(11), locale)}</span></p>
+            <p className="mt-1 text-sm text-white/60"><span className="font-mono">{b.reference}</span> · {t.statusLabel[b.status] ?? b.status} · {t.total} {jod(b.amountFils, locale)}</p>
+            {Boolean(b.feeFils) && <p className="mt-1 text-sm text-white/70">{t.fee}: {jod(b.feeFils ?? 0, locale)}{b.balanceFils ? ` · ${t.owedNote(jod(b.balanceFils, locale))}` : ""}</p>}
+            {Boolean(b.refundFils) && <p className="mt-1 text-sm text-white/70">{t.refund}: {jod(b.refundFils ?? 0, locale)}</p>}
+          </div>
+          {done && <p className="text-sm font-semibold" style={{ color: accent }} role="status">{done}</p>}
+          {(b.status === "held" || b.status === "confirmed") && mode === "view" && (
+            <div className="space-y-2">
+              {m.change.allowed ? (
+                <button type="button" onClick={() => { setMode("change"); setDate(b.startLocal.slice(0, 10) < site.today ? site.today : b.startLocal.slice(0, 10)); }} className="w-full rounded-2xl border border-white/20 py-3 font-semibold" data-testid="venue-manage-change">
+                  {t.changeTime} <span className="text-xs text-white/55">· {m.change.feeFils ? t.changeFee(jod(m.change.feeFils, locale)) : t.changeFree}</span>
+                </button>
+              ) : <p className="text-sm text-white/60">{t.cantChange[m.change.reason] ?? t.cantChange.not_active}</p>}
+              {m.cancel.allowed ? (
+                <button type="button" onClick={() => setMode("cancel")} className="w-full rounded-2xl border border-[#FF8A73]/50 py-3 font-semibold text-[#FF8A73]" data-testid="venue-manage-cancel">{t.cancelBooking}</button>
+              ) : <p className="text-sm text-white/60">{t.cancelTooLate(m.cancel.hours)}</p>}
+            </div>
+          )}
+          {mode === "cancel" && (
+            <div className="space-y-3 rounded-2xl border border-[#FF8A73]/40 p-4">
+              <p className="font-semibold">{m.cancel.feeFils ? t.cancelFee(jod(m.cancel.feeFils, locale)) : t.cancelFree}</p>
+              {m.cancel.refundFils > 0 && <p className="text-sm text-white/70">{t.refundNote(jod(m.cancel.refundFils, locale))}</p>}
+              {m.cancel.owedFils > 0 && <p className="text-sm text-white/70">{t.owedNote(jod(m.cancel.owedFils, locale))}</p>}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" disabled={busy} onClick={() => void call("/cancel", {}, t.cancelledTitle)} className="rounded-2xl bg-[#FF5A3C] px-5 py-2.5 font-bold text-white disabled:opacity-60" data-testid="venue-manage-confirm-cancel">{t.confirmCancel}</button>
+                <button type="button" onClick={() => setMode("view")} className="rounded-2xl border border-white/20 px-5 py-2.5 font-semibold">{t.keep}</button>
+              </div>
+            </div>
+          )}
+          {mode === "change" && (
+            <div className="space-y-3 rounded-2xl border border-white/15 p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-white/45">{t.pickNewTime}</p>
+              <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">{days.map((d) => <Chip key={d} active={d === date} accent={accent} onClick={() => setDate(d)}>{t.days[new Date(`${d}T00:00:00Z`).getUTCDay()]} {Number(d.slice(8))}</Chip>)}</div>
+              {times.length === 0 ? <p className="text-sm text-white/60">{t.noTimes}</p> : (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+                  {times.map((start) => (
+                    <button key={start} type="button" disabled={busy} onClick={() => void call("/change", { startLocal: start }, t.moved)} className="rounded-2xl border border-white/15 p-2.5 font-display font-bold hover:border-[var(--accent)]" dir="ltr">{clock(start.slice(11), locale)}</button>
+                  ))}
+                </div>
+              )}
+              {m.change.feeFils > 0 && <p className="text-xs text-white/60">{t.changeFee(jod(m.change.feeFils, locale))}</p>}
+              <button type="button" onClick={() => setMode("view")} className="text-sm font-semibold underline">{t.keep}</button>
+            </div>
+          )}
+        </div>
+      )}
+      {error && <p className="mt-3 text-sm text-[#FF8A73]" role="alert">{error}</p>}
     </section>
   );
 }

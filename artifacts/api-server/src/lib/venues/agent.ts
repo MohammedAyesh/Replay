@@ -35,17 +35,22 @@ import {
   VenueError,
   availability,
   bookingFacts,
+  bookingPolicy,
   cancelBooking,
+  changeByPlayer,
   createBookings,
   loadVenue,
   markPaid,
+  moneyOf,
   paymentTarget,
+  quoteFor,
   sendVenueMessage,
   type Venue,
 } from "./store";
+import { cancelQuote, changeQuote, policyOf, rulesSummary } from "./rules";
 
-type MenuStep = "menu" | "day" | "pitch" | "length" | "time" | "name" | "pay" | "cancel";
-type Draft = { date?: string; pitchId?: number; minutes?: number; startLocal?: string; name?: string; options?: string[] };
+type MenuStep = "menu" | "day" | "pitch" | "length" | "time" | "name" | "pay" | "cancel" | "manage" | "confirm_cancel";
+type Draft = { date?: string; pitchId?: number; minutes?: number; startLocal?: string; name?: string; options?: string[]; bookingId?: number; moveId?: number };
 type ThreadState = { step?: MenuStep | null; draft?: Draft; menuAt?: number; nudgedAt?: number; locale?: Locale };
 
 const HUMAN_KINDS = ["chat", "phone"];
@@ -268,9 +273,18 @@ const T = {
     back: "0 رجوع للقائمة",
     none: "ما عندك حجوزات جاية.",
     yours: "حجوزاتك:",
-    cancelHint: "لإلغاء حجز اكتب رقمه، أو 0 للقائمة.",
+    cancelHint: "لتغيير أو إلغاء حجز اكتب رقمه، أو 0 للقائمة.",
     cancelled: "تمام، ألغينا الحجز ✅",
     tooLate: (h: number) => `ما بنقدر نلغي أونلاين قبل الموعد بأقل من ${h} ساعات. احكي معنا هون ومنشوف.`,
+    manage: "شو بدك تعمل بهالحجز؟",
+    doChange: (fee: string | null) => `غيّر الموعد${fee ? ` (رسوم ${fee})` : ""}`,
+    doCancel: (fee: string | null) => `ألغِ الحجز${fee ? ` (رسوم ${fee})` : ""}`,
+    cantChange: (why: string) => `تغيير الموعد: ${why}`,
+    changeWhy: { off: "احكي مع الملعب", too_late: "انتهى وقت التغيير", too_many: "وصلت الحد الأقصى للتغييرات", not_active: "ما بينفع" } as Record<string, string>,
+    confirmCancel: (fee: string | null, refund: string | null) => [`متأكد بدك تلغي؟`, fee ? `رسوم الإلغاء المتأخر: ${fee}` : null, refund ? `رح نرجعلك ${refund}` : null, `${NUM[1]} أيوه، ألغِ`, "0 لا، ارجع"].filter(Boolean).join("\n"),
+    pickNewDay: "لأي يوم بدك تنقل الحجز؟",
+    blocked: "لازم تحكي مع الملعب عشان تحجز. حدا من الفريق رح يرد عليك هون 🙏",
+    firstDeposit: (amount: string) => `لأنه أول حجز إلك عنا، لازم تدفع ${amount} أونلاين.`,
     human: "تمام، حدا من الفريق رح يرد عليك هون بأقرب وقت 🙏",
     nudge: "اختار رقم من القائمة، أو اكتب 0 لترجع للقائمة.",
     hours: "مواعيد الدوام:",
@@ -295,9 +309,18 @@ const T = {
     back: "0 back to the menu",
     none: "You have no upcoming bookings.",
     yours: "Your bookings:",
-    cancelHint: "To cancel one, reply with its number, or 0 for the menu.",
+    cancelHint: "To change or cancel one, reply with its number, or 0 for the menu.",
     cancelled: "Done, the booking is cancelled ✅",
     tooLate: (h: number) => `Bookings can't be cancelled online less than ${h} hours before kick-off. Message us here and we'll sort it out.`,
+    manage: "What would you like to do with this booking?",
+    doChange: (fee: string | null) => `Change the time${fee ? ` (${fee} fee)` : ""}`,
+    doCancel: (fee: string | null) => `Cancel it${fee ? ` (${fee} fee)` : ""}`,
+    cantChange: (why: string) => `Changing the time: ${why}`,
+    changeWhy: { off: "message the field", too_late: "too close to kick-off", too_many: "no changes left", not_active: "not possible" } as Record<string, string>,
+    confirmCancel: (fee: string | null, refund: string | null) => ["Cancel this booking?", fee ? `Late cancellation fee: ${fee}` : null, refund ? `We'll refund ${refund}` : null, `${NUM[1]} Yes, cancel`, "0 No, go back"].filter(Boolean).join("\n"),
+    pickNewDay: "Which day would you like to move it to?",
+    blocked: "Please talk to the field to book. Someone from the team will reply here 🙏",
+    firstDeposit: (amount: string) => `As it's your first booking with us, ${amount} is paid online.`,
     human: "Sure, someone from the team will reply here shortly 🙏",
     nudge: "Reply with a number from the menu, or 0 to start again.",
     hours: "Opening hours:",
@@ -354,9 +377,21 @@ async function runMenu(venue: Venue, threadId: number, state: ThreadState, phone
   }
   const value = options[pick - 1];
   try {
+    if (step === "day" && draft.moveId) return askTime(venue, threadId, phone, locale, { ...draft, date: value });
     if (step === "day") return askPitch(venue, threadId, phone, locale, { ...draft, date: value });
     if (step === "pitch") return askLength(venue, threadId, phone, locale, { ...draft, pitchId: Number(value) });
     if (step === "length") return askTime(venue, threadId, phone, locale, { ...draft, minutes: Number(value) });
+    if (step === "time" && draft.moveId) {
+      const b = await mineById(venue, phone, draft.moveId);
+      if (!b) return showMenu();
+      try {
+        await changeByPlayer(venue, b, { startLocal: value });
+      } catch (error) {
+        if (error instanceof VenueError && error.code === "taken") return askTime(venue, threadId, phone, locale, draft);
+        throw error;
+      }
+      return save({ step: "menu", draft: {}, menuAt: Date.now() });
+    }
     if (step === "time") {
       const next = { ...draft, startLocal: value };
       if (pushName && pushName.trim().length >= 2) return askPay(venue, threadId, phone, locale, { ...next, name: pushName.trim().slice(0, 60) });
@@ -365,18 +400,42 @@ async function runMenu(venue: Venue, threadId: number, state: ThreadState, phone
     }
     if (step === "pay") return book(venue, threadId, phone, locale, draft, value as "cliq" | "card" | "field");
     if (step === "cancel") {
-      const id = Number(value);
-      const [b] = await db.select().from(venueBookingsTable).where(and(eq(venueBookingsTable.id, id), eq(venueBookingsTable.academyId, venue.id), eq(venueBookingsTable.customerPhone, phone)));
+      const b = await mineById(venue, phone, Number(value));
       if (!b) return showMenu();
-      if (b.startsAt.getTime() - Date.now() < venue.settings.cancelHours * 3_600_000 && b.status === "confirmed") {
-        await reply(venue, phone, t.tooLate(venue.settings.cancelHours));
+      return askManage(venue, threadId, phone, locale, b);
+    }
+    if (step === "manage") {
+      const b = await mineById(venue, phone, draft.bookingId ?? 0);
+      if (!b) return showMenu();
+      if (value === "change") {
+        const minutes = wallMinutes(b.endLocal) - wallMinutes(b.startLocal);
+        return askDay(venue, threadId, phone, locale, { moveId: b.id, pitchId: b.pitchId, minutes }, t.pickNewDay);
+      }
+      const policy = bookingPolicy(venue, b);
+      const q = cancelQuote(policy, moneyOf(b), "player");
+      if (!q.allowed) {
+        await reply(venue, phone, t.tooLate(policy.cancelHours));
         return save({ step: "menu", draft: {}, menuAt: Date.now() });
       }
-      await cancelBooking(venue, b, "Cancelled by the player on WhatsApp", { notify: false });
-      await reply(venue, phone, t.cancelled);
+      await reply(venue, phone, t.confirmCancel(q.feeFils ? formatJod(q.feeFils, locale) : null, q.refundFils ? formatJod(q.refundFils, locale) : null));
+      return save({ step: "confirm_cancel", draft: { bookingId: b.id, options: ["yes"] } });
+    }
+    if (step === "confirm_cancel") {
+      const b = await mineById(venue, phone, draft.bookingId ?? 0);
+      if (!b) return showMenu();
+      await cancelBooking(venue, b, "Cancelled by the player on WhatsApp", { by: "player" });
       return save({ step: "menu", draft: {}, menuAt: Date.now() });
     }
   } catch (error) {
+    if (error instanceof VenueError && error.code === "too_late") {
+      await reply(venue, phone, t.tooLate(venue.settings.cancelHours));
+      return save({ step: "menu", draft: {}, menuAt: Date.now() });
+    }
+    if (error instanceof VenueError && error.code?.startsWith("change_")) {
+      await reply(venue, phone, t.cantChange(t.changeWhy[error.code.slice(7)] ?? t.changeWhy.not_active));
+      return save({ step: "menu", draft: {}, menuAt: Date.now() });
+    }
+    if (error instanceof VenueError && error.code === "blocked") return handover(venue, threadId, phone, locale, t.blocked);
     const message = error instanceof VenueError ? error.message : t.error;
     await reply(venue, phone, error instanceof VenueError && locale === "ar" ? t.error : message);
     return showMenu();
@@ -432,6 +491,7 @@ async function askTime(venue: Venue, threadId: number, phone: string, locale: Lo
   await saveThread(threadId, { state: { step: "time", draft: { ...draft, options: free.map((f) => f.start) }, menuAt: Date.now(), locale } });
 }
 
+/** The ways to pay the field takes in general (for the AI's prompt). A player's own quote may narrow them. */
 async function payOptions(venue: Venue): Promise<Array<"cliq" | "card" | "field">> {
   const target = await paymentTarget(venue.settings);
   const out: Array<"cliq" | "card" | "field"> = [];
@@ -443,12 +503,39 @@ async function payOptions(venue: Venue): Promise<Array<"cliq" | "card" | "field"
   return out;
 }
 
+async function mineById(venue: Venue, phone: string, id: number): Promise<VenueBooking | null> {
+  if (!id) return null;
+  const [b] = await db.select().from(venueBookingsTable).where(and(eq(venueBookingsTable.id, id), eq(venueBookingsTable.academyId, venue.id), eq(venueBookingsTable.customerPhone, phone)));
+  return b && ["held", "confirmed"].includes(b.status) ? b : null;
+}
+
+async function askManage(venue: Venue, threadId: number, phone: string, locale: Locale, b: VenueBooking) {
+  const t = T[locale];
+  const policy = bookingPolicy(venue, b);
+  const money = moneyOf(b);
+  const cq = cancelQuote(policy, money, "player");
+  const ch = changeQuote(policy, money);
+  const options: string[] = [];
+  const lines: string[] = [`${dayLabel(b.startLocal.slice(0, 10), locale)} ${timeLabel(b.startLocal.slice(11), locale)} (${b.reference})`, t.manage];
+  if (ch.allowed) { options.push("change"); lines.push(`${num(options.length)} ${t.doChange(ch.feeFils ? formatJod(ch.feeFils, locale) : null)}`); }
+  if (cq.allowed) { options.push("cancel"); lines.push(`${num(options.length)} ${t.doCancel(cq.feeFils ? formatJod(cq.feeFils, locale) : null)}`); }
+  if (!ch.allowed) lines.push(t.cantChange(t.changeWhy[ch.reason] ?? t.changeWhy.not_active));
+  if (!cq.allowed) lines.push(t.tooLate(policy.cancelHours));
+  lines.push(t.back);
+  await reply(venue, phone, lines.join("\n"));
+  await saveThread(threadId, { state: { step: options.length ? "manage" : "menu", draft: { bookingId: b.id, options }, menuAt: Date.now(), locale } });
+}
+
 async function askPay(venue: Venue, threadId: number, phone: string, locale: Locale, draft: Draft) {
   const t = T[locale];
-  const options = await payOptions(venue);
+  const quote = await quoteFor(venue, { phone, pitchId: draft.pitchId!, startLocal: draft.startLocal!, minutes: draft.minutes! });
+  if (quote.blocked) return handover(venue, threadId, phone, locale, t.blocked);
+  const options = (["cliq", "card", "field"] as const).filter((m) => quote.methods[m]);
+  if (!options.length) options.push("field");
+  const note = quote.reason === "new_customer" ? t.firstDeposit(formatJod(quote.minimumOnlineFils, locale)) : null;
   if (options.length === 1) return book(venue, threadId, phone, locale, draft, options[0]);
   const label = { cliq: t.payCliq, card: t.payCard, field: t.payField };
-  await reply(venue, phone, [t.pickPay, ...options.map((o, i) => `${num(i + 1)} ${label[o]}`), t.back].join("\n"));
+  await reply(venue, phone, [note, t.pickPay, ...options.map((o, i) => `${num(i + 1)} ${label[o]}`), t.back].filter(Boolean).join("\n"));
   await saveThread(threadId, { state: { step: "pay", draft: { ...draft, options }, menuAt: Date.now(), locale } });
 }
 
@@ -487,8 +574,8 @@ async function listMine(venue: Venue, threadId: number, phone: string, locale: L
   await saveThread(threadId, { state: { step: "cancel", draft: { options: mine.map((b) => String(b.id)) }, menuAt: Date.now(), locale } });
 }
 
-async function handover(venue: Venue, threadId: number, phone: string, locale: Locale) {
-  await reply(venue, phone, T[locale].human);
+async function handover(venue: Venue, threadId: number, phone: string, locale: Locale, text?: string) {
+  await reply(venue, phone, text ?? T[locale].human);
   await saveThread(threadId, {
     handoverAt: new Date(),
     pausedUntil: new Date(Date.now() + Math.max(30, venue.settings.agentPauseMinutes) * 60_000),
@@ -585,8 +672,22 @@ const TOOLS = [
   },
   {
     name: "cancel_booking",
-    description: "Cancel one of this number's upcoming bookings by its code. Only when the player clearly asks to cancel.",
+    description: "Cancel one of this number's upcoming bookings by its code. Only when the player clearly asks to cancel. Check my_bookings first: if cancelling has a fee, tell the player the fee and cancel only after they agree. The system sends the player the cancellation (with any fee or refund) itself.",
     input_schema: { type: "object", properties: { reference: { type: "string" } }, required: ["reference"] },
+  },
+  {
+    name: "change_booking",
+    description: "Move one of this number's upcoming bookings to another kick-off time (same pitch and length unless given). Check my_bookings first for whether changes are allowed and the change fee; tell the player any fee and get their OK. Call check_availability for the new time first. The system sends the player the new details itself.",
+    input_schema: {
+      type: "object",
+      properties: {
+        reference: { type: "string" },
+        start_local: { type: "string", description: "YYYY-MM-DD HH:MM in Amman time, exactly as check_availability returned it" },
+        pitch_id: { type: "integer" },
+        minutes: { type: "integer" },
+      },
+      required: ["reference", "start_local"],
+    },
   },
   {
     name: "handover",
@@ -608,8 +709,9 @@ async function systemPrompt(venue: Venue, locale: Locale): Promise<string> {
     `Write like a friendly Jordanian front-desk person: Ammani Arabic dialect by default, or English if the player writes English. Short WhatsApp messages, no markdown headings, at most one emoji.`,
     `Never state a free time or a price you didn't get from check_availability in this conversation. Times are Amman time; a field open past midnight lists those late times under the day it opened.`,
     `To book you need: pitch, day, kick-off time, length, a name, and how they pay. Ask only for what's missing. Confirm the details in one line before calling create_booking.`,
-    `Ways to pay here: ${options.join(", ")}${s.depositMode === "deposit" ? ` (online is a deposit of ${formatJod(s.depositFils)}; the rest at the field)` : ""}. ${options.includes("cliq") ? "For CliQ the system sends the alias and a booking code; they send the receipt photo in this chat." : ""}`,
-    `Cancelling: allowed up to ${s.cancelHours} hours before kick-off; closer than that, hand over.`,
+    `Ways to pay here: ${options.join(", ")}. ${options.includes("cliq") ? "For CliQ the system sends the alias and a booking code; they send the receipt photo in this chat." : ""}`,
+    `The field's rules (the system enforces them; if create_booking says a payment method isn't allowed for this player, offer the methods it allows):`,
+    ...rulesSummary(policyOf(s as unknown as Record<string, unknown>), "en").map((l) => `- ${l}`),
     `Lengths offered: ${normaliseDurations(s.durations).join(", ")} minutes.`,
     "Pitches:",
     ...pitches.map((p) => `- id ${p.id}: ${p.name}${p.nameAr ? ` / ${p.nameAr}` : ""}, ${p.size}-a-side${p.surface ? `, ${p.surface}` : ""}${p.indoor ? ", indoor" : ""}`),
@@ -670,17 +772,37 @@ async function runTool(venue: Venue, threadId: number, phone: string, locale: Lo
     }
     if (name === "my_bookings") {
       const mine = await upcoming(venue.id, phone);
-      return { result: JSON.stringify(mine.map((b) => ({ reference: b.reference, start_local: b.startLocal, end_local: b.endLocal, pitch_id: b.pitchId, status: b.status, payment: b.paymentStatus, price_jod: b.amountFils / 1000 }))) };
+      return {
+        result: JSON.stringify(mine.map((b) => {
+          const policy = bookingPolicy(venue, b);
+          const cq = cancelQuote(policy, moneyOf(b), "player");
+          const ch = changeQuote(policy, moneyOf(b));
+          return {
+            reference: b.reference, start_local: b.startLocal, end_local: b.endLocal, pitch_id: b.pitchId, status: b.status, payment: b.paymentStatus,
+            price_jod: b.amountFils / 1000, paid_jod: b.paidFils / 1000,
+            cancel: cq.allowed ? { allowed: true, fee_jod: cq.feeFils / 1000, refund_jod: cq.refundFils / 1000 } : { allowed: false, why: "too close to kick-off: hand over" },
+            change: ch.allowed ? { allowed: true, fee_jod: ch.feeFils / 1000, changes_left: ch.changesLeft } : { allowed: false, why: ch.reason },
+          };
+        })),
+      };
     }
     if (name === "cancel_booking") {
       const reference = String(input.reference ?? "").toUpperCase().trim();
       const [b] = await db.select().from(venueBookingsTable).where(and(eq(venueBookingsTable.academyId, venue.id), eq(venueBookingsTable.customerPhone, phone), sql`upper(${venueBookingsTable.reference}) = ${reference}`));
       if (!b || !["held", "confirmed"].includes(b.status)) return { result: "No upcoming booking with that code on this number", isError: true };
-      if (b.status === "confirmed" && b.startsAt.getTime() - Date.now() < venue.settings.cancelHours * 3_600_000) {
-        return { result: `Too close to kick-off to cancel online (limit ${venue.settings.cancelHours} hours). Hand over to the team.`, isError: true };
-      }
-      await cancelBooking(venue, b, "Cancelled by the player on WhatsApp", { notify: false });
-      return { result: JSON.stringify({ ok: true, cancelled: b.reference }) };
+      const row = await cancelBooking(venue, b, "Cancelled by the player on WhatsApp", { by: "player" });
+      return { result: JSON.stringify({ ok: true, cancelled: b.reference, fee_jod: (row.feeFils - b.feeFils) / 1000, refund_jod: row.refundDueFils / 1000, note: "The system sent the player the cancellation details." }) };
+    }
+    if (name === "change_booking") {
+      const reference = String(input.reference ?? "").toUpperCase().trim();
+      const [b] = await db.select().from(venueBookingsTable).where(and(eq(venueBookingsTable.academyId, venue.id), eq(venueBookingsTable.customerPhone, phone), sql`upper(${venueBookingsTable.reference}) = ${reference}`));
+      if (!b || !["held", "confirmed"].includes(b.status)) return { result: "No upcoming booking with that code on this number", isError: true };
+      const row = await changeByPlayer(venue, b, {
+        startLocal: String(input.start_local ?? ""),
+        pitchId: Number(input.pitch_id) || undefined,
+        minutes: Number(input.minutes) || undefined,
+      });
+      return { result: JSON.stringify({ ok: true, reference: row.reference, start_local: row.startLocal, note: "The system sent the player the new details." }), stop: true };
     }
     if (name === "handover") {
       await saveThread(threadId, {

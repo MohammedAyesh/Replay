@@ -57,6 +57,26 @@ const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   { table: "academy_whatsapp_groups", column: "typing_until", type: "timestamp with time zone" },
   // 0059_venues.sql
   { table: "academies", column: "kind", type: "text DEFAULT 'academy' NOT NULL" },
+  // 0060_venue_booking_rules.sql
+  { table: "venue_settings", column: "accept_cliq", type: "boolean DEFAULT true NOT NULL" },
+  { table: "venue_settings", column: "deposit_percent", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_settings", column: "new_customer_policy", type: "text DEFAULT 'same' NOT NULL" },
+  { table: "venue_settings", column: "no_show_policy", type: "text DEFAULT 'same' NOT NULL" },
+  { table: "venue_settings", column: "late_cancel_mode", type: "text DEFAULT 'refuse' NOT NULL" },
+  { table: "venue_settings", column: "late_cancel_value", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_settings", column: "no_show_fee_mode", type: "text DEFAULT 'deposit' NOT NULL" },
+  { table: "venue_settings", column: "no_show_fee_value", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_settings", column: "allow_changes", type: "boolean DEFAULT true NOT NULL" },
+  { table: "venue_settings", column: "change_hours", type: "integer DEFAULT 6 NOT NULL" },
+  { table: "venue_settings", column: "change_fee_fils", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_settings", column: "max_changes", type: "integer DEFAULT 2 NOT NULL" },
+  { table: "venue_bookings", column: "fee_fils", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_bookings", column: "fee_reason", type: "text" },
+  { table: "venue_bookings", column: "refund_due_fils", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_bookings", column: "refunded_fils", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_bookings", column: "change_count", type: "integer DEFAULT 0 NOT NULL" },
+  { table: "venue_bookings", column: "policy", type: "jsonb" },
+  { table: "venue_bookings", column: "cancelled_by", type: "text" },
 ];
 
 const TABLES: Array<{ table: string; statements: string[] }> = [

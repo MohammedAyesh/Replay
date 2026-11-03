@@ -75,6 +75,7 @@ import weeklyHighlightsRouter from "./weeklyHighlights";
 import venueConsoleRouter from "./venueConsole";
 import venuePublicRouter from "./venuePublic";
 import venueAdminRouter from "./venueAdmin";
+import consoleHomeRouter from "./consoleHome";
 
 const router: IRouter = Router();
 
@@ -153,6 +154,7 @@ router.use(streamingRouter);
 router.use(safetyRouter);
 router.use(friendsRouter);
 router.use(venueConsoleRouter);
+router.use(consoleHomeRouter);
 router.use(venuePublicRouter);
 router.use(venueAdminRouter);
 

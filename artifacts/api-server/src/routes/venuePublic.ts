@@ -12,16 +12,22 @@ import {
   VenueError,
   availability,
   bookingFacts,
+  bookingPolicy,
+  cancelBooking,
+  changeByPlayer,
   createBookings,
   listPitches,
   loadVenue,
   markPaid,
+  moneyOf,
   paymentTarget,
+  quoteFor,
   venueByDomain,
   venueBySlug,
   type Venue,
 } from "../lib/venues/store";
 import { domainAllowed } from "../lib/venues/domains";
+import { balanceOf, cancelQuote, changeQuote, policyOf, requirement, rulesSummary } from "../lib/venues/rules";
 import { bookingByReference, verifyCardPayment } from "../lib/venues/payments";
 
 /**
@@ -49,6 +55,7 @@ function clientIp(req: Request): string {
 
 async function site(venue: Venue) {
   const s = venue.settings;
+  const policy = policyOf(s as unknown as Record<string, unknown>);
   const [academy] = await db.select().from(academiesTable).where(eq(academiesTable.id, venue.id));
   const [field] = await db.select({ lat: fieldsTable.latitude, lng: fieldsTable.longitude, location: fieldsTable.location, thumbnailUrl: fieldsTable.thumbnailUrl })
     .from(fieldsTable).where(eq(fieldsTable.id, venue.fieldId));
@@ -85,11 +92,17 @@ async function site(venue: Venue) {
     payment: {
       cliq: Boolean(target.alias) && s.depositMode !== "none",
       card: target.card && s.depositMode !== "none",
-      field: s.payAtField || s.depositMode === "none",
+      // For a returning player in good standing; the quote narrows it per phone number.
+      field: requirement(policy, { played: 1, noShows: 0 }, 10_000, { cliq: Boolean(target.alias), card: target.card }).fieldAllowed,
       depositMode: s.depositMode,
       depositFils: s.depositFils,
+      depositPercent: policy.depositPercent,
       cancelHours: s.cancelHours,
+      /** A first-time or past no-show player may be asked for more online: ask for a quote once the phone is in. */
+      perPlayer: policy.newCustomerPolicy !== "same" || policy.noShowPolicy !== "same",
+      allowChanges: policy.allowChanges && policy.maxChanges > 0,
     },
+    rules: { en: rulesSummary(policy, "en"), ar: rulesSummary(policy, "ar") },
     today: ammanLocal(new Date()).slice(0, 10),
   };
 }
@@ -212,7 +225,10 @@ async function publicBooking(venue: Venue, reference: string) {
     endLocal: b.endLocal,
     amountFils: b.amountFils,
     dueOnlineFils: b.dueOnlineFils,
-    balanceFils: Math.max(0, b.amountFils - b.paidFils),
+    balanceFils: b.status === "cancelled" || b.status === "no_show" ? Math.max(0, b.feeFils - b.paidFils) : balanceOf(b),
+    feeFils: b.feeFils,
+    refundFils: Math.max(0, b.refundDueFils - b.refundedFils),
+    depositReason: (b.policy as { reason?: string } | null)?.reason ?? "standard",
     payWith: b.payWith,
     cliqAlias: b.payWith === "cliq" ? facts.alias : null,
     cliqName: b.payWith === "cliq" ? facts.aliasName : null,
@@ -220,6 +236,104 @@ async function publicBooking(venue: Venue, reference: string) {
     holdExpiresAt: b.holdExpiresAt?.toISOString() ?? null,
   };
 }
+
+const quoteSchema = z.object({
+  pitchId: z.number().int().positive(),
+  startLocal: z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/),
+  minutes: z.number().int().min(30).max(360),
+  phone: z.string().trim().max(30).optional(),
+});
+
+/** What this player pays for this slot, and how: a first booking may need a deposit online. */
+router.post("/venue-site/:slug/quote", async (req, res): Promise<void> => {
+  const venue = await venueFromSlug(req, res);
+  if (!venue) return;
+  const body = quoteSchema.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Pick a time" }); return; }
+  if (limited(`quote:${clientIp(req)}`, 60, 600_000)) { res.status(429).json({ error: "Slow down a little" }); return; }
+  try {
+    const q = await quoteFor(venue, { phone: body.data.phone ? normalizePhone(body.data.phone) : null, pitchId: body.data.pitchId, startLocal: body.data.startLocal, minutes: body.data.minutes });
+    // Don't tell a stranger whether a number has booked here: only what to pay.
+    res.json({ amountFils: q.amountFils, onlineDueFils: q.onlineDueFils, minimumOnlineFils: q.minimumOnlineFils, reason: q.reason === "standard" ? "standard" : "rule", methods: q.methods, blocked: q.blocked });
+  } catch (error) {
+    if (error instanceof VenueError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
+    res.status(500).json({ error: "That didn't work" });
+  }
+});
+
+const manageSchema = z.object({
+  reference: z.string().trim().min(4).max(20),
+  phone: z.string().trim().min(7).max(30),
+});
+
+/** "Manage my booking": the booking code and the WhatsApp number it was made with, together. */
+async function managed(req: Request, res: Response): Promise<{ venue: Venue; booking: typeof venueBookingsTable.$inferSelect } | null> {
+  const venue = await venueFromSlug(req, res);
+  if (!venue) return null;
+  const body = manageSchema.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Enter your booking code and WhatsApp number" }); return null; }
+  if (limited(`manage:${clientIp(req)}`, 20, 3_600_000)) { res.status(429).json({ error: "Too many tries. Message the field on WhatsApp." }); return null; }
+  const phone = normalizePhone(body.data.phone);
+  const [booking] = phone ? await db.select().from(venueBookingsTable).where(and(
+    eq(venueBookingsTable.academyId, venue.id), eq(venueBookingsTable.reference, body.data.reference.toUpperCase()), eq(venueBookingsTable.customerPhone, phone),
+  )) : [];
+  if (!booking) { res.status(404).json({ error: "No booking with that code and number" }); return null; }
+  return { venue, booking };
+}
+
+async function manageView(venue: Venue, booking: typeof venueBookingsTable.$inferSelect) {
+  const policy = bookingPolicy(venue, booking);
+  const cq = cancelQuote(policy, moneyOf(booking), "player");
+  const ch = changeQuote(policy, moneyOf(booking));
+  const active = booking.status === "held" || booking.status === "confirmed";
+  return {
+    booking: await publicBooking(venue, booking.reference),
+    minutes: (Date.parse(`${booking.endLocal.replace(" ", "T")}:00Z`) - Date.parse(`${booking.startLocal.replace(" ", "T")}:00Z`)) / 60_000,
+    pitchId: booking.pitchId,
+    cancel: active ? { allowed: cq.allowed, late: cq.late, feeFils: cq.feeFils, refundFils: cq.refundFils, owedFils: cq.owedFils, hours: policy.cancelHours } : { allowed: false, late: false, feeFils: 0, refundFils: 0, owedFils: 0, hours: policy.cancelHours },
+    change: { allowed: active && ch.allowed, reason: active ? ch.reason : "not_active", feeFils: ch.feeFils, changesLeft: ch.changesLeft, hours: policy.changeHours },
+  };
+}
+
+router.post("/venue-site/:slug/manage", async (req, res): Promise<void> => {
+  const m = await managed(req, res);
+  if (!m) return;
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await manageView(m.venue, m.booking));
+});
+
+router.post("/venue-site/:slug/manage/cancel", async (req, res): Promise<void> => {
+  const m = await managed(req, res);
+  if (!m) return;
+  if (!["held", "confirmed"].includes(m.booking.status)) { res.status(409).json({ error: "This booking can't be cancelled" }); return; }
+  try {
+    const row = await cancelBooking(m.venue, m.booking, "Cancelled by the player on the website", { by: "player" });
+    res.json(await manageView(m.venue, row));
+  } catch (error) {
+    if (error instanceof VenueError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
+    res.status(500).json({ error: "That didn't work" });
+  }
+});
+
+const changeSchema = manageSchema.extend({
+  startLocal: z.string().regex(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/),
+  pitchId: z.number().int().positive().optional(),
+  minutes: z.number().int().min(30).max(360).optional(),
+});
+
+router.post("/venue-site/:slug/manage/change", async (req, res): Promise<void> => {
+  const m = await managed(req, res);
+  if (!m) return;
+  const body = changeSchema.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Pick a new time" }); return; }
+  try {
+    const row = await changeByPlayer(m.venue, m.booking, { startLocal: body.data.startLocal, pitchId: body.data.pitchId, minutes: body.data.minutes });
+    res.json(await manageView(m.venue, row));
+  } catch (error) {
+    if (error instanceof VenueError) { res.status(error.status).json({ error: error.message, code: error.code }); return; }
+    res.status(500).json({ error: "That didn't work" });
+  }
+});
 
 /** The booking page polls this after the player pays. The reference is the secret. */
 router.get("/venue-site/:slug/bookings/:reference", async (req, res): Promise<void> => {

@@ -53,6 +53,26 @@ export const venueSettingsTable = pgTable("venue_settings", {
   cancelHours: integer("cancel_hours").notNull().default(6),
   /** Mark a booking paid when the receipt check matches amount, receiver and reference. Off: the owner taps Confirm. */
   autoConfirmReceipts: boolean("auto_confirm_receipts").notNull().default(false),
+  /** Payments the field takes: CliQ online (cash at the field is payAtField, cards are cardEnabled). */
+  acceptCliq: boolean("accept_cliq").notNull().default(true),
+  /** Deposit as a share of the price (whole percent); 0 = use depositFils. */
+  depositPercent: integer("deposit_percent").notNull().default(0),
+  /** Someone who has never played here: same as everyone, a deposit online, or the full price online. */
+  newCustomerPolicy: text("new_customer_policy").notNull().default("same"),
+  /** Someone with a no-show here: same, deposit, full, or block (can't book online). */
+  noShowPolicy: text("no_show_policy").notNull().default("same"),
+  /** A player cancelling inside cancelHours: refuse (ask the field), free, keep the deposit, a percent or a fixed fee. */
+  lateCancelMode: text("late_cancel_mode").notNull().default("refuse"),
+  /** Percent (whole) or fils, by lateCancelMode. */
+  lateCancelValue: integer("late_cancel_value").notNull().default(0),
+  /** A no-show: no fee, keep the deposit, a percent or a fixed fee. */
+  noShowFeeMode: text("no_show_fee_mode").notNull().default("deposit"),
+  noShowFeeValue: integer("no_show_fee_value").notNull().default(0),
+  /** Players may move their own booking up to changeHours before kick-off, at most maxChanges times, for changeFeeFils each. */
+  allowChanges: boolean("allow_changes").notNull().default(true),
+  changeHours: integer("change_hours").notNull().default(6),
+  changeFeeFils: integer("change_fee_fils").notNull().default(0),
+  maxChanges: integer("max_changes").notNull().default(2),
   /** Replay's cut of bookings paid to Replay (basis points). Admin-only. */
   replayFeeBps: integer("replay_fee_bps").notNull().default(0),
   /** Card / Apple Pay payment links. Off until a gateway account exists. */
@@ -158,6 +178,17 @@ export const venueBookingsTable = pgTable("venue_bookings", {
   /** The receipt screenshot (Bunny Storage path) and what the check read off it. */
   receiptPath: text("receipt_path"),
   receiptCheck: jsonb("receipt_check"),
+  /** Late-cancel, no-show and change fees charged on this booking. */
+  feeFils: integer("fee_fils").notNull().default(0),
+  feeReason: text("fee_reason"),
+  /** Money paid that has to go back (a free cancellation, a cheaper move), and what went back. */
+  refundDueFils: integer("refund_due_fils").notNull().default(0),
+  refundedFils: integer("refunded_fils").notNull().default(0),
+  changeCount: integer("change_count").notNull().default(0),
+  /** The field's rules when this was booked: a later change of rules doesn't touch it. */
+  policy: jsonb("policy"),
+  /** field, player or system (an unpaid hold that lapsed). */
+  cancelledBy: text("cancelled_by"),
   cardRef: text("card_ref"),
   cardUrl: text("card_url"),
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),

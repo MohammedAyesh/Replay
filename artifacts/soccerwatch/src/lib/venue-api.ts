@@ -50,6 +50,13 @@ export type Booking = {
   dueOnlineFils: number;
   paidFils: number;
   balanceFils: number;
+  feeFils: number;
+  feeReason: "late_cancel" | "no_show" | "change" | null;
+  refundDueFils: number;
+  refundedFils: number;
+  changeCount: number;
+  cancelledBy: "player" | "field" | "system" | null;
+  depositReason: "standard" | "new_customer" | "no_show";
   reference: string;
   customerName: string | null;
   customerPhone: string | null;
@@ -115,7 +122,7 @@ export type PitchSlots = { pitchId: number; name: string; nameAr: string | null;
 
 export type Customer = {
   contactId: number | null; phone: string; display: string; name: string | null; kind: string; stage: string | null; tags: string[];
-  bookings: number; lastStartLocal: string | null; nextStartLocal: string | null; spentFils: number; noShows: number; cancelled: number;
+  bookings: number; lastStartLocal: string | null; nextStartLocal: string | null; spentFils: number; noShows: number; cancelled: number; owedFils: number;
   segment: "lead" | "new" | "returning" | "regular" | "lapsed";
 };
 
@@ -132,12 +139,29 @@ export type AgentData = {
   isOwner: boolean;
 };
 
+export type BookingRules = {
+  acceptCliq: boolean;
+  depositPercent: number;
+  newCustomerPolicy: "same" | "deposit" | "full";
+  noShowPolicy: "same" | "deposit" | "full" | "block";
+  lateCancelMode: "refuse" | "free" | "deposit" | "percent" | "fixed";
+  lateCancelValue: number;
+  noShowFeeMode: "none" | "deposit" | "percent" | "fixed";
+  noShowFeeValue: number;
+  allowChanges: boolean;
+  changeHours: number;
+  changeFeeFils: number;
+  maxChanges: number;
+};
+
 export type PaymentsData = {
   settings: {
     moneyTo: "venue" | "replay"; cliqAlias: string | null; cliqName: string | null; payAtField: boolean; depositMode: "full" | "deposit" | "none"; depositFils: number;
     cancelHours: number; autoConfirmReceipts: boolean; cardProvider: string; cardEnabled: boolean; cardConfigured: boolean; replayFeeBps: number;
-  };
+  } & BookingRules;
+  preview: { en: string[]; ar: string[] };
   ledger: {
+    refundsToSendFils: number; refundsToSendCount: number; feesOwedFils: number; feesOwedCount: number;
     collectedThisMonthFils: number; onlineThisMonthFils: number; unpaidAfterPlayFils: number; viaReplayFils: number; replayFeeFils: number; paidOutFils: number; owedByReplayFils: number;
     payouts: Array<{ id: number; amountFils: number; method: string; note: string | null; createdAt: string }>;
   };
@@ -211,12 +235,12 @@ export function useEditBooking(venueId: number) {
   });
 }
 
-export type BookingAction = "confirm-payment" | "collect-balance" | "confirm-hold" | "reject-receipt" | "cancel" | "complete" | "no-show" | "reopen" | "resend";
+export type BookingAction = "confirm-payment" | "collect-balance" | "confirm-hold" | "reject-receipt" | "cancel" | "complete" | "no-show" | "reopen" | "resend" | "refund-sent" | "fee-collected" | "waive-fee";
 
 export function useBookingAction(venueId: number) {
   const refresh = useInvalidate(venueId);
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: number; action: BookingAction; reason?: string; notify?: boolean; series?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: number; action: BookingAction; reason?: string; notify?: boolean; series?: boolean; byPlayer?: boolean }) =>
       venueCall<{ booking: Booking }>(`${v(venueId)}/bookings/${id}/action`, { method: "POST", ...json(body) }),
     onSuccess: refresh,
   });

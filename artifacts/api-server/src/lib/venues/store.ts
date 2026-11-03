@@ -38,7 +38,7 @@ import {
   ammanLocal,
   bookingReference,
   checkRequest,
-  dueOnline,
+  formatJod,
   fromAmmanLocal,
   normaliseDurations,
   normaliseHours,
@@ -51,8 +51,10 @@ import {
   type Busy,
   type OpeningHours,
 } from "./core";
+import { balanceOf, cancelQuote, changeQuote, noShowQuote, policyOf, requirement, type History, type Policy } from "./rules";
 import {
   cancelledMessage,
+  changedMessage,
   confirmedMessage,
   dayLabel,
   expiredMessage,
@@ -208,9 +210,9 @@ async function venueOwnerId(academyId: number): Promise<number | null> {
 export async function paymentTarget(settings: VenueSettings): Promise<{ alias: string | null; aliasName: string | null; card: boolean }> {
   if (settings.moneyTo === "replay") {
     const commerce = await loadCommerce({});
-    return { alias: commerce.cliqAlias, aliasName: "Replay", card: false };
+    return { alias: settings.acceptCliq === false ? null : commerce.cliqAlias, aliasName: "Replay", card: false };
   }
-  return { alias: settings.cliqAlias?.trim() || null, aliasName: settings.cliqName?.trim() || null, card: settings.cardEnabled && settings.cardProvider !== "none" && Boolean(settings.cardConfigEnc) };
+  return { alias: settings.acceptCliq === false ? null : settings.cliqAlias?.trim() || null, aliasName: settings.cliqName?.trim() || null, card: settings.cardEnabled && settings.cardProvider !== "none" && Boolean(settings.cardConfigEnc) };
 }
 
 // ─── Pitches and availability ────────────────────────────────────────────────
@@ -319,8 +321,10 @@ export async function createBookings(venue: Venue, input: NewBooking): Promise<V
   if (input.customerPhone && !phone) throw new VenueError("That phone number doesn't look right");
   if (!input.staff && !phone) throw new VenueError("A WhatsApp number is needed to book");
   const target = await paymentTarget(s);
+  const policy = policyOf(s as unknown as Record<string, unknown>);
+  // Staff book under the standard rules; a player's history can ask for more up front.
+  const history: History = !input.staff && phone ? await customerHistory(venue.id, phone) : { played: 1, noShows: 0 };
   let payWith = input.payWith;
-  if (payWith === "field" && !s.payAtField && !input.staff) throw new VenueError("Paying at the field isn't available here");
   if (payWith === "card" && !target.card) throw new VenueError("Card payment isn't available here");
   if (payWith === "cliq" && !target.alias) {
     if (input.staff) payWith = "none";
@@ -351,7 +355,16 @@ export async function createBookings(venue: Venue, input: NewBooking): Promise<V
     const startsAt = fromAmmanLocal(startLocal)!;
     const endsAt = fromAmmanLocal(endLocal)!;
     const amountFils = input.amountFils != null && input.staff ? Math.max(0, Math.round(input.amountFils)) : priceFor(pitch, startLocal, input.minutes);
-    const online = payWith === "cliq" || payWith === "card" ? dueOnline(amountFils, s.depositMode, s.depositFils) : 0;
+    const req = requirement(policy, history, amountFils, { cliq: Boolean(target.alias), card: target.card });
+    if (!input.staff) {
+      if (req.blocked) throw new VenueError("Please message the field to book.", 403, "blocked");
+      if (payWith === "field" && !req.fieldAllowed) {
+        throw new VenueError(req.minimumOnlineFils > 0
+          ? `This booking needs ${formatJod(req.minimumOnlineFils)} paid online first`
+          : "Paying at the field isn't available here", 409, req.minimumOnlineFils > 0 ? "deposit_required" : "field_off");
+      }
+    }
+    const online = payWith === "cliq" || payWith === "card" ? (req.onlineDueFils || (input.staff ? amountFils : 0)) : 0;
     const held = !input.staff && online > 0;
     const row = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${PITCH_LOCK}, ${pitch.id})`);
@@ -384,6 +397,7 @@ export async function createBookings(venue: Venue, input: NewBooking): Promise<V
         notes: input.notes?.trim().slice(0, 1000) || null,
         source: input.source,
         seriesId,
+        policy: { ...policy, reason: req.reason },
         holdExpiresAt: held ? new Date(Date.now() + Math.max(5, s.holdMinutes) * 60_000) : null,
         confirmedAt: held ? null : new Date(),
         paidAt: input.paid ? new Date() : null,
@@ -431,7 +445,7 @@ export async function getBooking(venueId: number, bookingId: number): Promise<Ve
 /** Payment came in (CliQ confirmed, card callback, or cash at the field). */
 export async function markPaid(venue: Venue, booking: VenueBooking, by: number | null, options: { full?: boolean; notify?: boolean } = {}): Promise<VenueBooking> {
   if (booking.status === "cancelled") throw new VenueError("This booking was cancelled", 409);
-  const paidFils = options.full ? booking.amountFils : Math.max(booking.paidFils, booking.dueOnlineFils || booking.amountFils);
+  const paidFils = options.full ? booking.amountFils + booking.feeFils : Math.max(booking.paidFils, booking.dueOnlineFils || booking.amountFils);
   const [row] = await db.update(venueBookingsTable).set({
     paymentStatus: "paid",
     paidFils,
@@ -457,12 +471,24 @@ export async function confirmWithoutPayment(venue: Venue, booking: VenueBooking)
   return (await getBooking(venue.id, row.id))!;
 }
 
-export async function cancelBooking(venue: Venue, booking: VenueBooking, reason: string, options: { notify?: boolean; lapsed?: boolean } = {}): Promise<VenueBooking> {
+/**
+ * Cancel a booking. `by` decides the money: the field (or the system, for a lapsed hold)
+ * owes back everything paid; a player cancelling late pays the field's late-cancel fee, and
+ * is refused when the rule is "ask the field".
+ */
+export async function cancelBooking(venue: Venue, booking: VenueBooking, reason: string, options: { notify?: boolean; lapsed?: boolean; by?: "field" | "player" | "system" } = {}): Promise<VenueBooking> {
   if (booking.status === "cancelled") return booking;
+  const by = options.by ?? (options.lapsed ? "system" : "field");
+  const quote = cancelQuote(bookingPolicy(venue, booking), moneyOf(booking), by === "player" ? "player" : "field");
+  if (!quote.allowed) throw new VenueError(`Too close to kick-off to cancel online (less than ${bookingPolicy(venue, booking).cancelHours} hours). Message the field.`, 409, "too_late");
   const [row] = await db.update(venueBookingsTable).set({
     status: "cancelled",
     cancelledAt: new Date(),
     cancelReason: reason.slice(0, 200),
+    cancelledBy: by,
+    feeFils: booking.feeFils + quote.feeFils,
+    feeReason: quote.feeFils > 0 ? "late_cancel" : booking.feeReason,
+    refundDueFils: quote.refundFils,
     holdExpiresAt: null,
     updatedAt: new Date(),
   }).where(and(eq(venueBookingsTable.id, booking.id), ne(venueBookingsTable.status, "cancelled"))).returning();
@@ -472,8 +498,8 @@ export async function cancelBooking(venue: Venue, booking: VenueBooking, reason:
   return row;
 }
 
-/** Staff move a booking to another time, length or pitch. */
-export async function moveBooking(venue: Venue, booking: VenueBooking, next: { pitchId?: number; startLocal?: string; minutes?: number; amountFils?: number | null }): Promise<VenueBooking> {
+/** Staff (or, through changeByPlayer, the player) move a booking to another time, length or pitch. */
+export async function moveBooking(venue: Venue, booking: VenueBooking, next: { pitchId?: number; startLocal?: string; minutes?: number; amountFils?: number | null }, options: { player?: boolean } = {}): Promise<VenueBooking> {
   if (booking.status === "cancelled") throw new VenueError("This booking was cancelled", 409);
   const pitchId = next.pitchId ?? booking.pitchId;
   const startLocal = next.startLocal ?? booking.startLocal;
@@ -482,7 +508,8 @@ export async function moveBooking(venue: Venue, booking: VenueBooking, next: { p
   if (!pitch) throw new VenueError("Pitch not found", 404);
   const check = checkRequest({
     startLocal, minutes, hours: normaliseHours(venue.settings.openingHours), stepMinutes: venue.settings.slotStepMinutes,
-    durations: normaliseDurations(venue.settings.durations), nowMinute: nowWallMinute(), minNoticeMinutes: 0, maxDaysAhead: 400, staff: true,
+    durations: normaliseDurations(venue.settings.durations), nowMinute: nowWallMinute(),
+    minNoticeMinutes: options.player ? venue.settings.minNoticeMinutes : 0, maxDaysAhead: options.player ? venue.settings.maxDaysAhead : 400, staff: !options.player,
   });
   if (!check.ok) throw new VenueError(check.error);
   const endLocal = wallString(wallMinutes(startLocal) + minutes);
@@ -508,6 +535,89 @@ export async function moveBooking(venue: Venue, booking: VenueBooking, next: { p
     await bookFootage(venue, { ...row, footageRequestId: null }).catch(() => undefined);
   }
   return (await getBooking(venue.id, row.id))!;
+}
+
+// ─── Rules: history, quotes, no-shows, changes ───────────────────────────────
+
+/** Games this number has played here (confirmed or played, already started) and its no-shows. */
+export async function customerHistory(venueId: number, phone: string): Promise<History> {
+  const [row] = await db.select({
+    played: sql<number>`count(*) filter (where ${venueBookingsTable.status} in ('confirmed', 'completed') and ${venueBookingsTable.startsAt} <= now())::int`,
+    noShows: sql<number>`count(*) filter (where ${venueBookingsTable.status} = 'no_show')::int`,
+  }).from(venueBookingsTable).where(and(eq(venueBookingsTable.academyId, venueId), eq(venueBookingsTable.customerPhone, phone)));
+  return { played: row?.played ?? 0, noShows: row?.noShows ?? 0 };
+}
+
+/** The rules a booking was made under (older bookings: the field's current rules). */
+export function bookingPolicy(venue: Venue, booking: VenueBooking): Policy {
+  const stored = booking.policy as Record<string, unknown> | null;
+  return policyOf(stored ?? (venue.settings as unknown as Record<string, unknown>));
+}
+
+export function moneyOf(b: VenueBooking) {
+  return { amountFils: b.amountFils, paidFils: b.paidFils, dueOnlineFils: b.dueOnlineFils, feeFils: b.feeFils, startsAt: b.startsAt, changeCount: b.changeCount, status: b.status };
+}
+
+/** What a player would pay, and how they may pay, for a slot. Used before booking on the site and by the agent. */
+export async function quoteFor(venue: Venue, input: { phone: string | null; pitchId: number; startLocal: string; minutes: number }) {
+  const [pitch] = await db.select().from(venuePitchesTable).where(and(eq(venuePitchesTable.id, input.pitchId), eq(venuePitchesTable.academyId, venue.id)));
+  if (!pitch) throw new VenueError("Pitch not found", 404);
+  const phone = input.phone ? normalizePhone(input.phone) : null;
+  const history = phone ? await customerHistory(venue.id, phone) : { played: 0, noShows: 0 };
+  const amountFils = priceFor(pitch, input.startLocal, input.minutes);
+  const target = await paymentTarget(venue.settings);
+  const policy = policyOf(venue.settings as unknown as Record<string, unknown>);
+  const req = requirement(policy, history, amountFils, { cliq: Boolean(target.alias), card: target.card });
+  return {
+    amountFils,
+    onlineDueFils: req.onlineDueFils,
+    minimumOnlineFils: req.minimumOnlineFils,
+    reason: req.reason,
+    blocked: req.blocked,
+    methods: {
+      cliq: Boolean(target.alias) && !req.blocked && (req.onlineDueFils > 0 || policy.depositMode !== "none"),
+      card: target.card && !req.blocked,
+      field: req.fieldAllowed && !req.blocked,
+    },
+    newCustomer: history.played === 0,
+  };
+}
+
+/** Staff mark a no-show: the field's no-show fee applies. */
+export async function markNoShow(venue: Venue, booking: VenueBooking): Promise<VenueBooking> {
+  if (booking.status === "cancelled") throw new VenueError("This booking was cancelled", 409);
+  const q = noShowQuote(bookingPolicy(venue, booking), moneyOf(booking));
+  const [row] = await db.update(venueBookingsTable).set({
+    status: "no_show",
+    feeFils: Math.max(booking.feeFils, q.feeFils),
+    feeReason: q.feeFils > 0 ? "no_show" : booking.feeReason,
+    updatedAt: new Date(),
+  }).where(eq(venueBookingsTable.id, booking.id)).returning();
+  return row;
+}
+
+/** A player moves their own booking: only inside the field's change rules, and the change fee is added. */
+export async function changeByPlayer(venue: Venue, booking: VenueBooking, next: { pitchId?: number; startLocal: string; minutes?: number }): Promise<VenueBooking> {
+  const q = changeQuote(bookingPolicy(venue, booking), moneyOf(booking));
+  if (!q.allowed) {
+    const policy = bookingPolicy(venue, booking);
+    const why = q.reason === "off" ? "This field doesn't take changes online. Message the field."
+      : q.reason === "too_many" ? "This booking can't be changed again online. Message the field."
+      : q.reason === "too_late" ? `Changes close ${policy.changeHours} hours before kick-off. Message the field.`
+      : "This booking can't be changed.";
+    throw new VenueError(why, 409, `change_${q.reason}`);
+  }
+  const moved = await moveBooking(venue, booking, { pitchId: next.pitchId, startLocal: next.startLocal, minutes: next.minutes }, { player: true });
+  const extraRefund = Math.max(0, moved.paidFils - (moved.amountFils + booking.feeFils + q.feeFils));
+  const [row] = await db.update(venueBookingsTable).set({
+    changeCount: booking.changeCount + 1,
+    feeFils: booking.feeFils + q.feeFils,
+    feeReason: q.feeFils > 0 ? "change" : booking.feeReason,
+    refundDueFils: booking.refundDueFils + extraRefund,
+    updatedAt: new Date(),
+  }).where(eq(venueBookingsTable.id, booking.id)).returning();
+  await notify(venue, row.id, "changed");
+  return row;
 }
 
 // ─── Camera ──────────────────────────────────────────────────────────────────
@@ -578,7 +688,7 @@ export async function attachCardLink(venue: Venue, booking: VenueBooking): Promi
 
 // ─── Messages ────────────────────────────────────────────────────────────────
 
-export type NotifyKind = "held" | "confirmed" | "paid" | "cancelled" | "expired" | "reminder" | "video";
+export type NotifyKind = "held" | "confirmed" | "paid" | "cancelled" | "expired" | "reminder" | "video" | "changed";
 
 const AUTOMATION_FOR: Record<NotifyKind, string | null> = {
   held: null, // payment instructions always go: the booking can't be kept without them
@@ -588,6 +698,7 @@ const AUTOMATION_FOR: Record<NotifyKind, string | null> = {
   expired: "expiring",
   reminder: "reminder",
   video: "videoReady",
+  changed: "confirmed",
 };
 
 export type VenueAutomations = {
@@ -636,8 +747,11 @@ export async function bookingFacts(venue: Venue, booking: VenueBooking, locale: 
     aliasName: booking.moneyTo === "replay" ? "Replay" : target.aliasName,
     holdUntil: hold ? timeLabel(hold, locale) : null,
     cardUrl: booking.cardUrl,
-    balanceFils: Math.max(0, booking.amountFils - booking.paidFils),
+    balanceFils: booking.status === "cancelled" ? Math.max(0, booking.feeFils - booking.paidFils) : balanceOf(booking),
     link,
+    feeFils: booking.feeFils,
+    refundFils: Math.max(0, booking.refundDueFils - booking.refundedFils),
+    reason: ((booking.policy as { reason?: string } | null)?.reason as BookingFacts["reason"]) ?? "standard",
   };
 }
 
@@ -672,9 +786,10 @@ export async function notify(venue: Venue, bookingId: number, kind: NotifyKind):
       : kind === "cancelled" ? cancelledMessage(f, locale)
       : kind === "expired" ? expiredMessage(f, locale)
       : kind === "reminder" ? reminderMessage(f, locale)
+      : kind === "changed" ? changedMessage(f, locale)
       : f.link ? videoReadyMessage(f, locale) : null;
     if (!body) return;
-    const dedupe = kind === "held" ? `v${venue.id}:b${booking.id}:held:${booking.updatedAt.getTime()}` : `v${venue.id}:b${booking.id}:${kind}${kind === "reminder" ? `:${booking.startLocal}` : ""}`;
+    const dedupe = kind === "held" || kind === "changed" ? `v${venue.id}:b${booking.id}:${kind}:${booking.updatedAt.getTime()}` : `v${venue.id}:b${booking.id}:${kind}${kind === "reminder" ? `:${booking.startLocal}` : ""}`;
     await sendVenueMessage(venue.id, booking.customerPhone, `booking_${kind}`, body, dedupe);
   } catch (error) {
     logger.warn({ venueId: venue.id, bookingId, kind, error: (error as Error).message }, "Booking message failed");
@@ -771,7 +886,14 @@ export function bookingView(b: VenueBooking, pitches?: Map<number, VenuePitch>) 
     amountFils: b.amountFils,
     dueOnlineFils: b.dueOnlineFils,
     paidFils: b.paidFils,
-    balanceFils: Math.max(0, b.amountFils - b.paidFils),
+    balanceFils: b.status === "cancelled" || b.status === "no_show" ? Math.max(0, b.feeFils - b.paidFils) : balanceOf(b),
+    feeFils: b.feeFils,
+    feeReason: b.feeReason,
+    refundDueFils: Math.max(0, b.refundDueFils - b.refundedFils),
+    refundedFils: b.refundedFils,
+    changeCount: b.changeCount,
+    cancelledBy: b.cancelledBy,
+    depositReason: ((b.policy as { reason?: string } | null)?.reason ?? "standard"),
     reference: b.reference,
     customerName: b.customerName,
     customerPhone: b.customerPhone,
@@ -811,6 +933,25 @@ export function pitchView(p: VenuePitch, cameraFieldIds?: Set<number>) {
   };
 }
 
+/** The booking-rule settings (Payments → Booking rules), as the console edits them. */
+export function rulesView(s: Pick<VenueSettings, "acceptCliq" | "depositPercent" | "newCustomerPolicy" | "noShowPolicy" | "lateCancelMode" | "lateCancelValue" | "noShowFeeMode" | "noShowFeeValue" | "allowChanges" | "changeHours" | "changeFeeFils" | "maxChanges">) {
+  const p = policyOf(s as unknown as Record<string, unknown>);
+  return {
+    acceptCliq: p.acceptCliq,
+    depositPercent: p.depositPercent,
+    newCustomerPolicy: p.newCustomerPolicy,
+    noShowPolicy: p.noShowPolicy,
+    lateCancelMode: p.lateCancelMode,
+    lateCancelValue: p.lateCancelValue,
+    noShowFeeMode: p.noShowFeeMode,
+    noShowFeeValue: p.noShowFeeValue,
+    allowChanges: p.allowChanges,
+    changeHours: p.changeHours,
+    changeFeeFils: p.changeFeeFils,
+    maxChanges: p.maxChanges,
+  };
+}
+
 export function settingsView(s: VenueSettings, options: { admin?: boolean } = {}) {
   return {
     slug: s.slug,
@@ -828,6 +969,7 @@ export function settingsView(s: VenueSettings, options: { admin?: boolean } = {}
     depositMode: s.depositMode,
     depositFils: s.depositFils,
     cancelHours: s.cancelHours,
+    ...rulesView(s),
     autoConfirmReceipts: s.autoConfirmReceipts,
     replayFeeBps: s.replayFeeBps,
     cardProvider: s.cardProvider,
@@ -856,7 +998,7 @@ export function settingsView(s: VenueSettings, options: { admin?: boolean } = {}
 }
 
 /** Booking count, last booking, money and no-shows per phone: the CRM's view of each customer. */
-export async function customerStats(venueId: number): Promise<Map<string, { bookings: number; lastStartLocal: string | null; nextStartLocal: string | null; spentFils: number; noShows: number; cancelled: number }>> {
+export async function customerStats(venueId: number): Promise<Map<string, { bookings: number; lastStartLocal: string | null; nextStartLocal: string | null; spentFils: number; noShows: number; cancelled: number; owedFils: number }>> {
   const rows = await db.select({
     phone: venueBookingsTable.customerPhone,
     bookings: sql<number>`count(*) filter (where ${venueBookingsTable.status} in ('confirmed', 'completed'))::int`,
@@ -865,8 +1007,9 @@ export async function customerStats(venueId: number): Promise<Map<string, { book
     spent: sql<number>`coalesce(sum(${venueBookingsTable.paidFils}) filter (where ${venueBookingsTable.status} <> 'cancelled'), 0)::int`,
     noShows: sql<number>`count(*) filter (where ${venueBookingsTable.status} = 'no_show')::int`,
     cancelled: sql<number>`count(*) filter (where ${venueBookingsTable.status} = 'cancelled')::int`,
+    owed: sql<number>`coalesce(sum(greatest(0, ${venueBookingsTable.feeFils} - ${venueBookingsTable.paidFils})) filter (where ${venueBookingsTable.status} in ('cancelled', 'no_show')), 0)::int`,
   }).from(venueBookingsTable)
     .where(and(eq(venueBookingsTable.academyId, venueId), isNotNull(venueBookingsTable.customerPhone)))
     .groupBy(venueBookingsTable.customerPhone);
-  return new Map(rows.map((r) => [r.phone!, { bookings: r.bookings, lastStartLocal: r.last, nextStartLocal: r.next, spentFils: r.spent, noShows: r.noShows, cancelled: r.cancelled }]));
+  return new Map(rows.map((r) => [r.phone!, { bookings: r.bookings, lastStartLocal: r.last, nextStartLocal: r.next, spentFils: r.spent, noShows: r.noShows, cancelled: r.cancelled, owedFils: r.owed }]));
 }

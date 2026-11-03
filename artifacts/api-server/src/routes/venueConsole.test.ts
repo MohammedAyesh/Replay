@@ -61,6 +61,7 @@ import consoleRouter from "./academyConsole";
 import academiesRouter from "./academies";
 import teamRouter from "./academyTeam";
 import whatsappRouter from "./academyWhatsapp";
+import consoleHomeRouter from "./consoleHome";
 import * as waha from "../lib/whatsapp/waha";
 import { runVenueTick } from "../lib/venues/store";
 import { addDays, ammanLocal } from "../lib/venues/core";
@@ -103,7 +104,7 @@ beforeAll(async () => {
   app.use("/api/whatsapp/webhook", express.raw({ type: "*/*" }));
   app.use(express.json());
   app.use("/api", academyAccessGate);
-  for (const r of [venueConsoleRouter, venuePublicRouter, venueAdminRouter, consoleRouter, academiesRouter, teamRouter, whatsappRouter]) app.use("/api", r);
+  for (const r of [venueConsoleRouter, venuePublicRouter, venueAdminRouter, consoleRouter, academiesRouter, teamRouter, whatsappRouter, consoleHomeRouter]) app.use("/api", r);
   const users = await db.insert(usersTable).values([
     { name: `Owner ${tag}`, email: `venue-owner-${tag}@test.local` },
     { name: `Desk ${tag}`, email: `venue-desk-${tag}@test.local` },
@@ -303,6 +304,119 @@ describe("the WhatsApp booking agent (menu)", () => {
   });
 });
 
+describe("booking rules", () => {
+  const later = addDays(ammanLocal(new Date()).slice(0, 10), 3);
+  const fresh = "962791110020";
+  const regular = "962791110021";
+  const flaky = "962791110022";
+  const rowByRef = async (reference: string) => (await db.select().from(venueBookingsTable).where(eq(venueBookingsTable.reference, reference)))[0];
+
+  it("lets the owner set deposits, first-booking, cancel, no-show and change rules", async () => {
+    await request(app).put(`${base()}/payments`).set(auth(ownerId)).send({
+      depositMode: "deposit", depositPercent: 25, payAtField: true, acceptCliq: true,
+      newCustomerPolicy: "deposit", noShowPolicy: "full",
+      lateCancelMode: "percent", lateCancelValue: 50, cancelHours: 6,
+      noShowFeeMode: "fixed", noShowFeeValue: 10000,
+      allowChanges: true, changeHours: 6, changeFeeFils: 2000, maxChanges: 1,
+    }).expect(200);
+    const got = await request(app).get(`${base()}/payments`).set(auth(ownerId)).expect(200);
+    expect(got.body.settings).toMatchObject({ depositPercent: 25, newCustomerPolicy: "deposit", lateCancelMode: "percent", lateCancelValue: 50, maxChanges: 1, acceptCliq: true });
+    await request(app).put(`${base()}/payments`).set(auth(ownerId)).send({ lateCancelMode: "percent", lateCancelValue: 150 }).expect(400);
+    await request(app).put(`${base()}/payments`).set(auth(deskId)).send({ maxChanges: 5 }).expect(403);
+    const site = await request(app).get(`/api/venue-site/${slug}`).expect(200);
+    expect(site.body.payment).toMatchObject({ field: true, perPlayer: true, allowChanges: true });
+    expect(site.body.rules.en.join(" ")).toMatch(/First booking/);
+    expect(site.body.rules.ar.length).toBe(site.body.rules.en.length);
+  });
+
+  it("asks a first-time player for the deposit online, and not a regular", async () => {
+    const past = await request(app).post(`${base()}/bookings`).set(auth(ownerId)).send({
+      pitchId: secondPitchId, startLocal: `${later} 23:00`, minutes: 60, customerName: "Regular", customerPhone: regular, payWith: "field", notify: false,
+    }).expect(201);
+    await db.update(venueBookingsTable).set({ status: "completed", startsAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() - 82_800_000) })
+      .where(eq(venueBookingsTable.id, past.body.bookings[0].id));
+    const first = await request(app).post(`/api/venue-site/${slug}/quote`).send({ pitchId, startLocal: `${later} 16:00`, minutes: 60, phone: "0791110020" }).expect(200);
+    expect(first.body).toMatchObject({ amountFils: 20000, minimumOnlineFils: 5000, onlineDueFils: 5000, reason: "rule", methods: { cliq: true, field: false } });
+    const known = await request(app).post(`/api/venue-site/${slug}/quote`).send({ pitchId, startLocal: `${later} 16:00`, minutes: 60, phone: "0791110021" }).expect(200);
+    expect(known.body).toMatchObject({ minimumOnlineFils: 0, reason: "standard", methods: { field: true } });
+    const refused = await request(app).post(`/api/venue-site/${slug}/bookings`).send({ pitchId, startLocal: `${later} 16:00`, minutes: 60, name: "Fresh", phone: "0791110020", payWith: "field" }).expect(409);
+    expect(refused.body.code).toBe("deposit_required");
+    const held = await request(app).post(`/api/venue-site/${slug}/bookings`).send({ pitchId, startLocal: `${later} 16:00`, minutes: 60, name: "Fresh", phone: "0791110020", payWith: "cliq" }).expect(201);
+    expect(held.body).toMatchObject({ status: "held", dueOnlineFils: 5000, depositReason: "new_customer" });
+    expect(await lastOut(fresh)).toMatch(/أول حجز/);
+  });
+
+  it("lets a player change then cancel late on the website, with the field's fees", async () => {
+    const booked = await request(app).post(`/api/venue-site/${slug}/bookings`).send({ pitchId, startLocal: `${later} 17:00`, minutes: 60, name: "Regular", phone: "0791110021", payWith: "field" }).expect(201);
+    expect(booked.body.status).toBe("confirmed");
+    const ref = booked.body.reference as string;
+    await request(app).post(`/api/venue-site/${slug}/manage`).send({ reference: ref, phone: "0791119999" }).expect(404);
+    const seen = await request(app).post(`/api/venue-site/${slug}/manage`).send({ reference: ref.toLowerCase(), phone: "0791110021" }).expect(200);
+    expect(seen.body.change).toMatchObject({ allowed: true, feeFils: 2000, changesLeft: 1 });
+    expect(seen.body.cancel).toMatchObject({ allowed: true, late: false, feeFils: 0 });
+    const moved = await request(app).post(`/api/venue-site/${slug}/manage/change`).send({ reference: ref, phone: "0791110021", startLocal: `${later} 18:00` }).expect(200);
+    expect(moved.body.booking).toMatchObject({ startLocal: `${later} 18:00`, feeFils: 2000, balanceFils: 22000 });
+    expect(await lastOut(regular)).toMatch(/تم تغيير موعد حجزك/);
+    const again = await request(app).post(`/api/venue-site/${slug}/manage/change`).send({ reference: ref, phone: "0791110021", startLocal: `${later} 18:30` }).expect(409);
+    expect(again.body.code).toBe("change_too_many");
+    // Two hours to kick-off: inside the 6-hour window, so half the price is the fee.
+    await db.update(venueBookingsTable).set({ startsAt: new Date(Date.now() + 2 * 3_600_000) }).where(eq(venueBookingsTable.reference, ref));
+    const late = await request(app).post(`/api/venue-site/${slug}/manage`).send({ reference: ref, phone: "0791110021" }).expect(200);
+    expect(late.body.cancel).toMatchObject({ allowed: true, late: true, feeFils: 10000, owedFils: 10000 });
+    const cancelled = await request(app).post(`/api/venue-site/${slug}/manage/cancel`).send({ reference: ref, phone: "0791110021" }).expect(200);
+    expect(cancelled.body.booking).toMatchObject({ status: "cancelled", feeFils: 12000, balanceFils: 12000 });
+    expect(await lastOut(regular)).toMatch(/رسوم الإلغاء المتأخر/);
+    const row = await rowByRef(ref);
+    expect(row.cancelledBy).toBe("player");
+    const ledger = await request(app).get(`${base()}/payments`).set(auth(ownerId)).expect(200);
+    expect(ledger.body.ledger.feesOwedFils).toBeGreaterThanOrEqual(12000);
+    const crm = await request(app).get(`${base()}/customers`).set(auth(deskId)).expect(200);
+    expect(crm.body.customers.find((c: { phone: string }) => c.phone === regular)).toMatchObject({ owedFils: 12000 });
+    const collected = await request(app).post(`${base()}/bookings/${row.id}/action`).set(auth(deskId)).send({ action: "fee-collected" }).expect(200);
+    expect(collected.body.booking).toMatchObject({ paidFils: 12000, balanceFils: 0 });
+  });
+
+  it("charges a no-show and asks for the full price online next time", async () => {
+    const made = await request(app).post(`${base()}/bookings`).set(auth(deskId)).send({
+      pitchId: secondPitchId, startLocal: `${later} 16:00`, minutes: 60, customerName: "Flaky", customerPhone: flaky, payWith: "field", notify: false,
+    }).expect(201);
+    const id = made.body.bookings[0].id;
+    const noShow = await request(app).post(`${base()}/bookings/${id}/action`).set(auth(deskId)).send({ action: "no-show" }).expect(200);
+    expect(noShow.body.booking).toMatchObject({ status: "no_show", feeFils: 10000, balanceFils: 10000, feeReason: "no_show" });
+    const quote = await request(app).post(`/api/venue-site/${slug}/quote`).send({ pitchId, startLocal: `${later} 19:00`, minutes: 60, phone: "0791110022" }).expect(200);
+    expect(quote.body).toMatchObject({ minimumOnlineFils: 20000, onlineDueFils: 20000, methods: { field: false } });
+    const reopened = await request(app).post(`${base()}/bookings/${id}/action`).set(auth(deskId)).send({ action: "reopen" }).expect(200);
+    expect(reopened.body.booking).toMatchObject({ status: "confirmed", feeFils: 0 });
+  });
+
+  it("owes back what a player paid when the field cancels, until the refund is marked sent", async () => {
+    const made = await request(app).post(`${base()}/bookings`).set(auth(deskId)).send({
+      pitchId: secondPitchId, startLocal: `${later} 18:00`, minutes: 60, customerName: "Paid up", customerPhone: "962791110023", payWith: "field", paid: true, notify: false,
+    }).expect(201);
+    const id = made.body.bookings[0].id;
+    const cancelled = await request(app).post(`${base()}/bookings/${id}/action`).set(auth(deskId)).send({ action: "cancel", notify: false }).expect(200);
+    expect(cancelled.body.booking).toMatchObject({ status: "cancelled", feeFils: 0, refundDueFils: 35000 });
+    const sent = await request(app).post(`${base()}/bookings/${id}/action`).set(auth(deskId)).send({ action: "refund-sent" }).expect(200);
+    expect(sent.body.booking).toMatchObject({ refundDueFils: 0, refundedFils: 35000, paymentStatus: "refunded" });
+  });
+
+  it("lets a player cancel from WhatsApp's my bookings, showing the fee first", async () => {
+    await inbound("0", fresh);
+    await inbound("2", fresh);
+    expect(await lastOut(fresh)).toMatch(/لتغيير أو إلغاء/);
+    await inbound("1", fresh);
+    expect(await lastOut(fresh)).toMatch(/غيّر الموعد \(رسوم/);
+    await inbound("2", fresh);
+    expect(await lastOut(fresh)).toMatch(/متأكد بدك تلغي/);
+    await inbound("1", fresh);
+    expect(await lastOut(fresh)).toMatch(/تم إلغاء حجزك/);
+    const [b] = await db.select().from(venueBookingsTable).where(and(eq(venueBookingsTable.academyId, venueId), eq(venueBookingsTable.customerPhone, fresh)));
+    expect(b).toMatchObject({ status: "cancelled", cancelledBy: "player", feeFils: 0 });
+    // Back to the defaults so later tests aren't affected.
+    await request(app).put(`${base()}/payments`).set(auth(ownerId)).send({ newCustomerPolicy: "same", noShowPolicy: "same", depositMode: "full", depositPercent: 0 }).expect(200);
+  });
+});
+
 describe("customers", () => {
   it("lists bookers with their counts and segments", async () => {
     const res = await request(app).get(`${base()}/customers`).set(auth(deskId)).expect(200);
@@ -339,5 +453,25 @@ describe("custom domains", () => {
     await request(app).get(`${base()}/dashboard`).set(auth(strangerId)).expect(403);
     await request(app).get(`${base()}/website`).set(auth(deskId)).expect(403);
     forgetAccess(venueId);
+  });
+});
+
+describe("landing after sign-in", () => {
+  it("sends field staff to the field console, academy coaches to theirs, field owners without one to footage", async () => {
+    const home = async (id: number) => (await request(app).get("/api/me/console-home").set(auth(id)).expect(200)).body.target;
+    expect(await home(ownerId)).toBe("/field");
+    expect(await home(deskId)).toBe("/field");
+    expect(await home(strangerId)).toBeNull();
+    expect(await home(adminId)).toBeNull();
+    const [coach, fieldOnly] = await db.insert(usersTable).values([
+      { name: `Coach ${tag}`, email: `academy-coach-${tag}@test.local` },
+      { name: `Field only ${tag}`, email: `field-only-${tag}@test.local` },
+    ]).returning({ id: usersTable.id });
+    const [academy] = await db.insert(academiesTable).values({ name: `Academy ${tag}`, fieldId }).returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: academy.id, userId: coach.id, role: "coach" });
+    expect(await home(coach.id)).toBe("/academy");
+    await db.insert(fieldOwnersTable).values({ userId: fieldOnly.id, fieldId });
+    expect(await home(fieldOnly.id)).toBe("/owner");
+    await request(app).get("/api/me/console-home").expect(401);
   });
 });

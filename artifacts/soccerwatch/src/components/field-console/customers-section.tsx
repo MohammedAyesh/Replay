@@ -47,6 +47,7 @@ export function CustomersSection({ venueId, onOpenChat, onBook }: { venueId: num
                 <th className="p-3 text-start font-semibold">{copy.customers.next}</th>
                 <th className="p-3 text-start font-semibold">{copy.customers.spent}</th>
                 <th className="p-3 text-start font-semibold">{copy.customers.noShows}</th>
+                <th className="p-3 text-start font-semibold">{copy.customers.owes}</th>
                 <th className="p-3" />
               </tr>
             </thead>
@@ -62,6 +63,7 @@ export function CustomersSection({ venueId, onOpenChat, onBook }: { venueId: num
                   <td className="p-3 text-muted-text">{c.nextStartLocal ? dayName(c.nextStartLocal.slice(0, 10), copy.locale) : copy.customers.never}</td>
                   <td className="p-3 tabular-nums">{jod(c.spentFils, copy.locale)}</td>
                   <td className={cn("p-3 tabular-nums", c.noShows > 0 && "text-[#FF8A73]")}>{c.noShows}</td>
+                  <td className={cn("p-3 tabular-nums", c.owedFils > 0 ? "font-bold text-amber-200" : "text-muted-text")}>{c.owedFils > 0 ? jod(c.owedFils, copy.locale) : "—"}</td>
                   <td className="p-3">
                     <div className="flex justify-end gap-1.5">
                       <Button type="button" size="sm" variant="outline" onClick={() => onOpenChat(c.phone)}><MessageCircle className="me-1 h-3.5 w-3.5" />{copy.customers.chat}</Button>

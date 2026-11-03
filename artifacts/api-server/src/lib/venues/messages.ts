@@ -23,6 +23,10 @@ export type BookingFacts = {
   cardUrl: string | null;
   balanceFils: number;
   link: string | null;
+  feeFils?: number;
+  refundFils?: number;
+  /** Why something is due online: the field's standard rule, a first booking, or a past no-show. */
+  reason?: "standard" | "new_customer" | "no_show";
 };
 
 const AR_DAYS = ["الأحد", "الإثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
@@ -76,6 +80,8 @@ export function paymentInstructions(f: BookingFacts, locale: Locale): string {
   if (locale === "ar") {
     lines.push(`${greet(f, locale)} حجزنالك ${when(f, locale)}.`);
     lines.push(`المبلغ: ${formatJod(f.amountFils, "ar")}${f.dueOnlineFils < f.amountFils ? ` — العربون ${formatJod(f.dueOnlineFils, "ar")} والباقي بالملعب` : ""}.`);
+    if (f.reason === "new_customer") lines.push("لأنه أول حجز إلك عنا، لازم تدفع هالمبلغ أونلاين عشان نثبّت الموعد.");
+    if (f.reason === "no_show") lines.push("عشان نثبّت الموعد لازم تدفع هالمبلغ أونلاين.");
     if (f.cardUrl) lines.push(`ادفع بالبطاقة أو Apple Pay من هون: ${f.cardUrl}`);
     if (f.alias) {
       lines.push(`${f.cardUrl ? "أو حوّل" : "حوّل"} ${formatJod(f.dueOnlineFils, "ar")} على كليك: *${f.alias}*${f.aliasName ? ` (${f.aliasName})` : ""}`);
@@ -87,6 +93,8 @@ export function paymentInstructions(f: BookingFacts, locale: Locale): string {
   }
   lines.push(`${greet(f, locale)} We've held ${when(f, locale)} for you.`);
   lines.push(`Price: ${formatJod(f.amountFils)}${f.dueOnlineFils < f.amountFils ? ` — ${formatJod(f.dueOnlineFils)} deposit now, the rest at the field` : ""}.`);
+  if (f.reason === "new_customer") lines.push("As it's your first booking with us, this is paid online to secure the slot.");
+  if (f.reason === "no_show") lines.push("This is paid online to secure the slot.");
   if (f.cardUrl) lines.push(`Pay by card or Apple Pay here: ${f.cardUrl}`);
   if (f.alias) {
     lines.push(`${f.cardUrl ? "Or send" : "Send"} ${formatJod(f.dueOnlineFils)} by CliQ to *${f.alias}*${f.aliasName ? ` (${f.aliasName})` : ""}`);
@@ -129,9 +137,21 @@ export function reminderMessage(f: BookingFacts, locale: Locale): string {
 }
 
 export function cancelledMessage(f: BookingFacts, locale: Locale): string {
+  const money: string[] = [];
+  if (f.feeFils) money.push(locale === "ar" ? `رسوم الإلغاء المتأخر: ${formatJod(f.feeFils, "ar")}` : `Late cancellation fee: ${formatJod(f.feeFils)}`);
+  if (f.refundFils) money.push(locale === "ar" ? `رح نرجعلك ${formatJod(f.refundFils, "ar")}` : `We'll refund ${formatJod(f.refundFils)}`);
+  if (f.feeFils && f.balanceFils) money.push(locale === "ar" ? `المطلوب منك: ${formatJod(f.balanceFils, "ar")}` : `Still to pay: ${formatJod(f.balanceFils)}`);
+  const head = locale === "ar"
+    ? `تم إلغاء حجزك (${f.reference}) — ${when(f, locale)}.`
+    : `Your booking ${f.reference} — ${when(f, locale)} — is cancelled.`;
+  const tail = locale === "ar" ? "إذا بدك موعد ثاني احكيلنا." : "Message us if you'd like another time.";
+  return [head, ...money, tail].join("\n");
+}
+
+export function changedMessage(f: BookingFacts, locale: Locale): string {
   return locale === "ar"
-    ? `تم إلغاء حجزك (${f.reference}) — ${when(f, locale)}.\nإذا بدك موعد ثاني احكيلنا.`
-    : `Your booking ${f.reference} — ${when(f, locale)} — is cancelled.\nMessage us if you'd like another time.`;
+    ? [`تم تغيير موعد حجزك ✅`, when(f, locale), `رقم الحجز: ${f.reference}`, f.balanceFils > 0 ? `المطلوب بالملعب: ${formatJod(f.balanceFils, "ar")}` : null].filter(Boolean).join("\n")
+    : ["Your booking has moved ✅", when(f, locale), `Booking code: ${f.reference}`, f.balanceFils > 0 ? `To pay at the field: ${formatJod(f.balanceFils)}` : null].filter(Boolean).join("\n");
 }
 
 export function expiredMessage(f: BookingFacts, locale: Locale): string {

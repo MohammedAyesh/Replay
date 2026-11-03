@@ -62,3 +62,26 @@ export function consumeExplicitAuthRedirect(target: string): boolean {
 export function withRedirectPath(path: string, redirectPath: string): string {
   return `${path}?redirect_url=${encodeURIComponent(redirectPath)}`;
 }
+const CONSOLE_HOME_KEY = "replay-console-home-checked";
+
+/**
+ * Academy staff and field owners land in their console instead of the player home: asked
+ * once per browser session, on the default landing only, so "Home" still works afterwards.
+ */
+export async function consoleHomeTarget(): Promise<string | null> {
+  try {
+    if (sessionStorage.getItem(CONSOLE_HOME_KEY)) return null;
+    sessionStorage.setItem(CONSOLE_HOME_KEY, "1");
+  } catch {
+    return null;
+  }
+  try {
+    const base = `${(import.meta.env.BASE_URL ?? "/").replace(/\/$/, "")}/api`;
+    const response = await fetch(`${base}/me/console-home`, { credentials: "include" });
+    if (!response.ok) return null;
+    const body = (await response.json()) as { target?: unknown };
+    return typeof body.target === "string" && ["/academy", "/field", "/owner"].includes(body.target) ? body.target : null;
+  } catch {
+    return null;
+  }
+}
