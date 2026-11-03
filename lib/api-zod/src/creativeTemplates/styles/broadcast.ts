@@ -1,5 +1,5 @@
 import type { Content } from "../content";
-import { crest, media, rect, slant, text, type Ctx, type Timing } from "../kit";
+import { seam, crest, media, rect, slant, text, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackUp } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
 
@@ -26,6 +26,7 @@ function photoTop(c: Ctx, h: number) {
   media(c, "photo", { x: 0, y: 0, w: c.W, h }, { name: "Photo" });
   rect(c, "photo-top-shade", { x: 0, y: 0, w: c.W, h: 300 }, { gradient: { from: "#0B0F1ACC", to: CLEAR } });
   rect(c, "photo-shade", { x: 0, y: Math.round(h * 0.3), w: c.W, h: h - Math.round(h * 0.3) }, { gradient: { from: CLEAR, to: VOID } });
+  seam(c, "photo-seam", h, VOID);
 }
 
 function footer(c: Ctx) {
@@ -280,4 +281,4 @@ const skin: StyleKit["skin"] = {
   },
 };
 
-export const broadcast: StyleKit = { background: VOID, score, fixture, hero, list, promo, skin };
+export const broadcast: StyleKit = { background: VOID, plate: { opacity: 0.6 }, score, fixture, hero, list, promo, skin };

@@ -1,12 +1,12 @@
 import fs from "node:fs";
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { isVideoScene, mediaSourceSchema, sceneSchema } from "@workspace/api-zod";
+import { CREATIVE_FORMATS, CREATIVE_STYLES, TINT_MODES, isVideoScene, mediaSourceSchema, sceneSchema, type CreativeFormat, type ResolvedTint, type TintMode } from "@workspace/api-zod";
 import { CREATIVE_BASE, creativeOwner, loadCreativeProject, publicProject } from "../lib/creative/projects";
 import { logger } from "../lib/logger";
 import { renderScenePng } from "../lib/creative/render";
 import { isRendering, queueVideoRender, renderStillNow, sweepInterruptedRenders } from "../lib/creative/renderJobs";
-import { browserMedia, creativeImageResolver, loadCreativeContext, serverData } from "../lib/creative/renderMedia";
+import { backgroundPlates, browserMedia, creativeImageResolver, loadCreativeContext, rescanPlates, serverData, tintedStill } from "../lib/creative/renderMedia";
 import { sendOutput } from "../lib/creative/renderStore";
 import type { ConcreteSource } from "../lib/creative/render";
 
@@ -17,8 +17,12 @@ import type { ConcreteSource } from "../lib/creative/render";
  *                                       video: queued    → { project } queued (poll the project)
  *   GET  …/projects/:projectId/output   the stored PNG / MP4 (Range for video; ?download=1 = attachment)
  *   POST …/preview                      { scene, data?, width?, timeMs? } → PNG (thumbnails; ≤ 1080 wide)
- *   GET  …/media?src=<MediaSource JSON>&want=still|video
- *                                       something the browser can load for a scene source
+ *   GET  …/media?src=<MediaSource JSON>&want=still|video[&format=post|square|story][&tint=<hex>&tintMode=&tintAmount=&size=<px>]
+ *                                       something the browser can load for a scene source;
+ *                                       format picks a background plate's post/story file;
+ *                                       tint returns the still recoloured as the renderer does (PNG)
+ *   GET  …/artwork/backgrounds?style=<style>
+ *                                       { style, plates: [{ key: "bg/<style>/<n>", n, aspects }] } (empty when none)
  *
  * Academy facts and names are filled on the server (renderMedia.serverData),
  * whatever the browser sent; every media source is checked against the academy.
@@ -29,6 +33,27 @@ const base = CREATIVE_BASE;
 if (process.env.NODE_ENV !== "test") {
   // A render a previous process was running is not running any more.
   setTimeout(() => { void sweepInterruptedRenders(); }, 5_000).unref();
+  // The background plates shipped with this build.
+  rescanPlates();
+}
+
+const queryString = (v: unknown): string | null => (typeof v === "string" ? v : Array.isArray(v) && typeof v[0] === "string" ? v[0] : null);
+
+/** ?tint=<#RRGGBB or RRGGBB>&tintMode=color|multiply|screen&tintAmount=0..1 → a tint, or null (none / invalid). */
+export function tintFromQuery(q: Record<string, unknown>): ResolvedTint | null {
+  const hex = queryString(q.tint);
+  if (!hex || !/^#?[0-9a-fA-F]{6}$/.test(hex)) return null;
+  const modeRaw = queryString(q.tintMode);
+  const mode: TintMode = modeRaw && (TINT_MODES as readonly string[]).includes(modeRaw) ? (modeRaw as TintMode) : "color";
+  const amountRaw = queryString(q.tintAmount);
+  const amount = amountRaw === null || amountRaw === "" ? 1 : Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  return { color: `#${hex.replace(/^#/, "").toUpperCase()}`, mode, amount: Math.min(1, amount) };
+}
+
+function formatFromQuery(v: unknown): CreativeFormat | undefined {
+  const f = queryString(v);
+  return f && f in CREATIVE_FORMATS ? (f as CreativeFormat) : undefined;
 }
 
 router.post(`${base}/projects/:projectId/render`, async (req, res): Promise<void> => {
@@ -126,9 +151,21 @@ router.get(`${base}/media`, async (req, res): Promise<void> => {
   } catch { /* falls through to 400 */ }
   if (!src) { res.status(400).json({ error: "Invalid media source" }); return; }
   const want = req.query.want === "video" ? "video" : "still";
+  const format = formatFromQuery(req.query.format);
+  const tint = want === "still" ? tintFromQuery(req.query as Record<string, unknown>) : null;
   const temps: string[] = [];
   try {
-    const media = await browserMedia(access, src, want, temps);
+    if (tint) {
+      const size = Number(queryString(req.query.size));
+      const png = await tintedStill(access, src, format, tint, temps, Number.isFinite(size) && size >= 64 ? size : undefined);
+      if (png) {
+        res.setHeader("Cache-Control", "private, max-age=300");
+        res.type("png").send(png);
+        return;
+      }
+      // Not loadable here (a crest drawn as initials): the untinted picture, as the export draws it.
+    }
+    const media = await browserMedia(access, src, want, temps, format);
     if (!media) { res.status(404).json({ error: "Not found" }); return; }
     res.setHeader("Cache-Control", "private, max-age=300");
     if ("redirect" in media) { res.redirect(302, media.redirect); return; }
@@ -145,6 +182,18 @@ router.get(`${base}/media`, async (req, res): Promise<void> => {
   } finally {
     for (const t of temps) fs.unlink(t, () => {});
   }
+});
+
+router.get(`${base}/artwork/backgrounds`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  const style = queryString(req.query.style);
+  if (!style || !(CREATIVE_STYLES as readonly string[]).includes(style)) {
+    res.status(400).json({ error: "Unknown style" });
+    return;
+  }
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.json({ style, plates: backgroundPlates(style) });
 });
 
 export default router;

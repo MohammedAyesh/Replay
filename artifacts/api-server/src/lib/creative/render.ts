@@ -5,7 +5,9 @@ import {
   layerVisibleAt,
   resolveColor,
   resolveSource,
+  resolveTint,
   type CreativeBrand,
+  type CreativeFormat,
   type CreativeData,
   type MediaSource,
   type Scene,
@@ -28,6 +30,7 @@ import {
   textDirection,
   type FontFace,
 } from "./renderLayout";
+import { tintPicture } from "./renderTint";
 
 /**
  * Creative hub engine: a scene → PNG, with @napi-rs/canvas and the fonts the
@@ -39,15 +42,19 @@ import {
  *   shape  rect / ellipse / line / slant, fill or gradient, stroke, radius
  *   text   {{bindings}} filled, fit-to-box, uppercase, letter spacing, line
  *          height, stroke, shadow, background pill, Arabic shaped right-to-left
- *   image  cover / contain, radius (cutout is not done yet: drawn as is)
+ *   image  cover / contain, radius, tint (renderTint.ts; cutout is not done yet: drawn as is)
  *   video  its still (a thumbnail) — the MP4 renderer plays the footage
  * then rotation, opacity and hidden, as SceneCanvas does in the browser.
  */
 
 export type ConcreteSource = Exclude<MediaSource, { type: "binding" }>;
 export type MediaLayer = Extract<SceneLayer, { kind: "image" | "video" }>;
-/** A picture for an image layer, or the still of a video layer. Null skips the layer (the crest draws initials). */
-export type ImageResolver = (layer: MediaLayer, src: ConcreteSource) => Promise<Image | Canvas | null>;
+/**
+ * A picture for an image layer, or the still of a video layer. Null skips the
+ * layer (the crest draws initials). `scene.format` picks a background plate's
+ * post or story file.
+ */
+export type ImageResolver = (layer: MediaLayer, src: ConcreteSource, scene: { format: CreativeFormat }) => Promise<Image | Canvas | null>;
 
 export type SceneRenderOptions = {
   scene: Scene;
@@ -308,17 +315,37 @@ export function drawScene(
   ctx.restore();
 }
 
-/** Load every picture the visible layers need (in parallel), keyed by layer id. */
+/**
+ * How far a picture can be shrunk before it is tinted without losing detail:
+ * the scale it will be drawn at (fit into the box, times the output scale), at most 1.
+ */
+function drawnScale(layer: MediaLayer, img: Image | Canvas, outScale: number): number {
+  const kx = layer.w / img.width;
+  const ky = layer.h / img.height;
+  const fit = (layer.fit ?? "cover") === "contain" ? Math.min(kx, ky) : Math.max(kx, ky);
+  return Math.min(1, fit * outScale);
+}
+
+/** Load every picture the visible layers need (in parallel), keyed by layer id. Tinted layers come back tinted. */
 export async function loadPictures(opts: SceneRenderOptions): Promise<Map<string, Image | Canvas | null>> {
   const out = new Map<string, Image | Canvas | null>();
   const data = opts.data ?? {};
+  const { w: W } = sceneSize(opts.scene);
+  const outScale = (opts.width ?? W) / W;
+  const scene = { format: opts.scene.format };
   const jobs = layersToDraw(opts.scene, opts.t ?? null, opts.include)
     .filter((l): l is MediaLayer => l.kind === "image" || l.kind === "video")
     .map(async (layer) => {
       const src = resolveSource(layer.src, data);
       if (!src || !opts.images) { out.set(layer.id, null); return; }
-      const img = await opts.images(layer, src).catch(() => null);
-      out.set(layer.id, img && img.width > 0 && img.height > 0 ? img : null);
+      let img = await opts.images(layer, src, scene).catch(() => null);
+      if (!img || img.width <= 0 || img.height <= 0) { out.set(layer.id, null); return; }
+      const tint = layer.kind === "image" ? resolveTint(layer.tint, opts.brand) : null;
+      if (tint) {
+        const k = drawnScale(layer, img, outScale);
+        img = tintPicture(img, tint, Math.ceil(Math.max(img.width, img.height) * k));
+      }
+      out.set(layer.id, img);
     });
   await Promise.all(jobs);
   return out;

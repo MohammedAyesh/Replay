@@ -249,4 +249,4 @@ const skin: StyleKit["skin"] = {
   },
 };
 
-export const stadium: StyleKit = { background: NIGHT, score, fixture, hero, list, promo, skin };
+export const stadium: StyleKit = { background: NIGHT, plate: { opacity: 1, above: "sky" }, score, fixture, hero, list, promo, skin };

@@ -210,4 +210,4 @@ const skin: StyleKit["skin"] = {
   },
 };
 
-export const cinematic: StyleKit = { background: BLACK, score, fixture, hero, list, promo, skin };
+export const cinematic: StyleKit = { background: BLACK, plate: { opacity: 1 }, score, fixture, hero, list, promo, skin };

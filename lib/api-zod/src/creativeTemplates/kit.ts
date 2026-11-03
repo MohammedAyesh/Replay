@@ -204,3 +204,17 @@ export function video(c: Ctx, id: string, b: Box, o: Common & { path?: string; m
 
 /** Full canvas box. */
 export const full = (c: Ctx): Box => ({ x: 0, y: 0, w: c.W, h: c.H });
+
+/**
+ * Under a photo box that fades into the background colour (#RRGGBB): that
+ * colour fading out again over the next stretch, so the background plate
+ * (PLATE_LAYER_ID) below meets the photo without a hard line. Over a plain
+ * background it is the background colour on itself, so it changes nothing.
+ */
+export function seam(c: Ctx, id: string, y: number, color: string, h = Math.round(c.H * 0.2)) {
+  // Starts 2px up, over the end of the photo's fade, so the two edges never leave an antialiased hairline.
+  const top = Math.round(y) - 2;
+  const hh = Math.min(h + 2, c.H - top);
+  if (hh < 8) return;
+  rect(c, id, { x: 0, y: top, w: c.W, h: hh }, { gradient: { from: color, to: `${color.slice(0, 7)}00` } });
+}

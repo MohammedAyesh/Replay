@@ -3,13 +3,17 @@ import {
   CREATIVE_FORMATS,
   isVideoScene,
   layerVisibleAt,
+  parsePlateKey,
+  PLATE_LAYER_ID,
   resolveColor,
   resolveSource,
+  resolveTint,
   type CreativeBrand,
   type CreativeData,
   type Scene,
   type SceneLayer,
 } from "@workspace/api-zod";
+import { withMediaVariant } from "@/lib/creative-hub-media";
 import { moveBox, resizeBox, rotationTo, tidy, type Box, type Corner, type Snap } from "./canvas/editing";
 import { entranceAt } from "./canvas/layout";
 import { ImageView, VideoView } from "./canvas/media";
@@ -54,6 +58,12 @@ export type SceneCanvasProps = {
  *   - {{bindings}} are filled with fillText(text, data, false); binding media
  *     sources are resolved with `data` before `mediaUrl` sees the layer, so
  *     mediaUrl always gets a concrete source. No URL → a neutral placeholder.
+ *   - Tinted image layers and background plates: the URL mediaUrl returns
+ *     gets the scene format and the tint (brand tokens resolved with `brand`)
+ *     added (withMediaVariant), so the server sends the picture recoloured by
+ *     the same code the export uses. A plate that fails to load draws nothing,
+ *     as in the export. A locked plate ignores the pointer, so a tap on the
+ *     background still clears the selection.
  *   - Editing: click selects, drag moves (centre snaps to the canvas centre
  *     lines), corner handles resize in the layer's rotated frame (Shift keeps
  *     the aspect), the knob rotates (snaps to right angles; Shift = 15° steps),
@@ -145,7 +155,18 @@ export function SceneCanvas({
   const urlFor = (layer: MediaLayer): string | null => {
     const src = resolveSource(layer.src, d);
     if (!src || !mediaUrl) return null;
-    return mediaUrl({ ...layer, src } as MediaLayer);
+    const url = mediaUrl({ ...layer, src } as MediaLayer);
+    if (layer.kind !== "image") return url;
+    const plate = src.type === "artwork" && !!parsePlateKey(src.key);
+    const tint = resolveTint(layer.tint, brand);
+    // Covering a box of another shape needs up to ~1.5× its longest side; device pixels, not CSS pixels.
+    const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+    const size = Math.ceil(Math.max(layer.w, layer.h) * scale * dpr * 1.5);
+    return plate || tint ? withMediaVariant(url, { format: plate ? scene.format : undefined, tint, size }) : url;
+  };
+  const isPlate = (layer: MediaLayer) => {
+    const src = resolveSource(layer.src, d);
+    return layer.kind === "image" && src?.type === "artwork" && !!parsePlateKey(src.key);
   };
 
   const isFootage = (layer: MediaLayer) => {
@@ -174,11 +195,12 @@ export function SceneCanvas({
             const enter = video && timeMs !== undefined ? entranceAt(layer, t ?? 0) : { alpha: 1, dx: 0, dy: 0 };
             const alpha = (layer.opacity ?? 1) * enter.alpha;
             const editing = editingId === layer.id && layer.kind === "text";
+            const interactive = editable && !(layer.id === PLATE_LAYER_ID && layer.locked);
             return (
               <div
                 key={layer.id}
                 data-testid={`scene-layer-${layer.id}`}
-                onPointerDown={editable ? (e) => {
+                onPointerDown={interactive ? (e) => {
                   e.stopPropagation();
                   if (editing || e.button !== 0) return;
                   onSelectLayer?.(layer.id);
@@ -189,8 +211,8 @@ export function SceneCanvas({
                   position: "absolute", left: box.x, top: box.y, width: box.w, height: box.h,
                   transform: `translate(${enter.dx}px, ${enter.dy}px) rotate(${box.rotation}deg)`, transformOrigin: "50% 50%",
                   opacity: alpha,
-                  pointerEvents: editable ? "auto" : "none",
-                  cursor: editable ? (layer.locked ? "default" : "move") : undefined,
+                  pointerEvents: interactive ? "auto" : "none",
+                  cursor: interactive ? (layer.locked ? "default" : "move") : undefined,
                 }}
               >
                 {layer.kind === "shape" ? <ShapeView layer={{ ...layer, w: box.w, h: box.h }} brand={brand} />
@@ -208,7 +230,7 @@ export function SceneCanvas({
                   : layer.kind === "video" && isFootage(layer) ? (
                     <VideoView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} timeMs={t ?? 0} playing={playing && video} />
                   )
-                  : <ImageView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} />}
+                  : <ImageView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} quiet={isPlate(layer)} />}
               </div>
             );
           })}

@@ -69,6 +69,26 @@ export const mediaSourceSchema = z.discriminatedUnion("type", [
 ]);
 export type MediaSource = z.infer<typeof mediaSourceSchema>;
 
+/**
+ * Recolouring a picture with the academy's colour (image layers only).
+ *   color     hex or brand token
+ *   mode      "color" (default): Photoshop's Color blend — the picture keeps its
+ *             own light and dark (white stays white, black stays black) and
+ *             takes the tint's hue and saturation. Meant for greyscale plates.
+ *             "multiply": darkens towards the tint. "screen": lightens towards it.
+ *   amount    0..1 (default 1): how much of the tinted picture shows over the original.
+ */
+export const TINT_MODES = ["color", "multiply", "screen"] as const;
+export type TintMode = (typeof TINT_MODES)[number];
+export const tintSchema = z.object({
+  color: colorSchema,
+  mode: z.enum(TINT_MODES).optional(),
+  amount: z.number().min(0).max(1).optional(),
+});
+export type LayerTint = z.infer<typeof tintSchema>;
+/** A tint with its colour resolved to #RRGGBB and its defaults filled. */
+export type ResolvedTint = { color: string; mode: TintMode; amount: number };
+
 export const sceneLayerSchema = z.discriminatedUnion("kind", [
   z.object({
     ...baseLayer,
@@ -93,6 +113,8 @@ export const sceneLayerSchema = z.discriminatedUnion("kind", [
     /** Remove the background (player cut-out). */
     cutout: z.boolean().optional(),
     radius: z.number().min(0).optional(),
+    /** Recolour the picture (background plates are greyscale and tinted with @primary). */
+    tint: tintSchema.optional(),
   }),
   z.object({
     ...baseLayer,
@@ -168,6 +190,44 @@ export function resolveColor(color: string | undefined, brand: CreativeBrand, fa
     case "@muted": return brand.muted;
     default: return color;
   }
+}
+
+/** A tint's colour as #RRGGBB (alpha dropped), mode and amount filled; null when there is nothing to do. */
+export function resolveTint(tint: LayerTint | undefined | null, brand: CreativeBrand): ResolvedTint | null {
+  if (!tint) return null;
+  const hex = resolveColor(tint.color, brand, "");
+  if (!/^#[0-9a-fA-F]{6}/.test(hex)) return null;
+  const amount = Math.max(0, Math.min(1, tint.amount ?? 1));
+  if (amount <= 0) return null;
+  return { color: hex.slice(0, 7).toUpperCase(), mode: tint.mode ?? "color", amount };
+}
+
+// ── Background plates ────────────────────────────────────────────────────────
+
+/**
+ * Background plates: text-free greyscale artwork shipped with Replay, tinted
+ * with the academy's colour at render time. Files live in
+ * artifacts/api-server/assets/creative/artwork/bg/<style>/<n>-<aspect>.png,
+ * aspect "post" (4:5) or "story" (9:16). A scene names a plate by the artwork
+ * key "bg/<style>/<n>"; the renderer picks the file for the scene's format
+ * (story → the story file if there is one, else the post file with cover;
+ * post and square → the post file). Every template has one plate layer, id
+ * PLATE_LAYER_ID, at the bottom; a missing file draws nothing.
+ */
+export const PLATE_LAYER_ID = "plate";
+export type PlateAspect = "post" | "story";
+export const PLATE_KEY = /^bg\/([a-z]+)\/(\d{1,3})$/;
+
+export const plateKey = (style: string, n: number) => `bg/${style}/${n}`;
+
+export function parsePlateKey(key: string): { style: string; n: number } | null {
+  const m = PLATE_KEY.exec(key);
+  return m ? { style: m[1], n: Number(m[2]) } : null;
+}
+
+/** Plate files to try for a format, best first. */
+export function plateAspects(format: CreativeFormat | undefined): PlateAspect[] {
+  return format === "story" ? ["story", "post"] : ["post", "story"];
 }
 
 /**

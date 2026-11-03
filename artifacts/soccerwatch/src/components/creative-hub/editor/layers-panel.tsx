@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { ChevronDown, ChevronUp, Eye, EyeOff, Film, Image, Lock, LockOpen, Shapes, Trash2, Type } from "lucide-react";
-import { fillText, type SceneLayer } from "@workspace/api-zod";
+import { fillText, PLATE_LAYER_ID, type SceneLayer } from "@workspace/api-zod";
 import { useCreativeEditorCopy, type CreativeEditorStrings } from "@/i18n/creative-editor-strings";
 import { cn } from "@/lib/utils";
 import { panelEmpty } from "./controls";
@@ -9,6 +9,7 @@ import type { EditorApi } from "./editor-api";
 const ICON = { text: Type, image: Image, video: Film, shape: Shapes } as const;
 
 export function layerTitle(layer: SceneLayer, copy: CreativeEditorStrings, data: EditorApi["data"]): string {
+  if (layer.id === PLATE_LAYER_ID && layer.kind === "image") return copy.plateLayer;
   if (layer.name) return layer.name;
   if (layer.kind === "text") {
     const t = fillText(layer.text, data, true).replace(/\s+/g, " ").trim();

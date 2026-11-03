@@ -25,9 +25,10 @@ export function MediaPlaceholder({ layer }: { layer: ImageLayer | VideoLayer }) 
 const clipFor = (layer: ImageLayer | VideoLayer) =>
   layer.kind === "image" && layer.radius ? `path('${roundRectPath(0, 0, layer.w, layer.h, layer.radius)}')` : undefined;
 
-export function ImageView({ layer, url }: { layer: ImageLayer | VideoLayer; url: string | null }) {
+/** `quiet`: draw nothing instead of the placeholder (a background plate whose file is missing, as the export skips it). */
+export function ImageView({ layer, url, quiet = false }: { layer: ImageLayer | VideoLayer; url: string | null; quiet?: boolean }) {
   const [failed, setFailed] = useState<string | null>(null);
-  if (!url || failed === url) return <MediaPlaceholder layer={layer} />;
+  if (!url || failed === url) return quiet ? null : <MediaPlaceholder layer={layer} />;
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ clipPath: clipFor(layer) }}>
       <img src={url} alt="" draggable={false} onError={() => setFailed(url)}

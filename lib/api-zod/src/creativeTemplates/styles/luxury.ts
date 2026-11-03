@@ -1,5 +1,5 @@
 import type { Content } from "../content";
-import { crest, media, rect, rule, text, type Ctx, type Timing } from "../kit";
+import { seam, crest, media, rect, rule, text, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackHeight, stackUp, type StackItem } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
 
@@ -37,6 +37,7 @@ function band(c: Ctx, h: number) {
   media(c, "photo", { x: 0, y: 0, w: c.W, h }, { name: "Photo", opacity: 0.92 });
   rect(c, "photo-top", { x: 0, y: 0, w: c.W, h: 240 }, { gradient: { from: "#060606CC", to: CLEAR } });
   rect(c, "photo-fade", { x: 0, y: Math.round(h * 0.4), w: c.W, h: h - Math.round(h * 0.4) + 2 }, { gradient: { from: CLEAR, to: BLACK } });
+  seam(c, "photo-seam", h + 2, BLACK);
 }
 
 /** The one accent line. */
@@ -218,4 +219,4 @@ const skin: StyleKit["skin"] = {
   },
 };
 
-export const luxury: StyleKit = { background: BLACK, score, fixture, hero, list, promo, skin };
+export const luxury: StyleKit = { background: BLACK, plate: { opacity: 0.35 }, score, fixture, hero, list, promo, skin };

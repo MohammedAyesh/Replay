@@ -13,7 +13,17 @@ import {
   userClipsTable,
   type AcademyAdMedia,
 } from "@workspace/db";
-import type { CreativeBrand, CreativeData, MediaSource } from "@workspace/api-zod";
+import {
+  parsePlateKey,
+  plateAspects,
+  plateKey,
+  type CreativeBrand,
+  type CreativeData,
+  type CreativeFormat,
+  type MediaSource,
+  type PlateAspect,
+  type ResolvedTint,
+} from "@workspace/api-zod";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { displayPhone, instagramHandle } from "../academyOwner";
 import { BUNNY_CDN_HOSTNAME, getBunnyPlaybackUrl, getBunnyProxiedThumbnailUrl, getBunnyThumbnailUrl, isBunnyConfigured, isBunnyStorageConfigured } from "../bunny";
@@ -26,6 +36,7 @@ import { downloadToTemp } from "../meta/media";
 import { firstName, namesAllowed, studioLook } from "../../routes/academyStudio";
 import type { ConcreteSource, ImageResolver, MediaLayer } from "./render";
 import type { VideoResolver, VideoSourceFile } from "./renderVideo";
+import { tintKey, tintPicture } from "./renderTint";
 
 /**
  * Creative hub engine: where a scene's pictures and footage come from.
@@ -94,11 +105,70 @@ export function creativeAssetDir(): string {
 
 const ASSET_KEY = /^[a-z0-9][a-z0-9/_-]{0,119}$/;
 
-/** assets/creative/artwork/<key>.png, or null when the key is odd or the file is not there. */
-export function artworkPath(key: string): string | null {
+/** assets/creative/artwork (CREATIVE_ARTWORK_DIR overrides it, for tests). */
+export function artworkDir(): string {
+  return process.env.CREATIVE_ARTWORK_DIR || path.join(creativeAssetDir(), "artwork");
+}
+
+/**
+ * assets/creative/artwork/<key>.png, or null when the key is odd or the file is
+ * not there. A background plate key "bg/<style>/<n>" names two files,
+ * <n>-post.png (4:5) and <n>-story.png (9:16): a story takes the story file if
+ * there is one, else the post file (drawn with cover); post and square take
+ * the post file, else the story file.
+ */
+export function artworkPath(key: string, format?: CreativeFormat): string | null {
   if (!ASSET_KEY.test(key) || key.includes("..") || key.includes("//")) return null;
-  const file = path.join(creativeAssetDir(), "artwork", `${key}.png`);
-  return fs.existsSync(file) ? file : null;
+  const dir = artworkDir();
+  const names = parsePlateKey(key) ? plateAspects(format).map((a) => `${key}-${a}.png`) : [`${key}.png`];
+  for (const name of names) {
+    const file = path.join(dir, name);
+    if (fs.existsSync(file)) return file;
+  }
+  return null;
+}
+
+// ── Background plates (GET …/creative/artwork/backgrounds) ───────────────────
+
+export type PlateEntry = { key: string; n: number; aspects: PlateAspect[] };
+
+const PLATE_FILE = /^(\d{1,3})-(post|story)\.png$/;
+
+/** Every plate under <root>/<style>/<n>-<aspect>.png, by style, in number order. */
+export function scanPlates(root = path.join(artworkDir(), "bg")): Map<string, PlateEntry[]> {
+  const out = new Map<string, PlateEntry[]>();
+  let styles: fs.Dirent[] = [];
+  try { styles = fs.readdirSync(root, { withFileTypes: true }); } catch { return out; }
+  for (const dir of styles) {
+    if (!dir.isDirectory() || !/^[a-z]+$/.test(dir.name)) continue;
+    const byN = new Map<number, Set<PlateAspect>>();
+    let files: string[] = [];
+    try { files = fs.readdirSync(path.join(root, dir.name)); } catch { continue; }
+    for (const f of files) {
+      const m = PLATE_FILE.exec(f);
+      if (!m || Number(m[1]) < 1) continue;
+      const n = Number(m[1]);
+      if (!byN.has(n)) byN.set(n, new Set());
+      byN.get(n)!.add(m[2] as PlateAspect);
+    }
+    const list = [...byN.entries()].sort((a, b) => a[0] - b[0])
+      .map(([n, set]) => ({ key: plateKey(dir.name, n), n, aspects: (["post", "story"] as const).filter((a) => set.has(a)) }));
+    if (list.length) out.set(dir.name, list);
+  }
+  return out;
+}
+
+let plateIndex: Map<string, PlateEntry[]> | null = null;
+
+/** Read the plate folder again (at boot; tests). */
+export function rescanPlates(root?: string): Map<string, PlateEntry[]> {
+  plateIndex = scanPlates(root);
+  return plateIndex;
+}
+
+/** The plates shipped for a style (scanned once per process; empty when there are none). */
+export function backgroundPlates(style: string): PlateEntry[] {
+  return (plateIndex ?? rescanPlates()).get(style) ?? [];
 }
 
 /** assets/creative/music/<trackKey>.(m4a|mp3|aac), or null. */
@@ -189,14 +259,14 @@ async function dataUrlImage(dataUrl: string | null | undefined): Promise<Image |
  * Pictures for the still renderer. A video layer draws the frame at its trim
  * point; an image layer of a clip draws the clip's own thumbnail.
  */
-export function creativeImageResolver(academyId: number, look: BrandLook): ImageResolver {
-  return async (layer: MediaLayer, src: ConcreteSource): Promise<Image | Canvas | null> => {
+export function creativeImageResolver(academyId: number, look: Pick<BrandLook, "crest">): ImageResolver {
+  return async (layer: MediaLayer, src: ConcreteSource, scene?: { format: CreativeFormat }): Promise<Image | Canvas | null> => {
     const trimSec = layer.kind === "video" ? (layer.trimInMs ?? 0) / 1000 : 0;
     switch (src.type) {
       case "crest":
         return (look.crest as Image | null) ?? null;
       case "artwork": {
-        const file = artworkPath(src.key);
+        const file = artworkPath(src.key, scene?.format);
         return file ? loadImage(file).catch(() => null) : null;
       }
       case "upload": {
@@ -355,7 +425,9 @@ const MAX_BROWSER_WINDOW_MS = 10 * 60_000;
  * A URL (or bytes) the browser can load for a scene source: an image for
  * want=still, a playable MP4 for want=video. Null is a 404.
  */
-export async function browserMedia(access: AcademyOwnerAccess, src: ConcreteSource, want: "still" | "video", temps: string[]): Promise<BrowserMedia> {
+export async function browserMedia(
+  access: AcademyOwnerAccess, src: ConcreteSource, want: "still" | "video", temps: string[], format?: CreativeFormat,
+): Promise<BrowserMedia> {
   const academyId = access.academyId;
   const base = `/api/academy/console/academies/${academyId}`;
   switch (src.type) {
@@ -366,7 +438,7 @@ export async function browserMedia(access: AcademyOwnerAccess, src: ConcreteSour
       return { buffer: await crestPng(await studioLook(access, temps)), type: "image/png" };
     }
     case "artwork": {
-      const file = artworkPath(src.key);
+      const file = artworkPath(src.key, format);
       return file ? { file, type: "image/png" } : null;
     }
     case "upload": {
@@ -396,6 +468,66 @@ export async function browserMedia(access: AcademyOwnerAccess, src: ConcreteSour
       return windowVideo(rec.id, recordingPlaylist(rec.videoUrl), src.fromMs / 1000, to / 1000);
     }
   }
+}
+
+/** Longest side of a tinted preview picture (the export tints at the size it draws). */
+export const TINTED_PREVIEW_MAX_SIDE = 1920;
+const TINT_CACHE_ENTRIES = 32;
+const TINT_CACHE_BYTES = 128 * 1024 * 1024;
+const tinted = new Map<string, Buffer>();
+const tinting = new Map<string, Promise<Buffer | null>>();
+let tintedBytes = 0;
+
+function rememberTinted(key: string, png: Buffer): void {
+  const old = tinted.get(key);
+  if (old) { tinted.delete(key); tintedBytes -= old.length; }
+  tinted.set(key, png);
+  tintedBytes += png.length;
+  while (tinted.size > TINT_CACHE_ENTRIES || (tintedBytes > TINT_CACHE_BYTES && tinted.size > 1)) {
+    const [k, v] = tinted.entries().next().value!;
+    tinted.delete(k);
+    tintedBytes -= v.length;
+  }
+}
+
+/** For tests. */
+export function clearTintedCache(): void {
+  tinted.clear();
+  tinting.clear();
+  tintedBytes = 0;
+}
+
+/**
+ * A still recoloured exactly as the renderer recolours it (renderTint.ts), as
+ * a PNG, for SceneCanvas, at most `maxSide` (≤ 1920) on its longest side.
+ * Kept in a small in-memory LRU by academy, source, format, tint and size. Null when the picture can't be loaded here (the caller then
+ * serves it untinted, or 404s).
+ */
+export async function tintedStill(
+  access: AcademyOwnerAccess, src: ConcreteSource, format: CreativeFormat | undefined, tint: ResolvedTint, temps: string[], maxSide?: number,
+): Promise<Buffer | null> {
+  const side = Math.round(Math.min(TINTED_PREVIEW_MAX_SIDE, maxSide ?? TINTED_PREVIEW_MAX_SIDE));
+  const key = `${access.academyId}|${JSON.stringify(src)}|${format ?? ""}|${tintKey(tint)}|${side}`;
+  const hit = tinted.get(key);
+  if (hit) {
+    tinted.delete(key);
+    tinted.set(key, hit);
+    return hit;
+  }
+  let job = tinting.get(key);
+  if (!job) {
+    job = (async () => {
+      const look = src.type === "crest" ? await studioLook(access, temps) : { crest: null };
+      const layer = { id: "tint", kind: "image", src, fit: "cover", x: 0, y: 0, w: 1, h: 1 } as MediaLayer;
+      const img = await creativeImageResolver(access.academyId, look)(layer, src, { format: format ?? "post" });
+      if (!img || img.width <= 0 || img.height <= 0) return null;
+      const png = tintPicture(img, tint, side).toBuffer("image/png");
+      rememberTinted(key, png);
+      return png;
+    })().finally(() => tinting.delete(key));
+    tinting.set(key, job);
+  }
+  return job;
 }
 
 /** A window of footage as a small MP4: from Bunny's edge once it has been cut there, else from this server's disk. */

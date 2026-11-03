@@ -155,6 +155,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     move: (id, to) => dispatch({ type: "moveLayer", id, to }),
     setFormat: (format) => dispatch({ type: "setFormat", format }),
     setStyle: (style) => dispatch({ type: "setStyle", style }),
+    setPlate: (change, key) => dispatch({ type: "setPlate", change, key: key ? `plate:${key}` : undefined, at: Date.now() }),
     setData: (path, value) => { setDataState((d) => setPath(d, path, value)); setDataRev((r) => r + 1); },
     pick: (accept, onPick) => setPicker({ accept, onPick }),
     setTimeMs: (t) => setTimeMs(t),

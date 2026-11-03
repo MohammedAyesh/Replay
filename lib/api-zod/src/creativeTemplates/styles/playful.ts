@@ -239,4 +239,4 @@ const skin: StyleKit["skin"] = {
   },
 };
 
-export const playful: StyleKit = { background: CREAM, score, fixture, hero, list, promo, skin };
+export const playful: StyleKit = { background: CREAM, plate: { opacity: 0.5 }, score, fixture, hero, list, promo, skin };

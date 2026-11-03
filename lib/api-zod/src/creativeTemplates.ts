@@ -1,6 +1,7 @@
-import type { CreativeData, CreativeFormat, CreativeStyle, Scene } from "./creativeScene";
+import type { CreativeData, CreativeFormat, CreativeStyle, Scene, SceneLayer } from "./creativeScene";
 import { DEFINITIONS, sampleFor } from "./creativeTemplates/content";
-import { buildScene } from "./creativeTemplates/build";
+import { buildScene, plateLayer } from "./creativeTemplates/build";
+import { STYLE_KITS } from "./creativeTemplates/styles";
 
 /**
  * Creative hub template catalogue. Every template builds a Scene for any
@@ -11,6 +12,7 @@ import { buildScene } from "./creativeTemplates/build";
  *   CREATIVE_TEMPLATES: TemplateMeta[]
  *   buildTemplateScene(key, style, format, locale): Scene
  *   templateSampleData(key, locale): CreativeData
+ *   templatePlateLayer(style, format): SceneLayer   (additive: the style's background plate layer)
  *
  * The implementation lives in creativeTemplates/: content.ts says what each
  * template says (fixed labels in EN and AR, {{bindings}} for facts, sample
@@ -65,4 +67,13 @@ export function buildTemplateScene(key: string, style: CreativeStyle, format: Cr
 /** Believable sample data so a gallery looks real before any data exists. Media are artwork keys "sample/<name>". */
 export function templateSampleData(key: string, locale: "en" | "ar"): CreativeData {
   return sampleFor(key, locale);
+}
+
+/**
+ * The background plate layer a style's templates start with (id "plate",
+ * artwork "bg/<style>/1", tinted @primary, the style's own strength). The
+ * editor uses it to put a plate back into a design that has none.
+ */
+export function templatePlateLayer(style: CreativeStyle, format: CreativeFormat): SceneLayer {
+  return plateLayer(STYLE_KITS[style] ? style : "broadcast", format, STYLE_KITS[style] ?? STYLE_KITS.broadcast);
 }

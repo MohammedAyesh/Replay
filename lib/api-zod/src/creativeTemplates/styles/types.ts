@@ -5,6 +5,12 @@ import type { VideoSkin } from "../parts";
 /** One visual family: a hand-made layout for every archetype plus its video skin. */
 export type StyleKit = {
   background: string;
+  /**
+   * The tinted background plate (artwork "bg/<style>/1", see PLATE_LAYER_ID):
+   * how strongly it shows, and optionally the id of a full-canvas layer it sits
+   * right above (stadium paints its sky first; the plate replaces it).
+   */
+  plate: { opacity: number; above?: string };
   score: (c: Ctx, k: Content) => void;
   fixture: (c: Ctx, k: Content) => void;
   hero: (c: Ctx, k: Content) => void;

@@ -1,6 +1,10 @@
 import {
   buildTemplateScene,
   CREATIVE_FORMATS,
+  parsePlateKey,
+  PLATE_LAYER_ID,
+  templatePlateLayer,
+  type LayerTint,
   type CreativeData,
   type CreativeFormat,
   type CreativeStyle,
@@ -52,6 +56,7 @@ export type EditorAction =
   | { type: "updateScene"; change: Partial<Pick<Scene, "durationMs" | "background" | "music">>; key?: string; at?: number }
   | { type: "setFormat"; format: CreativeFormat }
   | { type: "setStyle"; style: CreativeStyle }
+  | { type: "setPlate"; change: PlateChange; key?: string; at?: number }
   | { type: "checkpoint" }
   | { type: "undo" }
   | { type: "redo" };
@@ -91,6 +96,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return commit(state, changeFormat(state.scene, action.format));
     case "setStyle":
       return commit(state, changeStyle(state.scene, action.style));
+    case "setPlate":
+      return commit(state, setPlate(state.scene, action.change), action.key ?? null, action.at ?? 0);
     case "checkpoint":
       return { ...state, lastKey: null };
     case "undo": {
@@ -215,6 +222,48 @@ export function newMediaLayer(scene: Scene, kind: "image" | "video", src: MediaS
   };
 }
 
+// ── Background plate ────────────────────────────────────────────────────────
+
+export type ImageLayer = Extract<SceneLayer, { kind: "image" }>;
+/** A change to the background plate: another picture, its tint (null removes it), shown or not, how strongly. */
+export type PlateChange = { src?: MediaSource; tint?: LayerTint | null; hidden?: boolean; opacity?: number };
+
+export const plateOf = (scene: Scene): ImageLayer | null => {
+  const l = findLayer(scene, PLATE_LAYER_ID);
+  return l && l.kind === "image" ? l : null;
+};
+
+/**
+ * Change the background plate (Style panel → Background). A design without
+ * one (made before plates, or the manager deleted it) gets the style's plate
+ * back where the template puts it, unless the change only hides it.
+ */
+export function setPlate(scene: Scene, change: PlateChange, build: typeof buildTemplateScene = buildTemplateScene): Scene {
+  const patch: LayerChange = {
+    ...(change.src ? { src: change.src } : {}),
+    ...("tint" in change ? { tint: change.tint ?? undefined } : {}),
+    ...("hidden" in change ? { hidden: change.hidden ? true : undefined } : {}),
+    ...(change.opacity !== undefined ? { opacity: change.opacity >= 1 ? undefined : Math.max(0, change.opacity) } : {}),
+  };
+  if (plateOf(scene)) return updateLayer(scene, PLATE_LAYER_ID, patch);
+  if (findLayer(scene, PLATE_LAYER_ID) || change.hidden) return scene;
+  const style = scene.template?.style ?? "broadcast";
+  const fresh = templatePlateLayer(style, scene.format);
+  // Where the template puts it: right above the layer under it in a fresh build (stadium's sky), else at the bottom.
+  let index = 0;
+  if (scene.template) {
+    try {
+      const built = build(scene.template.key, style, scene.format, scene.locale).layers;
+      const below = built[built.findIndex((l) => l.id === PLATE_LAYER_ID) - 1];
+      const at = below ? scene.layers.findIndex((l) => l.id === below.id) : -1;
+      if (at >= 0) index = at + 1;
+    } catch { /* bottom */ }
+  }
+  const layers = [...scene.layers];
+  layers.splice(index, 0, updateLayer({ ...scene, layers: [fresh] }, PLATE_LAYER_ID, patch).layers[0]!);
+  return { ...scene, layers };
+}
+
 // ── Format: proportional re-layout ──────────────────────────────────────────
 
 /**
@@ -290,7 +339,9 @@ export function changeStyle(scene: Scene, style: CreativeStyle, build: typeof bu
     const cur = curById.get(fresh.id);
     const was = origById.get(fresh.id);
     let out: SceneLayer = fresh;
-    if (cur && cur.kind === fresh.kind) {
+    if (fresh.id === PLATE_LAYER_ID && cur?.kind === "image" && fresh.kind === "image") {
+      out = carryPlate(fresh, cur, was?.kind === "image" ? was : undefined);
+    } else if (cur && cur.kind === fresh.kind) {
       if (cur.kind === "text" && out.kind === "text" && (!was || was.kind !== "text" || was.text !== cur.text)) out = { ...out, text: cur.text };
       if (isMedia(cur) && isMedia(out) && !sameSource(cur.src, isMedia(was) ? was.src : undefined)) {
         out = carryMedia(out, cur);
@@ -322,6 +373,25 @@ export function changeStyle(scene: Scene, style: CreativeStyle, build: typeof bu
     durationMs: scene.durationMs !== orig.durationMs ? scene.durationMs : next.durationMs,
     music: scene.music ?? next.music,
   };
+}
+
+/**
+ * The background plate in the new style: the new style's own artwork (plates
+ * are drawn per style), with the manager's tint, strength and hiding carried.
+ * A picture of their own in the plate's place is carried too.
+ */
+function carryPlate(fresh: ImageLayer, cur: ImageLayer, was: ImageLayer | undefined): ImageLayer {
+  const out: ImageLayer = { ...fresh };
+  const ownPicture = !sameSource(cur.src, was?.src) && !(cur.src.type === "artwork" && parsePlateKey(cur.src.key));
+  if (ownPicture) out.src = cur.src;
+  if (JSON.stringify(cur.tint ?? null) !== JSON.stringify(was?.tint ?? null)) {
+    if (cur.tint) out.tint = cur.tint; else delete out.tint;
+  }
+  if (cur.opacity !== was?.opacity) {
+    if (cur.opacity === undefined) delete out.opacity; else out.opacity = cur.opacity;
+  }
+  if (cur.hidden) out.hidden = true;
+  return out;
 }
 
 function carryMedia(target: MediaLayer, from: MediaLayer): MediaLayer {

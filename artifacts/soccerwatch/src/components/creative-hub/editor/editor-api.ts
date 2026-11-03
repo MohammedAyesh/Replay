@@ -1,5 +1,5 @@
 import type { CreativeBrand, CreativeData, CreativeFormat, CreativeStyle, MediaSource, Scene, SceneLayer, TemplateMeta } from "@workspace/api-zod";
-import type { LayerChange } from "@/lib/creative-editor-state";
+import type { LayerChange, PlateChange } from "@/lib/creative-editor-state";
 
 /** What the editor's panels and timeline get to read and change. Built once per render in editor.tsx. */
 export type EditorApi = {
@@ -17,6 +17,8 @@ export type EditorApi = {
   move: (id: string, to: "up" | "down" | "top" | "bottom" | number) => void;
   setFormat: (format: CreativeFormat) => void;
   setStyle: (style: CreativeStyle) => void;
+  /** Change the background plate (adds the style's plate back if the design has none). Same `key` coalesces like update. */
+  setPlate: (change: PlateChange, key?: string) => void;
   brand: CreativeBrand;
   data: CreativeData;
   setData: (path: string, value: unknown) => void;

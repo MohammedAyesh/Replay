@@ -263,4 +263,4 @@ const skin: StyleKit["skin"] = {
   },
 };
 
-export const editorial: StyleKit = { background: PAPER, score, fixture, hero, list, promo, skin };
+export const editorial: StyleKit = { background: PAPER, plate: { opacity: 0.35 }, score, fixture, hero, list, promo, skin };

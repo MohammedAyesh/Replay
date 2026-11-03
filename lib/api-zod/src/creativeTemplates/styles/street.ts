@@ -225,4 +225,4 @@ const skin: StyleKit["skin"] = {
   },
 };
 
-export const street: StyleKit = { background: INK, score, fixture, hero, list, promo, skin };
+export const street: StyleKit = { background: INK, plate: { opacity: 0.75 }, score, fixture, hero, list, promo, skin };
