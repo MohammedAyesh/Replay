@@ -22,11 +22,12 @@ export type WaMedia = {
 
 export type WhatsappContent =
   | { type: "image"; media: WaMedia; caption?: string | null }
-  | { type: "video"; media: WaMedia; caption?: string | null; gif?: boolean }
+  | { type: "video"; media: WaMedia; caption?: string | null; gif?: boolean; note?: boolean }
   | { type: "audio"; media: WaMedia; voice?: boolean }
   | { type: "document"; media: WaMedia; caption?: string | null }
   | { type: "sticker"; media: WaMedia }
   | { type: "location"; latitude: number; longitude: number; name?: string | null; address?: string | null }
+  | { type: "contact"; contacts: Array<{ name: string; phone: string }> }
   | { type: "poll"; name: string; options: string[]; multipleAnswers: boolean };
 
 export const MAX_CHAT_MEDIA_BYTES = 30 * 1024 * 1024;
@@ -107,6 +108,7 @@ export function summaryFor(content: WhatsappContent, locale: "ar" | "en" = "en")
     case "document": return content.caption?.trim() || `📄 ${content.media.filename || (ar ? "ملف" : "Document")}`;
     case "sticker": return ar ? "ملصق" : "Sticker";
     case "location": return `📍 ${content.name?.trim() || (ar ? "موقع" : "Location")}`;
+    case "contact": return `👤 ${content.contacts.map((c) => c.name).join("، ")}`;
     case "poll": return `📊 ${content.name}`;
   }
 }
@@ -127,6 +129,8 @@ export function incomingKind(payload: Record<string, unknown>): {
       : [];
     return { type: "poll", poll: { name: String(pollMessage.name ?? ""), options, multipleAnswers: Number(pollMessage.selectableOptionsCount ?? 0) !== 1 } };
   }
+  if (Array.isArray(payload.vCards) && payload.vCards.length > 0) return { type: "contact" };
+  if (message.contactMessage || message.contactsArrayMessage) return { type: "contact" };
   if (payload.location && typeof payload.location === "object") return { type: "location" };
   if (message.locationMessage || message.liveLocationMessage) return { type: "location" };
   if (message.stickerMessage) return { type: "sticker" };
@@ -154,4 +158,24 @@ export function incomingLocation(payload: Record<string, unknown>): { latitude: 
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
   const name = typeof raw.name === "string" && raw.name ? raw.name : typeof raw.description === "string" ? raw.description : null;
   return { latitude, longitude, name, address: typeof raw.address === "string" && raw.address ? raw.address : null };
+}
+
+/** Names and numbers from the vCards WAHA attaches to a contact message. */
+export function incomingContacts(payload: Record<string, unknown>): Array<{ name: string; phone: string }> {
+  const out: Array<{ name: string; phone: string }> = [];
+  const cards = Array.isArray(payload.vCards) ? (payload.vCards as unknown[]) : [];
+  for (const card of cards) {
+    if (typeof card !== "string") continue;
+    const name = /^FN[^:]*:(.+)$/m.exec(card)?.[1]?.trim();
+    const waid = /waid=(\d{6,15})/i.exec(card)?.[1];
+    const tel = /^(?:item\d+\.)?TEL[^:]*:(.+)$/m.exec(card)?.[1]?.replace(/\D/g, "");
+    const phone = waid ?? tel;
+    if (phone && phone.length >= 6) out.push({ name: name || `+${phone}`, phone });
+  }
+  return out.slice(0, 10);
+}
+
+/** Phones named in an "@962795550003" style mention, in the order they appear. */
+export function mentionedPhones(text: string): string[] {
+  return [...new Set([...text.matchAll(/@(\d{8,15})/g)].map((m) => m[1]))].slice(0, 30);
 }

@@ -39,7 +39,8 @@ import {
   type Relationship,
 } from "../lib/whatsapp/contacts";
 import { chatKeyFromParam, formatPhoneForDisplay, groupIdFromKey, groupKey, isGroupKey, normalizePhone, phoneFromChatId } from "../lib/whatsapp/phone";
-import { MAX_CHAT_MEDIA_BYTES, gifToMp4, mediaUrl, storeChatMedia, summaryFor, type WaMedia, type WhatsappContent } from "../lib/whatsapp/media";
+import { MAX_CHAT_MEDIA_BYTES, gifToMp4, mentionedPhones, mediaUrl, storeChatMedia, summaryFor, type WaMedia, type WhatsappContent } from "../lib/whatsapp/media";
+import { parseChatOptions } from "../lib/whatsapp/chatOptions";
 import {
   dispatchMessageNow,
   dispatchQueue,
@@ -68,6 +69,11 @@ import {
   createGroup,
   listGroups,
   refreshWebhookEvents,
+  fetchImageBytes,
+  getPictureUrl,
+  sendSeen,
+  serializedMessageId,
+  subscribePresence,
   ensureSessionStarted,
   getQrDataUrl,
   getSession,
@@ -83,16 +89,16 @@ import {
 
 const router: IRouter = Router();
 
-function rawParam(value: string | string[] | undefined): string {
+export function rawParam(value: string | string[] | undefined): string {
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
-function intParam(value: string | string[] | undefined): number | null {
+export function intParam(value: string | string[] | undefined): number | null {
   const n = Number(rawParam(value));
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-function wahaFailure(res: Response, error: unknown, fallback: string) {
+export function wahaFailure(res: Response, error: unknown, fallback: string) {
   if (error instanceof WahaError) {
     const status = error.status === 503 ? 503 : error.status === 404 ? 404 : 502;
     res.status(status).json({ error: error.status === 503 ? "WhatsApp service is not set up yet" : error.message || fallback });
@@ -102,9 +108,9 @@ function wahaFailure(res: Response, error: unknown, fallback: string) {
   res.status(500).json({ error: fallback });
 }
 
-type Access = { user: AcademyConsoleUser; isOwner: boolean; academyId: number; academyName: string };
+export type Access = { user: AcademyConsoleUser; isOwner: boolean; academyId: number; academyName: string };
 
-async function academyAccess(req: Request, res: Response, ownerOnly = false): Promise<Access | null> {
+export async function academyAccess(req: Request, res: Response, ownerOnly = false): Promise<Access | null> {
   const user = await requireAcademyConsoleUser(req, res);
   if (!user) return null;
   const academyId = intParam(req.params.academyId);
@@ -408,7 +414,7 @@ const AudienceBody = z.object({
   playerIds: z.array(z.number().int().positive()).nullable().default(null),
 });
 
-async function validateAudience(academyId: number, audience: z.infer<typeof AudienceBody>, res: Response): Promise<boolean> {
+export async function validateAudience(academyId: number, audience: z.infer<typeof AudienceBody>, res: Response): Promise<boolean> {
   if (audience.squadIds && audience.squadIds.length > 0) {
     const rows = await db.select({ id: academySquadsTable.id }).from(academySquadsTable)
       .where(and(eq(academySquadsTable.academyId, academyId), inArray(academySquadsTable.id, audience.squadIds)));
@@ -466,7 +472,7 @@ const BroadcastBody = z.object({
 }).refine((b) => b.audience || b.contactIds, { message: "Pick an audience or people" });
 
 /** Picked people as merged recipients, with the players they are linked to. */
-async function contactRecipients(academyId: number, contactIds: number[]) {
+export async function contactRecipients(academyId: number, contactIds: number[]) {
   const contacts = await db.select().from(academyContactsTable)
     .where(and(eq(academyContactsTable.academyId, academyId), inArray(academyContactsTable.id, contactIds)));
   const links = await linksForContacts(contacts.map((c) => c.id));
@@ -910,13 +916,13 @@ function phoneParam(req: Request, res: Response): string | null {
 }
 
 /** A person's phone or a group's "g:<id>". */
-function chatKeyParam(req: Request, res: Response): string | null {
+export function chatKeyParam(req: Request, res: Response): string | null {
   const key = chatKeyFromParam(rawParam(req.params.phone));
   if (!key) res.status(400).json({ error: "Invalid chat" });
   return key;
 }
 
-async function groupRow(academyId: number, key: string) {
+export async function groupRow(academyId: number, key: string) {
   const groupId = groupIdFromKey(key);
   if (!groupId) return null;
   const [row] = await db.select().from(academyWhatsappGroupsTable)
@@ -924,7 +930,7 @@ async function groupRow(academyId: number, key: string) {
   return row ?? null;
 }
 
-function groupView(g: typeof academyWhatsappGroupsTable.$inferSelect) {
+export function groupView(g: typeof academyWhatsappGroupsTable.$inferSelect) {
   return { id: g.id, groupId: g.groupId, subject: g.subject, origin: g.origin, squadId: g.squadId };
 }
 
@@ -991,6 +997,8 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
         blocked: false,
         linkLater: true,
         assignedUserId: group.assignedUserId,
+        avatarUrl: avatarUrl(group.avatarPath),
+        typing: Boolean(group.typingUntil && group.typingUntil.getTime() > Date.now()),
         group: groupView(group),
         contact: null,
       };
@@ -1009,10 +1017,13 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
       blocked: Boolean(contact?.blockedAt),
       linkLater: Boolean(contact?.linkDismissedAt),
       assignedUserId: contact?.assignedUserId ?? null,
+      avatarUrl: avatarUrl(contact?.avatarPath),
+      typing: Boolean(contact?.typingUntil && contact.typingUntil.getTime() > Date.now()),
       group: null,
       contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
     };
   });
+  void refreshAvatars(access.academyId, contacts, groups);
   // A group just created has no messages yet; it still belongs in the list.
   const listed = new Set(rows.map((r) => r.phone));
   for (const g of groups) {
@@ -1021,7 +1032,7 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
     chats.push({
       phone: key, display: g.subject, lastAt: g.createdAt.toISOString(), lastBody: "", lastDirection: "out", lastStatus: "sent",
       unread: 0, archived: Boolean(g.archivedAt), muted: g.muted, blocked: false, linkLater: true,
-      assignedUserId: g.assignedUserId, group: groupView(g), contact: null,
+      assignedUserId: g.assignedUserId, avatarUrl: avatarUrl(g.avatarPath), typing: false, group: groupView(g), contact: null,
     });
   }
   chats.sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
@@ -1031,7 +1042,7 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
 // ─── Chat controls: archive, mute, block, personal, "who is this" ────────────
 
 /** Archive, mute, block and personal are the owner's, unless he gave "chats.manage" to the role. */
-async function canManageChats(access: Access): Promise<boolean> {
+export async function canManageChats(access: Access): Promise<boolean> {
   const staff = await staffAccessFor(access.user.id, access.academyId);
   return Boolean(staff?.permissions.includes("chats.manage"));
 }
@@ -1159,8 +1170,91 @@ router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/who", a
 
 type MessageRow = typeof academyWhatsappMessagesTable.$inferSelect;
 
+export function avatarUrl(path: string | null | undefined): string | null {
+  return path ? mediaUrl({ path }) : null;
+}
+
+/**
+ * Blue ticks: tell WhatsApp the incoming messages since the chat was last read were seen.
+ * Never blocks or fails the page; off when the academy turned read receipts off.
+ */
+async function markChatRead(academyId: number, chatKey: string, settings: Awaited<ReturnType<typeof getWhatsappSettings>>, since: Date | null): Promise<void> {
+  try {
+    const session = senderSessionFor(settings);
+    if (!session || !wahaConfigured() || !parseChatOptions(settings.chatOptions, settings.locale).readReceipts) return;
+    const unseen = await db.select({ waMessageId: academyWhatsappMessagesTable.waMessageId, authorPhone: academyWhatsappMessagesTable.authorPhone })
+      .from(academyWhatsappMessagesTable)
+      .where(and(
+        eq(academyWhatsappMessagesTable.academyId, academyId),
+        eq(academyWhatsappMessagesTable.phone, chatKey),
+        eq(academyWhatsappMessagesTable.direction, "in"),
+        isNotNull(academyWhatsappMessagesTable.waMessageId),
+        sql`${academyWhatsappMessagesTable.createdAt} > ${since ?? new Date(0)}`,
+        sql`${academyWhatsappMessagesTable.kind} <> 'call'`,
+      ))
+      .limit(50);
+    if (unseen.length === 0) return;
+    const groupId = groupIdFromKey(chatKey);
+    const chatId = groupId ? `${groupId}@g.us` : `${chatKey}@c.us`;
+    void sendSeen(session, chatId, unseen.map((m) => serializedMessageId(false, chatId, m.waMessageId!, groupId && m.authorPhone ? `${m.authorPhone}@c.us` : null)))
+      .catch((error) => logger.warn({ error: (error as Error).message }, "Sending read receipts failed"));
+  } catch (error) {
+    logger.warn({ error: (error as Error).message }, "Read receipts skipped");
+  }
+}
+
+const AVATAR_TTL_MS = 7 * 24 * 3_600_000;
+const avatarsRunning = new Set<number>();
+
+/** Copy up to a few stale profile photos from WhatsApp to Bunny, in the background. */
+async function refreshAvatars(
+  academyId: number,
+  contacts: Array<typeof academyContactsTable.$inferSelect>,
+  groups: Array<typeof academyWhatsappGroupsTable.$inferSelect>,
+): Promise<void> {
+  if (avatarsRunning.has(academyId) || !wahaConfigured()) return;
+  const stale = (checked: Date | null) => !checked || Date.now() - checked.getTime() > AVATAR_TTL_MS;
+  const contactJobs = contacts.filter((c) => stale(c.avatarCheckedAt) && !c.blockedAt).slice(0, 4).map((c) => ({ kind: "contact" as const, id: c.id, chatId: `${c.phone}@c.us` }));
+  const groupJobs = groups.filter((g) => stale(g.avatarCheckedAt)).slice(0, 2).map((g) => ({ kind: "group" as const, id: g.id, chatId: `${g.groupId}@g.us` }));
+  const jobs = [...contactJobs, ...groupJobs];
+  if (jobs.length === 0) return;
+  avatarsRunning.add(academyId);
+  try {
+    const settings = await getWhatsappSettings(academyId);
+    const session = senderSessionFor(settings);
+    if (!session) return;
+    for (const job of jobs) {
+      let path: string | null = null;
+      try {
+        const url = await getPictureUrl(session, job.chatId);
+        const image = url ? await fetchImageBytes(url) : null;
+        if (image) path = (await storeChatMedia(academyId, image.buffer, image.mimetype, "avatar.jpg")).path;
+      } catch (error) {
+        logger.warn({ academyId, error: (error as Error).message }, "Copying a WhatsApp profile photo failed");
+      }
+      const patch = { avatarCheckedAt: new Date(), ...(path ? { avatarPath: path } : {}) };
+      if (job.kind === "contact") await db.update(academyContactsTable).set(patch).where(eq(academyContactsTable.id, job.id));
+      else await db.update(academyWhatsappGroupsTable).set(patch).where(eq(academyWhatsappGroupsTable.id, job.id));
+    }
+  } finally {
+    avatarsRunning.delete(academyId);
+  }
+}
+
+const presenceWatched = new Map<string, number>();
+
+/** Ask WhatsApp to tell us when this chat is typing (once every 10 minutes per chat). */
+async function watchPresence(settings: Awaited<ReturnType<typeof getWhatsappSettings>>, chatId: string): Promise<void> {
+  if (settings.sender !== "own" || !wahaConfigured()) return;
+  const key = `${settings.academyId}|${chatId}`;
+  if (Date.now() - (presenceWatched.get(key) ?? 0) < 10 * 60_000) return;
+  presenceWatched.set(key, Date.now());
+  if (presenceWatched.size > 2000) presenceWatched.clear();
+  await subscribePresence(academySessionName(settings.academyId), chatId).catch(() => undefined);
+}
+
 /** Media gets its URL; a poll gets its tally. */
-async function messagesView(rows: MessageRow[]) {
+export async function messagesView(rows: MessageRow[], academyId?: number) {
   const pollIds = rows.filter((m) => (m.content as WhatsappContent | null)?.type === "poll").map((m) => m.id);
   const votes = pollIds.length === 0 ? [] : await db.select().from(academyWhatsappPollVotesTable)
     .where(inArray(academyWhatsappPollVotesTable.messageId, pollIds));
@@ -1168,6 +1262,12 @@ async function messagesView(rows: MessageRow[]) {
   const senders = senderIds.length === 0 ? [] : await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable)
     .where(inArray(usersTable.id, senderIds));
   const senderName = new Map(senders.map((u) => [u.id, u.name]));
+  // The message each reply quotes (it may be older than the page, so look it up).
+  const quotedIds = [...new Set(rows.map((m) => m.replyToWaId).filter((id): id is string => Boolean(id)))];
+  const quotedRows = quotedIds.length === 0 ? [] : await db.select().from(academyWhatsappMessagesTable)
+    .where(and(eq(academyWhatsappMessagesTable.academyId, academyId ?? rows[0]?.academyId ?? 0), inArray(academyWhatsappMessagesTable.waMessageId, quotedIds)));
+  const quoted = new Map(quotedRows.map((q) => [q.waMessageId, q]));
+  const now = Date.now();
   return rows.map((m) => {
     const content = m.content as WhatsappContent | null;
     let view: Record<string, unknown> | null = null;
@@ -1184,10 +1284,17 @@ async function messagesView(rows: MessageRow[]) {
             return { option, count: who.length, voters: who.map((v) => v.voterName || (v.voterPhone === "me" ? "You" : formatPhoneForDisplay(v.voterPhone))) };
           }),
         };
+      } else if (content.type === "contact") {
+        view = { ...content, contacts: content.contacts.map((c) => ({ ...c, display: formatPhoneForDisplay(c.phone) })) };
       } else {
         view = { ...content };
       }
     }
+    const q = m.replyToWaId ? quoted.get(m.replyToWaId) : null;
+    const reactions = Object.entries((m.reactions ?? {}) as Record<string, { emoji: string; name: string | null }>)
+      .map(([who, r]) => ({ who: who === "me" ? "me" : formatPhoneForDisplay(who), name: r.name, emoji: r.emoji }));
+    const editable = m.direction === "out" && m.kind === "chat" && !m.content && !m.deletedAt && Boolean(m.waMessageId)
+      && ["sent", "delivered", "read"].includes(m.status) && m.sentAt !== null && now - m.sentAt.getTime() < 14 * 60_000;
     return {
       id: m.id,
       direction: m.direction,
@@ -1196,10 +1303,20 @@ async function messagesView(rows: MessageRow[]) {
       status: m.status,
       error: m.error,
       createdAt: m.createdAt,
+      scheduledFor: m.status === "queued" && m.scheduledFor.getTime() > now + 30_000 ? m.scheduledFor : null,
       sentAt: m.sentAt,
       content: view,
       author: m.authorPhone || m.authorName ? { phone: m.authorPhone ? formatPhoneForDisplay(m.authorPhone) : null, name: m.authorName } : null,
       sentBy: m.createdBy ? senderName.get(m.createdBy) ?? null : null,
+      replyTo: m.replyToWaId ? (q
+        ? { id: q.id, direction: q.direction, body: q.deletedAt ? "" : q.body, deleted: Boolean(q.deletedAt), type: (q.content as WhatsappContent | null)?.type ?? "text", author: q.direction === "in" ? (q.authorName ?? null) : "me" }
+        : { id: null, direction: "in", body: "", deleted: false, type: "text", author: null }) : null,
+      reactions,
+      mentions: Array.isArray(m.mentions) ? (m.mentions as string[]) : [],
+      editedAt: m.editedAt,
+      deleted: Boolean(m.deletedAt),
+      canEdit: editable,
+      canDelete: !m.deletedAt && m.direction === "out" && (m.status === "queued" || (Boolean(m.waMessageId) && ["sent", "delivered", "read"].includes(m.status))),
     };
   });
 }
@@ -1220,16 +1337,20 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats/:phone", async 
     .where(and(eq(academyWhatsappMessagesTable.academyId, access.academyId), eq(academyWhatsappMessagesTable.phone, phone)))
     .orderBy(desc(academyWhatsappMessagesTable.createdAt), desc(academyWhatsappMessagesTable.id))
     .limit(300);
-  const messages = await messagesView(rows.reverse());
+  const messages = await messagesView(rows.reverse(), access.academyId);
   const canManage = await canManageChats(access);
   if (group) {
+    const settings = await getWhatsappSettings(access.academyId);
     if (req.query.markRead !== "0") {
+      await markChatRead(access.academyId, phone, settings, group.lastReadAt);
       await db.update(academyWhatsappGroupsTable).set({ lastReadAt: new Date() }).where(eq(academyWhatsappGroupsTable.id, group.id));
     }
-    const settings = await getWhatsappSettings(access.academyId);
+    void watchPresence(settings, `${group.groupId}@g.us`);
     res.json({
       phone,
       display: group.subject,
+      avatarUrl: avatarUrl(group.avatarPath),
+      typing: Boolean(group.typingUntil && group.typingUntil.getTime() > Date.now()),
       group: groupView(group),
       wrongNumber: senderSessionFor(settings) !== group.session,
       contact: null,
@@ -1246,14 +1367,19 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats/:phone", async 
   }
   const [contact] = await db.select().from(academyContactsTable)
     .where(and(eq(academyContactsTable.academyId, access.academyId), eq(academyContactsTable.phone, phone)));
-  if (contact && req.query.markRead !== "0") {
-    await db.update(academyContactsTable).set({ lastReadAt: new Date() }).where(eq(academyContactsTable.id, contact.id));
+  const settings = await getWhatsappSettings(access.academyId);
+  if (req.query.markRead !== "0") {
+    await markChatRead(access.academyId, phone, settings, contact?.lastReadAt ?? null);
+    if (contact) await db.update(academyContactsTable).set({ lastReadAt: new Date() }).where(eq(academyContactsTable.id, contact.id));
   }
+  void watchPresence(settings, `${phone}@c.us`);
   const links = contact ? await linksForContacts([contact.id]) : new Map();
   const optOuts = await optedOutPhones(access.academyId);
   res.json({
     phone,
     display: formatPhoneForDisplay(phone),
+    avatarUrl: avatarUrl(contact?.avatarPath),
+    typing: Boolean(contact?.typingUntil && contact.typingUntil.getTime() > Date.now()),
     group: null,
     wrongNumber: false,
     contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
@@ -1277,7 +1403,7 @@ const MediaRef = z.object({
 const Caption = z.string().trim().max(1024).nullable().optional();
 const ContentBody = z.discriminatedUnion("type", [
   z.object({ type: z.literal("image"), media: MediaRef, caption: Caption }),
-  z.object({ type: z.literal("video"), media: MediaRef, caption: Caption, gif: z.boolean().optional() }),
+  z.object({ type: z.literal("video"), media: MediaRef, caption: Caption, gif: z.boolean().optional(), note: z.boolean().optional() }),
   z.object({ type: z.literal("document"), media: MediaRef, caption: Caption }),
   z.object({ type: z.literal("audio"), media: MediaRef, voice: z.boolean().optional() }),
   z.object({ type: z.literal("sticker"), media: MediaRef }),
@@ -1287,6 +1413,10 @@ const ContentBody = z.discriminatedUnion("type", [
     longitude: z.number().min(-180).max(180),
     name: z.string().trim().max(200).nullable().optional(),
     address: z.string().trim().max(300).nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("contact"),
+    contacts: z.array(z.object({ name: z.string().trim().min(1).max(100), phone: z.string().regex(/^\d{6,15}$/) })).min(1).max(10),
   }),
   z.object({
     type: z.literal("poll"),
@@ -1299,6 +1429,10 @@ const ContentBody = z.discriminatedUnion("type", [
 const ChatSendBody = z.object({
   body: z.string().trim().max(4000).optional(),
   content: ContentBody.optional(),
+  /** Id of the message in this chat being answered. */
+  replyToId: z.number().int().positive().optional(),
+  /** Send later instead of now. */
+  scheduledFor: z.string().datetime({ offset: true }).optional(),
 }).refine((b) => Boolean(b.body) || Boolean(b.content), { message: "Write a message first" });
 
 router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/messages", async (req, res): Promise<void> => {
@@ -1316,13 +1450,29 @@ router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/message
     res.status(400).json({ error: "Upload the file again" });
     return;
   }
+  const scheduledFor = body.data.scheduledFor ? new Date(body.data.scheduledFor) : null;
+  if (scheduledFor && (scheduledFor.getTime() < Date.now() - 60_000 || scheduledFor.getTime() > Date.now() + 60 * 24 * 3_600_000)) {
+    res.status(400).json({ error: "Pick a time within the next 60 days" });
+    return;
+  }
   const settings = await getWhatsappSettings(access.academyId);
   const session = senderSessionFor(settings);
   if (!session) {
     res.status(409).json({ error: "Turn WhatsApp on first: link your number or choose Replay's number." });
     return;
   }
+  let replyToWaId: string | null = null;
+  if (body.data.replyToId) {
+    const [quoted] = await db.select({ waMessageId: academyWhatsappMessagesTable.waMessageId }).from(academyWhatsappMessagesTable)
+      .where(and(eq(academyWhatsappMessagesTable.id, body.data.replyToId), eq(academyWhatsappMessagesTable.academyId, access.academyId), eq(academyWhatsappMessagesTable.phone, phone)));
+    if (!quoted?.waMessageId) {
+      res.status(400).json({ error: "That message can't be quoted" });
+      return;
+    }
+    replyToWaId = quoted.waMessageId;
+  }
   let recipientName: string | null = null;
+  let mentions: string[] | null = null;
   if (isGroupKey(phone)) {
     const group = await groupRow(access.academyId, phone);
     if (!group) {
@@ -1334,6 +1484,7 @@ router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/message
       return;
     }
     recipientName = group.subject;
+    if (body.data.body && !content) mentions = mentionedPhones(body.data.body);
   } else {
     const contact = await upsertContact(access.academyId, phone, { source: "chat" });
     if (contact.blockedAt) {
@@ -1346,13 +1497,17 @@ router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/message
     academyId: access.academyId,
     kind: "chat",
     phone,
-    body: content ? (content.type === "poll" || content.type === "location" || !("caption" in content) || !content.caption ? summaryFor(content, settings.locale) : content.caption) : body.data.body!,
+    body: content ? (!("caption" in content) || !content.caption ? summaryFor(content, settings.locale) : content.caption) : body.data.body!,
     content,
+    replyToWaId,
+    mentions: mentions?.length ? mentions : null,
     recipientName,
     createdBy: access.user.id,
+    ...(scheduledFor && scheduledFor.getTime() > Date.now() + 30_000 ? { scheduledFor } : {}),
   }).returning({ id: academyWhatsappMessagesTable.id });
-  const outcome = await dispatchMessageNow(message.id);
-  res.status(201).json({ id: message.id, outcome });
+  const later = Boolean(scheduledFor && scheduledFor.getTime() > Date.now() + 30_000);
+  const outcome = later ? "queued" : await dispatchMessageNow(message.id);
+  res.status(201).json({ id: message.id, outcome, scheduled: later });
 });
 
 // ─── Files and GIFs ──────────────────────────────────────────────────────────

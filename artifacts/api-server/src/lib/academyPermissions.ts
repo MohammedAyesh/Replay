@@ -161,7 +161,7 @@ export function sectionForPath(path: string): { academyId: number; section: Cons
     access: "team",
   };
   // Chats, and what a chat needs (files, GIFs, groups, who to hand it to), are the chats section.
-  const chatParts = new Set(["chats", "media", "gifs", "groups", "assignees", "check"]);
+  const chatParts = new Set(["chats", "media", "gifs", "groups", "assignees", "check", "saved-replies"]);
   if (first === "whatsapp") return { academyId, section: chatParts.has(second ?? "") ? "chats" : "whatsapp" };
   // Instagram / Messenger conversations live in Chats; connecting, comments and posts in Social.
   if (first === "social") return { academyId, section: second?.startsWith("threads") ? "chats" : "social" };

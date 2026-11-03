@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
-  BarChart3, Check, FileText, Film, Image as ImageIcon, Loader2, MapPin, Mic, Paperclip, Plus, Search, Send, Trash2, UserRoundCheck, Users, X,
+  BarChart3, CalendarClock, Check, CornerUpLeft, FileText, Film, Image as ImageIcon, Loader2, MapPin, Mic, Paperclip, Pencil, Plus, Search, Send, Smile, Trash2, UserRound, UserRoundCheck, Users, Video, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,13 +10,17 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { useChatNativeCopy } from "@/i18n/chat-native-strings";
+import { useChatExtrasCopy } from "@/i18n/chat-extras-strings";
 import { useAcademyProfile } from "@/lib/academy-profile-api";
 import { parseLocation } from "@/lib/chat-location";
 import {
   MAX_CHAT_FILE_BYTES,
   checkChatNumber,
   pickGif,
+  sendTyping,
   uploadChatFile,
+  useEditMessage,
+  useSavedReplies,
   useAssignChat,
   useChatAssignees,
   useContacts,
@@ -27,8 +31,10 @@ import {
   useSendChat,
   useWhatsappOverview,
   type ChatContent,
+  type ChatMessage,
   type MediaRef,
   type OutgoingContent,
+  type SendInput,
 } from "@/lib/academy-whatsapp-api";
 
 // ─── Showing a message ───────────────────────────────────────────────────────
@@ -66,7 +72,22 @@ export function ChatContentView({ content, body }: { content: ChatContent; body:
       );
     case "sticker":
       return <img src={content.media.url!} alt="" loading="lazy" className="h-32 w-32 object-contain" />;
+    case "contact":
+      return (
+        <ul className="min-w-[13rem] space-y-1.5">
+          {content.contacts.map((c) => (
+            <li key={c.phone} className="flex items-center gap-2.5 rounded-xl border border-line bg-surface/60 p-2.5">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-turf/15 text-turf"><UserRound className="h-4 w-4" aria-hidden="true" /></span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold" dir="auto">{c.name}</span>
+                <span className="block text-xs text-muted-text" dir="ltr">{c.display}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      );
     case "video":
+      if (content.note) return <video src={content.media.url!} controls preload="metadata" playsInline className="h-56 w-56 rounded-full bg-black object-cover" />;
       return (
         <figure className="space-y-1.5">
           {content.gif
@@ -148,34 +169,83 @@ function recorderMime(): string | undefined {
 }
 
 /**
- * The bottom of a WhatsApp chat: text, files (photo, video, document), GIFs, voice notes,
- * locations and polls. Text typed while a file is attached becomes its caption.
+ * The bottom of a WhatsApp chat: text, files (photo, video, document), GIFs, stickers, round videos,
+ * voice notes, contact cards, locations and polls. Text typed while a file is attached becomes its
+ * caption. "/" inserts a saved reply, "@" mentions someone in a group, the clock sends later, and
+ * a quoted message turns the next send into a reply.
  */
-export function ChatComposer({ academyId, phone, placeholder, disabled }: { academyId: number; phone: string; placeholder: string; disabled?: boolean }) {
+export function ChatComposer({ academyId, phone, placeholder, disabled, isGroup = false, mentionable = [], replyTo, onClearReply, editing, onClearEdit }: {
+  academyId: number;
+  phone: string;
+  placeholder: string;
+  disabled?: boolean;
+  isGroup?: boolean;
+  mentionable?: Array<{ phone: string; name: string }>;
+  replyTo?: ChatMessage | null;
+  onClearReply?: () => void;
+  editing?: ChatMessage | null;
+  onClearEdit?: () => void;
+}) {
   const copy = useChatNativeCopy();
+  const extras = useChatExtrasCopy();
   const send = useSendChat(academyId, phone);
+  const edit = useEditMessage(academyId, phone);
+  const saved = useSavedReplies(academyId);
   const [draft, setDraft] = useState("");
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<null | "location" | "poll" | "gif">(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<null | "location" | "poll" | "gif" | "contact" | "schedule">(null);
   const mediaInput = useRef<HTMLInputElement>(null);
   const docInput = useRef<HTMLInputElement>(null);
+  const stickerInput = useRef<HTMLInputElement>(null);
+  const noteInput = useRef<HTMLInputElement>(null);
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const [recording, setRecording] = useState(false);
   const [seconds, setSeconds] = useState(0);
+  const typingSince = useRef(0);
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { setDraft(""); setAttachment(null); setError(null); }, [phone]);
+  useEffect(() => { setDraft(""); setAttachment(null); setError(null); setNotice(null); }, [phone]);
+  useEffect(() => { if (editing) setDraft(editing.body); }, [editing]);
   useEffect(() => {
     if (!recording) return;
     const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(timer);
   }, [recording]);
+  useEffect(() => () => { if (typingTimer.current) clearTimeout(typingTimer.current); }, []);
 
-  const deliver = (message: string | OutgoingContent, after?: () => void) => {
+  const stopTyping = () => {
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    typingTimer.current = null;
+    if (typingSince.current) {
+      typingSince.current = 0;
+      sendTyping(academyId, phone, false);
+    }
+  };
+  const noteTyping = (text: string) => {
+    if (disabled || !text.trim() || editing) return;
+    if (Date.now() - typingSince.current > 4_000) {
+      typingSince.current = Date.now();
+      sendTyping(academyId, phone, true);
+    }
+    if (typingTimer.current) clearTimeout(typingTimer.current);
+    typingTimer.current = setTimeout(stopTyping, 5_000);
+  };
+
+  const deliver = (message: Exclude<SendInput, string>, after?: () => void) => {
     setError(null);
-    send.mutate(message, { onSuccess: () => after?.(), onError: (err) => setError((err as Error).message) });
+    stopTyping();
+    send.mutate({ ...message, ...(replyTo ? { replyToId: replyTo.id } : {}) }, {
+      onSuccess: (result) => {
+        onClearReply?.();
+        if (result.scheduled && message.scheduledFor) setNotice(extras.scheduledOk(new Intl.DateTimeFormat(copy.locale === "ar" ? "ar-JO" : "en-GB", { hour: "numeric", minute: "2-digit", day: "numeric", month: "short", timeZone: "Asia/Amman" }).format(new Date(message.scheduledFor))));
+        after?.();
+      },
+      onError: (err) => setError((err as Error).message),
+    });
   };
 
   const upload = async (file: File | Blob, name: string) => {
@@ -203,20 +273,29 @@ export function ChatComposer({ academyId, phone, placeholder, disabled }: { acad
     setAttachment({ media: result.media, kind: result.gif ? "gif" : kind, previewUrl: kind === "document" ? null : URL.createObjectURL(file), name: file.name });
   };
 
-  const submit = (e?: FormEvent) => {
+  const attachmentContent = (caption: string | null): OutgoingContent | null => {
+    if (!attachment) return null;
+    return attachment.kind === "image" ? { type: "image", media: attachment.media, caption }
+      : attachment.kind === "video" ? { type: "video", media: attachment.media, caption }
+      : attachment.kind === "gif" ? { type: "video", media: attachment.media, caption, gif: true }
+      : { type: "document", media: attachment.media, caption };
+  };
+
+  const submit = (e?: FormEvent, scheduledFor?: string) => {
     e?.preventDefault();
     const text = draft.trim();
-    if (attachment) {
-      const caption = text || null;
-      const content: OutgoingContent = attachment.kind === "image" ? { type: "image", media: attachment.media, caption }
-        : attachment.kind === "video" ? { type: "video", media: attachment.media, caption }
-        : attachment.kind === "gif" ? { type: "video", media: attachment.media, caption, gif: true }
-        : { type: "document", media: attachment.media, caption };
-      deliver(content, () => { setDraft(""); setAttachment(null); });
+    if (editing) {
+      if (!text || text === editing.body) return onClearEdit?.();
+      edit.mutate({ messageId: editing.id, text }, { onSuccess: () => { setDraft(""); onClearEdit?.(); }, onError: (err) => setError((err as Error).message) });
+      return;
+    }
+    const content = attachmentContent(text || null);
+    if (content) {
+      deliver({ content, ...(scheduledFor ? { scheduledFor } : {}) }, () => { setDraft(""); setAttachment(null); });
       return;
     }
     if (!text) return;
-    deliver(text, () => setDraft(""));
+    deliver({ body: text, ...(scheduledFor ? { scheduledFor } : {}) }, () => setDraft(""));
   };
 
   const startRecording = async () => {
@@ -247,15 +326,61 @@ export function ChatComposer({ academyId, phone, placeholder, disabled }: { acad
       const type = rec.mimeType || "audio/webm";
       const blob = new Blob(chunks.current, { type: type.split(";")[0] });
       const result = await upload(blob, `voice.${type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : "webm"}`);
-      if (result) deliver({ type: "audio", media: result.media, voice: true });
+      if (result) deliver({ content: { type: "audio", media: result.media, voice: true } });
     };
     rec.stop();
   };
 
-  const busy = send.isPending || uploading;
+  // "/price" → saved replies; "@sa" → people in the group.
+  const slash = /^\/(\S*)$/.exec(draft);
+  const replies = slash ? (saved.data?.replies ?? []).filter((r) => !slash[1] || r.shortcut.startsWith(slash[1].toLowerCase()) || r.title.toLocaleLowerCase().includes(slash[1].toLocaleLowerCase())).slice(0, 6) : [];
+  const at = isGroup ? /(?:^|\s)@([^\s@]*)$/.exec(draft) : null;
+  const people = at ? mentionable.filter((p) => !at[1] || p.name.toLocaleLowerCase().includes(at[1].toLocaleLowerCase()) || p.phone.includes(at[1])).slice(0, 6) : [];
+
+  const busy = send.isPending || uploading || edit.isPending;
+  const hasContent = Boolean(draft.trim() || attachment);
 
   return (
-    <div className="border-t border-line">
+    <div className="relative border-t border-line">
+      {(replies.length > 0 || people.length > 0) && (
+        <ul className="absolute inset-x-3 bottom-full z-10 mb-1 max-h-56 overflow-y-auto rounded-xl border border-line bg-surface shadow-xl" role="listbox" data-testid="chat-suggestions">
+          {replies.map((r) => (
+            <li key={r.id}>
+              <button type="button" className="block w-full px-3 py-2 text-start hover:bg-raised" onClick={() => setDraft(r.body)}>
+                <span className="block text-sm font-semibold"><span className="text-turf">/{r.shortcut}</span> · <span dir="auto">{r.title}</span></span>
+                <span className="block truncate text-xs text-muted-text" dir="auto">{r.body}</span>
+              </button>
+            </li>
+          ))}
+          {people.map((p) => (
+            <li key={p.phone}>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-raised"
+                onClick={() => setDraft((d) => d.replace(/@[^\s@]*$/, `@${p.phone} `))}>
+                <UserRound className="h-4 w-4 text-sky-300" aria-hidden="true" />
+                <span className="min-w-0 flex-1 truncate text-sm" dir="auto">{p.name}</span>
+                <span className="text-xs text-muted-text" dir="ltr">{p.phone}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {editing && (
+        <div className="flex items-center gap-2 border-b border-line bg-amber-300/5 px-3 py-2 text-sm">
+          <Pencil className="h-4 w-4 text-amber-200" aria-hidden="true" />
+          <span className="flex-1 truncate text-amber-100">{extras.editing}</span>
+          <Button type="button" variant="ghost" size="icon" onClick={() => { setDraft(""); onClearEdit?.(); }} aria-label={copy.cancel}><X className="h-4 w-4" aria-hidden="true" /></Button>
+        </div>
+      )}
+      {replyTo && !editing && (
+        <div className="flex items-center gap-2 border-b border-line bg-raised/40 px-3 py-2" data-testid="chat-reply-bar">
+          <CornerUpLeft className="h-4 w-4 shrink-0 text-turf" aria-hidden="true" />
+          <span className="min-w-0 flex-1 border-s-4 border-turf/70 ps-2">
+            <span className="block truncate text-[11px] font-semibold text-turf" dir="auto">{extras.replyingTo} {replyTo.direction === "out" ? extras.you : replyTo.author?.name || replyTo.author?.phone || ""}</span>
+            <span className="block truncate text-xs text-muted-text" dir="auto">{replyTo.body || copy.document}</span>
+          </span>
+          <Button type="button" variant="ghost" size="icon" onClick={onClearReply} aria-label={copy.cancel}><X className="h-4 w-4" aria-hidden="true" /></Button>
+        </div>
+      )}
       {attachment && (
         <div className="flex items-center gap-3 border-b border-line bg-raised/40 px-3 py-2" data-testid="chat-attachment">
           {attachment.previewUrl && (attachment.kind === "image"
@@ -278,10 +403,10 @@ export function ChatComposer({ academyId, phone, placeholder, disabled }: { acad
           </Button>
         </div>
       ) : (
-        <form onSubmit={submit} className="flex items-end gap-2 p-3">
+        <form onSubmit={(e) => submit(e)} className="flex items-end gap-2 p-3">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button type="button" variant="ghost" size="icon" className="h-11 w-11 shrink-0 rounded-full" disabled={disabled || busy} aria-label={copy.attach} data-testid="button-chat-attach">
+              <Button type="button" variant="ghost" size="icon" className="h-11 w-11 shrink-0 rounded-full" disabled={disabled || busy || Boolean(editing)} aria-label={copy.attach} data-testid="button-chat-attach">
                 {uploading ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Paperclip className="h-5 w-5" aria-hidden="true" />}
               </Button>
             </DropdownMenuTrigger>
@@ -289,16 +414,31 @@ export function ChatComposer({ academyId, phone, placeholder, disabled }: { acad
               <DropdownMenuItem onSelect={() => mediaInput.current?.click()}><ImageIcon className="me-2 h-4 w-4 text-sky-300" aria-hidden="true" />{copy.photoVideo}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => docInput.current?.click()}><FileText className="me-2 h-4 w-4 text-violet-300" aria-hidden="true" />{copy.document}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setDialog("gif")}><Film className="me-2 h-4 w-4 text-pink-300" aria-hidden="true" />{copy.gif}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => stickerInput.current?.click()}><Smile className="me-2 h-4 w-4 text-yellow-300" aria-hidden="true" />{extras.sticker}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => noteInput.current?.click()}><Video className="me-2 h-4 w-4 text-emerald-300" aria-hidden="true" />{extras.videoNote}</DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setDialog("contact")}><UserRound className="me-2 h-4 w-4 text-teal-300" aria-hidden="true" />{extras.sendContact}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setDialog("location")}><MapPin className="me-2 h-4 w-4 text-red-300" aria-hidden="true" />{copy.location}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setDialog("poll")} data-testid="menu-chat-poll"><BarChart3 className="me-2 h-4 w-4 text-amber-300" aria-hidden="true" />{copy.poll}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
           <input ref={mediaInput} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { void onPick(e.target.files?.[0]); e.target.value = ""; }} />
           <input ref={docInput} type="file" className="hidden" onChange={(e) => { void onPick(e.target.files?.[0]); e.target.value = ""; }} />
+          <input ref={stickerInput} type="file" accept="image/webp" className="hidden" onChange={(e) => {
+            const file = e.target.files?.[0]; e.target.value = "";
+            if (file) void upload(file, file.name).then((r) => { if (r) deliver({ content: { type: "sticker", media: r.media } }); });
+          }} />
+          <input ref={noteInput} type="file" accept="video/*" className="hidden" onChange={(e) => {
+            const file = e.target.files?.[0]; e.target.value = "";
+            if (file) void upload(file, file.name).then((r) => { if (r) deliver({ content: { type: "video", media: r.media, note: true } }); });
+          }} />
           <Textarea
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
+            onChange={(e) => { setDraft(e.target.value); noteTyping(e.target.value); }}
+            onBlur={stopTyping}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); }
+              if (e.key === "Escape") { if (editing) { setDraft(""); onClearEdit?.(); } else if (replyTo) onClearReply?.(); }
+            }}
             placeholder={attachment ? copy.captionPlaceholder : placeholder}
             rows={1}
             dir="auto"
@@ -306,9 +446,14 @@ export function ChatComposer({ academyId, phone, placeholder, disabled }: { acad
             className="max-h-40 min-h-11 resize-none"
             data-testid="input-chat-message"
           />
-          {draft.trim() || attachment ? (
-            <Button type="submit" disabled={busy || disabled} className="h-11 w-11 shrink-0 rounded-full bg-floodlight p-0 text-void" aria-label={copy.send} data-testid="button-chat-send">
-              {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4 rtl:-scale-x-100" aria-hidden="true" />}
+          {hasContent && !editing && (
+            <Button type="button" variant="ghost" size="icon" className="h-11 w-11 shrink-0 rounded-full" disabled={busy || disabled} onClick={() => setDialog("schedule")} aria-label={extras.schedule} data-testid="button-chat-schedule">
+              <CalendarClock className="h-5 w-5" aria-hidden="true" />
+            </Button>
+          )}
+          {hasContent ? (
+            <Button type="submit" disabled={busy || disabled} className="h-11 w-11 shrink-0 rounded-full bg-floodlight p-0 text-void" aria-label={editing ? extras.save : copy.send} data-testid="button-chat-send">
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : editing ? <Check className="h-4 w-4" aria-hidden="true" /> : <Send className="h-4 w-4 rtl:-scale-x-100" aria-hidden="true" />}
             </Button>
           ) : (
             <Button type="button" onClick={() => void startRecording()} disabled={busy || disabled || typeof MediaRecorder === "undefined"} className="h-11 w-11 shrink-0 rounded-full bg-floodlight p-0 text-void" aria-label={copy.voice} data-testid="button-chat-voice">
@@ -318,14 +463,87 @@ export function ChatComposer({ academyId, phone, placeholder, disabled }: { acad
         </form>
       )}
       {error && <p className="px-3 pb-2 text-xs text-red-400" role="alert">{error}</p>}
+      {notice && <p className="px-3 pb-2 text-xs text-turf" role="status">{notice}</p>}
       <LocationDialog academyId={academyId} open={dialog === "location"} onOpenChange={(o) => setDialog(o ? "location" : null)}
-        onSend={(loc) => deliver({ type: "location", ...loc }, () => setDialog(null))} pending={send.isPending} />
+        onSend={(loc) => deliver({ content: { type: "location", ...loc } }, () => setDialog(null))} pending={send.isPending} />
       <PollDialog open={dialog === "poll"} onOpenChange={(o) => setDialog(o ? "poll" : null)}
-        onSend={(poll) => deliver({ type: "poll", ...poll }, () => setDialog(null))} pending={send.isPending} />
+        onSend={(poll) => deliver({ content: { type: "poll", ...poll } }, () => setDialog(null))} pending={send.isPending} />
       <GifDialog academyId={academyId} open={dialog === "gif"} onOpenChange={(o) => setDialog(o ? "gif" : null)}
         upload={(file) => upload(file, file.name)}
-        onSend={(media) => deliver({ type: "video", media, gif: true, caption: draft.trim() || null }, () => { setDialog(null); setDraft(""); })} pending={send.isPending} />
+        onSend={(media) => deliver({ content: { type: "video", media, gif: true, caption: draft.trim() || null } }, () => { setDialog(null); setDraft(""); })} pending={send.isPending} />
+      <ContactCardDialog academyId={academyId} open={dialog === "contact"} onOpenChange={(o) => setDialog(o ? "contact" : null)}
+        onSend={(contacts) => deliver({ content: { type: "contact", contacts } }, () => setDialog(null))} pending={send.isPending} />
+      <ScheduleDialog open={dialog === "schedule"} onOpenChange={(o) => setDialog(o ? "schedule" : null)} pending={send.isPending}
+        onSend={(iso) => { submit(undefined, iso); setDialog(null); }} />
     </div>
+  );
+}
+
+/** Pick people from People to send as contact cards. */
+function ContactCardDialog({ academyId, open, onOpenChange, onSend, pending }: {
+  academyId: number; open: boolean; onOpenChange: (open: boolean) => void; pending: boolean;
+  onSend: (contacts: Array<{ name: string; phone: string }>) => void;
+}) {
+  const extras = useChatExtrasCopy();
+  const copy = useChatNativeCopy();
+  const contacts = useContacts(academyId);
+  const [q, setQ] = useState("");
+  const [picked, setPicked] = useState<string[]>([]);
+  useEffect(() => { if (open) { setQ(""); setPicked([]); } }, [open]);
+  const matches = useMemo(() => {
+    const needle = q.trim().toLocaleLowerCase();
+    return (contacts.data ?? []).filter((c) => !needle || [c.name, c.display].join(" ").toLocaleLowerCase().includes(needle)).slice(0, 60);
+  }, [contacts.data, q]);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="border-line bg-surface text-text" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
+        <DialogHeader className="text-start"><DialogTitle>{extras.pickContact}</DialogTitle></DialogHeader>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={copy.searchPeople} />
+        <ul className="max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line">
+          {matches.map((c) => (
+            <li key={c.id}>
+              <label className="flex cursor-pointer items-center gap-2 px-2.5 py-2 hover:bg-raised">
+                <input type="checkbox" checked={picked.includes(c.phone)} onChange={() => setPicked((l) => (l.includes(c.phone) ? l.filter((x) => x !== c.phone) : l.length < 10 ? [...l, c.phone] : l))} className="h-4 w-4" />
+                <span className="min-w-0 flex-1 truncate text-sm" dir="auto">{c.name || c.display}</span>
+                <span className="text-xs text-muted-text" dir="ltr">{c.display}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+        <Button type="button" disabled={picked.length === 0 || pending} className="bg-floodlight font-bold text-void"
+          onClick={() => onSend(picked.map((phone) => ({ phone, name: (contacts.data ?? []).find((c) => c.phone === phone)?.name || (contacts.data ?? []).find((c) => c.phone === phone)?.display || phone })))}>
+          {pending && <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden="true" />}{copy.send}{picked.length ? ` · ${picked.length}` : ""}
+        </Button>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Choose when the message goes out (Amman time). */
+function ScheduleDialog({ open, onOpenChange, onSend, pending }: { open: boolean; onOpenChange: (open: boolean) => void; onSend: (iso: string) => void; pending: boolean }) {
+  const extras = useChatExtrasCopy();
+  const [value, setValue] = useState("");
+  const toLocal = (d: Date) => {
+    const parts = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Amman", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(d);
+    return parts.replace(" ", "T");
+  };
+  useEffect(() => { if (open) setValue(toLocal(new Date(Date.now() + 3_600_000))); }, [open]);
+  // The field shows Amman time (UTC+3 all year); turn it back into an instant.
+  const instant = value ? new Date(`${value}:00+03:00`) : null;
+  const valid = instant !== null && !Number.isNaN(instant.getTime()) && instant.getTime() > Date.now() + 60_000;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="border-line bg-surface text-text sm:max-w-sm" dir={extras.locale === "ar" ? "rtl" : "ltr"}>
+        <DialogHeader className="text-start"><DialogTitle>{extras.scheduleTitle}</DialogTitle></DialogHeader>
+        <label className="block space-y-1 text-sm font-semibold">
+          {extras.scheduleAt}
+          <Input type="datetime-local" value={value} onChange={(e) => setValue(e.target.value)} dir="ltr" data-testid="input-schedule-at" />
+        </label>
+        <Button type="button" disabled={!valid || pending} className="bg-floodlight font-bold text-void" onClick={() => instant && onSend(instant.toISOString())} data-testid="button-schedule-send">
+          <CalendarClock className="me-2 h-4 w-4" aria-hidden="true" />{extras.scheduleSend}
+        </Button>
+      </DialogContent>
+    </Dialog>
   );
 }
 

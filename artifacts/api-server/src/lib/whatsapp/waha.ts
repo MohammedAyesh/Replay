@@ -166,7 +166,7 @@ export async function getSession(name: string): Promise<WahaSession | null> {
 }
 
 /** Every event Replay handles. A session created before one was added is refreshed by refreshWebhookEvents. */
-export const WEBHOOK_EVENTS = ["message.any", "message.ack", "session.status", "poll.vote"] as const;
+export const WEBHOOK_EVENTS = ["message.any", "message.ack", "message.reaction", "message.revoked", "message.edited", "presence.update", "call.received", "session.status", "poll.vote"] as const;
 
 function sessionConfig(metadata: Record<string, string>) {
   const secret = wahaWebhookSecret();
@@ -292,8 +292,8 @@ function messageIdFrom(raw: unknown): string | null {
   return null;
 }
 
-export async function sendText(session: string, chatId: string, text: string): Promise<string | null> {
-  const raw = await wahaRequest("POST", "/api/sendText", { session, chatId, text, linkPreview: true }, { timeoutMs: 30_000 });
+export async function sendText(session: string, chatId: string, text: string, opts: { replyTo?: string | null; mentions?: string[] } = {}): Promise<string | null> {
+  const raw = await wahaRequest("POST", "/api/sendText", { session, chatId, text, linkPreview: true, ...(opts.replyTo ? { reply_to: opts.replyTo } : {}), ...(opts.mentions?.length ? { mentions: opts.mentions } : {}) }, { timeoutMs: 30_000 });
   return messageIdFrom(raw);
 }
 
@@ -325,40 +325,147 @@ export async function refreshWebhookEvents(name: string): Promise<boolean> {
 /** A file WAHA downloads from a public URL (Replay's media sits on the Bunny pull zone). */
 export type WahaFile = { url: string; mimetype: string; filename?: string };
 
-async function send(path: string, body: Record<string, unknown>): Promise<string | null> {
+export type SendOptions = {
+  /** Serialized id (or bare id) of the message being answered. */
+  replyTo?: string | null;
+  /** Chat ids (9627…@c.us) @mentioned in the text. */
+  mentions?: string[];
+};
+
+async function send(path: string, body: Record<string, unknown>, opts: SendOptions = {}): Promise<string | null> {
   // Media sends wait while WAHA downloads (and maybe converts) the file.
-  return messageIdFrom(await wahaRequest("POST", path, body, { timeoutMs: 90_000 }));
+  const extra: Record<string, unknown> = {};
+  if (opts.replyTo) extra.reply_to = opts.replyTo;
+  if (opts.mentions?.length) extra.mentions = opts.mentions;
+  return messageIdFrom(await wahaRequest("POST", path, { ...body, ...extra }, { timeoutMs: 90_000 }));
 }
 
-export function sendImage(session: string, chatId: string, file: WahaFile, caption?: string) {
-  return send("/api/sendImage", { session, chatId, file, ...(caption ? { caption } : {}) });
+export function sendImage(session: string, chatId: string, file: WahaFile, caption?: string, opts: SendOptions = {}) {
+  return send("/api/sendImage", { session, chatId, file, ...(caption ? { caption } : {}) }, opts);
 }
 
-/** A video; with `gif` WhatsApp shows it as a looping, silent GIF. */
-export function sendVideo(session: string, chatId: string, file: WahaFile, caption?: string, gif = false) {
+/** A video; with `gif` WhatsApp shows it as a looping, silent GIF; with `note` as a round video note. */
+export function sendVideo(session: string, chatId: string, file: WahaFile, caption?: string, gif = false, opts: SendOptions & { note?: boolean } = {}) {
   // GOWS turns on gifPlayback when the file is labelled image/gif; the bytes are an MP4.
   const labelled = gif ? { ...file, mimetype: "image/gif" } : file;
-  return send("/api/sendVideo", { session, chatId, file: labelled, convert: true, caption: caption ?? "" });
+  return send("/api/sendVideo", { session, chatId, file: labelled, convert: true, caption: caption ?? "", ...(opts.note ? { asNote: true } : {}) }, opts);
 }
 
-export function sendVoice(session: string, chatId: string, file: WahaFile) {
-  return send("/api/sendVoice", { session, chatId, file, convert: true });
+export function sendVoice(session: string, chatId: string, file: WahaFile, opts: SendOptions = {}) {
+  return send("/api/sendVoice", { session, chatId, file, convert: true }, opts);
 }
 
-export function sendFile(session: string, chatId: string, file: WahaFile, caption?: string) {
-  return send("/api/sendFile", { session, chatId, file, ...(caption ? { caption } : {}) });
+export function sendFile(session: string, chatId: string, file: WahaFile, caption?: string, opts: SendOptions = {}) {
+  return send("/api/sendFile", { session, chatId, file, ...(caption ? { caption } : {}) }, opts);
 }
 
-export function sendSticker(session: string, chatId: string, file: WahaFile) {
-  return send("/api/sendSticker", { session, chatId, file });
+export function sendSticker(session: string, chatId: string, file: WahaFile, opts: SendOptions = {}) {
+  return send("/api/sendSticker", { session, chatId, file }, opts);
 }
 
-export function sendLocation(session: string, chatId: string, latitude: number, longitude: number, title?: string) {
-  return send("/api/sendLocation", { session, chatId, latitude, longitude, title: title ?? "" });
+export function sendLocation(session: string, chatId: string, latitude: number, longitude: number, title?: string, opts: SendOptions = {}) {
+  return send("/api/sendLocation", { session, chatId, latitude, longitude, title: title ?? "" }, opts);
 }
 
-export function sendPoll(session: string, chatId: string, poll: { name: string; options: string[]; multipleAnswers: boolean }) {
-  return send("/api/sendPoll", { session, chatId, poll });
+export function sendPoll(session: string, chatId: string, poll: { name: string; options: string[]; multipleAnswers: boolean }, opts: SendOptions = {}) {
+  return send("/api/sendPoll", { session, chatId, poll }, opts);
+}
+
+/** Contact cards. */
+export function sendContacts(session: string, chatId: string, contacts: Array<{ name: string; phone: string }>, opts: SendOptions = {}) {
+  const vcards = contacts.map((c) => ({
+    vcard: `BEGIN:VCARD\nVERSION:3.0\nFN:${c.name.replace(/[\r\n;]/g, " ")}\nTEL;type=CELL;type=VOICE;waid=${c.phone}:+${c.phone}\nEND:VCARD`,
+  }));
+  return send("/api/sendContactVcard", { session, chatId, contacts: vcards }, opts);
+}
+
+/** WAHA's id for a message: "true_<chat>_<id>" with the sender appended in a group. */
+export function serializedMessageId(fromMe: boolean, chatId: string, waId: string, participant?: string | null): string {
+  return `${fromMe ? "true" : "false"}_${chatId}_${waId}${participant ? `_${participant}` : ""}`;
+}
+
+export async function setReaction(session: string, serializedId: string, emoji: string): Promise<void> {
+  await wahaRequest("PUT", "/api/reaction", { session, messageId: serializedId, reaction: emoji }, { timeoutMs: 20_000 });
+}
+
+export async function deleteMessage(session: string, chatId: string, serializedId: string): Promise<void> {
+  await wahaRequest("DELETE", `/api/${encodeURIComponent(session)}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(serializedId)}`, undefined, { timeoutMs: 20_000 });
+}
+
+export async function editMessage(session: string, chatId: string, serializedId: string, text: string, mentions?: string[]): Promise<void> {
+  await wahaRequest("PUT", `/api/${encodeURIComponent(session)}/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(serializedId)}`, { text, ...(mentions?.length ? { mentions } : {}) }, { timeoutMs: 20_000 });
+}
+
+/** Blue ticks for these incoming messages. */
+export async function sendSeen(session: string, chatId: string, serializedIds: string[]): Promise<void> {
+  if (serializedIds.length === 0) return;
+  await wahaRequest("POST", "/api/sendSeen", { session, chatId, messageIds: serializedIds.slice(-50) }, { timeoutMs: 15_000 });
+}
+
+export async function setTyping(session: string, chatId: string, typing: boolean): Promise<void> {
+  await wahaRequest("POST", typing ? "/api/startTyping" : "/api/stopTyping", { session, chatId }, { timeoutMs: 10_000 });
+}
+
+/** Ask WhatsApp to tell us when this chat is typing. */
+export async function subscribePresence(session: string, chatId: string): Promise<void> {
+  await wahaRequest("POST", `/api/${encodeURIComponent(session)}/presence/${encodeURIComponent(chatId)}/subscribe`, undefined, { timeoutMs: 10_000 });
+}
+
+/** A contact's or group's current photo link (null when privacy hides it). Short-lived: copy it. */
+export async function getPictureUrl(session: string, contactId: string): Promise<string | null> {
+  try {
+    const raw = await wahaRequest<{ profilePictureURL?: string | null }>(
+      "GET", `/api/contacts/profile-picture?contactId=${encodeURIComponent(contactId)}&session=${encodeURIComponent(session)}`, undefined, { timeoutMs: 10_000 },
+    );
+    return typeof raw?.profilePictureURL === "string" && raw.profilePictureURL ? raw.profilePictureURL : null;
+  } catch (error) {
+    if (error instanceof WahaError && error.status < 500) return null;
+    throw error;
+  }
+}
+
+/** Fetch a small public image (a profile photo) as bytes. */
+export async function fetchImageBytes(url: string, maxBytes = 2 * 1024 * 1024): Promise<{ buffer: Buffer; mimetype: string } | null> {
+  let host: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") return null;
+    host = parsed.hostname;
+  } catch {
+    return null;
+  }
+  if (!/(^|\.)(whatsapp\.net|whatsapp\.com|fbcdn\.net)$/.test(host)) return null;
+  const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) return null;
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (buffer.length === 0 || buffer.length > maxBytes) return null;
+  return { buffer, mimetype: response.headers.get("content-type")?.split(";")[0] || "image/jpeg" };
+}
+
+// ─── Status and Channels ─────────────────────────────────────────────────────
+
+export async function postStatus(session: string, post:
+  | { kind: "text"; text: string; backgroundColor: string }
+  | { kind: "image"; file: WahaFile; caption?: string }
+  | { kind: "video"; file: WahaFile; caption?: string }): Promise<string | null> {
+  const body = post.kind === "text"
+    ? { session, text: post.text, backgroundColor: post.backgroundColor, font: 0, linkPreview: true }
+    : { session, file: post.file, caption: post.caption ?? "", ...(post.kind === "video" ? { convert: true } : {}) };
+  return messageIdFrom(await wahaRequest("POST", `/api/${encodeURIComponent(session)}/status/${post.kind}`, body, { timeoutMs: 90_000 }));
+}
+
+export async function deleteStatus(session: string, id: string): Promise<void> {
+  await wahaRequest("POST", `/api/${encodeURIComponent(session)}/status/delete`, { id }, { timeoutMs: 20_000 });
+}
+
+export type WahaChannel = { id: string; name: string; invite: string | null };
+
+export async function createChannel(session: string, name: string, description: string): Promise<WahaChannel> {
+  const raw = await wahaRequest<{ id?: string; name?: string; invite?: string | null }>(
+    "POST", `/api/${encodeURIComponent(session)}/channels`, { name, description }, { timeoutMs: 60_000 },
+  );
+  if (!raw?.id) throw new WahaError(502, "WhatsApp did not return the new channel", true);
+  return { id: raw.id, name: raw.name ?? name, invite: raw.invite ?? null };
 }
 
 export type WahaGroup = { id: string; subject: string; participants: number | null };
@@ -436,4 +543,52 @@ export async function downloadWahaFile(mediaUrl: string, maxBytes: number): Prom
     chunks.push(Buffer.from(chunk));
   }
   return { buffer: Buffer.concat(chunks), mimetype: response.headers.get("content-type")?.split(";")[0]?.trim() || "application/octet-stream" };
+}
+
+export type WahaGroupMember = { phone: string | null; id: string; admin: boolean };
+
+export async function getGroupMembers(session: string, groupId: string): Promise<WahaGroupMember[]> {
+  const raw = await wahaRequest<Array<{ id?: string; pn?: string | null; role?: string }>>(
+    "GET", `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(`${groupId}@g.us`)}/participants/v2`, undefined, { timeoutMs: 20_000 },
+  );
+  const digits = (v: string | null | undefined) => {
+    const local = (v ?? "").split("@")[0]?.split(":")[0] ?? "";
+    return /^\d{8,15}$/.test(local) ? local : null;
+  };
+  return (Array.isArray(raw) ? raw : []).map((p) => {
+    const id = String(p.id ?? "");
+    const phone = digits(p.pn) ?? (id.endsWith("@lid") ? null : digits(id));
+    return { id, phone, admin: /admin/i.test(String(p.role ?? "")) };
+  });
+}
+
+const groupPath = (session: string, groupId: string, rest = "") => `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(`${groupId}@g.us`)}${rest}`;
+
+export async function setGroupSubject(session: string, groupId: string, subject: string): Promise<void> {
+  await wahaRequest("PUT", groupPath(session, groupId, "/subject"), { subject }, { timeoutMs: 20_000 });
+}
+export async function setGroupDescription(session: string, groupId: string, description: string): Promise<void> {
+  await wahaRequest("PUT", groupPath(session, groupId, "/description"), { description }, { timeoutMs: 20_000 });
+}
+export async function setGroupPicture(session: string, groupId: string, file: { url: string; mimetype: string } | null): Promise<void> {
+  if (!file) await wahaRequest("DELETE", groupPath(session, groupId, "/picture"), undefined, { timeoutMs: 20_000 });
+  else await wahaRequest("PUT", groupPath(session, groupId, "/picture"), { file }, { timeoutMs: 60_000 });
+}
+/** Only admins can post (announcement group) / only admins can edit the group's info. */
+export async function setGroupAdminsOnly(session: string, groupId: string, what: "messages" | "info", adminsOnly: boolean): Promise<void> {
+  await wahaRequest("PUT", groupPath(session, groupId, `/settings/security/${what}-admin-only`), { adminsOnly }, { timeoutMs: 20_000 });
+}
+export async function removeGroupMembers(session: string, groupId: string, chatIds: string[]): Promise<void> {
+  await wahaRequest("POST", groupPath(session, groupId, "/participants/remove"), { participants: chatIds.map((id) => ({ id })) }, { timeoutMs: 30_000 });
+}
+export async function setGroupAdmins(session: string, groupId: string, chatIds: string[], admin: boolean): Promise<void> {
+  await wahaRequest("POST", groupPath(session, groupId, admin ? "/admin/promote" : "/admin/demote"), { participants: chatIds.map((id) => ({ id })) }, { timeoutMs: 30_000 });
+}
+export async function getGroupInviteLink(session: string, groupId: string, revoke = false): Promise<string | null> {
+  const raw = revoke
+    ? await wahaRequest<unknown>("POST", groupPath(session, groupId, "/invite-code/revoke"), undefined, { timeoutMs: 20_000 })
+    : await wahaRequest<unknown>("GET", groupPath(session, groupId, "/invite-code"), undefined, { timeoutMs: 20_000 });
+  const text = typeof raw === "string" ? raw : typeof (raw as { inviteCode?: unknown; code?: unknown })?.inviteCode === "string" ? String((raw as { inviteCode: string }).inviteCode) : typeof (raw as { code?: unknown })?.code === "string" ? String((raw as { code: string }).code) : "";
+  if (!text) return null;
+  return text.startsWith("http") ? text : `https://chat.whatsapp.com/${text.replace(/^"|"$/g, "")}`;
 }

@@ -199,7 +199,7 @@ describe("locations and polls", () => {
   it("sends a location and files one that arrives", async () => {
     await request(app).post(`${base()}/chats/962795550001/messages`).set(auth(coachId))
       .send({ content: { type: "location", latitude: 31.95, longitude: 35.91, name: "Galaxy pitch" } }).expect(201);
-    expect(vi.mocked(waha.sendLocation).mock.calls[0].slice(1)).toEqual(["962795550001@c.us", 31.95, 35.91, "Galaxy pitch"]);
+    expect(vi.mocked(waha.sendLocation).mock.calls[0].slice(1, 5)).toEqual(["962795550001@c.us", 31.95, 35.91, "Galaxy pitch"]);
     await hook({
       event: "message.any", session: session(),
       payload: { id: "IN-LOC-1", from: "962795550001@c.us", fromMe: false, body: "", location: { latitude: 31.9, longitude: 35.8, name: "Home" } },

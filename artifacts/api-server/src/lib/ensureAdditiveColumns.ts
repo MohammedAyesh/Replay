@@ -42,6 +42,19 @@ const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   { table: "academy_whatsapp_messages", column: "author_name", type: "text" },
   { table: "academy_contacts", column: "assigned_user_id", type: `integer CONSTRAINT "academy_contacts_assigned_user_id_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL` },
   { table: "academy_social_threads", column: "assigned_user_id", type: `integer CONSTRAINT "academy_social_threads_assigned_user_id_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL` },
+  // 0058_academy_whatsapp_chat_features.sql
+  { table: "academy_whatsapp_settings", column: "chat_options", type: "jsonb DEFAULT '{}'::jsonb NOT NULL" },
+  { table: "academy_whatsapp_messages", column: "reply_to_wa_id", type: "text" },
+  { table: "academy_whatsapp_messages", column: "reactions", type: "jsonb" },
+  { table: "academy_whatsapp_messages", column: "mentions", type: "jsonb" },
+  { table: "academy_whatsapp_messages", column: "edited_at", type: "timestamp with time zone" },
+  { table: "academy_whatsapp_messages", column: "deleted_at", type: "timestamp with time zone" },
+  { table: "academy_contacts", column: "avatar_path", type: "text" },
+  { table: "academy_contacts", column: "avatar_checked_at", type: "timestamp with time zone" },
+  { table: "academy_contacts", column: "typing_until", type: "timestamp with time zone" },
+  { table: "academy_whatsapp_groups", column: "avatar_path", type: "text" },
+  { table: "academy_whatsapp_groups", column: "avatar_checked_at", type: "timestamp with time zone" },
+  { table: "academy_whatsapp_groups", column: "typing_until", type: "timestamp with time zone" },
 ];
 
 const TABLES: Array<{ table: string; statements: string[] }> = [
@@ -250,6 +263,20 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
     table: "academy_whatsapp_poll_votes",
     statements: [
       `CREATE TABLE IF NOT EXISTS "academy_whatsapp_poll_votes" ("id" serial PRIMARY KEY, "message_id" integer NOT NULL CONSTRAINT "academy_whatsapp_poll_votes_message_id_academy_whatsapp_messages_id_fk" REFERENCES "academy_whatsapp_messages"("id") ON DELETE CASCADE, "voter_phone" text NOT NULL, "voter_name" text, "options" jsonb DEFAULT '[]'::jsonb NOT NULL, "voted_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "academy_whatsapp_poll_votes_message_voter_unique" UNIQUE ("message_id", "voter_phone"))`,
+    ],
+  },
+  // 0058_academy_whatsapp_chat_features.sql
+  {
+    table: "academy_whatsapp_saved_replies",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "academy_whatsapp_saved_replies" ("id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "academy_whatsapp_saved_replies_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "shortcut" text NOT NULL, "title" text NOT NULL, "body" text NOT NULL, "created_by" integer CONSTRAINT "academy_whatsapp_saved_replies_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "academy_whatsapp_saved_replies_academy_shortcut_unique" UNIQUE ("academy_id", "shortcut"))`,
+    ],
+  },
+  {
+    table: "academy_whatsapp_posts",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "academy_whatsapp_posts" ("id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "academy_whatsapp_posts_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "target" text NOT NULL, "kind" text NOT NULL, "text" text, "media" jsonb, "background_color" text, "wa_message_id" text, "error" text, "created_by" integer CONSTRAINT "academy_whatsapp_posts_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "deleted_at" timestamp with time zone, "created_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "academy_whatsapp_posts_target_check" CHECK ("target" in ('status', 'channel')), CONSTRAINT "academy_whatsapp_posts_kind_check" CHECK ("kind" in ('text', 'image', 'video')))`,
+      `CREATE INDEX IF NOT EXISTS "academy_whatsapp_posts_academy_idx" ON "academy_whatsapp_posts" ("academy_id", "created_at")`,
     ],
   },
 ];

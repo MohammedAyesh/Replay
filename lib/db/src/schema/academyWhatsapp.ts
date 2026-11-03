@@ -32,6 +32,11 @@ export const academyWhatsappSettingsTable = pgTable("academy_whatsapp_settings",
   dailyLimit: integer("daily_limit").notNull().default(300),
   /** Per-automation config, keyed by automation key. Missing keys use the defaults in code. */
   automations: jsonb("automations").notNull().default(sql`'{}'::jsonb`),
+  /**
+   * Chat behaviour: { readReceipts, greeting, away, missedCall, channel }.
+   * Missing keys use the defaults in code (lib/whatsapp/chatOptions.ts).
+   */
+  chatOptions: jsonb("chat_options").notNull().default(sql`'{}'::jsonb`),
   /** Last status WAHA reported for the academy's own session (webhook or poll). */
   sessionStatus: text("session_status"),
   connectedPhone: text("connected_phone"),
@@ -97,6 +102,15 @@ export const academyWhatsappMessagesTable = pgTable("academy_whatsapp_messages",
   /** In a group: who wrote it. */
   authorPhone: text("author_phone"),
   authorName: text("author_name"),
+  /** The WhatsApp id (bare) of the message this one answers. */
+  replyToWaId: text("reply_to_wa_id"),
+  /** Emoji reactions: { "<phone or 'me'>": { emoji, name } }. */
+  reactions: jsonb("reactions"),
+  /** Phones @mentioned in a group message. */
+  mentions: jsonb("mentions"),
+  editedAt: timestamp("edited_at", { withTimezone: true }),
+  /** Deleted for everyone (by us or by the sender); the content is cleared. */
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("academy_whatsapp_messages_direction_check", sql`${table.direction} in ('out', 'in')`),
@@ -159,6 +173,11 @@ export const academyContactsTable = pgTable("academy_contacts", {
   linkDismissedAt: timestamp("link_dismissed_at", { withTimezone: true }),
   /** The manager or coach this chat is handed to. */
   assignedUserId: integer("assigned_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  /** WhatsApp profile photo, copied to Bunny Storage (WhatsApp's own links expire). */
+  avatarPath: text("avatar_path"),
+  avatarCheckedAt: timestamp("avatar_checked_at", { withTimezone: true }),
+  /** They are typing (or recording) until this time. */
+  typingUntil: timestamp("typing_until", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -205,6 +224,9 @@ export const academyWhatsappGroupsTable = pgTable("academy_whatsapp_groups", {
   lastReadAt: timestamp("last_read_at", { withTimezone: true }),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   muted: boolean("muted").notNull().default(false),
+  avatarPath: text("avatar_path"),
+  avatarCheckedAt: timestamp("avatar_checked_at", { withTimezone: true }),
+  typingUntil: timestamp("typing_until", { withTimezone: true }),
   createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -224,6 +246,42 @@ export const academyWhatsappPollVotesTable = pgTable("academy_whatsapp_poll_vote
   votedAt: timestamp("voted_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("academy_whatsapp_poll_votes_message_voter_unique").on(table.messageId, table.voterPhone),
+]);
+
+/** Ready answers a coach inserts into a chat ("/prices"). */
+export const academyWhatsappSavedRepliesTable = pgTable("academy_whatsapp_saved_replies", {
+  id: serial("id").primaryKey(),
+  academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
+  /** Short word typed after "/" to find it. */
+  shortcut: text("shortcut").notNull(),
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("academy_whatsapp_saved_replies_academy_shortcut_unique").on(table.academyId, table.shortcut),
+]);
+
+/** What the academy posted to its WhatsApp Status or its WhatsApp Channel. */
+export const academyWhatsappPostsTable = pgTable("academy_whatsapp_posts", {
+  id: serial("id").primaryKey(),
+  academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
+  /** "status" or "channel". */
+  target: text("target").notNull(),
+  kind: text("kind").notNull(),
+  text: text("text"),
+  media: jsonb("media"),
+  backgroundColor: text("background_color"),
+  waMessageId: text("wa_message_id"),
+  error: text("error"),
+  createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("academy_whatsapp_posts_academy_idx").on(table.academyId, table.createdAt),
+  check("academy_whatsapp_posts_target_check", sql`${table.target} in ('status', 'channel')`),
+  check("academy_whatsapp_posts_kind_check", sql`${table.kind} in ('text', 'image', 'video')`),
 ]);
 
 export type AcademyWhatsappGroup = typeof academyWhatsappGroupsTable.$inferSelect;

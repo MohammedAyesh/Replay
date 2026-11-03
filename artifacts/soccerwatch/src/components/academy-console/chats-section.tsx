@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, ArrowLeft, ArrowRight, BellOff, Check, CheckCheck, Clock, EyeOff, HelpCircle, Loader2, LogOut, MessageSquarePlus, MessagesSquare, MoreVertical, Search, ShieldOff, Smartphone, UserPlus, UserRoundCog, Users, X } from "lucide-react";
+import { Archive, ArrowLeft, ArrowRight, BellOff, EyeOff, HelpCircle, Image as ImageIcon, Info, Loader2, LogOut, MessageSquarePlus, MessagesSquare, MoreVertical, Search, Settings2, ShieldOff, UserPlus, UserRoundCog, Users, X } from "lucide-react";
 import { useTeamCopy } from "@/i18n/team-strings";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePeopleCopy } from "@/i18n/people-strings";
 import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
-import { useAddToGroup, useChatAssignees, useChatState, useChatThread, useChatWho, useChats, useContacts, useHiddenChats, useWhatsappOverview, type ChatState, type ChatSummary } from "@/lib/academy-whatsapp-api";
+import { useAddToGroup, useChatAssignees, useChatState, useChatThread, useChatWho, useChats, useContacts, useGroupMembers, useHiddenChats, useWhatsappOverview, type ChatMessage, type ChatState, type ChatSummary } from "@/lib/academy-whatsapp-api";
+import { useChatExtrasCopy } from "@/i18n/chat-extras-strings";
+import { MessageBubble, SourceLabel, StatusTick } from "./chat-message";
+import { ChatMediaSheet, ChatSearchSheet, GroupInfoSheet } from "./chat-panels";
+import { ChatToolsSheet } from "./chat-tools";
 import { useChatNativeCopy } from "@/i18n/chat-native-strings";
-import { AssigneeBadge, ChatComposer, ChatContentView, FollowGroupsSheet, NewChatDialog, NewGroupDialog, WhatsappAssign } from "./chat-native";
+import { AssigneeBadge, ChatComposer, FollowGroupsSheet, NewChatDialog, NewGroupDialog, WhatsappAssign } from "./chat-native";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -21,14 +25,6 @@ function initials(name: string | null, fallback: string) {
   const source = (name ?? "").trim();
   if (!source) return fallback.slice(-2);
   return source.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
-}
-
-function StatusTick({ status }: { status: string }) {
-  if (status === "read") return <CheckCheck className="h-3.5 w-3.5 text-sky-300" aria-hidden="true" />;
-  if (status === "delivered") return <CheckCheck className="h-3.5 w-3.5" aria-hidden="true" />;
-  if (status === "sent") return <Check className="h-3.5 w-3.5" aria-hidden="true" />;
-  if (status === "failed" || status === "skipped") return <X className="h-3.5 w-3.5 text-red-400" aria-hidden="true" />;
-  return <Clock className="h-3.5 w-3.5" aria-hidden="true" />;
 }
 
 type ChatFilter = "all" | "unread" | "mine" | "unknown" | "archived";
@@ -48,6 +44,8 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
   const [query, setQuery] = useState("");
   const [hiddenOpen, setHiddenOpen] = useState(false);
   const [creating, setCreating] = useState<null | "chat" | "group" | "follow">(null);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const extras = useChatExtrasCopy();
   const native = useChatNativeCopy();
   const assignees = useChatAssignees(academyId);
   const myId = (assignees.data ?? []).find((m) => m.me)?.id ?? null;
@@ -122,6 +120,9 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
                 <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => setCreating("group")} data-testid="button-new-group">
                   <Users className="h-3.5 w-3.5" aria-hidden="true" />{native.newGroup}
                 </Button>
+                <Button type="button" size="sm" variant="ghost" className="h-8 gap-1.5 text-xs text-muted-text" onClick={() => setToolsOpen(true)} data-testid="button-chat-tools">
+                  <Settings2 className="h-3.5 w-3.5" aria-hidden="true" />{extras.tools}
+                </Button>
                 {canManageChats && overview.data?.sender === "own" && (
                   <Button type="button" size="sm" variant="ghost" className="h-8 gap-1.5 text-xs text-muted-text" onClick={() => setCreating("follow")} data-testid="button-follow-groups">
                     {native.followGroups}
@@ -171,6 +172,7 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
         </div>
       </div>
       {canManageChats && <HiddenChatsSheet academyId={academyId} open={hiddenOpen} onOpenChange={setHiddenOpen} />}
+      <ChatToolsSheet academyId={academyId} isOwner={isOwner} open={toolsOpen} onOpenChange={setToolsOpen} />
       <NewChatDialog academyId={academyId} open={creating === "chat"} onOpenChange={(o) => setCreating(o ? "chat" : null)} onOpen={open} />
       <NewGroupDialog academyId={academyId} open={creating === "group"} onOpenChange={(o) => setCreating(o ? "group" : null)} onCreated={open} />
       {canManageChats && <FollowGroupsSheet academyId={academyId} open={creating === "follow"} onOpenChange={(o) => setCreating(o ? "follow" : null)} onOpen={open} />}
@@ -228,6 +230,7 @@ function HiddenChatsSheet({ academyId, open, onOpenChange }: { academyId: number
 
 function ChatRow({ academyId, chat, active, onClick }: { academyId: number; chat: ChatSummary; active: boolean; onClick: () => void }) {
   const copy = usePeopleCopy();
+  const extras = useChatExtrasCopy();
   const name = chat.group ? chat.group.subject : chat.contact?.name;
   const unknown = !chat.group && (!chat.contact || chat.contact.kind === "unknown" || chat.contact.players.length === 0);
   const time = new Date(chat.lastAt);
@@ -235,9 +238,11 @@ function ChatRow({ academyId, chat, active, onClick }: { academyId: number; chat
   const label = new Intl.DateTimeFormat(copy.locale === "ar" ? "ar-JO" : "en-GB", sameDay ? { hour: "numeric", minute: "2-digit", timeZone: "Asia/Amman" } : { day: "numeric", month: "short", timeZone: "Asia/Amman" }).format(time);
   return (
     <button type="button" onClick={onClick} className={cn("flex w-full items-start gap-3 border-b border-line/60 px-3 py-3 text-start transition-colors", active ? "bg-turf/10" : "hover:bg-raised")} data-testid={`chat-row-${chat.phone}`}>
-      <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-bold", chat.group ? "bg-sky-400/15 text-sky-200" : unknown ? "bg-amber-300/15 text-amber-200" : "bg-turf/15 text-turf")}>
-        {chat.group ? <Users className="h-4 w-4" aria-hidden="true" /> : unknown && !name ? <HelpCircle className="h-4 w-4" aria-hidden="true" /> : initials(name ?? null, chat.phone)}
-      </span>
+      {chat.avatarUrl
+        ? <img src={chat.avatarUrl} alt="" loading="lazy" className="h-10 w-10 shrink-0 rounded-full object-cover" />
+        : <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-bold", chat.group ? "bg-sky-400/15 text-sky-200" : unknown ? "bg-amber-300/15 text-amber-200" : "bg-turf/15 text-turf")}>
+            {chat.group ? <Users className="h-4 w-4" aria-hidden="true" /> : unknown && !name ? <HelpCircle className="h-4 w-4" aria-hidden="true" /> : initials(name ?? null, chat.phone)}
+          </span>}
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
           <span className="truncate text-sm font-semibold text-text" dir="auto">{name || chat.display}</span>
@@ -247,7 +252,9 @@ function ChatRow({ academyId, chat, active, onClick }: { academyId: number; chat
         {chat.assignedUserId && <span className="mt-0.5 flex"><AssigneeBadge academyId={academyId} userId={chat.assignedUserId} /></span>}
         <span className="mt-0.5 flex items-center gap-1.5">
           {chat.lastDirection === "out" && <span className="text-muted-text"><StatusTick status={chat.lastStatus} /></span>}
-          <span className="truncate text-xs text-muted-text" dir="auto">{chat.lastBody}</span>
+          {chat.typing
+            ? <span className="truncate text-xs font-semibold text-turf">{extras.typing}</span>
+            : <span className="truncate text-xs text-muted-text" dir="auto">{chat.lastBody}</span>}
           {chat.muted && <BellOff className="ms-auto h-3.5 w-3.5 shrink-0 text-muted-text" aria-label="muted" />}
           {chat.unread > 0 && <span className={cn("grid h-5 min-w-5 shrink-0 place-items-center rounded-full px-1.5 text-[10px] font-bold", chat.muted ? "bg-raised text-muted-text" : "ms-auto bg-floodlight text-void")}>{chat.unread}</span>}
         </span>
@@ -264,6 +271,10 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
   const who = useChatWho(academyId);
   const [confirm, setConfirm] = useState<null | "personal" | "block" | "unfollow">(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [panel, setPanel] = useState<null | "search" | "media" | "info">(null);
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
+  const [editing, setEditing] = useState<ChatMessage | null>(null);
+  const extras = useChatExtrasCopy();
   const waCopy = useWhatsappCopy();
   const thread = useChatThread(academyId, phone);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -273,11 +284,14 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
   const contact = data?.contact ?? null;
   const unknown = !group && (!contact || contact.kind === "unknown" || contact.players.length === 0);
   const count = data?.messages.length ?? 0;
+  const members = useGroupMembers(academyId, group?.groupId ?? null, Boolean(group));
+  const names = useMemo(() => new Map((members.data ?? []).filter((m) => m.phone && m.name).map((m) => [m.phone!, m.name!])), [members.data]);
+  const mentionable = useMemo(() => (members.data ?? []).filter((m) => m.phone).map((m) => ({ phone: m.phone!, name: m.name || m.display || m.phone! })), [members.data]);
 
   useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [count, phone]);
+  useEffect(() => { setReplyTo(null); setEditing(null); setPanel(null); }, [phone]);
 
   const BackIcon = copy.locale === "ar" ? ArrowRight : ArrowLeft;
-  const fmt = new Intl.DateTimeFormat(copy.locale === "ar" ? "ar-JO" : "en-GB", { hour: "numeric", minute: "2-digit", day: "numeric", month: "short", timeZone: "Asia/Amman" });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -285,22 +299,30 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
         <Button type="button" variant="ghost" size="icon" className="md:hidden" onClick={onBack} aria-label={copy.chats.back}><BackIcon className="h-5 w-5" aria-hidden="true" /></Button>
         {group ? (
           <div className="flex min-w-0 flex-1 items-center gap-2" data-testid="chat-header">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sky-400/15 text-sky-200"><Users className="h-4 w-4" aria-hidden="true" /></span>
+            {data?.avatarUrl
+              ? <img src={data.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+              : <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sky-400/15 text-sky-200"><Users className="h-4 w-4" aria-hidden="true" /></span>}
             <span className="min-w-0">
               <span className="block truncate font-semibold text-text" dir="auto">{group.subject}</span>
-              <span className="text-xs text-muted-text">{native.groupTag}</span>
+              <span className={cn("text-xs", data?.typing ? "font-semibold text-turf" : "text-muted-text")}>{data?.typing ? extras.typing : native.groupTag}</span>
             </span>
           </div>
         ) : (
-          <button type="button" onClick={() => setInfoOpen(true)} className="min-w-0 flex-1 text-start" data-testid="chat-header">
-            <span className="block truncate font-semibold text-text" dir="auto">{contact?.name || data?.display || phone}</span>
-            <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-text">
-              <span dir="ltr">{data?.display}</span>
-              {contact && contact.kind !== "unknown" && <span>· {copy.contact.kinds[contact.kind]}</span>}
+          <button type="button" onClick={() => setInfoOpen(true)} className="flex min-w-0 flex-1 items-center gap-2 text-start" data-testid="chat-header">
+            {data?.avatarUrl && <img src={data.avatarUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />}
+            <span className="min-w-0">
+              <span className="block truncate font-semibold text-text" dir="auto">{contact?.name || data?.display || phone}</span>
+              <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-text">
+                {data?.typing ? <span className="font-semibold text-turf">{extras.typing}</span> : <span dir="ltr">{data?.display}</span>}
+                {!data?.typing && contact && contact.kind !== "unknown" && <span>· {copy.contact.kinds[contact.kind]}</span>}
+              </span>
+              {contact && <RelationshipChips contact={contact} className="mt-1" />}
             </span>
-            {contact && <RelationshipChips contact={contact} className="mt-1" />}
           </button>
         )}
+        <Button type="button" variant="ghost" size="icon" onClick={() => setPanel("search")} aria-label={extras.searchChat} data-testid="button-chat-search"><Search className="h-4 w-4" aria-hidden="true" /></Button>
+        <Button type="button" variant="ghost" size="icon" onClick={() => setPanel("media")} aria-label={extras.mediaTab} data-testid="button-chat-media"><ImageIcon className="h-4 w-4" aria-hidden="true" /></Button>
+        {group && <Button type="button" variant="ghost" size="icon" onClick={() => setPanel("info")} aria-label={extras.groupInfo} data-testid="button-group-info"><Info className="h-4 w-4" aria-hidden="true" /></Button>}
         {data && <WhatsappAssign academyId={academyId} phone={phone} assignedUserId={data.assignedUserId} />}
         {group
           ? <Button type="button" variant="outline" size="sm" onClick={() => setAddOpen(true)} data-testid="button-group-add"><UserPlus className="me-1.5 h-4 w-4" aria-hidden="true" />{native.addMembers}</Button>
@@ -375,38 +397,24 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
       {data?.optedOut && <p className="border-b border-line bg-raised px-3 py-2 text-xs text-muted-text">{copy.chats.optedOut}</p>}
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(47,216,196,0.04),transparent_60%)] p-4">
-        {thread.isLoading ? <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-text" aria-hidden="true" /> : data?.messages.map((m) => {
-          const mine = m.direction === "out";
-          const bare = m.content && (m.content.type === "sticker");
-          return (
-            <div key={m.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
-              <div className={cn("max-w-[80%] rounded-2xl px-3.5 py-2 text-sm shadow-sm", bare ? "bg-transparent shadow-none" : mine ? "rounded-ee-md bg-turf/20 text-text" : "rounded-es-md bg-raised text-text")} data-testid={`chat-bubble-${m.id}`}>
-                {!mine && m.author && (
-                  <span className="mb-0.5 block text-[11px] font-semibold text-sky-200" dir="auto">{m.author.name || m.author.phone}{m.author.name && m.author.phone ? <span className="ms-1 font-normal text-muted-text" dir="ltr">{m.author.phone}</span> : null}</span>
-                )}
-                {mine && m.kind !== "chat" && (
-                  <span className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-turf/80">
-                    {m.kind === "phone" ? <><Smartphone className="h-3 w-3" aria-hidden="true" />{copy.chats.fromPhone}</> : (waCopy.history.kinds[m.kind] ?? waCopy.automations.items[m.kind]?.title ?? m.kind)}
-                  </span>
-                )}
-                {mine && m.kind === "chat" && m.sentBy && (
-                  <span className="mb-0.5 block text-[10px] font-semibold text-turf/80" dir="auto">{m.sentBy}</span>
-                )}
-                {m.content ? <ChatContentView content={m.content} body={m.body} /> : <p dir="auto" className="whitespace-pre-wrap break-words leading-6">{m.body}</p>}
-                <span className="mt-0.5 flex items-center justify-end gap-1 text-[10px] text-muted-text">
-                  {fmt.format(new Date(m.sentAt ?? m.createdAt))}
-                  {mine && <StatusTick status={m.status} />}
-                </span>
-                {m.status === "failed" && m.error && <p className="mt-1 text-[11px] text-red-400">{m.error}</p>}
-                {m.status === "queued" && mine && <p className="mt-1 text-[11px] text-muted-text">{copy.chats.queuedNote}</p>}
-              </div>
-            </div>
-          );
-        })}
+        {thread.isLoading ? <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-text" aria-hidden="true" /> : data?.messages.map((m) => (
+          <MessageBubble key={m.id} academyId={academyId} phone={phone} m={m} isGroup={Boolean(group)} names={names}
+            kindLabel={m.direction === "out" && m.kind !== "chat" ? (
+              <SourceLabel kind={m.kind} fromPhone={copy.chats.fromPhone}
+                label={m.kind === "auto_reply" ? extras.autoReply : (waCopy.history.kinds[m.kind] ?? waCopy.automations.items[m.kind]?.title ?? m.kind)} />
+            ) : null}
+            onReply={(msg) => { setEditing(null); setReplyTo(msg); }}
+            onEdit={(msg) => { setReplyTo(null); setEditing(msg); }}
+            onJumpTo={(id) => document.getElementById(`msg-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })} />
+        ))}
         <div ref={bottom} />
       </div>
 
-      <ChatComposer academyId={academyId} phone={phone} placeholder={copy.chats.typeMessage} disabled={data?.blocked || data?.wrongNumber} />
+      <ChatComposer academyId={academyId} phone={phone} placeholder={copy.chats.typeMessage} disabled={data?.blocked || data?.wrongNumber}
+        isGroup={Boolean(group)} mentionable={mentionable} replyTo={replyTo} onClearReply={() => setReplyTo(null)} editing={editing} onClearEdit={() => setEditing(null)} />
+      <ChatSearchSheet academyId={academyId} phone={phone} open={panel === "search"} onOpenChange={(o) => setPanel(o ? "search" : null)} />
+      <ChatMediaSheet academyId={academyId} phone={phone} open={panel === "media"} onOpenChange={(o) => setPanel(o ? "media" : null)} />
+      {group && <GroupInfoSheet academyId={academyId} group={group} canManage={canManage} open={panel === "info"} onOpenChange={(o) => setPanel(o ? "info" : null)} />}
 
       {group && <AddToGroupDialog academyId={academyId} groupId={group.groupId} open={addOpen} onOpenChange={setAddOpen} />}
       {!group && (
