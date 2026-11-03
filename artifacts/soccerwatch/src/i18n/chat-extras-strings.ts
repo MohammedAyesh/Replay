@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 const en = {
   reply: "Reply",
@@ -234,5 +235,5 @@ const ar: Strings = {
 
 export function useChatExtrasCopy(): Strings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }

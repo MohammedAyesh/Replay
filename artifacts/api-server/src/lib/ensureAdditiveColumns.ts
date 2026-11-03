@@ -55,6 +55,8 @@ const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   { table: "academy_whatsapp_groups", column: "avatar_path", type: "text" },
   { table: "academy_whatsapp_groups", column: "avatar_checked_at", type: "timestamp with time zone" },
   { table: "academy_whatsapp_groups", column: "typing_until", type: "timestamp with time zone" },
+  // 0059_venues.sql
+  { table: "academies", column: "kind", type: "text DEFAULT 'academy' NOT NULL" },
 ];
 
 const TABLES: Array<{ table: string; statements: string[] }> = [
@@ -277,6 +279,43 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
     statements: [
       `CREATE TABLE IF NOT EXISTS "academy_whatsapp_posts" ("id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "academy_whatsapp_posts_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "target" text NOT NULL, "kind" text NOT NULL, "text" text, "media" jsonb, "background_color" text, "wa_message_id" text, "error" text, "created_by" integer CONSTRAINT "academy_whatsapp_posts_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "deleted_at" timestamp with time zone, "created_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "academy_whatsapp_posts_target_check" CHECK ("target" in ('status', 'channel')), CONSTRAINT "academy_whatsapp_posts_kind_check" CHECK ("kind" in ('text', 'image', 'video')))`,
       `CREATE INDEX IF NOT EXISTS "academy_whatsapp_posts_academy_idx" ON "academy_whatsapp_posts" ("academy_id", "created_at")`,
+    ],
+  },
+  // 0059_venues.sql (field console)
+  {
+    table: "venue_settings",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "venue_settings" ( "academy_id" integer PRIMARY KEY CONSTRAINT "venue_settings_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "slug" text NOT NULL, "booking_enabled" boolean DEFAULT true NOT NULL, "opening_hours" jsonb DEFAULT '{}'::jsonb NOT NULL, "slot_step_minutes" integer DEFAULT 30 NOT NULL, "durations" jsonb DEFAULT '[60, 90, 120]'::jsonb NOT NULL, "max_days_ahead" integer DEFAULT 14 NOT NULL, "min_notice_minutes" integer DEFAULT 30 NOT NULL, "hold_minutes" integer DEFAULT 30 NOT NULL, "money_to" text DEFAULT 'venue' NOT NULL, "cliq_alias" text, "cliq_name" text, "pay_at_field" boolean DEFAULT true NOT NULL, "deposit_mode" text DEFAULT 'full' NOT NULL, "deposit_fils" integer DEFAULT 0 NOT NULL, "cancel_hours" integer DEFAULT 6 NOT NULL, "auto_confirm_receipts" boolean DEFAULT false NOT NULL, "replay_fee_bps" integer DEFAULT 0 NOT NULL, "card_provider" text DEFAULT 'none' NOT NULL, "card_enabled" boolean DEFAULT false NOT NULL, "card_config_enc" text, "agent_mode" text DEFAULT 'off' NOT NULL, "agent_name" text, "agent_notes" text, "agent_pause_minutes" integer DEFAULT 120 NOT NULL, "automations" jsonb DEFAULT '{}'::jsonb NOT NULL, "site_enabled" boolean DEFAULT true NOT NULL, "site_tagline" text, "site_tagline_ar" text, "site_about" text, "site_about_ar" text, "hero_image_url" text, "accent_color" text, "custom_domain" text, "domain_token" text, "domain_status" text DEFAULT 'none' NOT NULL, "domain_checked_at" timestamp with time zone, "domain_error" text, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "venue_settings_slug_unique" UNIQUE("slug"), CONSTRAINT "venue_settings_money_to_check" CHECK ("money_to" in ('venue', 'replay')), CONSTRAINT "venue_settings_deposit_mode_check" CHECK ("deposit_mode" in ('full', 'deposit', 'none')), CONSTRAINT "venue_settings_card_provider_check" CHECK ("card_provider" in ('none', 'paytabs')), CONSTRAINT "venue_settings_agent_mode_check" CHECK ("agent_mode" in ('off', 'ai', 'menu')), CONSTRAINT "venue_settings_domain_status_check" CHECK ("domain_status" in ('none', 'pending', 'live', 'error')))`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS "venue_settings_custom_domain_unique" ON "venue_settings" ("custom_domain") WHERE "custom_domain" is not null`,
+    ],
+  },
+  {
+    table: "venue_pitches",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "venue_pitches" ( "id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "venue_pitches_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "name" text NOT NULL, "name_ar" text, "size" text DEFAULT '5' NOT NULL, "surface" text, "indoor" boolean DEFAULT false NOT NULL, "field_id" integer CONSTRAINT "venue_pitches_field_id_fields_id_fk" REFERENCES "fields"("id") ON DELETE SET NULL, "record_bookings" boolean DEFAULT true NOT NULL, "price_per_hour_fils" integer DEFAULT 20000 NOT NULL, "price_rules" jsonb DEFAULT '[]'::jsonb NOT NULL, "image_url" text, "active" boolean DEFAULT true NOT NULL, "sort_order" integer DEFAULT 0 NOT NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS "venue_pitches_academy_idx" ON "venue_pitches" ("academy_id")`,
+    ],
+  },
+  {
+    table: "venue_bookings",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "venue_bookings" ( "id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "venue_bookings_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "pitch_id" integer NOT NULL CONSTRAINT "venue_bookings_pitch_id_venue_pitches_id_fk" REFERENCES "venue_pitches"("id") ON DELETE CASCADE, "starts_at" timestamp with time zone NOT NULL, "ends_at" timestamp with time zone NOT NULL, "start_local" text NOT NULL, "end_local" text NOT NULL, "status" text DEFAULT 'held' NOT NULL, "payment_status" text DEFAULT 'unpaid' NOT NULL, "pay_with" text DEFAULT 'cliq' NOT NULL, "money_to" text DEFAULT 'venue' NOT NULL, "amount_fils" integer DEFAULT 0 NOT NULL, "due_online_fils" integer DEFAULT 0 NOT NULL, "paid_fils" integer DEFAULT 0 NOT NULL, "reference" text NOT NULL, "customer_name" text, "customer_phone" text, "contact_id" integer CONSTRAINT "venue_bookings_contact_id_academy_contacts_id_fk" REFERENCES "academy_contacts"("id") ON DELETE SET NULL, "team_name" text, "notes" text, "source" text DEFAULT 'console' NOT NULL, "series_id" text, "hold_expires_at" timestamp with time zone, "footage_request_id" integer CONSTRAINT "venue_bookings_footage_request_id_footage_requests_id_fk" REFERENCES "footage_requests"("id") ON DELETE SET NULL, "footage_note" text, "video_sent_at" timestamp with time zone, "reminded_at" timestamp with time zone, "receipt_path" text, "receipt_check" jsonb, "card_ref" text, "card_url" text, "confirmed_at" timestamp with time zone, "paid_at" timestamp with time zone, "paid_by" integer CONSTRAINT "venue_bookings_paid_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "cancelled_at" timestamp with time zone, "cancel_reason" text, "created_by" integer CONSTRAINT "venue_bookings_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "venue_bookings_reference_unique" UNIQUE("reference"), CONSTRAINT "venue_bookings_status_check" CHECK ("status" in ('held', 'confirmed', 'cancelled', 'completed', 'no_show')), CONSTRAINT "venue_bookings_payment_status_check" CHECK ("payment_status" in ('unpaid', 'receipt', 'paid', 'refunded', 'waived')), CONSTRAINT "venue_bookings_pay_with_check" CHECK ("pay_with" in ('cliq', 'field', 'card', 'none')), CONSTRAINT "venue_bookings_money_to_check" CHECK ("money_to" in ('venue', 'replay')), CONSTRAINT "venue_bookings_source_check" CHECK ("source" in ('console', 'whatsapp', 'website', 'app')))`,
+      `CREATE INDEX IF NOT EXISTS "venue_bookings_pitch_time_idx" ON "venue_bookings" ("pitch_id", "starts_at")`,
+      `CREATE INDEX IF NOT EXISTS "venue_bookings_academy_time_idx" ON "venue_bookings" ("academy_id", "starts_at")`,
+      `CREATE INDEX IF NOT EXISTS "venue_bookings_academy_phone_idx" ON "venue_bookings" ("academy_id", "customer_phone")`,
+    ],
+  },
+  {
+    table: "venue_agent_threads",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "venue_agent_threads" ( "id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "venue_agent_threads_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "phone" text NOT NULL, "state" jsonb DEFAULT '{}'::jsonb NOT NULL, "paused_until" timestamp with time zone, "handover_at" timestamp with time zone, "turns" integer DEFAULT 0 NOT NULL, "last_in_at" timestamp with time zone, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "venue_agent_threads_academy_phone_unique" UNIQUE("academy_id", "phone"))`,
+    ],
+  },
+  {
+    table: "venue_payouts",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "venue_payouts" ( "id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "venue_payouts_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "amount_fils" integer NOT NULL, "method" text DEFAULT 'cliq' NOT NULL, "note" text, "created_by" integer CONSTRAINT "venue_payouts_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL)`,
+      `CREATE INDEX IF NOT EXISTS "venue_payouts_academy_idx" ON "venue_payouts" ("academy_id")`,
     ],
   },
 ];

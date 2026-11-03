@@ -36,7 +36,8 @@ export default function AcademyInvitePage() {
     try {
       await acceptInvite(token);
       setDone(true);
-      setTimeout(() => setLocation("/academy"), 900);
+      // A field's staff land in the Field console.
+      setTimeout(() => setLocation(peek?.kind === "venue" ? "/field" : "/academy"), 900);
     } catch (e) {
       setError((e as Error).message);
     } finally {

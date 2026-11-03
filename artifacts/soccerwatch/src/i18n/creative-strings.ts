@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 /**
  * Academy console → Creative hub: the shell only. Each section keeps its own
@@ -25,5 +26,5 @@ export type CreativeStrings = typeof en;
 
 export function useCreativeCopy(): CreativeStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }

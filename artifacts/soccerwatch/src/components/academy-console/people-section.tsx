@@ -15,10 +15,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { useConsoleKind } from "@/lib/console-kind";
 import { ContactEditor, RelationshipChips } from "./contact-editor";
 
 type Segment = "all" | "lead" | "parent" | "player" | "coach" | "unknown";
 const SEGMENTS: Segment[] = ["all", "lead", "parent", "player", "coach", "unknown"];
+/** Field console: customers first, no families. */
+const VENUE_SEGMENTS: Segment[] = ["all", "player", "lead", "coach", "unknown"];
 
 const KIND_TONE: Record<string, string> = {
   lead: "bg-floodlight/15 text-floodlight",
@@ -58,6 +61,8 @@ export function AcademyPeopleSection({ academyId, isOwner, onOpenChat }: { acade
   const [editing, setEditing] = useState<Contact | "new" | null>(null);
   const [messageOpen, setMessageOpen] = useState(false);
 
+  const kind = useConsoleKind();
+  const segments = kind === "venue" ? VENUE_SEGMENTS : SEGMENTS;
   const all = contacts.data ?? [];
   const tags = useMemo(() => [...new Set(all.flatMap((c) => c.tags))].sort((a, b) => a.localeCompare(b)), [all]);
   const leads = all.filter((c) => c.kind === "lead");
@@ -89,7 +94,7 @@ export function AcademyPeopleSection({ academyId, isOwner, onOpenChat }: { acade
       </header>
 
       <div className="flex flex-wrap gap-1.5">
-        {SEGMENTS.map((s) => {
+        {segments.map((s) => {
           const n = all.filter((c) => matchesSegment(c, s)).length;
           return (
             <button key={s} type="button" onClick={() => { setSegment(s); setStage(null); }}

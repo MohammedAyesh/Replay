@@ -16,11 +16,22 @@ import { academyRolesForUser, type AcademyConsoleRole } from "./academyAccess";
 export const CONSOLE_SECTIONS = [
   "dashboard", "squads", "players", "registrations", "attendance", "schedule", "recordings", "matches",
   "fees", "announcements", "chats", "people", "whatsapp", "social", "ads", "profile", "branding", "studio",
+  // Field console (venues) only.
+  "bookings", "pitches", "payments", "agent", "website",
 ] as const;
+export type ConsoleSectionList = readonly ConsoleSection[];
+
+/** Sections that belong to an academy, and to a field business (venue). */
+export const ACADEMY_ONLY_SECTIONS: readonly string[] = ["squads", "players", "registrations", "attendance", "schedule", "matches", "fees", "announcements"];
+export const VENUE_ONLY_SECTIONS: readonly string[] = ["bookings", "pitches", "payments", "agent", "website"];
+export function sectionsForKind(kind: string | null | undefined): ConsoleSection[] {
+  const drop = kind === "venue" ? ACADEMY_ONLY_SECTIONS : VENUE_ONLY_SECTIONS;
+  return CONSOLE_SECTIONS.filter((s) => !drop.includes(s));
+}
 export type ConsoleSection = (typeof CONSOLE_SECTIONS)[number];
 
 /** Sections coaches don't see unless the owner opens them (and then with full control). */
-export const OWNER_SECTIONS: ConsoleSection[] = ["fees", "social", "ads", "branding", "studio"];
+export const OWNER_SECTIONS: ConsoleSection[] = ["fees", "social", "ads", "branding", "studio", "pitches", "payments", "agent", "website"];
 
 export const FAMILY_SCREENS = ["schedule", "footage", "matches", "attendance", "news", "fees", "payments"] as const;
 export type FamilyScreen = (typeof FAMILY_SCREENS)[number];
@@ -165,11 +176,19 @@ export function sectionForPath(path: string): { academyId: number; section: Cons
   if (first === "whatsapp") return { academyId, section: chatParts.has(second ?? "") ? "chats" : "whatsapp" };
   // Instagram / Messenger conversations live in Chats; connecting, comments and posts in Social.
   if (first === "social") return { academyId, section: second?.startsWith("threads") ? "chats" : "social" };
+  // Field console: /venue/<section>/…
+  if (first === "venue") {
+    const venueMap: Record<string, ConsoleSection> = {
+      dashboard: "dashboard", bookings: "bookings", availability: "bookings", customers: "people",
+      pitches: "pitches", payments: "payments", agent: "agent", website: "website",
+    };
+    return { academyId, section: venueMap[second ?? ""] ?? null };
+  }
   return { academyId, section: map[first] ?? null };
 }
 
 /** Reading these exposes private data, so a role that can't see the section can't read it either. */
-export const PRIVATE_SECTIONS: ConsoleSection[] = ["fees", "ads", "chats", "people", "whatsapp", "social", "branding", "studio"];
+export const PRIVATE_SECTIONS: ConsoleSection[] = ["fees", "ads", "chats", "people", "whatsapp", "social", "branding", "studio", "bookings", "payments", "agent", "website", "pitches"];
 
 /** The family-page screens a parent or a player of this academy sees. */
 export async function familyScreensFor(academyId: number, role: FamilyRole): Promise<FamilyScreen[]> {

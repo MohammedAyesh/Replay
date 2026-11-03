@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { logger } from "../logger";
 import { upsertContact } from "./contacts";
+import { handleVenueInbound } from "../venues/agent";
 import { recordAdLead } from "../meta/leads";
 import { findAdReferral } from "../meta/referral";
 import { groupIdFromKey, groupKey, isGroupKey, isLid, phoneFromChatId } from "./phone";
@@ -698,14 +699,24 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
       await db.update(academyWhatsappMessagesTable)
         .set({ content: { ...content, media: kept } as WhatsappContent })
         .where(eq(academyWhatsappMessagesTable.id, stored.id));
+      content = { ...content, media: kept } as WhatsappContent;
     }
 
     if (fromMe || isGroup) return;
-    await upsertContact(academyId, chatKey, { kind: "unknown", source: "whatsapp", name: pushName });
+    const contact = await upsertContact(academyId, chatKey, { kind: "unknown", source: "whatsapp", name: pushName });
 
     const word = body.trim().toLowerCase().replace(/[.!؟?]+$/, "");
     if (!STOP_WORDS.has(word) && !START_WORDS.has(word)) {
-      await autoReply(academyId, chatKey, stored.id, settings).catch((error) => logger.warn({ academyId, error: (error as Error).message }, "Auto-reply failed"));
+      // A field's booking agent answers instead of the greeting and away replies.
+      const agentAnswered = contact.kind === "staff" || contact.kind === "coach"
+        ? false
+        : await handleVenueInbound({ academyId, phone: chatKey, body, content, pushName }).catch((error) => {
+          logger.warn({ academyId, error: (error as Error).message }, "Booking agent failed");
+          return false;
+        });
+      if (!agentAnswered) {
+        await autoReply(academyId, chatKey, stored.id, settings).catch((error) => logger.warn({ academyId, error: (error as Error).message }, "Auto-reply failed"));
+      }
     }
     if (STOP_WORDS.has(word)) {
       await db.insert(academyWhatsappOptOutsTable).values({ academyId, phone: chatKey }).onConflictDoNothing();

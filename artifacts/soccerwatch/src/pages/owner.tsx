@@ -44,8 +44,9 @@ import {
   Sparkles,
   WalletCards,
   X,
+  Trophy,
 } from "lucide-react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { HlsPlayer } from "@/components/HlsPlayer";
 import { EarlyPlay } from "@/components/match/EarlyPlay";
 import { StreamingPanel } from "@/components/StreamingPanel";
@@ -614,6 +615,13 @@ export default function Owner() {
           </div>
         </section>
       )}
+      <Link href="/field" className="mb-3 flex items-center gap-3 rounded-2xl border border-floodlight/30 bg-floodlight/[0.06] p-3" data-testid="owner-field-console-link">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-floodlight text-void"><Trophy className="h-4 w-4" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-xs font-bold text-text">{locale === "ar" ? "لوحة الملعب" : "Field console"}</span>
+          <span className="block text-[11px] leading-4 text-muted-text">{locale === "ar" ? "الحجوزات، موظف حجز عالواتساب، الدفع، وموقع حجز بدومينك." : "Bookings, a WhatsApp booking agent, payments and a booking site on your domain."}</span>
+        </span>
+      </Link>
       <section className="rounded-[26px] border border-line bg-surface p-4 sm:p-5" data-testid="owner-header">
         <div className="flex items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">

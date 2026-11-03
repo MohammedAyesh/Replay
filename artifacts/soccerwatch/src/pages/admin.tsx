@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { FieldConsolesTab } from "@/components/admin/field-consoles-tab";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -55,7 +56,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads" | "weekly-highlights" | "whatsapp" | "meta-ads";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads" | "weekly-highlights" | "whatsapp" | "meta-ads" | "field-consoles";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -7166,6 +7167,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   "weekly-highlights": { label: "Weekly highlights", render: () => <WeeklyHighlightsTab /> },
   whatsapp: { label: "WhatsApp", render: () => <WhatsappTab /> },
   "meta-ads": { label: "Meta ads", render: () => <MetaAdsTab /> },
+  "field-consoles": { label: "Field consoles", render: () => <FieldConsolesTab /> },
 };
 
 const TAB_ORDER = Object.keys(TABS) as Tab[];

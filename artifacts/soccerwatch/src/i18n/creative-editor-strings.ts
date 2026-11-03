@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 /**
  * Academy console → Creative hub → Editor. Owner only. English is the type;
@@ -336,7 +337,7 @@ export type CreativeEditorStrings = typeof en;
 
 export function useCreativeEditorCopy(): CreativeEditorStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }
 
 export const creativeEditorStrings = { en, ar };

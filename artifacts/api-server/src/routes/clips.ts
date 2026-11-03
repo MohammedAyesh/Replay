@@ -27,7 +27,7 @@ interface ClipLookups {
 
 async function loadClipLookups(): Promise<ClipLookups> {
   const [academies, settings] = await Promise.all([
-    db.select({ id: academiesTable.id, fieldId: academiesTable.fieldId, introVideoUrl: academiesTable.introVideoUrl }).from(academiesTable),
+    db.select({ id: academiesTable.id, fieldId: academiesTable.fieldId, introVideoUrl: academiesTable.introVideoUrl }).from(academiesTable).where(eq(academiesTable.kind, "academy")),
     db.select().from(clipSettingsTable).orderBy(desc(clipSettingsTable.id)).limit(1),
   ]);
   const academyByField = new Map<number, { id: number; introVideoUrl: string | null }>();

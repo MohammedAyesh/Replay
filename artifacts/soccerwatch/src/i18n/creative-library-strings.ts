@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 /**
  * Creative hub → Library (and the Editor's library picker). Arabic is Ammani,
@@ -142,5 +143,5 @@ export type CreativeLibraryStrings = typeof en;
 
 export function useCreativeLibraryCopy(): CreativeLibraryStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }

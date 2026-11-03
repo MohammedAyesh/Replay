@@ -21,6 +21,8 @@ const router: IRouter = Router();
 const HIDDEN_ACADEMY_NAMES = new Set(["jordan united football academy"]);
 
 function isHiddenAcademy(academy: typeof academiesTable.$inferSelect): boolean {
+  // A field business (Field console) is not an academy.
+  if (academy.kind === "venue") return true;
   return HIDDEN_ACADEMY_NAMES.has(academy.name.trim().toLowerCase());
 }
 

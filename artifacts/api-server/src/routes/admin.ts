@@ -1866,7 +1866,8 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
   // links intact; the unique constraint makes this idempotent.
   const academies = await db
     .select({ id: academiesTable.id, fieldId: academiesTable.fieldId })
-    .from(academiesTable);
+    .from(academiesTable)
+    .where(eq(academiesTable.kind, "academy"));
   const academyIdsByField = new Map<number, number[]>();
   for (const academy of academies) {
     const ids = academyIdsByField.get(academy.fieldId) ?? [];

@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 const en = {
   connect: {
@@ -216,7 +217,7 @@ const ar: AdsWizardStrings = {
 
 export function useAdsWizardCopy(): AdsWizardStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }
 
 /** Ad text templates, in the ad's own language, with the academy's name filled in. */

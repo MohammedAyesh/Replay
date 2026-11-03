@@ -72,6 +72,9 @@ import academyCreativeRenderRouter from "./academyCreativeRender";
 import academyCreativePublishRouter from "./academyCreativePublish";
 import demoBrandingRouter from "./demoBranding";
 import weeklyHighlightsRouter from "./weeklyHighlights";
+import venueConsoleRouter from "./venueConsole";
+import venuePublicRouter from "./venuePublic";
+import venueAdminRouter from "./venueAdmin";
 
 const router: IRouter = Router();
 
@@ -149,5 +152,8 @@ router.use(matchLiveRouter);
 router.use(streamingRouter);
 router.use(safetyRouter);
 router.use(friendsRouter);
+router.use(venueConsoleRouter);
+router.use(venuePublicRouter);
+router.use(venueAdminRouter);
 
 export default router;

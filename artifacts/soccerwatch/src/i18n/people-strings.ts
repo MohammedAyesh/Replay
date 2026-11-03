@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 const en = {
   chats: {
@@ -146,7 +147,32 @@ const ar: PeopleStrings = {
   },
 };
 
+/** Field console: customers rather than players and families. */
+function venueOverrides(c: PeopleStrings & { locale: "ar" | "en" }): PeopleStrings & { locale: "ar" | "en" } {
+  const ar = c.locale === "ar";
+  return {
+    ...c,
+    chats: {
+      ...c.chats,
+      description: ar ? "كل رسائل الواتساب من وإلى الملعب، ومنها ردود موظف الحجز. ردّ من هون بأي وقت." : "Every WhatsApp message to and from the field, including the booking agent's. Reply here any time.",
+      empty: ar ? "لسّا ما في رسائل. لما حدا يبعت للملعب بتطلع المحادثة هون." : "No messages yet. When someone messages the field, the conversation shows up here.",
+      unknownBody: ar ? "احفظ اسمه وصنّفه عشان تعرفه المرة الجاية." : "Save their name and sort them so you know them next time.",
+    },
+    people: {
+      ...c.people,
+      description: ar ? "كل اللي حجزوا أو سألوا عن الملعب. صنّفهم، اكتب ملاحظات، وابعتلهم عروض." : "Everyone who booked or asked about the field. Tag them, keep notes, and send them offers.",
+      segments: { ...c.people.segments, player: ar ? "الزبائن" : "Customers", lead: ar ? "سألوا وما حجزوا" : "Asked, not booked", coach: ar ? "الموظفين" : "Staff" },
+      messageHint: ar ? "استعمل {name} لاسم كل شخص." : "Use {name} for each person's name.",
+    },
+    contact: {
+      ...c.contact,
+      kinds: { ...c.contact.kinds, player: ar ? "زبون" : "Customer", lead: ar ? "مهتم" : "Interested", coach: ar ? "موظف" : "Staff" },
+      stages: { ...c.contact.stages, trial: ar ? "حجز مرة" : "Booked once", joined: ar ? "زبون دائم" : "Regular", lost: ar ? "ما رجع" : "Didn't come back" },
+    },
+  };
+}
+
 export function usePeopleCopy(): PeopleStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" }, venueOverrides);
 }

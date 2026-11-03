@@ -37,6 +37,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { useConsoleKind } from "@/lib/console-kind";
 import { WhatsappLinkDialog } from "./whatsapp-link-dialog";
 
 const ROLES: AudienceRole[] = ["parents", "players", "coaches"];
@@ -73,9 +74,11 @@ function StatusPill({ data, copy }: { data: WhatsappOverview; copy: WhatsappStri
 }
 
 export function AcademyWhatsappSection({ academyId }: { academyId: number }) {
+  // A field's console sends from People and from bookings; its automations live in Booking agent.
+  const venue = useConsoleKind() === "venue";
   const copy = useWhatsappCopy();
   const overview = useWhatsappOverview(academyId);
-  const [tab, setTab] = useState("send");
+  const [tab, setTab] = useState(venue ? "settings" : "send");
   const data = overview.data;
   const isOwner = data?.role === "owner";
 
@@ -113,13 +116,13 @@ export function AcademyWhatsappSection({ academyId }: { academyId: number }) {
 
           <Tabs value={tab} onValueChange={setTab} dir={copy.locale === "ar" ? "rtl" : "ltr"}>
             <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-raised p-1">
-              <TabsTrigger value="send" data-testid="tab-whatsapp-send">{copy.tabs.send}</TabsTrigger>
-              {isOwner && <TabsTrigger value="automations" data-testid="tab-whatsapp-automations">{copy.tabs.automations}</TabsTrigger>}
+              {!venue && <TabsTrigger value="send" data-testid="tab-whatsapp-send">{copy.tabs.send}</TabsTrigger>}
+              {isOwner && !venue && <TabsTrigger value="automations" data-testid="tab-whatsapp-automations">{copy.tabs.automations}</TabsTrigger>}
               <TabsTrigger value="history" data-testid="tab-whatsapp-history">{copy.tabs.history}</TabsTrigger>
               {isOwner && <TabsTrigger value="settings" data-testid="tab-whatsapp-settings">{copy.tabs.settings}</TabsTrigger>}
             </TabsList>
-            <TabsContent value="send" className="mt-5"><SendPanel academyId={academyId} data={data} /></TabsContent>
-            {isOwner && <TabsContent value="automations" className="mt-5"><AutomationsPanel academyId={academyId} data={data} /></TabsContent>}
+            {!venue && <TabsContent value="send" className="mt-5"><SendPanel academyId={academyId} data={data} /></TabsContent>}
+            {isOwner && !venue && <TabsContent value="automations" className="mt-5"><AutomationsPanel academyId={academyId} data={data} /></TabsContent>}
             <TabsContent value="history" className="mt-5"><HistoryPanel academyId={academyId} active={tab === "history"} /></TabsContent>
             {isOwner && <TabsContent value="settings" className="mt-5"><SettingsPanel academyId={academyId} data={data} /></TabsContent>}
           </Tabs>

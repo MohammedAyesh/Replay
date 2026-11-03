@@ -1,5 +1,6 @@
 import type { CreativeFormat, CreativeStyle, TemplateCategory } from "@workspace/api-zod";
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 /**
  * Creative hub → Templates tab. Arabic is Ammani, as across the console.
@@ -121,7 +122,7 @@ export type CreativeTemplatesStrings = typeof en;
 
 export function useCreativeTemplatesCopy(): CreativeTemplatesStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }
 
 export const creativeTemplatesStrings = { en, ar };

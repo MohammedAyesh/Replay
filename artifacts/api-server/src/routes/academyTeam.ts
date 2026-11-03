@@ -12,6 +12,7 @@ import {
   loadAccess,
   primaryRole,
   saveAccess,
+  sectionsForKind,
   staffAccess,
 } from "../lib/academyPermissions";
 import { publicBaseUrl } from "../lib/whatsapp/waha";
@@ -71,6 +72,8 @@ router.get("/academy/console/academies/:academyId/team", async (req, res): Promi
     )).orderBy(desc(academyStaffInvitesTable.createdAt)),
     loadAccess(m.academyId),
   ]);
+  const [kindRow] = await db.select({ kind: academiesTable.kind }).from(academiesTable).where(eq(academiesTable.id, m.academyId));
+  const sections = sectionsForKind(kindRow?.kind);
   // One row per person, at his highest role.
   const people = new Map<number, { userId: number; name: string | null; email: string | null; role: string; since: Date; isMe: boolean }>();
   for (const row of members) {
@@ -82,7 +85,7 @@ router.get("/academy/console/academies/:academyId/team", async (req, res): Promi
     members: [...people.values()].sort((a, b) => ["owner", "manager", "coach"].indexOf(a.role) - ["owner", "manager", "coach"].indexOf(b.role)),
     invites: invites.map((i) => ({ id: i.id, role: i.role, label: i.label, url: inviteUrl(i.token), expiresAt: i.expiresAt, createdAt: i.createdAt })),
     access,
-    catalog: { sections: CONSOLE_SECTIONS, ownerSections: OWNER_SECTIONS, familyScreens: FAMILY_SCREENS, permissions: PERMISSIONS },
+    catalog: { sections, ownerSections: OWNER_SECTIONS.filter((x) => sections.includes(x)), familyScreens: kindRow?.kind === "venue" ? [] : FAMILY_SCREENS, permissions: PERMISSIONS },
   });
 });
 
@@ -169,7 +172,7 @@ router.put("/academy/console/academies/:academyId/access", async (req, res): Pro
 // ─── Accepting an invite (any signed-in account) ─────────────────────────────
 
 async function openInvite(token: string) {
-  const [row] = await db.select({ invite: academyStaffInvitesTable, academyName: academiesTable.name })
+  const [row] = await db.select({ invite: academyStaffInvitesTable, academyName: academiesTable.name, kind: academiesTable.kind })
     .from(academyStaffInvitesTable).innerJoin(academiesTable, eq(academiesTable.id, academyStaffInvitesTable.academyId))
     .where(eq(academyStaffInvitesTable.token, token));
   if (!row) return { state: "missing" as const };
@@ -183,7 +186,7 @@ async function openInvite(token: string) {
 router.get("/academy/invites/:token", async (req, res): Promise<void> => {
   const found = await openInvite(String(req.params.token ?? ""));
   if (found.state === "missing") { res.status(404).json({ error: "This invite link isn't valid" }); return; }
-  res.json({ state: found.state, role: found.row.invite.role, academyName: found.row.academyName, academyId: found.row.invite.academyId });
+  res.json({ state: found.state, role: found.row.invite.role, academyName: found.row.academyName, academyId: found.row.invite.academyId, kind: found.row.kind });
 });
 
 router.post("/academy/invites/:token/accept", async (req, res): Promise<void> => {

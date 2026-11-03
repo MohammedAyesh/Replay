@@ -89,7 +89,7 @@ export function useSaveAccess(academyId: number) {
 }
 
 export async function peekInvite(token: string) {
-  return call<{ state: "open" | "used" | "expired" | "revoked"; role: "manager" | "coach"; academyName: string; academyId: number }>(`/academy/invites/${encodeURIComponent(token)}`);
+  return call<{ state: "open" | "used" | "expired" | "revoked"; role: "manager" | "coach"; academyName: string; academyId: number; kind?: "academy" | "venue" }>(`/academy/invites/${encodeURIComponent(token)}`);
 }
 
 export async function acceptInvite(token: string) {

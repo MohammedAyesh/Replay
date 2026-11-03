@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 /** Wallet, media, carousel, text versions, questions and ready-made campaigns. */
 const en = {
@@ -165,5 +166,5 @@ const ar: Strings = {
 
 export function useAdsExtraCopy(): Strings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }

@@ -54,6 +54,8 @@ import LegacyDemoPage from "@/pages/demo-route";
 import DemoPage from "@/pages/demo/DemoPage";
 import SimpleDemo from "@/pages/demo/SimpleDemo";
 import AcademyConsole from "@/pages/academy-console";
+import FieldConsole from "@/pages/field-console";
+import VenueSitePage from "@/pages/venue-site";
 import AcademyJoinPage from "@/pages/academy-join";
 import AcademyFamilyPage from "@/pages/academy-family";
 import AcademyMatchPage from "@/pages/academy-match";
@@ -526,7 +528,7 @@ function AppRouter() {
   const { signOut } = useClerk();
   const { locale } = useLocale();
   const [location] = useLocation();
-  const isPublicJoinRoute = location.split("?")[0].startsWith("/join/");
+  const isPublicJoinRoute = location.split("?")[0].startsWith("/join/") || location.split("?")[0].startsWith("/v/");
   const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/") || location.split(/[?#]/)[0].startsWith("/academy/invite/");
   const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute;
   const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me" || location.split(/[?#]/)[0].startsWith("/academy/me/match/");
@@ -610,6 +612,8 @@ function AppRouter() {
         <Route path="/academy/me/match/:sessionId" component={AcademyMatchPage} />
         <Route path="/academy/me"><AcademyFamilyPage source="me" /></Route>
         <Route path="/academy/*?" component={AcademyConsole} />
+        <Route path="/field/*?" component={FieldConsole} />
+        <Route path="/v/:slug" component={VenueSitePage} />
         <Route path="/account/blocked" component={BlockedPlayers} />
         <Route path="/owner" component={Owner} />
         <Route path="/owner/var/:requestId" component={OwnerVar} />

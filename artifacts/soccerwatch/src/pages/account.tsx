@@ -4,7 +4,7 @@ import { useGetMe, useGetAccountStats, useGetAccountClaimedMatches, useUpdatePro
 import { useAuth } from "@/lib/auth";
 import { useClerk } from "@clerk/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, ChevronLeft, ChevronDown, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles, Bookmark, Heart, MapPin, Target } from "lucide-react";
+import { ChevronRight, ChevronLeft, ChevronDown, LogOut, Globe, Pencil, Shield, Video, FileText, Mail, Ban, Users, Sparkles, Bookmark, Heart, MapPin, Target, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { isDeleteConfirmation, deletionErrorMessage } from "@/lib/account-deletion";
 import { ReplayMark } from "@/components/ReplayMark";
+import { useVenueMemberships } from "@/lib/venue-api";
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const POSITIONS = [
@@ -46,6 +47,7 @@ const GENDERS = [
 export default function Account() {
   const { isGuest, user: authUser, isAdmin } = useAuth();
   const { t, locale } = useTranslation();
+  const venueMemberships = useVenueMemberships(Boolean(authUser) && !isGuest);
   const legal = useLegalCopy();
   const safety = useSafetyCopy();
   const friendsCopy = useFriendsCopy();
@@ -275,7 +277,8 @@ export default function Account() {
                 {supportHref && <a href={supportHref} className={accountRowClass}><span className={`${iconBox} bg-raised text-muted-text`}><Mail className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{legal.contactSupport}</span>{renderChevron()}</a>}
               </AccountGroup>
 
-              {!isGuest && ((displayUser?.ownedFieldIds?.length ?? 0) > 0 || isAdmin) && <AccountGroup title={t.account.controlPanels}>
+              {!isGuest && ((displayUser?.ownedFieldIds?.length ?? 0) > 0 || isAdmin || (venueMemberships.data?.memberships.length ?? 0) > 0) && <AccountGroup title={t.account.controlPanels}>
+                {((venueMemberships.data?.memberships.length ?? 0) > 0 || venueMemberships.data?.canSetUp) && <Link href="/field" data-testid="link-field-console" className={accountRowClass}><span className={`${iconBox} bg-floodlight/15 text-floodlight`}><Trophy className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{locale === "ar" ? "لوحة الملعب" : "Field console"}</span>{renderChevron()}</Link>}
                 {(displayUser?.ownedFieldIds?.length ?? 0) > 0 && <Link href="/owner" data-testid="link-owner-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><Video className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.ownerConsole}</span>{renderChevron()}</Link>}
                 {isAdmin && <Link href="/admin" data-testid="link-admin-console" className={accountRowClass}><span className={`${iconBox} bg-[#7B5CFF]/15 text-[#B9A8FF]`}><Shield className="h-[18px] w-[18px]" /></span><span className="flex-1 text-[15px] font-semibold">{t.account.adminPanel}</span>{renderChevron()}</Link>}
               </AccountGroup>}

@@ -1,4 +1,5 @@
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 const en = {
   chat: {
@@ -154,7 +155,20 @@ const ar: Strings = {
   },
 };
 
+/** Field console: the "coach" role is the front desk. */
+function venueOverrides(c: Strings & { locale: "ar" | "en" }): Strings & { locale: "ar" | "en" } {
+  const swap = (text: string) => c.locale === "ar"
+    ? text.replace(/المدربين/g, "موظفين الاستقبال").replace(/مدرب/g, "موظف استقبال").replace(/والأهالي واللاعبين/g, "")
+    : text.replace(/\bcoaches\b/g, "front desk staff").replace(/\bCoaches\b/g, "Front desk").replace(/\bcoach\b/g, "front desk").replace(/\bCoach\b/g, "Front desk").replace(/, parents and players/g, "");
+  const walk = (v: unknown): unknown => typeof v === "string" ? swap(v)
+    : typeof v === "function" ? (...args: unknown[]) => walk((v as (...a: unknown[]) => unknown)(...args))
+    : Array.isArray(v) ? v.map(walk)
+    : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === "locale" ? x : walk(x)]))
+    : v;
+  return walk(c) as Strings & { locale: "ar" | "en" };
+}
+
 export function useTeamCopy(): Strings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" }, venueOverrides);
 }

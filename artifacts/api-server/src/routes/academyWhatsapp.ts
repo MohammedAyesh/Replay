@@ -87,6 +87,7 @@ import {
   type WahaSession,
 } from "../lib/whatsapp/waha";
 
+import { runVenueTick } from "../lib/venues/store";
 const router: IRouter = Router();
 
 export function rawParam(value: string | string[] | undefined): string {
@@ -836,6 +837,11 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
   const started = Date.now();
   try {
     const scheduled = await runScheduledAutomations();
+    // Field bookings: lapse unpaid holds, send reminders and recording links (queued for this dispatch).
+    const venues = await runVenueTick().catch((error) => {
+      logger.warn({ error: (error as Error)?.message }, "Venue tick failed");
+      return "failed" as const;
+    });
     const dispatched = await dispatchQueue({ budgetMs: Math.max(10_000, 50_000 - (Date.now() - started)) });
     // The same tick keeps Replay's Meta ad numbers fresh (at most hourly; never fails the tick).
     const meta = await maybeSyncMetaAds();
@@ -845,7 +851,7 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
       return "failed" as const;
     });
     const webhooks = await maybeRefreshWebhooks();
-    res.json({ scheduled, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, ms: Date.now() - started });
+    res.json({ scheduled, venues, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, ms: Date.now() - started });
   } catch (error) {
     // vps1 logs this body: say what broke (e.g. a table missing after a publish).
     logger.error({ error: (error as Error)?.message }, "WhatsApp tick failed");

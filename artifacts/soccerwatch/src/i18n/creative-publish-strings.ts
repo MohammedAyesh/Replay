@@ -1,5 +1,6 @@
 import { arCount } from "./ar-count";
 import { useLocale } from "./context";
+import { useConsoleWording } from "@/lib/console-kind";
 
 /**
  * Creative hub → Publish. Arabic is Ammani, as across the console.
@@ -255,7 +256,7 @@ export type CreativePublishStrings = typeof en;
 
 export function useCreativePublishCopy(): CreativePublishStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return { ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" };
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
 }
 
 /** "{n} numbers" → "12 numbers". */

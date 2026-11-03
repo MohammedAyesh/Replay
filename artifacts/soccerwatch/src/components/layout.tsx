@@ -46,7 +46,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isOwnerVar = location.startsWith("/owner/var/");
   const isMatchRoom = location.startsWith("/m/");
   const isGuidedDemo = location === "/demo" || location.startsWith("/demo/");
-  const isAcademyConsole = location === "/academy" || location.startsWith("/academy/");
+  // The Field console is laid out exactly like the academy console.
+  const isAcademyConsole = location === "/academy" || location.startsWith("/academy/") || location === "/field" || location.startsWith("/field/");
   const isSignedInHome = location === "/home" && Boolean(user) && !isGuest;
   const { isFullscreenVideo } = useFullscreenVideo();
 

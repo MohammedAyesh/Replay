@@ -435,7 +435,7 @@ router.get("/academy/console/memberships", async (req, res): Promise<void> => {
     })
     .from(academyMembersTable)
     .innerJoin(academiesTable, eq(academyMembersTable.academyId, academiesTable.id))
-    .where(eq(academyMembersTable.userId, user.id))
+    .where(and(eq(academyMembersTable.userId, user.id), eq(academiesTable.kind, "academy")))
     .orderBy(asc(academiesTable.name), asc(academyMembersTable.role));
 
   if (rows.length === 0) {

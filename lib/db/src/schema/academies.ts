@@ -8,6 +8,8 @@ import { academySessionsTable } from "./academySessions";
 export const academiesTable = pgTable("academies", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
+  /** academy, or venue: a field business run from the Field console (see venues.ts). */
+  kind: text("kind").notNull().default("academy"),
   fieldId: integer("field_id").notNull().references(() => fieldsTable.id, { onDelete: "cascade" }),
   daysOfWeek: text("days_of_week").notNull().default(""),
   description: text("description"),
