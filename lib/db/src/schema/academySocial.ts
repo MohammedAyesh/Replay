@@ -60,6 +60,8 @@ export const academySocialThreadsTable = pgTable("academy_social_threads", {
   muted: boolean("muted").notNull().default(false),
   blockedAt: timestamp("blocked_at", { withTimezone: true }),
   personalAt: timestamp("personal_at", { withTimezone: true }),
+  /** The manager or coach this chat is handed to. */
+  assignedUserId: integer("assigned_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

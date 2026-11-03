@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Archive, ArrowLeft, ArrowRight, BellOff, Check, CheckCheck, Clock, EyeOff, HelpCircle, Loader2, MessagesSquare, MoreVertical, Search, Send, ShieldOff, Smartphone, UserRoundCog, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Archive, ArrowLeft, ArrowRight, BellOff, Check, CheckCheck, Clock, EyeOff, HelpCircle, Loader2, LogOut, MessageSquarePlus, MessagesSquare, MoreVertical, Search, ShieldOff, Smartphone, UserPlus, UserRoundCog, Users, X } from "lucide-react";
 import { useTeamCopy } from "@/i18n/team-strings";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { usePeopleCopy } from "@/i18n/people-strings";
 import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
-import { useChatState, useChatThread, useChatWho, useChats, useHiddenChats, useSendChat, useWhatsappOverview, type ChatState, type ChatSummary } from "@/lib/academy-whatsapp-api";
+import { useAddToGroup, useChatAssignees, useChatState, useChatThread, useChatWho, useChats, useContacts, useHiddenChats, useWhatsappOverview, type ChatState, type ChatSummary } from "@/lib/academy-whatsapp-api";
+import { useChatNativeCopy } from "@/i18n/chat-native-strings";
+import { AssigneeBadge, ChatComposer, ChatContentView, FollowGroupsSheet, NewChatDialog, NewGroupDialog, WhatsappAssign } from "./chat-native";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { ContactEditor, LinkPlayerForm, RelationshipChips } from "./contact-editor";
@@ -29,7 +31,7 @@ function StatusTick({ status }: { status: string }) {
   return <Clock className="h-3.5 w-3.5" aria-hidden="true" />;
 }
 
-type ChatFilter = "all" | "unread" | "unknown" | "archived";
+type ChatFilter = "all" | "unread" | "mine" | "unknown" | "archived";
 type ChannelFilter = "all" | "whatsapp" | "instagram" | "messenger";
 type Row = { kind: "wa"; key: string; at: number; chat: ChatSummary } | { kind: "social"; key: string; at: number; thread: SocialThreadSummary };
 
@@ -45,6 +47,11 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
   const [filter, setFilter] = useState<ChatFilter>("all");
   const [query, setQuery] = useState("");
   const [hiddenOpen, setHiddenOpen] = useState(false);
+  const [creating, setCreating] = useState<null | "chat" | "group" | "follow">(null);
+  const native = useChatNativeCopy();
+  const assignees = useChatAssignees(academyId);
+  const myId = (assignees.data ?? []).find((m) => m.me)?.id ?? null;
+  const open = (phone: string) => { setCreating(null); setFilter("all"); setSelected(phone); };
 
   useEffect(() => { if (initialPhone) setSelected(initialPhone); }, [initialPhone]);
   useEffect(() => { if (initialSocialThreadId) setSelected(`s:${initialSocialThreadId}`); }, [initialSocialThreadId]);
@@ -58,7 +65,8 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
     const wa: Row[] = channel !== "all" && channel !== "whatsapp" ? [] : visible.filter((c) => {
       if (filter === "archived" ? !c.archived : c.archived) return false;
       if (filter === "unread" && (c.unread === 0 || c.muted)) return false;
-      if (filter === "unknown" && c.contact && c.contact.players.length > 0 && c.contact.kind !== "unknown") return false;
+      if (filter === "mine" && c.assignedUserId !== myId) return false;
+      if (filter === "unknown" && (c.group || (c.contact && c.contact.players.length > 0 && c.contact.kind !== "unknown"))) return false;
       if (!q) return true;
       const hay = [c.contact?.name, c.display, c.phone, ...(c.contact?.players.map((p) => p.playerName) ?? []), ...(c.contact?.tags ?? [])].join(" ").toLocaleLowerCase();
       return hay.includes(q);
@@ -67,14 +75,16 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
       if (channel !== "all" && t.channel !== channel) return false;
       if (filter === "archived" ? !t.archived : t.archived) return false;
       if (filter === "unread" && (t.unread === 0 || t.muted)) return false;
+      if (filter === "mine" && t.assignedUserId !== myId) return false;
       if (filter === "unknown" && t.contact) return false;
       if (!q) return true;
       return [t.name, t.username, t.contact?.display, t.lastBody].join(" ").toLocaleLowerCase().includes(q);
     }).map((t) => ({ kind: "social", key: `s:${t.id}`, at: t.lastAt ? new Date(t.lastAt).getTime() : 0, thread: t }));
     return [...wa, ...so].sort((a, b) => b.at - a.at);
-  }, [visible, socialVisible, filter, query, channel]);
+  }, [visible, socialVisible, filter, query, channel, myId]);
 
-  const unknownCount = visible.filter((c) => !c.archived && (!c.contact || c.contact.kind === "unknown" || c.contact.players.length === 0)).length
+  const mineCount = myId === null ? 0 : visible.filter((c) => !c.archived && c.assignedUserId === myId).length + socialVisible.filter((t) => !t.archived && t.assignedUserId === myId).length;
+  const unknownCount = visible.filter((c) => !c.archived && !c.group && (!c.contact || c.contact.kind === "unknown" || c.contact.players.length === 0)).length
     + socialVisible.filter((t) => !t.archived && !t.contact).length;
   const hasSocial = (social.data ?? []).length > 0;
 
@@ -94,16 +104,31 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
               <Search className="pointer-events-none absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-text" aria-hidden="true" />
               <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={copy.chats.search} className="min-h-10 ps-9" data-testid="input-chat-search" />
             </div>
-            <div className="flex gap-1.5">
-              {(["all", "unread", "unknown", "archived"] as const).filter((f) => f !== "archived" || archivedCount > 0).map((f) => (
+            <div className="flex flex-wrap gap-1.5">
+              {(["all", "unread", "mine", "unknown", "archived"] as const).filter((f) => (f !== "archived" || archivedCount > 0) && (f !== "mine" || mineCount > 0 || filter === "mine")).map((f) => (
                 <button key={f} type="button" onClick={() => setFilter(f)}
                   className={cn("min-h-8 rounded-full px-3 text-xs font-semibold", filter === f ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")}
                   data-testid={`chat-filter-${f}`}>
-                  {f === "archived" ? team.chat.archived : copy.chats.filters[f]}
-                  {f === "unknown" && unknownCount > 0 ? ` · ${unknownCount}` : ""}{f === "archived" ? ` · ${archivedCount}` : ""}
+                  {f === "archived" ? team.chat.archived : f === "mine" ? native.mine : copy.chats.filters[f]}
+                  {f === "unknown" && unknownCount > 0 ? ` · ${unknownCount}` : ""}{f === "archived" ? ` · ${archivedCount}` : ""}{f === "mine" ? ` · ${mineCount}` : ""}
                 </button>
               ))}
             </div>
+            {overview.data?.sender !== "off" && (
+              <div className="flex flex-wrap gap-1.5">
+                <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => setCreating("chat")} data-testid="button-new-chat">
+                  <MessageSquarePlus className="h-3.5 w-3.5" aria-hidden="true" />{native.newChat}
+                </Button>
+                <Button type="button" size="sm" variant="outline" className="h-8 gap-1.5 text-xs" onClick={() => setCreating("group")} data-testid="button-new-group">
+                  <Users className="h-3.5 w-3.5" aria-hidden="true" />{native.newGroup}
+                </Button>
+                {canManageChats && overview.data?.sender === "own" && (
+                  <Button type="button" size="sm" variant="ghost" className="h-8 gap-1.5 text-xs text-muted-text" onClick={() => setCreating("follow")} data-testid="button-follow-groups">
+                    {native.followGroups}
+                  </Button>
+                )}
+              </div>
+            )}
             {hasSocial && (
               <div className="flex gap-1.5" data-testid="chat-channels">
                 {(["all", "whatsapp", "instagram", "messenger"] as const).map((c) => (
@@ -121,8 +146,8 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
             {chats.isLoading ? <div className="space-y-2 p-3">{[0, 1, 2, 3].map((n) => <div key={n} className="h-14 animate-pulse rounded-xl bg-raised" />)}</div>
               : list.length === 0 ? <p className="p-6 text-center text-sm leading-6 text-muted-text">{copy.chats.empty}</p>
                 : list.map((r) => r.kind === "wa"
-                  ? <ChatRow key={r.key} chat={r.chat} active={selected === r.key} onClick={() => setSelected(r.key)} />
-                  : <SocialChatRow key={r.key} thread={r.thread} active={selected === r.key} onClick={() => setSelected(r.key)} />)}
+                  ? <ChatRow key={r.key} academyId={academyId} chat={r.chat} active={selected === r.key} onClick={() => setSelected(r.key)} />
+                  : <SocialChatRow key={r.key} academyId={academyId} thread={r.thread} active={selected === r.key} onClick={() => setSelected(r.key)} />)}
           </div>
           {canManageChats && (
             <button type="button" onClick={() => setHiddenOpen(true)} className="flex items-center gap-2 border-t border-line px-3 py-2.5 text-xs text-muted-text hover:text-text" data-testid="button-hidden-chats">
@@ -146,6 +171,9 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
         </div>
       </div>
       {canManageChats && <HiddenChatsSheet academyId={academyId} open={hiddenOpen} onOpenChange={setHiddenOpen} />}
+      <NewChatDialog academyId={academyId} open={creating === "chat"} onOpenChange={(o) => setCreating(o ? "chat" : null)} onOpen={open} />
+      <NewGroupDialog academyId={academyId} open={creating === "group"} onOpenChange={(o) => setCreating(o ? "group" : null)} onCreated={open} />
+      {canManageChats && <FollowGroupsSheet academyId={academyId} open={creating === "follow"} onOpenChange={(o) => setCreating(o ? "follow" : null)} onOpen={open} />}
     </section>
   );
 }
@@ -198,17 +226,17 @@ function HiddenChatsSheet({ academyId, open, onOpenChange }: { academyId: number
   );
 }
 
-function ChatRow({ chat, active, onClick }: { chat: ChatSummary; active: boolean; onClick: () => void }) {
+function ChatRow({ academyId, chat, active, onClick }: { academyId: number; chat: ChatSummary; active: boolean; onClick: () => void }) {
   const copy = usePeopleCopy();
-  const name = chat.contact?.name;
-  const unknown = !chat.contact || chat.contact.kind === "unknown" || chat.contact.players.length === 0;
+  const name = chat.group ? chat.group.subject : chat.contact?.name;
+  const unknown = !chat.group && (!chat.contact || chat.contact.kind === "unknown" || chat.contact.players.length === 0);
   const time = new Date(chat.lastAt);
   const sameDay = time.toDateString() === new Date().toDateString();
   const label = new Intl.DateTimeFormat(copy.locale === "ar" ? "ar-JO" : "en-GB", sameDay ? { hour: "numeric", minute: "2-digit", timeZone: "Asia/Amman" } : { day: "numeric", month: "short", timeZone: "Asia/Amman" }).format(time);
   return (
     <button type="button" onClick={onClick} className={cn("flex w-full items-start gap-3 border-b border-line/60 px-3 py-3 text-start transition-colors", active ? "bg-turf/10" : "hover:bg-raised")} data-testid={`chat-row-${chat.phone}`}>
-      <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-bold", unknown ? "bg-amber-300/15 text-amber-200" : "bg-turf/15 text-turf")}>
-        {unknown && !name ? <HelpCircle className="h-4 w-4" aria-hidden="true" /> : initials(name ?? null, chat.phone)}
+      <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-full text-xs font-bold", chat.group ? "bg-sky-400/15 text-sky-200" : unknown ? "bg-amber-300/15 text-amber-200" : "bg-turf/15 text-turf")}>
+        {chat.group ? <Users className="h-4 w-4" aria-hidden="true" /> : unknown && !name ? <HelpCircle className="h-4 w-4" aria-hidden="true" /> : initials(name ?? null, chat.phone)}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-baseline gap-2">
@@ -216,6 +244,7 @@ function ChatRow({ chat, active, onClick }: { chat: ChatSummary; active: boolean
           <span className="ms-auto shrink-0 text-[11px] text-muted-text">{label}</span>
         </span>
         {chat.contact && chat.contact.players.length > 0 && <RelationshipChips contact={chat.contact} className="mt-0.5" />}
+        {chat.assignedUserId && <span className="mt-0.5 flex"><AssigneeBadge academyId={academyId} userId={chat.assignedUserId} /></span>}
         <span className="mt-0.5 flex items-center gap-1.5">
           {chat.lastDirection === "out" && <span className="text-muted-text"><StatusTick status={chat.lastStatus} /></span>}
           <span className="truncate text-xs text-muted-text" dir="auto">{chat.lastBody}</span>
@@ -230,48 +259,52 @@ function ChatRow({ chat, active, onClick }: { chat: ChatSummary; active: boolean
 function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { academyId: number; phone: string; isOwner: boolean; canManage: boolean; onBack: () => void; onHidden: () => void }) {
   const copy = usePeopleCopy();
   const team = useTeamCopy();
+  const native = useChatNativeCopy();
   const chatState = useChatState(academyId);
   const who = useChatWho(academyId);
-  const [confirm, setConfirm] = useState<null | "personal" | "block">(null);
+  const [confirm, setConfirm] = useState<null | "personal" | "block" | "unfollow">(null);
+  const [addOpen, setAddOpen] = useState(false);
   const waCopy = useWhatsappCopy();
   const thread = useChatThread(academyId, phone);
-  const send = useSendChat(academyId, phone);
-  const [draft, setDraft] = useState("");
   const [infoOpen, setInfoOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const data = thread.data;
+  const group = data?.group ?? null;
   const contact = data?.contact ?? null;
-  const unknown = !contact || contact.kind === "unknown" || contact.players.length === 0;
+  const unknown = !group && (!contact || contact.kind === "unknown" || contact.players.length === 0);
   const count = data?.messages.length ?? 0;
 
   useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [count, phone]);
-  useEffect(() => { setDraft(""); setError(null); }, [phone]);
-
-  const submit = (e?: FormEvent) => {
-    e?.preventDefault();
-    const body = draft.trim();
-    if (!body) return;
-    setError(null);
-    send.mutate(body, { onSuccess: () => setDraft(""), onError: (err) => setError((err as Error).message) });
-  };
 
   const BackIcon = copy.locale === "ar" ? ArrowRight : ArrowLeft;
   const fmt = new Intl.DateTimeFormat(copy.locale === "ar" ? "ar-JO" : "en-GB", { hour: "numeric", minute: "2-digit", day: "numeric", month: "short", timeZone: "Asia/Amman" });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-3 border-b border-line px-3 py-2.5">
+      <div className="flex items-center gap-2 border-b border-line px-3 py-2.5">
         <Button type="button" variant="ghost" size="icon" className="md:hidden" onClick={onBack} aria-label={copy.chats.back}><BackIcon className="h-5 w-5" aria-hidden="true" /></Button>
-        <button type="button" onClick={() => setInfoOpen(true)} className="min-w-0 flex-1 text-start" data-testid="chat-header">
-          <span className="block truncate font-semibold text-text" dir="auto">{contact?.name || data?.display || phone}</span>
-          <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-text">
-            <span dir="ltr">{data?.display}</span>
-            {contact && contact.kind !== "unknown" && <span>· {copy.contact.kinds[contact.kind]}</span>}
-          </span>
-          {contact && <RelationshipChips contact={contact} className="mt-1" />}
-        </button>
-        <Button type="button" variant="outline" size="sm" onClick={() => setInfoOpen(true)} data-testid="button-chat-info"><UserRoundCog className="me-1.5 h-4 w-4" aria-hidden="true" />{copy.contact.editTitle}</Button>
+        {group ? (
+          <div className="flex min-w-0 flex-1 items-center gap-2" data-testid="chat-header">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-sky-400/15 text-sky-200"><Users className="h-4 w-4" aria-hidden="true" /></span>
+            <span className="min-w-0">
+              <span className="block truncate font-semibold text-text" dir="auto">{group.subject}</span>
+              <span className="text-xs text-muted-text">{native.groupTag}</span>
+            </span>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setInfoOpen(true)} className="min-w-0 flex-1 text-start" data-testid="chat-header">
+            <span className="block truncate font-semibold text-text" dir="auto">{contact?.name || data?.display || phone}</span>
+            <span className="flex flex-wrap items-center gap-1.5 text-xs text-muted-text">
+              <span dir="ltr">{data?.display}</span>
+              {contact && contact.kind !== "unknown" && <span>· {copy.contact.kinds[contact.kind]}</span>}
+            </span>
+            {contact && <RelationshipChips contact={contact} className="mt-1" />}
+          </button>
+        )}
+        {data && <WhatsappAssign academyId={academyId} phone={phone} assignedUserId={data.assignedUserId} />}
+        {group
+          ? <Button type="button" variant="outline" size="sm" onClick={() => setAddOpen(true)} data-testid="button-group-add"><UserPlus className="me-1.5 h-4 w-4" aria-hidden="true" />{native.addMembers}</Button>
+          : <Button type="button" variant="outline" size="sm" onClick={() => setInfoOpen(true)} data-testid="button-chat-info"><UserRoundCog className="me-1.5 h-4 w-4" aria-hidden="true" /><span className="hidden sm:inline">{copy.contact.editTitle}</span></Button>}
         {canManage && data && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -285,12 +318,20 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
                 <BellOff className="me-2 h-4 w-4" aria-hidden="true" />{data.muted ? team.chat.unmute : team.chat.mute}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onSelect={() => (data.blocked ? chatState.mutate({ phone, state: { blocked: false } }) : setConfirm("block"))} className="text-red-300">
-                <ShieldOff className="me-2 h-4 w-4" aria-hidden="true" />{data.blocked ? team.chat.unblock : team.chat.block}
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setConfirm("personal")}>
-                <EyeOff className="me-2 h-4 w-4" aria-hidden="true" />{team.chat.personal}
-              </DropdownMenuItem>
+              {group ? (
+                <DropdownMenuItem onSelect={() => setConfirm("unfollow")} className="text-red-300">
+                  <LogOut className="me-2 h-4 w-4" aria-hidden="true" />{native.stopFollowing}
+                </DropdownMenuItem>
+              ) : (
+                <>
+                  <DropdownMenuItem onSelect={() => (data.blocked ? chatState.mutate({ phone, state: { blocked: false } }) : setConfirm("block"))} className="text-red-300">
+                    <ShieldOff className="me-2 h-4 w-4" aria-hidden="true" />{data.blocked ? team.chat.unblock : team.chat.block}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setConfirm("personal")}>
+                    <EyeOff className="me-2 h-4 w-4" aria-hidden="true" />{team.chat.personal}
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -298,9 +339,9 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
 
       {confirm && (
         <div className="flex flex-wrap items-center gap-2 border-b border-red-400/30 bg-red-500/5 p-3 text-sm" role="alertdialog" data-testid="chat-confirm">
-          <p className="w-full text-text">{confirm === "personal" ? team.chat.personalConfirm : team.chat.blockConfirm}</p>
+          <p className="w-full text-text">{confirm === "personal" ? team.chat.personalConfirm : confirm === "unfollow" ? native.stopFollowingConfirm : team.chat.blockConfirm}</p>
           <Button type="button" size="sm" className="bg-red-500 font-bold text-white hover:bg-red-600" disabled={chatState.isPending}
-            onClick={() => chatState.mutate({ phone, state: confirm === "personal" ? { personal: true } : { blocked: true } }, { onSuccess: () => { setConfirm(null); onHidden(); } })}>
+            onClick={() => chatState.mutate({ phone, state: confirm === "block" ? { blocked: true } : { personal: true } }, { onSuccess: () => { setConfirm(null); onHidden(); } })}>
             {team.chat.confirm}
           </Button>
           <Button type="button" size="sm" variant="ghost" onClick={() => setConfirm(null)}>{team.chat.cancel}</Button>
@@ -308,6 +349,7 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
       )}
       {chatState.isError && <p className="border-b border-line px-3 py-2 text-xs text-red-400" role="alert">{(chatState.error as Error).message}</p>}
       {data?.blocked && <p className="border-b border-line bg-red-500/5 px-3 py-2 text-xs text-red-300">{team.chat.blockedNote}</p>}
+      {data?.wrongNumber && <p className="border-b border-line bg-amber-300/5 px-3 py-2 text-xs text-amber-100">{native.wrongNumber}</p>}
 
       {unknown && contact && !data?.linkLater && contact.kind !== "other" && (
         <div className="border-b border-amber-300/20 bg-amber-300/5 p-3" data-testid="chat-who-is-this">
@@ -335,15 +377,22 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(47,216,196,0.04),transparent_60%)] p-4">
         {thread.isLoading ? <Loader2 className="mx-auto h-5 w-5 animate-spin text-muted-text" aria-hidden="true" /> : data?.messages.map((m) => {
           const mine = m.direction === "out";
+          const bare = m.content && (m.content.type === "sticker");
           return (
             <div key={m.id} className={cn("flex", mine ? "justify-end" : "justify-start")}>
-              <div className={cn("max-w-[80%] rounded-2xl px-3.5 py-2 text-sm shadow-sm", mine ? "rounded-ee-md bg-turf/20 text-text" : "rounded-es-md bg-raised text-text")} data-testid={`chat-bubble-${m.id}`}>
+              <div className={cn("max-w-[80%] rounded-2xl px-3.5 py-2 text-sm shadow-sm", bare ? "bg-transparent shadow-none" : mine ? "rounded-ee-md bg-turf/20 text-text" : "rounded-es-md bg-raised text-text")} data-testid={`chat-bubble-${m.id}`}>
+                {!mine && m.author && (
+                  <span className="mb-0.5 block text-[11px] font-semibold text-sky-200" dir="auto">{m.author.name || m.author.phone}{m.author.name && m.author.phone ? <span className="ms-1 font-normal text-muted-text" dir="ltr">{m.author.phone}</span> : null}</span>
+                )}
                 {mine && m.kind !== "chat" && (
                   <span className="mb-0.5 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-turf/80">
                     {m.kind === "phone" ? <><Smartphone className="h-3 w-3" aria-hidden="true" />{copy.chats.fromPhone}</> : (waCopy.history.kinds[m.kind] ?? waCopy.automations.items[m.kind]?.title ?? m.kind)}
                   </span>
                 )}
-                <p dir="auto" className="whitespace-pre-wrap break-words leading-6">{m.body}</p>
+                {mine && m.kind === "chat" && m.sentBy && (
+                  <span className="mb-0.5 block text-[10px] font-semibold text-turf/80" dir="auto">{m.sentBy}</span>
+                )}
+                {m.content ? <ChatContentView content={m.content} body={m.body} /> : <p dir="auto" className="whitespace-pre-wrap break-words leading-6">{m.body}</p>}
                 <span className="mt-0.5 flex items-center justify-end gap-1 text-[10px] text-muted-text">
                   {fmt.format(new Date(m.sentAt ?? m.createdAt))}
                   {mine && <StatusTick status={m.status} />}
@@ -357,35 +406,61 @@ function Thread({ academyId, phone, isOwner, canManage, onBack, onHidden }: { ac
         <div ref={bottom} />
       </div>
 
-      <form onSubmit={submit} className="flex items-end gap-2 border-t border-line p-3">
-        <Textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
-          placeholder={copy.chats.typeMessage}
-          rows={1}
-          dir="auto"
-          className="max-h-40 min-h-11 resize-none"
-          data-testid="input-chat-message"
-        />
-        <Button type="submit" disabled={!draft.trim() || send.isPending} className="h-11 w-11 shrink-0 rounded-full bg-floodlight p-0 text-void" aria-label={copy.chats.send} data-testid="button-chat-send">
-          {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4 rtl:-scale-x-100" aria-hidden="true" />}
-        </Button>
-      </form>
-      {error && <p className="px-3 pb-2 text-xs text-red-400" role="alert">{error}</p>}
+      <ChatComposer academyId={academyId} phone={phone} placeholder={copy.chats.typeMessage} disabled={data?.blocked || data?.wrongNumber} />
 
-      <Sheet open={infoOpen} onOpenChange={setInfoOpen}>
-        <SheetContent side={copy.locale === "ar" ? "left" : "right"} className="w-full overflow-y-auto border-line bg-surface text-text sm:max-w-md" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
-          <SheetHeader className="px-8 text-start">
-            <SheetTitle>{contact?.name || data?.display}</SheetTitle>
-            <SheetDescription dir="ltr" className="text-start">{data?.display}</SheetDescription>
-          </SheetHeader>
-          <div className="mt-4">
-            {contact ? <ContactEditor academyId={academyId} contact={contact} isOwner={isOwner} onDeleted={() => setInfoOpen(false)} />
-              : <ContactEditor academyId={academyId} contact={null} initialPhone={phone} />}
-          </div>
-        </SheetContent>
-      </Sheet>
+      {group && <AddToGroupDialog academyId={academyId} groupId={group.groupId} open={addOpen} onOpenChange={setAddOpen} />}
+      {!group && (
+        <Sheet open={infoOpen} onOpenChange={setInfoOpen}>
+          <SheetContent side={copy.locale === "ar" ? "left" : "right"} className="w-full overflow-y-auto border-line bg-surface text-text sm:max-w-md" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
+            <SheetHeader className="px-8 text-start">
+              <SheetTitle>{contact?.name || data?.display}</SheetTitle>
+              <SheetDescription dir="ltr" className="text-start">{data?.display}</SheetDescription>
+            </SheetHeader>
+            <div className="mt-4">
+              {contact ? <ContactEditor academyId={academyId} contact={contact} isOwner={isOwner} onDeleted={() => setInfoOpen(false)} />
+                : <ContactEditor academyId={academyId} contact={null} initialPhone={phone} />}
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
     </div>
+  );
+}
+
+/** Add People to a group the academy runs. */
+function AddToGroupDialog({ academyId, groupId, open, onOpenChange }: { academyId: number; groupId: string; open: boolean; onOpenChange: (open: boolean) => void }) {
+  const native = useChatNativeCopy();
+  const contacts = useContacts(academyId);
+  const add = useAddToGroup(academyId);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [q, setQ] = useState("");
+  useEffect(() => { if (open) { setPicked([]); setQ(""); add.reset(); } }, [open]);
+  const matches = useMemo(() => {
+    const needle = q.trim().toLocaleLowerCase();
+    return (contacts.data ?? []).filter((c) => !needle || [c.name, c.display, ...c.players.map((p) => p.playerName)].join(" ").toLocaleLowerCase().includes(needle)).slice(0, 60);
+  }, [contacts.data, q]);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="border-line bg-surface text-text" dir={native.locale === "ar" ? "rtl" : "ltr"}>
+        <DialogHeader className="text-start"><DialogTitle>{native.addMembers}</DialogTitle></DialogHeader>
+        <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={native.searchPeople} />
+        <ul className="max-h-64 divide-y divide-line overflow-y-auto rounded-lg border border-line">
+          {matches.map((c) => (
+            <li key={c.id}>
+              <label className="flex cursor-pointer items-center gap-2 px-2.5 py-2 hover:bg-raised">
+                <input type="checkbox" checked={picked.includes(c.id)} onChange={() => setPicked((ids) => (ids.includes(c.id) ? ids.filter((x) => x !== c.id) : [...ids, c.id]))} className="h-4 w-4" />
+                <span className="min-w-0 flex-1 truncate text-sm" dir="auto">{c.name || c.display}</span>
+                <span className="text-xs text-muted-text" dir="ltr">{c.display}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+        {add.isError && <p className="text-xs text-red-400" role="alert">{(add.error as Error).message}</p>}
+        {add.isSuccess && <p className="text-xs text-turf">{native.added(add.data.added)}</p>}
+        <Button type="button" disabled={picked.length === 0 || add.isPending} onClick={() => add.mutate({ groupId, contactIds: picked })} className="bg-floodlight font-bold text-void">
+          {add.isPending && <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden="true" />}{native.addMembers}{picked.length ? ` · ${native.members(picked.length)}` : ""}
+        </Button>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -2,7 +2,9 @@ import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import {
   academiesTable,
   academyContactsTable,
+  academyWhatsappGroupsTable,
   academyWhatsappMessagesTable,
+  academyWhatsappPollVotesTable,
   academyWhatsappOptOutsTable,
   academyWhatsappSettingsTable,
   db,
@@ -12,7 +14,17 @@ import { logger } from "../logger";
 import { upsertContact } from "./contacts";
 import { recordAdLead } from "../meta/leads";
 import { findAdReferral } from "../meta/referral";
-import { isLid, phoneFromChatId } from "./phone";
+import { groupIdFromKey, groupKey, isGroupKey, isLid, phoneFromChatId } from "./phone";
+import {
+  MAX_CHAT_MEDIA_BYTES,
+  incomingKind,
+  incomingLocation,
+  mediaUrl,
+  storeChatMedia,
+  summaryFor,
+  type WaMedia,
+  type WhatsappContent,
+} from "./media";
 import type { WhatsappLocale } from "./templates";
 import {
   REPLAY_SESSION,
@@ -21,10 +33,19 @@ import {
   academySessionName,
   bareMessageId,
   checkNumber,
+  downloadWahaFile,
   getSession,
   phoneForLid,
+  sendFile,
+  sendImage,
+  sendLocation,
+  sendPoll,
+  sendSticker,
   sendText,
+  sendVideo,
+  sendVoice,
   wahaConfigured,
+  type WahaFile,
 } from "./waha";
 
 export type WhatsappSender = "own" | "replay" | "off";
@@ -174,7 +195,7 @@ export type DispatchSummary = {
   sessions: Record<string, string>;
 };
 
-type ClaimedRow = { id: number; academy_id: number; phone: string; body: string; attempts: number; kind: string };
+type ClaimedRow = { id: number; academy_id: number; phone: string; body: string; attempts: number; kind: string; content: WhatsappContent | null };
 
 async function claimNext(academyIds: number[], session: string): Promise<ClaimedRow | null> {
   if (academyIds.length === 0) return null;
@@ -189,7 +210,7 @@ async function claimNext(academyIds: number[], session: string): Promise<Claimed
       for update skip locked
       limit 1
     )
-    returning id, academy_id, phone, body, attempts, kind
+    returning id, academy_id, phone, body, attempts, kind, content
   `);
   return ((result as unknown as { rows: ClaimedRow[] }).rows ?? [])[0] ?? null;
 }
@@ -221,6 +242,61 @@ async function markQueued(academyIds: number[], status: "failed" | "skipped", er
     ))
     .returning({ id: academyWhatsappMessagesTable.id });
   return rows.length;
+}
+
+class NotOnWhatsapp extends Error {}
+
+/** The other WAHA session can't post in a group that lives on one number. */
+class WrongNumberForGroup extends Error {}
+
+/**
+ * Send one claimed message: text, a file, a location or a poll, to a person or a group.
+ * On Replay's shared number the academy's name goes on top (in the caption, the location's
+ * title or the poll's question), so the recipient knows who is writing.
+ */
+async function deliver(session: string, row: ClaimedRow, academyName: string | null): Promise<string | null> {
+  const brand = session === REPLAY_SESSION && academyName ? academyName : null;
+  const branded = (text: string | null | undefined) => (brand ? `*${brand}*\n${text ?? ""}`.trim() : (text ?? "").trim());
+  let chatId: string;
+  const groupId = groupIdFromKey(row.phone);
+  if (groupId) {
+    const [group] = await db.select({ session: academyWhatsappGroupsTable.session }).from(academyWhatsappGroupsTable)
+      .where(and(eq(academyWhatsappGroupsTable.academyId, row.academy_id), eq(academyWhatsappGroupsTable.groupId, groupId)));
+    if (group && group.session !== session) throw new WrongNumberForGroup();
+    chatId = `${groupId}@g.us`;
+  } else {
+    const found = await checkNumber(session, row.phone);
+    if (!found) throw new NotOnWhatsapp();
+    chatId = found;
+  }
+  const content = row.content;
+  if (!content) return sendText(session, chatId, branded(row.body));
+  const file = (media: WaMedia): WahaFile => {
+    const url = mediaUrl(media);
+    if (!url) throw new WahaError(400, "The file is no longer available", false);
+    return { url, mimetype: media.mimetype, ...(media.filename ? { filename: media.filename } : {}) };
+  };
+  switch (content.type) {
+    case "image": return sendImage(session, chatId, file(content.media), branded(content.caption) || undefined);
+    case "video": return sendVideo(session, chatId, file(content.media), branded(content.caption) || undefined, content.gif === true);
+    case "document": return sendFile(session, chatId, file(content.media), branded(content.caption) || undefined);
+    case "audio": return sendVoice(session, chatId, file(content.media));
+    case "sticker": return sendSticker(session, chatId, file(content.media));
+    case "location": {
+      const title = [brand, content.name].filter(Boolean).join(" · ");
+      return sendLocation(session, chatId, content.latitude, content.longitude, title || undefined);
+    }
+    case "poll": {
+      const name = brand ? `${brand}: ${content.name}` : content.name;
+      return sendPoll(session, chatId, { name: name.slice(0, 255), options: content.options, multipleAnswers: content.multipleAnswers });
+    }
+  }
+}
+
+function deliveryFailure(error: unknown): string | null {
+  if (error instanceof NotOnWhatsapp) return "This number is not on WhatsApp";
+  if (error instanceof WrongNumberForGroup) return "This group is on the academy's other WhatsApp number";
+  return null;
 }
 
 /**
@@ -314,22 +390,13 @@ export async function dispatchQueue(options: { budgetMs?: number } = {}): Promis
         summary.skipped += 1;
         continue;
       }
-      if (row.kind !== "reply" && row.kind !== "chat" && optOuts.get(academyId)!.has(row.phone)) {
+      if (!isGroupKey(row.phone) && row.kind !== "reply" && row.kind !== "chat" && optOuts.get(academyId)!.has(row.phone)) {
         await finish(row.id, { status: "skipped", error: "Recipient replied STOP" });
         summary.skipped += 1;
         continue;
       }
-      const text = session === REPLAY_SESSION
-        ? `*${academyNames.get(academyId) ?? ""}*\n${row.body}`.trim()
-        : row.body;
       try {
-        const chatId = await checkNumber(session, row.phone);
-        if (!chatId) {
-          await finish(row.id, { status: "failed", error: "This number is not on WhatsApp" });
-          summary.failed += 1;
-          continue;
-        }
-        const waId = await sendText(session, chatId, text);
+        const waId = await deliver(session, row, academyNames.get(academyId) ?? null);
         await finish(row.id, { status: "sent", sentAt: new Date(), waMessageId: bareMessageId(waId), error: null });
         summary.sent += 1;
         sentThisTick += 1;
@@ -339,6 +406,12 @@ export async function dispatchQueue(options: { budgetMs?: number } = {}): Promis
         if (count >= (limits.get(academyId) ?? 300)) open = open.filter((id) => id !== academyId);
         await sleep(jitter());
       } catch (error) {
+        const final = deliveryFailure(error);
+        if (final) {
+          await finish(row.id, { status: "failed", error: final });
+          summary.failed += 1;
+          continue;
+        }
         const transient = error instanceof WahaError ? error.transient : true;
         const message = (error as Error).message?.slice(0, 500) ?? "Send failed";
         if (transient && row.attempts < MAX_ATTEMPTS) {
@@ -443,17 +516,17 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
     return;
   }
 
+  if (event.event === "poll.vote") {
+    await handlePollVote(session, payload);
+    return;
+  }
+
   if (event.event === "message" || event.event === "message.any") {
     const from = typeof payload.from === "string" ? payload.from : "";
     const to = typeof payload.to === "string" ? payload.to : "";
     const fromMe = payload.fromMe === true;
     const other = fromMe ? to : from;
-    if (other.endsWith("@g.us") || other.includes("status@broadcast") || other.endsWith("@newsletter")) return;
-    const phone = await phoneForChat(session, other, payload, fromMe);
-    if (!phone) {
-      if (!fromMe) logger.warn({ session, chat: other }, "WhatsApp message from a number we couldn't resolve; dropped");
-      return;
-    }
+    if (other.includes("status@broadcast") || other.endsWith("@newsletter")) return;
     const body = typeof payload.body === "string" ? payload.body : "";
     const waMessageId = bareMessageId(typeof payload.id === "string" ? payload.id : null);
     if (waMessageId) {
@@ -464,93 +537,131 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
         .limit(1);
       if (seen) return;
     }
-
     const pushName = typeof (payload._data as { pushName?: unknown } | undefined)?.pushName === "string"
       ? String((payload._data as { pushName: string }).pushName)
       : typeof (payload as { notifyName?: unknown }).notifyName === "string" ? String((payload as { notifyName: string }).notifyName) : null;
 
-    // Which academy is this for? Own number → that academy. Replay's number →
-    // the academy whose ad they tapped, else the academy that last messaged
-    // this phone from it.
-    let academyId = academyForSession(session);
-    const referral = fromMe ? null : findAdReferral(payload);
-    if (referral) {
-      const lead = await recordAdLead({
-        source: "whatsapp",
-        externalId: `wa:${waMessageId ?? referral.ctwaClid ?? `${phone}:${Date.now()}`}`,
-        academyId,
-        adId: referral.adId,
-        ctwaClid: referral.ctwaClid,
-        headline: referral.headline,
-        phone,
-        name: pushName,
-        answers: { message: body.slice(0, 500), adBody: referral.body, sourceUrl: referral.sourceUrl },
-      }).catch((error) => {
-        logger.warn({ error: (error as Error).message }, "Recording a click-to-WhatsApp lead failed");
-        return null;
-      });
-      academyId ??= lead?.academyId ?? null;
-    }
-    if (academyId === null && session === REPLAY_SESSION) {
-      if (fromMe) return;
-      const [last] = await db
-        .select({ academyId: academyWhatsappMessagesTable.academyId })
-        .from(academyWhatsappMessagesTable)
-        .where(and(
-          eq(academyWhatsappMessagesTable.phone, phone),
-          eq(academyWhatsappMessagesTable.direction, "out"),
-          eq(academyWhatsappMessagesTable.senderSession, REPLAY_SESSION),
-        ))
-        .orderBy(sql`${academyWhatsappMessagesTable.createdAt} desc`)
+    let academyId: number | null;
+    let chatKey: string;
+    let authorPhone: string | null = null;
+    const isGroup = other.endsWith("@g.us");
+
+    if (isGroup) {
+      // Only groups the academy follows in Chats are kept; any other group on the phone stays private.
+      const groupId = other.slice(0, -"@g.us".length);
+      const group = await followedGroup(session, groupId);
+      if (!group) return;
+      academyId = group.academyId;
+      chatKey = groupKey(groupId);
+      if (!fromMe) {
+        const data = (payload._data ?? {}) as Record<string, unknown>;
+        const info = (data.Info ?? data.info ?? {}) as Record<string, unknown>;
+        const participant = [payload.participant, payload.author, info.Sender].find((v): v is string => typeof v === "string" && v.length > 0) ?? "";
+        authorPhone = participant ? await phoneForChat(session, participant, payload, false) : null;
+      }
+    } else {
+      const phone = await phoneForChat(session, other, payload, fromMe);
+      if (!phone) {
+        if (!fromMe) logger.warn({ session, chat: other }, "WhatsApp message from a number we couldn't resolve; dropped");
+        return;
+      }
+      chatKey = phone;
+      // Which academy is this for? Own number → that academy. Replay's number →
+      // the academy whose ad they tapped, else the academy that last messaged
+      // this phone from it, else the one academy that has this number in People.
+      academyId = academyForSession(session);
+      const referral = fromMe ? null : findAdReferral(payload);
+      if (referral) {
+        const lead = await recordAdLead({
+          source: "whatsapp",
+          externalId: `wa:${waMessageId ?? referral.ctwaClid ?? `${phone}:${Date.now()}`}`,
+          academyId,
+          adId: referral.adId,
+          ctwaClid: referral.ctwaClid,
+          headline: referral.headline,
+          phone,
+          name: pushName,
+          answers: { message: body.slice(0, 500), adBody: referral.body, sourceUrl: referral.sourceUrl },
+        }).catch((error) => {
+          logger.warn({ error: (error as Error).message }, "Recording a click-to-WhatsApp lead failed");
+          return null;
+        });
+        academyId ??= lead?.academyId ?? null;
+      }
+      if (academyId === null && session === REPLAY_SESSION) {
+        if (fromMe) return;
+        academyId = await academyForReplayNumber(phone);
+      }
+      if (academyId === null) return;
+      // A blocked number, or a chat the academy marked personal, is never stored.
+      const [hidden] = await db.select({ blockedAt: academyContactsTable.blockedAt, personalAt: academyContactsTable.personalAt })
+        .from(academyContactsTable)
+        .where(and(eq(academyContactsTable.academyId, academyId), eq(academyContactsTable.phone, phone)))
         .limit(1);
-      academyId = last?.academyId ?? null;
+      if (hidden?.blockedAt || hidden?.personalAt) return;
     }
-    if (academyId === null) return;
-    // A blocked number, or a chat the academy marked personal, is never stored.
-    const [hidden] = await db.select({ blockedAt: academyContactsTable.blockedAt, personalAt: academyContactsTable.personalAt })
-      .from(academyContactsTable)
-      .where(and(eq(academyContactsTable.academyId, academyId), eq(academyContactsTable.phone, phone)))
-      .limit(1);
-    if (hidden?.blockedAt || hidden?.personalAt) return;
-    const text = body.slice(0, 4000) || (payload.hasMedia ? "[media]" : "");
+    if (fromMe && payload.source === "api") return; // Sent by Replay: stored already.
 
-    if (fromMe) {
-      // Typed on the academy's phone itself; messages the app sent are stored already.
-      if (payload.source === "api") return;
-      await db.insert(academyWhatsappMessagesTable).values({
-        academyId,
-        direction: "out",
-        kind: "phone",
-        phone,
-        body: text,
-        status: "sent",
-        sentAt: new Date(),
-        senderSession: session,
-        waMessageId,
-      });
-      return;
+    const settings = await getWhatsappSettings(academyId);
+    const kind = incomingKind(payload);
+    let content: WhatsappContent | null = null;
+    if (kind.type === "location") {
+      const location = incomingLocation(payload);
+      if (location) content = { type: "location", ...location };
+    } else if (kind.type === "poll" && kind.poll) {
+      content = { type: "poll", ...kind.poll };
+    } else if (kind.type !== "text" && kind.type !== "poll") {
+      const media = (payload.media ?? {}) as { url?: unknown; mimetype?: unknown; filename?: unknown };
+      const placeholder: WaMedia = {
+        path: "",
+        mimetype: typeof media.mimetype === "string" ? media.mimetype : "application/octet-stream",
+        filename: typeof media.filename === "string" ? media.filename : null,
+        unavailable: true,
+        pending: typeof media.url === "string",
+      };
+      const caption = body.trim() || null;
+      content = kind.type === "image" ? { type: "image", media: placeholder, caption }
+        : kind.type === "video" ? { type: "video", media: placeholder, caption, gif: kind.gif === true }
+        : kind.type === "audio" ? { type: "audio", media: placeholder, voice: kind.voice === true }
+        : kind.type === "sticker" ? { type: "sticker", media: placeholder }
+        : { type: "document", media: placeholder, caption };
     }
+    const text = (content ? summaryFor(content, settings.locale) : body).slice(0, 4000) || (payload.hasMedia ? "[media]" : "");
+    if (!text) return;
 
-    await db.insert(academyWhatsappMessagesTable).values({
+    const [stored] = await db.insert(academyWhatsappMessagesTable).values({
       academyId,
-      direction: "in",
-      kind: "reply",
-      phone,
+      direction: fromMe ? "out" : "in",
+      kind: fromMe ? "phone" : "reply",
+      phone: chatKey,
       body: text,
-      status: "received",
+      status: fromMe ? "sent" : "received",
+      ...(fromMe ? { sentAt: new Date() } : {}),
       senderSession: session,
       waMessageId,
-    });
-    await upsertContact(academyId, phone, { kind: "unknown", source: "whatsapp", name: pushName });
+      content,
+      authorPhone,
+      authorName: isGroup && !fromMe ? pushName : null,
+    }).returning({ id: academyWhatsappMessagesTable.id });
+
+    if (content && "media" in content && content.media.pending) {
+      // WAHA keeps a received file for a few minutes only: copy it now.
+      const kept = await keepIncomingMedia(academyId, String((payload.media as { url: string }).url), content.media);
+      await db.update(academyWhatsappMessagesTable)
+        .set({ content: { ...content, media: kept } as WhatsappContent })
+        .where(eq(academyWhatsappMessagesTable.id, stored.id));
+    }
+
+    if (fromMe || isGroup) return;
+    await upsertContact(academyId, chatKey, { kind: "unknown", source: "whatsapp", name: pushName });
 
     const word = body.trim().toLowerCase().replace(/[.!؟?]+$/, "");
-    const settings = await getWhatsappSettings(academyId);
     if (STOP_WORDS.has(word)) {
-      await db.insert(academyWhatsappOptOutsTable).values({ academyId, phone }).onConflictDoNothing();
+      await db.insert(academyWhatsappOptOutsTable).values({ academyId, phone: chatKey }).onConflictDoNothing();
       await enqueueMessages([{
         academyId,
         kind: "reply",
-        phone,
+        phone: chatKey,
         body: settings.locale === "en"
           ? "You won't receive more messages from us. Reply START to subscribe again."
           : "تمام، ما رح توصلك رسائل منّا بعد هيك. ابعت تفعيل إذا بدك ترجع تستقبلها.",
@@ -558,10 +669,101 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
     } else if (START_WORDS.has(word)) {
       await db.delete(academyWhatsappOptOutsTable).where(and(
         eq(academyWhatsappOptOutsTable.academyId, academyId),
-        eq(academyWhatsappOptOutsTable.phone, phone),
+        eq(academyWhatsappOptOutsTable.phone, chatKey),
       ));
     }
   }
+}
+
+async function keepIncomingMedia(academyId: number, url: string, placeholder: WaMedia): Promise<WaMedia> {
+  try {
+    const file = await downloadWahaFile(url, MAX_CHAT_MEDIA_BYTES);
+    if (!file) return { ...placeholder, pending: false };
+    const mimetype = placeholder.mimetype !== "application/octet-stream" ? placeholder.mimetype : file.mimetype;
+    return await storeChatMedia(academyId, file.buffer, mimetype, placeholder.filename);
+  } catch (error) {
+    logger.warn({ academyId, error: (error as Error).message }, "Keeping a WhatsApp file failed");
+    return { ...placeholder, pending: false };
+  }
+}
+
+/** The academy that follows this group on this WhatsApp number, if any. */
+async function followedGroup(session: string, groupId: string): Promise<{ academyId: number } | null> {
+  const own = academyForSession(session);
+  const rows = await db.select({ academyId: academyWhatsappGroupsTable.academyId }).from(academyWhatsappGroupsTable)
+    .where(and(eq(academyWhatsappGroupsTable.groupId, groupId), eq(academyWhatsappGroupsTable.session, session)))
+    .limit(2);
+  if (own !== null) return rows.find((r) => r.academyId === own) ?? null;
+  return rows[0] ?? null;
+}
+
+/**
+ * Who a message to Replay's shared number is for, when it didn't come from an ad: the academy
+ * that last wrote to this phone from Replay's number, else the one academy that has the number
+ * in People as someone it knows (a parent, player, coach, staff or lead). Anyone else stays
+ * out, so personal chats on that phone never reach an academy.
+ */
+export async function academyForReplayNumber(phone: string): Promise<number | null> {
+  const [last] = await db
+    .select({ academyId: academyWhatsappMessagesTable.academyId })
+    .from(academyWhatsappMessagesTable)
+    .where(and(
+      eq(academyWhatsappMessagesTable.phone, phone),
+      eq(academyWhatsappMessagesTable.direction, "out"),
+      eq(academyWhatsappMessagesTable.senderSession, REPLAY_SESSION),
+    ))
+    .orderBy(sql`${academyWhatsappMessagesTable.createdAt} desc`)
+    .limit(1);
+  if (last) return last.academyId;
+  const known = await db.selectDistinct({ academyId: academyContactsTable.academyId }).from(academyContactsTable)
+    .innerJoin(academyWhatsappSettingsTable, eq(academyWhatsappSettingsTable.academyId, academyContactsTable.academyId))
+    .where(and(
+      eq(academyContactsTable.phone, phone),
+      inArray(academyContactsTable.kind, ["parent", "player", "coach", "staff", "lead"]),
+      eq(academyWhatsappSettingsTable.sender, "replay"),
+    ))
+    .limit(2);
+  return known.length === 1 ? known[0].academyId : null;
+}
+
+/** A vote on a poll an academy sent. A changed vote replaces the old one; an empty one removes it. */
+async function handlePollVote(session: string, payload: Record<string, unknown>): Promise<void> {
+  const vote = (payload.vote ?? {}) as { from?: unknown; participant?: unknown; fromMe?: unknown; selectedOptions?: unknown; timestamp?: unknown };
+  const poll = (payload.poll ?? {}) as { id?: unknown };
+  const pollId = bareMessageId(typeof poll.id === "string" ? poll.id : null);
+  if (!pollId) return;
+  const [message] = await db.select({ id: academyWhatsappMessagesTable.id, academyId: academyWhatsappMessagesTable.academyId })
+    .from(academyWhatsappMessagesTable)
+    .where(eq(academyWhatsappMessagesTable.waMessageId, pollId))
+    .limit(1);
+  if (!message) return;
+  let voterPhone: string | null;
+  if (vote.fromMe === true) {
+    voterPhone = "me";
+  } else {
+    const who = [vote.participant, vote.from].find((v): v is string => typeof v === "string" && !v.endsWith("@g.us")) ?? "";
+    voterPhone = who ? await phoneForChat(session, who, payload, false) : null;
+    voterPhone ??= who ? who.split("@")[0] : null;
+  }
+  if (!voterPhone) return;
+  const options = Array.isArray(vote.selectedOptions) ? vote.selectedOptions.map(String).filter(Boolean).slice(0, 12) : [];
+  if (options.length === 0) {
+    await db.delete(academyWhatsappPollVotesTable).where(and(
+      eq(academyWhatsappPollVotesTable.messageId, message.id),
+      eq(academyWhatsappPollVotesTable.voterPhone, voterPhone),
+    ));
+    return;
+  }
+  const [contact] = voterPhone === "me" ? [] : await db.select({ name: academyContactsTable.name }).from(academyContactsTable)
+    .where(and(eq(academyContactsTable.academyId, message.academyId), eq(academyContactsTable.phone, voterPhone))).limit(1);
+  const seconds = Number(vote.timestamp);
+  const votedAt = Number.isFinite(seconds) && seconds > 0 ? new Date(seconds < 1e12 ? seconds * 1000 : seconds) : new Date();
+  await db.insert(academyWhatsappPollVotesTable)
+    .values({ messageId: message.id, voterPhone, voterName: contact?.name ?? null, options, votedAt })
+    .onConflictDoUpdate({
+      target: [academyWhatsappPollVotesTable.messageId, academyWhatsappPollVotesTable.voterPhone],
+      set: { options, votedAt, voterName: contact?.name ?? null },
+    });
 }
 
 /**
@@ -587,25 +789,21 @@ export async function dispatchMessageNow(messageId: number): Promise<"sent" | "q
     update academy_whatsapp_messages
     set status = 'sending', attempts = attempts + 1, claimed_at = now(), sender_session = ${session}
     where id = ${messageId} and status = 'queued'
-    returning id, academy_id, phone, body, attempts, kind
+    returning id, academy_id, phone, body, attempts, kind, content
   `);
   const row = ((result as unknown as { rows: ClaimedRow[] }).rows ?? [])[0];
   if (!row) return "queued";
-  let text = row.body;
-  if (session === REPLAY_SESSION) {
-    const [academy] = await db.select({ name: academiesTable.name }).from(academiesTable).where(eq(academiesTable.id, row.academy_id));
-    text = `*${academy?.name ?? ""}*\n${row.body}`.trim();
-  }
+  const [academy] = await db.select({ name: academiesTable.name }).from(academiesTable).where(eq(academiesTable.id, row.academy_id));
   try {
-    const chatId = await checkNumber(session, row.phone);
-    if (!chatId) {
-      await finish(row.id, { status: "failed", error: "This number is not on WhatsApp" });
-      return "failed";
-    }
-    const waId = await sendText(session, chatId, text);
+    const waId = await deliver(session, row, academy?.name ?? null);
     await finish(row.id, { status: "sent", sentAt: new Date(), waMessageId: bareMessageId(waId), error: null });
     return "sent";
   } catch (error) {
+    const final = deliveryFailure(error);
+    if (final) {
+      await finish(row.id, { status: "failed", error: final });
+      return "failed";
+    }
     const transient = error instanceof WahaError ? error.transient : true;
     const message = (error as Error).message?.slice(0, 500) ?? "Send failed";
     if (transient && row.attempts < MAX_ATTEMPTS) {

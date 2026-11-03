@@ -60,3 +60,26 @@ export function formatPhoneForDisplay(phone: string): string {
   if (/^9627\d{8}$/.test(phone)) return `+962 ${phone.slice(3, 5)} ${phone.slice(5, 8)} ${phone.slice(8)}`;
   return `+${phone}`;
 }
+
+// ─── Group chats: stored under the key "g:<groupId>" where a person's chat uses the phone ───
+
+const GROUP_ID = /^\d{6,30}(-\d{6,15})?$/;
+
+export function isGroupKey(key: string | null | undefined): boolean {
+  return typeof key === "string" && key.startsWith("g:") && GROUP_ID.test(key.slice(2));
+}
+
+export function groupKey(groupId: string): string {
+  return `g:${groupId.replace(/@g\.us$/, "")}`;
+}
+
+export function groupIdFromKey(key: string): string | null {
+  return isGroupKey(key) ? key.slice(2) : null;
+}
+
+/** A chat key from a URL: a phone number (normalised) or a group key. */
+export function chatKeyFromParam(raw: string | null | undefined): string | null {
+  const value = (raw ?? "").trim();
+  if (isGroupKey(value)) return value;
+  return normalizePhone(value);
+}

@@ -165,6 +165,9 @@ export async function getSession(name: string): Promise<WahaSession | null> {
   }
 }
 
+/** Every event Replay handles. A session created before one was added is refreshed by refreshWebhookEvents. */
+export const WEBHOOK_EVENTS = ["message.any", "message.ack", "session.status", "poll.vote"] as const;
+
 function sessionConfig(metadata: Record<string, string>) {
   const secret = wahaWebhookSecret();
   return {
@@ -172,7 +175,7 @@ function sessionConfig(metadata: Record<string, string>) {
     webhooks: [
       {
         url: webhookUrl(),
-        events: ["message.any", "message.ack", "session.status"],
+        events: [...WEBHOOK_EVENTS],
         ...(secret ? { hmac: { key: secret } } : {}),
         retries: { policy: "constant", delaySeconds: 5, attempts: 6 },
       },
@@ -299,4 +302,138 @@ export function bareMessageId(id: string | null | undefined): string | null {
   if (!id) return null;
   const parts = id.split("_");
   return parts.length >= 3 ? parts.slice(2).join("_") : id;
+}
+
+/**
+ * Make an existing session's webhook ask for every event in WEBHOOK_EVENTS (votes on polls
+ * arrive as "poll.vote"). WAHA restarts a running session to apply a config change, so this
+ * only writes when something is missing. Returns true when it updated the session.
+ */
+export async function refreshWebhookEvents(name: string): Promise<boolean> {
+  const raw = await wahaRequest<{ config?: { metadata?: Record<string, string>; webhooks?: Array<{ url?: string; events?: string[] }> } }>(
+    "GET", `/api/sessions/${encodeURIComponent(name)}`, undefined, { timeoutMs: 6_000 },
+  );
+  const hook = raw?.config?.webhooks?.find((w) => w.url === webhookUrl()) ?? raw?.config?.webhooks?.[0];
+  const events = new Set(hook?.events ?? []);
+  if (WEBHOOK_EVENTS.every((e) => events.has(e) || events.has("*"))) return false;
+  await wahaRequest("PUT", `/api/sessions/${encodeURIComponent(name)}`, { name, config: sessionConfig(raw?.config?.metadata ?? {}) });
+  return true;
+}
+
+// ─── Media, locations, polls, groups ─────────────────────────────────────────
+
+/** A file WAHA downloads from a public URL (Replay's media sits on the Bunny pull zone). */
+export type WahaFile = { url: string; mimetype: string; filename?: string };
+
+async function send(path: string, body: Record<string, unknown>): Promise<string | null> {
+  // Media sends wait while WAHA downloads (and maybe converts) the file.
+  return messageIdFrom(await wahaRequest("POST", path, body, { timeoutMs: 90_000 }));
+}
+
+export function sendImage(session: string, chatId: string, file: WahaFile, caption?: string) {
+  return send("/api/sendImage", { session, chatId, file, ...(caption ? { caption } : {}) });
+}
+
+/** A video; with `gif` WhatsApp shows it as a looping, silent GIF. */
+export function sendVideo(session: string, chatId: string, file: WahaFile, caption?: string, gif = false) {
+  // GOWS turns on gifPlayback when the file is labelled image/gif; the bytes are an MP4.
+  const labelled = gif ? { ...file, mimetype: "image/gif" } : file;
+  return send("/api/sendVideo", { session, chatId, file: labelled, convert: true, caption: caption ?? "" });
+}
+
+export function sendVoice(session: string, chatId: string, file: WahaFile) {
+  return send("/api/sendVoice", { session, chatId, file, convert: true });
+}
+
+export function sendFile(session: string, chatId: string, file: WahaFile, caption?: string) {
+  return send("/api/sendFile", { session, chatId, file, ...(caption ? { caption } : {}) });
+}
+
+export function sendSticker(session: string, chatId: string, file: WahaFile) {
+  return send("/api/sendSticker", { session, chatId, file });
+}
+
+export function sendLocation(session: string, chatId: string, latitude: number, longitude: number, title?: string) {
+  return send("/api/sendLocation", { session, chatId, latitude, longitude, title: title ?? "" });
+}
+
+export function sendPoll(session: string, chatId: string, poll: { name: string; options: string[]; multipleAnswers: boolean }) {
+  return send("/api/sendPoll", { session, chatId, poll });
+}
+
+export type WahaGroup = { id: string; subject: string; participants: number | null };
+
+function toGroup(raw: unknown): WahaGroup | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const rawId = r.JID ?? r.id ?? (r.id as { _serialized?: unknown } | undefined)?._serialized ?? r.gid;
+  const id = typeof rawId === "string" ? rawId
+    : typeof (rawId as { _serialized?: unknown } | undefined)?._serialized === "string" ? String((rawId as { _serialized: string })._serialized) : "";
+  if (!id.endsWith("@g.us")) return null;
+  const subject = String(r.Name ?? r.subject ?? r.name ?? "").trim();
+  const list = r.Participants ?? r.participants;
+  return { id: id.slice(0, -"@g.us".length), subject: subject || "Group", participants: Array.isArray(list) ? list.length : null };
+}
+
+/** Groups the session's number is in. */
+export async function listGroups(session: string): Promise<WahaGroup[]> {
+  const raw = await wahaRequest<unknown>("GET", `/api/${encodeURIComponent(session)}/groups?limit=500`, undefined, { timeoutMs: 30_000 });
+  const list = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? Object.values(raw as Record<string, unknown>) : [];
+  return list.map(toGroup).filter((g): g is WahaGroup => g !== null);
+}
+
+export async function getGroup(session: string, groupId: string): Promise<WahaGroup | null> {
+  try {
+    return toGroup(await wahaRequest("GET", `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(`${groupId}@g.us`)}`, undefined, { timeoutMs: 10_000 }));
+  } catch (error) {
+    if (error instanceof WahaError && (error.status === 404 || error.status === 400)) return null;
+    throw error;
+  }
+}
+
+/** Create a group with the given members (chat ids like 9627…@c.us). Returns its id without "@g.us". */
+export async function createGroup(session: string, subject: string, participantChatIds: string[]): Promise<WahaGroup> {
+  const raw = await wahaRequest("POST", `/api/${encodeURIComponent(session)}/groups`, {
+    name: subject,
+    participants: participantChatIds.map((id) => ({ id })),
+  }, { timeoutMs: 60_000 });
+  const group = toGroup(raw);
+  if (!group) throw new WahaError(502, "WhatsApp did not return the new group", true);
+  return { ...group, subject: group.subject === "Group" ? subject : group.subject };
+}
+
+export async function addGroupParticipants(session: string, groupId: string, participantChatIds: string[]): Promise<void> {
+  await wahaRequest("POST", `/api/${encodeURIComponent(session)}/groups/${encodeURIComponent(`${groupId}@g.us`)}/participants/add`, {
+    participants: participantChatIds.map((id) => ({ id })),
+  }, { timeoutMs: 30_000 });
+}
+
+/**
+ * Download a file WAHA saved for an incoming message. Its URL names WAHA's own host, which
+ * need not be reachable from here, so only the path is kept and fetched from wahaBaseUrl().
+ */
+export async function downloadWahaFile(mediaUrl: string, maxBytes: number): Promise<{ buffer: Buffer; mimetype: string } | null> {
+  const base = wahaBaseUrl();
+  const key = wahaApiKey();
+  if (!base || !key) return null;
+  let path: string;
+  try {
+    const parsed = new URL(mediaUrl, base);
+    path = parsed.pathname;
+  } catch {
+    return null;
+  }
+  if (!path.startsWith("/api/files/")) return null;
+  const response = await fetch(`${base}${path}`, { headers: { "x-api-key": key }, signal: AbortSignal.timeout(60_000) });
+  if (!response.ok || !response.body) return null;
+  const declared = Number(response.headers.get("content-length") ?? 0);
+  if (declared > maxBytes) return null;
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+    size += chunk.byteLength;
+    if (size > maxBytes) return null;
+    chunks.push(Buffer.from(chunk));
+  }
+  return { buffer: Buffer.concat(chunks), mimetype: response.headers.get("content-type")?.split(";")[0]?.trim() || "application/octet-stream" };
 }

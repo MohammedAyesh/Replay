@@ -58,6 +58,7 @@ export type SocialThreadSummary = {
   muted: boolean;
   blocked: boolean;
   replyWindow: ReplyWindow;
+  assignedUserId?: number | null;
   lastInAt: string | null;
   lastAt: string | null;
   lastBody: string;
@@ -206,6 +207,15 @@ export function useSocialThreadState(academyId: number) {
   return useMutation({
     mutationFn: ({ threadId, state }: { threadId: number; state: Partial<Record<"archived" | "muted" | "blocked" | "personal", boolean>> }) =>
       call(`${root(academyId)}/threads/${threadId}/state`, { method: "POST", body: JSON.stringify(state) }),
+    onSuccess: done,
+  });
+}
+
+export function useAssignSocialThread(academyId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: ({ threadId, userId }: { threadId: number; userId: number | null }) =>
+      call(`${root(academyId)}/threads/${threadId}/assign`, { method: "POST", body: JSON.stringify({ userId }) }),
     onSuccess: done,
   });
 }

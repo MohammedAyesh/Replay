@@ -5,6 +5,7 @@ import { and, desc, eq, getTableColumns, inArray, isNull, sql } from "drizzle-or
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import {
+  academyMembersTable,
   academyAdMediaTable,
   academyContactsTable,
   academySocialCommentsTable,
@@ -211,6 +212,7 @@ function threadView(t: AcademySocialThread, contact: typeof academyContactsTable
     replyWindow: replyWindow(t),
     lastInAt: t.lastInAt,
     lastAt: t.lastAt,
+    assignedUserId: t.assignedUserId,
     ...extra,
   };
 }
@@ -339,6 +341,33 @@ router.post(`${base}/threads/:threadId/state`, async (req, res): Promise<void> =
   const [row] = await db.update(academySocialThreadsTable).set(patch).where(eq(academySocialThreadsTable.id, thread.id)).returning();
   if (body.data.personal) await db.delete(academySocialMessagesTable).where(eq(academySocialMessagesTable.threadId, thread.id));
   res.json({ id: row.id, archived: Boolean(row.archivedAt), muted: row.muted, blocked: Boolean(row.blockedAt), personal: Boolean(row.personalAt) });
+});
+
+/** Hand an Instagram / Messenger chat to someone on the team (or nobody). */
+router.post(`${base}/threads/:threadId/assign`, async (req, res): Promise<void> => {
+  const a = await access(req, res);
+  if (!a) return;
+  const thread = await threadFor(a.academyId, intParam(req.params.threadId));
+  if (!thread) {
+    res.status(404).json({ error: "Chat not found" });
+    return;
+  }
+  const raw = req.body?.userId;
+  const userId = raw === null ? null : Number(raw);
+  if (userId !== null && !(Number.isSafeInteger(userId) && userId > 0)) {
+    res.status(400).json({ error: "Pick someone on the team" });
+    return;
+  }
+  if (userId !== null) {
+    const [member] = await db.select({ id: academyMembersTable.userId }).from(academyMembersTable)
+      .where(and(eq(academyMembersTable.academyId, a.academyId), eq(academyMembersTable.userId, userId))).limit(1);
+    if (!member) {
+      res.status(404).json({ error: "That person isn't on this academy's team" });
+      return;
+    }
+  }
+  await db.update(academySocialThreadsTable).set({ assignedUserId: userId, updatedAt: new Date() }).where(eq(academySocialThreadsTable.id, thread.id));
+  res.json({ id: thread.id, assignedUserId: userId });
 });
 
 router.get(`${base}/threads-hidden`, async (req, res): Promise<void> => {

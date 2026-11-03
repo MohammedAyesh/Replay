@@ -36,6 +36,12 @@ const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   { table: "academy_contacts", column: "blocked_at", type: "timestamp with time zone" },
   { table: "academy_contacts", column: "personal_at", type: "timestamp with time zone" },
   { table: "academy_contacts", column: "link_dismissed_at", type: "timestamp with time zone" },
+  // 0057_academy_whatsapp_native.sql
+  { table: "academy_whatsapp_messages", column: "content", type: "jsonb" },
+  { table: "academy_whatsapp_messages", column: "author_phone", type: "text" },
+  { table: "academy_whatsapp_messages", column: "author_name", type: "text" },
+  { table: "academy_contacts", column: "assigned_user_id", type: `integer CONSTRAINT "academy_contacts_assigned_user_id_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL` },
+  { table: "academy_social_threads", column: "assigned_user_id", type: `integer CONSTRAINT "academy_social_threads_assigned_user_id_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL` },
 ];
 
 const TABLES: Array<{ table: string; statements: string[] }> = [
@@ -230,6 +236,20 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   CONSTRAINT "academy_creative_projects_render_status_check" CHECK ("render_status" in ('none', 'queued', 'rendering', 'done', 'failed')))`,
       `CREATE UNIQUE INDEX IF NOT EXISTS "academy_creative_projects_origin_unique" ON "academy_creative_projects" ("academy_id", "origin_key") WHERE "origin_key" is not null`,
       `CREATE INDEX IF NOT EXISTS "academy_creative_projects_academy_idx" ON "academy_creative_projects" ("academy_id", "updated_at")`,
+    ],
+  },
+  // 0057_academy_whatsapp_native.sql
+  {
+    table: "academy_whatsapp_groups",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "academy_whatsapp_groups" ("id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "academy_whatsapp_groups_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "group_id" text NOT NULL, "session" text NOT NULL, "subject" text NOT NULL, "origin" text DEFAULT 'replay' NOT NULL, "squad_id" integer CONSTRAINT "academy_whatsapp_groups_squad_id_academy_squads_id_fk" REFERENCES "academy_squads"("id") ON DELETE SET NULL, "assigned_user_id" integer CONSTRAINT "academy_whatsapp_groups_assigned_user_id_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "last_read_at" timestamp with time zone, "archived_at" timestamp with time zone, "muted" boolean DEFAULT false NOT NULL, "created_by" integer CONSTRAINT "academy_whatsapp_groups_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "academy_whatsapp_groups_academy_group_unique" UNIQUE ("academy_id", "group_id"), CONSTRAINT "academy_whatsapp_groups_origin_check" CHECK ("origin" in ('replay', 'existing')))`,
+      `CREATE INDEX IF NOT EXISTS "academy_whatsapp_groups_group_idx" ON "academy_whatsapp_groups" ("group_id")`,
+    ],
+  },
+  {
+    table: "academy_whatsapp_poll_votes",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS "academy_whatsapp_poll_votes" ("id" serial PRIMARY KEY, "message_id" integer NOT NULL CONSTRAINT "academy_whatsapp_poll_votes_message_id_academy_whatsapp_messages_id_fk" REFERENCES "academy_whatsapp_messages"("id") ON DELETE CASCADE, "voter_phone" text NOT NULL, "voter_name" text, "options" jsonb DEFAULT '[]'::jsonb NOT NULL, "voted_at" timestamp with time zone DEFAULT now() NOT NULL, CONSTRAINT "academy_whatsapp_poll_votes_message_voter_unique" UNIQUE ("message_id", "voter_phone"))`,
     ],
   },
 ];

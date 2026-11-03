@@ -6,13 +6,17 @@ import {
   academiesTable,
   academyContactPlayersTable,
   academyContactsTable,
+  academyMembersTable,
   academyPlayersTable,
   academySquadsTable,
   academyWhatsappBroadcastsTable,
+  academyWhatsappGroupsTable,
   academyWhatsappMessagesTable,
+  academyWhatsappPollVotesTable,
   academyWhatsappOptOutsTable,
   academyWhatsappSettingsTable,
   db,
+  usersTable,
 } from "@workspace/db";
 import {
   requireAcademyConsoleUser,
@@ -34,7 +38,8 @@ import {
   type LeadStage,
   type Relationship,
 } from "../lib/whatsapp/contacts";
-import { formatPhoneForDisplay, normalizePhone, phoneFromChatId } from "../lib/whatsapp/phone";
+import { chatKeyFromParam, formatPhoneForDisplay, groupIdFromKey, groupKey, isGroupKey, normalizePhone, phoneFromChatId } from "../lib/whatsapp/phone";
+import { MAX_CHAT_MEDIA_BYTES, gifToMp4, mediaUrl, storeChatMedia, summaryFor, type WaMedia, type WhatsappContent } from "../lib/whatsapp/media";
 import {
   dispatchMessageNow,
   dispatchQueue,
@@ -58,6 +63,11 @@ import {
   REPLAY_SESSION,
   WahaError,
   academySessionName,
+  addGroupParticipants,
+  checkNumber,
+  createGroup,
+  listGroups,
+  refreshWebhookEvents,
   ensureSessionStarted,
   getQrDataUrl,
   getSession,
@@ -828,13 +838,36 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
       logger.warn({ error: (error as Error)?.message }, "Social tick failed");
       return "failed" as const;
     });
-    res.json({ scheduled, dispatched, meta: typeof meta === "string" ? meta : "synced", social, ms: Date.now() - started });
+    const webhooks = await maybeRefreshWebhooks();
+    res.json({ scheduled, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, ms: Date.now() - started });
   } catch (error) {
     // vps1 logs this body: say what broke (e.g. a table missing after a publish).
     logger.error({ error: (error as Error)?.message }, "WhatsApp tick failed");
     res.status(500).json({ error: describeDbError(error) });
   }
 });
+
+let webhooksCheckedAt = 0;
+
+/**
+ * Sessions linked before an event was added (poll votes) don't send it. Every 6 hours the tick
+ * checks each working session and updates the ones missing an event (WAHA restarts them).
+ */
+async function maybeRefreshWebhooks(): Promise<string[]> {
+  if (Date.now() - webhooksCheckedAt < 6 * 3_600_000) return [];
+  webhooksCheckedAt = Date.now();
+  const updated: string[] = [];
+  try {
+    for (const session of await listSessions()) {
+      if (session.status !== "WORKING") continue;
+      if (session.name !== REPLAY_SESSION && !/^academy-\d+$/.test(session.name)) continue;
+      if (await refreshWebhookEvents(session.name).catch(() => false)) updated.push(session.name);
+    }
+  } catch (error) {
+    logger.warn({ error: (error as Error)?.message }, "Checking WhatsApp webhooks failed");
+  }
+  return updated;
+}
 
 /** Express gives this route the raw body (see app.ts) so the HMAC is checked over exact bytes. */
 router.post("/whatsapp/webhook", async (req, res): Promise<void> => {
@@ -872,8 +905,27 @@ router.post("/whatsapp/webhook", async (req, res): Promise<void> => {
 
 function phoneParam(req: Request, res: Response): string | null {
   const phone = normalizePhone(rawParam(req.params.phone));
-  if (!phone) res.status(400).json({ error: "Invalid phone number" });
-  return phone;
+  if (!phone || isGroupKey(rawParam(req.params.phone))) res.status(400).json({ error: "Invalid phone number" });
+  return phone && !isGroupKey(rawParam(req.params.phone)) ? phone : null;
+}
+
+/** A person's phone or a group's "g:<id>". */
+function chatKeyParam(req: Request, res: Response): string | null {
+  const key = chatKeyFromParam(rawParam(req.params.phone));
+  if (!key) res.status(400).json({ error: "Invalid chat" });
+  return key;
+}
+
+async function groupRow(academyId: number, key: string) {
+  const groupId = groupIdFromKey(key);
+  if (!groupId) return null;
+  const [row] = await db.select().from(academyWhatsappGroupsTable)
+    .where(and(eq(academyWhatsappGroupsTable.academyId, academyId), eq(academyWhatsappGroupsTable.groupId, groupId)));
+  return row ?? null;
+}
+
+function groupView(g: typeof academyWhatsappGroupsTable.$inferSelect) {
+  return { id: g.id, groupId: g.groupId, subject: g.subject, origin: g.origin, squadId: g.squadId };
 }
 
 function contactView(
@@ -904,20 +956,45 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
       (array_agg(m.body order by m.created_at desc, m.id desc))[1] as "lastBody",
       (array_agg(m.direction order by m.created_at desc, m.id desc))[1] as "lastDirection",
       (array_agg(m.status order by m.created_at desc, m.id desc))[1] as "lastStatus",
-      count(*) filter (where m.direction = 'in' and m.created_at > coalesce(c.last_read_at, 'epoch'::timestamptz))::int as "unread"
+      (array_agg(m.author_name order by m.created_at desc, m.id desc))[1] as "lastAuthor",
+      count(*) filter (where m.direction = 'in' and m.created_at > coalesce(c.last_read_at, g.last_read_at, 'epoch'::timestamptz))::int as "unread"
     from academy_whatsapp_messages m
     left join academy_contacts c on c.academy_id = m.academy_id and c.phone = m.phone
+    left join academy_whatsapp_groups g on g.academy_id = m.academy_id and m.phone = 'g:' || g.group_id
     where m.academy_id = ${access.academyId} and c.personal_at is null
-    group by m.phone, c.last_read_at
+      and (m.phone not like 'g:%' or g.id is not null)
+    group by m.phone, c.last_read_at, g.last_read_at
     order by max(m.created_at) desc
     limit 300
   `);
-  const rows = (result as unknown as { rows: Array<{ phone: string; lastAt: string; lastBody: string; lastDirection: string; lastStatus: string; unread: number }> }).rows ?? [];
-  const contacts = rows.length === 0 ? [] : await db.select().from(academyContactsTable)
-    .where(and(eq(academyContactsTable.academyId, access.academyId), inArray(academyContactsTable.phone, rows.map((r) => r.phone))));
+  const rows = (result as unknown as { rows: Array<{ phone: string; lastAt: string; lastBody: string; lastDirection: string; lastStatus: string; lastAuthor: string | null; unread: number }> }).rows ?? [];
+  const phones = rows.map((r) => r.phone).filter((p) => !isGroupKey(p));
+  const contacts = phones.length === 0 ? [] : await db.select().from(academyContactsTable)
+    .where(and(eq(academyContactsTable.academyId, access.academyId), inArray(academyContactsTable.phone, phones)));
   const links = await linksForContacts(contacts.map((c) => c.id));
   const byPhone = new Map(contacts.map((c) => [c.phone, c]));
-  res.json(rows.map((r) => {
+  const groups = await db.select().from(academyWhatsappGroupsTable).where(eq(academyWhatsappGroupsTable.academyId, access.academyId));
+  const groupByKey = new Map(groups.map((g) => [groupKey(g.groupId), g]));
+  const chats = rows.map((r) => {
+    const group = groupByKey.get(r.phone);
+    if (group) {
+      return {
+        phone: r.phone,
+        display: group.subject,
+        lastAt: r.lastAt,
+        lastBody: r.lastAuthor && r.lastDirection === "in" ? `${r.lastAuthor}: ${r.lastBody}` : r.lastBody,
+        lastDirection: r.lastDirection,
+        lastStatus: r.lastStatus,
+        unread: r.unread,
+        archived: Boolean(group.archivedAt),
+        muted: group.muted,
+        blocked: false,
+        linkLater: true,
+        assignedUserId: group.assignedUserId,
+        group: groupView(group),
+        contact: null,
+      };
+    }
     const contact = byPhone.get(r.phone);
     return {
       phone: r.phone,
@@ -931,9 +1008,24 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats", async (req, r
       muted: contact?.muted ?? false,
       blocked: Boolean(contact?.blockedAt),
       linkLater: Boolean(contact?.linkDismissedAt),
+      assignedUserId: contact?.assignedUserId ?? null,
+      group: null,
       contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
     };
-  }));
+  });
+  // A group just created has no messages yet; it still belongs in the list.
+  const listed = new Set(rows.map((r) => r.phone));
+  for (const g of groups) {
+    const key = groupKey(g.groupId);
+    if (listed.has(key)) continue;
+    chats.push({
+      phone: key, display: g.subject, lastAt: g.createdAt.toISOString(), lastBody: "", lastDirection: "out", lastStatus: "sent",
+      unread: 0, archived: Boolean(g.archivedAt), muted: g.muted, blocked: false, linkLater: true,
+      assignedUserId: g.assignedUserId, group: groupView(g), contact: null,
+    });
+  }
+  chats.sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime());
+  res.json(chats);
 });
 
 // ─── Chat controls: archive, mute, block, personal, "who is this" ────────────
@@ -954,7 +1046,7 @@ const ChatStateBody = z.object({
 router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/state", async (req, res): Promise<void> => {
   const access = await academyAccess(req, res);
   if (!access) return;
-  const phone = phoneParam(req, res);
+  const phone = chatKeyParam(req, res);
   if (!phone) return;
   const body = ChatStateBody.safeParse(req.body ?? {});
   if (!body.success || Object.keys(body.data).length === 0) {
@@ -963,6 +1055,35 @@ router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/state",
   }
   if (!(await canManageChats(access))) {
     res.status(403).json({ error: "Only the academy owner can archive, mute, block or hide chats, unless he gives your role that permission.", code: "chats_manage" });
+    return;
+  }
+  if (isGroupKey(phone)) {
+    const group = await groupRow(access.academyId, phone);
+    if (!group) {
+      res.status(404).json({ error: "Group not found" });
+      return;
+    }
+    if (body.data.blocked) {
+      res.status(400).json({ error: "A group can't be blocked. Stop following it instead." });
+      return;
+    }
+    if (body.data.personal) {
+      // "Stop following": the group leaves Replay and what was stored from it goes.
+      await db.delete(academyWhatsappMessagesTable).where(and(
+        eq(academyWhatsappMessagesTable.academyId, access.academyId),
+        eq(academyWhatsappMessagesTable.phone, phone),
+      ));
+      await db.delete(academyWhatsappGroupsTable).where(eq(academyWhatsappGroupsTable.id, group.id));
+      res.json({ phone, archived: false, muted: false, blocked: false, personal: true });
+      return;
+    }
+    const now = new Date();
+    const [row] = await db.update(academyWhatsappGroupsTable).set({
+      updatedAt: now,
+      ...(body.data.archived !== undefined ? { archivedAt: body.data.archived ? now : null } : {}),
+      ...(body.data.muted !== undefined ? { muted: body.data.muted } : {}),
+    }).where(eq(academyWhatsappGroupsTable.id, group.id)).returning();
+    res.json({ phone, archived: Boolean(row.archivedAt), muted: row.muted, blocked: false, personal: false });
     return;
   }
   const contact = await upsertContact(access.academyId, phone, { source: "chat" });
@@ -1034,26 +1155,95 @@ router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/who", a
   res.json({ phone, kind: row.kind, linkLater: Boolean(row.linkDismissedAt) });
 });
 
+// ─── One chat: messages with their files, locations, polls and votes ─────────
+
+type MessageRow = typeof academyWhatsappMessagesTable.$inferSelect;
+
+/** Media gets its URL; a poll gets its tally. */
+async function messagesView(rows: MessageRow[]) {
+  const pollIds = rows.filter((m) => (m.content as WhatsappContent | null)?.type === "poll").map((m) => m.id);
+  const votes = pollIds.length === 0 ? [] : await db.select().from(academyWhatsappPollVotesTable)
+    .where(inArray(academyWhatsappPollVotesTable.messageId, pollIds));
+  const senderIds = [...new Set(rows.map((m) => m.createdBy).filter((id): id is number => id !== null))];
+  const senders = senderIds.length === 0 ? [] : await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable)
+    .where(inArray(usersTable.id, senderIds));
+  const senderName = new Map(senders.map((u) => [u.id, u.name]));
+  return rows.map((m) => {
+    const content = m.content as WhatsappContent | null;
+    let view: Record<string, unknown> | null = null;
+    if (content) {
+      if ("media" in content) {
+        view = { ...content, media: { mimetype: content.media.mimetype, filename: content.media.filename ?? null, size: content.media.size ?? null, url: mediaUrl(content.media), pending: content.media.pending === true } };
+      } else if (content.type === "poll") {
+        const mine = votes.filter((v) => v.messageId === m.id);
+        view = {
+          ...content,
+          voters: mine.length,
+          tally: content.options.map((option) => {
+            const who = mine.filter((v) => Array.isArray(v.options) && (v.options as string[]).includes(option));
+            return { option, count: who.length, voters: who.map((v) => v.voterName || (v.voterPhone === "me" ? "You" : formatPhoneForDisplay(v.voterPhone))) };
+          }),
+        };
+      } else {
+        view = { ...content };
+      }
+    }
+    return {
+      id: m.id,
+      direction: m.direction,
+      kind: m.kind,
+      body: m.body,
+      status: m.status,
+      error: m.error,
+      createdAt: m.createdAt,
+      sentAt: m.sentAt,
+      content: view,
+      author: m.authorPhone || m.authorName ? { phone: m.authorPhone ? formatPhoneForDisplay(m.authorPhone) : null, name: m.authorName } : null,
+      sentBy: m.createdBy ? senderName.get(m.createdBy) ?? null : null,
+    };
+  });
+}
+
 router.get("/academy/console/academies/:academyId/whatsapp/chats/:phone", async (req, res): Promise<void> => {
   const access = await academyAccess(req, res);
   if (!access) return;
-  const phone = phoneParam(req, res);
+  const phone = chatKeyParam(req, res);
   if (!phone) return;
-  const messages = await db
-    .select({
-      id: academyWhatsappMessagesTable.id,
-      direction: academyWhatsappMessagesTable.direction,
-      kind: academyWhatsappMessagesTable.kind,
-      body: academyWhatsappMessagesTable.body,
-      status: academyWhatsappMessagesTable.status,
-      error: academyWhatsappMessagesTable.error,
-      createdAt: academyWhatsappMessagesTable.createdAt,
-      sentAt: academyWhatsappMessagesTable.sentAt,
-    })
+  const group = isGroupKey(phone) ? await groupRow(access.academyId, phone) : null;
+  if (isGroupKey(phone) && !group) {
+    res.status(404).json({ error: "Group not found" });
+    return;
+  }
+  const rows = await db
+    .select()
     .from(academyWhatsappMessagesTable)
     .where(and(eq(academyWhatsappMessagesTable.academyId, access.academyId), eq(academyWhatsappMessagesTable.phone, phone)))
     .orderBy(desc(academyWhatsappMessagesTable.createdAt), desc(academyWhatsappMessagesTable.id))
     .limit(300);
+  const messages = await messagesView(rows.reverse());
+  const canManage = await canManageChats(access);
+  if (group) {
+    if (req.query.markRead !== "0") {
+      await db.update(academyWhatsappGroupsTable).set({ lastReadAt: new Date() }).where(eq(academyWhatsappGroupsTable.id, group.id));
+    }
+    const settings = await getWhatsappSettings(access.academyId);
+    res.json({
+      phone,
+      display: group.subject,
+      group: groupView(group),
+      wrongNumber: senderSessionFor(settings) !== group.session,
+      contact: null,
+      optedOut: false,
+      archived: Boolean(group.archivedAt),
+      muted: group.muted,
+      blocked: false,
+      linkLater: true,
+      assignedUserId: group.assignedUserId,
+      canManage,
+      messages,
+    });
+    return;
+  }
   const [contact] = await db.select().from(academyContactsTable)
     .where(and(eq(academyContactsTable.academyId, access.academyId), eq(academyContactsTable.phone, phone)));
   if (contact && req.query.markRead !== "0") {
@@ -1064,49 +1254,411 @@ router.get("/academy/console/academies/:academyId/whatsapp/chats/:phone", async 
   res.json({
     phone,
     display: formatPhoneForDisplay(phone),
+    group: null,
+    wrongNumber: false,
     contact: contact ? contactView(contact, links.get(contact.id) ?? []) : null,
     optedOut: optOuts.has(phone),
     archived: Boolean(contact?.archivedAt),
     muted: contact?.muted ?? false,
     blocked: Boolean(contact?.blockedAt),
     linkLater: Boolean(contact?.linkDismissedAt),
-    canManage: await canManageChats(access),
-    messages: contact?.personalAt ? [] : messages.reverse(),
+    assignedUserId: contact?.assignedUserId ?? null,
+    canManage,
+    messages: contact?.personalAt ? [] : messages,
   });
 });
 
-const ChatSendBody = z.object({ body: z.string().trim().min(1).max(4000) });
+const MediaRef = z.object({
+  path: z.string().regex(/^wa-media\/\d+\/[0-9a-f]{32}\.[a-z0-9]{1,5}$/),
+  mimetype: z.string().min(3).max(150),
+  filename: z.string().max(200).nullable().optional(),
+  size: z.number().int().nonnegative().nullable().optional(),
+});
+const Caption = z.string().trim().max(1024).nullable().optional();
+const ContentBody = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("image"), media: MediaRef, caption: Caption }),
+  z.object({ type: z.literal("video"), media: MediaRef, caption: Caption, gif: z.boolean().optional() }),
+  z.object({ type: z.literal("document"), media: MediaRef, caption: Caption }),
+  z.object({ type: z.literal("audio"), media: MediaRef, voice: z.boolean().optional() }),
+  z.object({ type: z.literal("sticker"), media: MediaRef }),
+  z.object({
+    type: z.literal("location"),
+    latitude: z.number().min(-90).max(90),
+    longitude: z.number().min(-180).max(180),
+    name: z.string().trim().max(200).nullable().optional(),
+    address: z.string().trim().max(300).nullable().optional(),
+  }),
+  z.object({
+    type: z.literal("poll"),
+    name: z.string().trim().min(1).max(255),
+    options: z.array(z.string().trim().min(1).max(100)).min(2).max(12)
+      .refine((o) => new Set(o.map((x) => x.toLowerCase())).size === o.length, { message: "Each option must be different" }),
+    multipleAnswers: z.boolean().default(false),
+  }),
+]);
+const ChatSendBody = z.object({
+  body: z.string().trim().max(4000).optional(),
+  content: ContentBody.optional(),
+}).refine((b) => Boolean(b.body) || Boolean(b.content), { message: "Write a message first" });
 
 router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/messages", async (req, res): Promise<void> => {
   const access = await academyAccess(req, res);
   if (!access) return;
-  const phone = phoneParam(req, res);
+  const phone = chatKeyParam(req, res);
   if (!phone) return;
   const body = ChatSendBody.safeParse(req.body ?? {});
   if (!body.success) {
-    res.status(400).json({ error: "Write a message first" });
+    res.status(400).json({ error: body.error.issues[0]?.message === "Write a message first" ? "Write a message first" : body.error.issues[0]?.message ?? "Invalid message" });
+    return;
+  }
+  const content = (body.data.content ?? null) as WhatsappContent | null;
+  if (content && "media" in content && !content.media.path.startsWith(`wa-media/${access.academyId}/`)) {
+    res.status(400).json({ error: "Upload the file again" });
     return;
   }
   const settings = await getWhatsappSettings(access.academyId);
-  if (!senderSessionFor(settings)) {
+  const session = senderSessionFor(settings);
+  if (!session) {
     res.status(409).json({ error: "Turn WhatsApp on first: link your number or choose Replay's number." });
     return;
   }
-  const contact = await upsertContact(access.academyId, phone, { source: "chat" });
-  if (contact.blockedAt) {
-    res.status(409).json({ error: "This number is blocked. Unblock it to message it." });
-    return;
+  let recipientName: string | null = null;
+  if (isGroupKey(phone)) {
+    const group = await groupRow(access.academyId, phone);
+    if (!group) {
+      res.status(404).json({ error: "Group not found" });
+      return;
+    }
+    if (group.session !== session) {
+      res.status(409).json({ error: "This group is on the academy's other WhatsApp number. Switch back to that number to post in it." });
+      return;
+    }
+    recipientName = group.subject;
+  } else {
+    const contact = await upsertContact(access.academyId, phone, { source: "chat" });
+    if (contact.blockedAt) {
+      res.status(409).json({ error: "This number is blocked. Unblock it to message it." });
+      return;
+    }
+    recipientName = contact.name;
   }
   const [message] = await db.insert(academyWhatsappMessagesTable).values({
     academyId: access.academyId,
     kind: "chat",
     phone,
-    body: body.data.body,
-    recipientName: contact.name,
+    body: content ? (content.type === "poll" || content.type === "location" || !("caption" in content) || !content.caption ? summaryFor(content, settings.locale) : content.caption) : body.data.body!,
+    content,
+    recipientName,
     createdBy: access.user.id,
   }).returning({ id: academyWhatsappMessagesTable.id });
   const outcome = await dispatchMessageNow(message.id);
   res.status(201).json({ id: message.id, outcome });
+});
+
+// ─── Files and GIFs ──────────────────────────────────────────────────────────
+
+/** The browser sends the file's bytes as the body (see app.ts), its type as Content-Type. */
+router.post("/academy/console/academies/:academyId/whatsapp/media", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const bytes = Buffer.isBuffer(req.body) ? req.body : null;
+  if (!bytes || bytes.length === 0) {
+    res.status(400).json({ error: "Choose a file" });
+    return;
+  }
+  if (bytes.length > MAX_CHAT_MEDIA_BYTES) {
+    res.status(413).json({ error: "Files up to 30 MB can be sent" });
+    return;
+  }
+  const mimetype = String(req.headers["content-type"] ?? "application/octet-stream").split(";")[0].trim().toLowerCase();
+  const filename = String(req.query.filename ?? "").replace(/[\\/\r\n]/g, "").slice(0, 200) || null;
+  try {
+    if (mimetype === "image/gif") {
+      const mp4 = await gifToMp4(bytes);
+      const media = await storeChatMedia(access.academyId, mp4, "video/mp4", filename ? filename.replace(/\.gif$/i, ".mp4") : null);
+      res.status(201).json({ media, gif: true });
+      return;
+    }
+    const media = await storeChatMedia(access.academyId, bytes, mimetype, filename);
+    res.status(201).json({ media, gif: false, url: mediaUrl(media) });
+  } catch (error) {
+    logger.warn({ error: (error as Error).message }, "Storing a chat file failed");
+    res.status(502).json({ error: "The file couldn't be uploaded. Try again." });
+  }
+});
+
+function giphyKey(): string {
+  return (process.env.GIPHY_API_KEY ?? "").trim();
+}
+
+type GiphyItem = { id?: string; title?: string; images?: Record<string, { url?: string; mp4?: string; width?: string; height?: string }> };
+
+function giphyView(g: GiphyItem) {
+  const preview = g.images?.fixed_width_small?.mp4 ?? g.images?.fixed_width?.mp4 ?? g.images?.preview?.mp4 ?? null;
+  const still = g.images?.fixed_width_small_still?.url ?? g.images?.fixed_width_still?.url ?? null;
+  return { id: String(g.id ?? ""), title: g.title ?? "", preview, still };
+}
+
+/** GIF search (GIPHY), when a GIPHY key is set; otherwise the console offers uploading a GIF. */
+router.get("/academy/console/academies/:academyId/whatsapp/gifs", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const key = giphyKey();
+  if (!key) {
+    res.json({ enabled: false, results: [] });
+    return;
+  }
+  const q = String(req.query.q ?? "").trim().slice(0, 50);
+  const url = q
+    ? `https://api.giphy.com/v1/gifs/search?api_key=${encodeURIComponent(key)}&q=${encodeURIComponent(q)}&limit=24&rating=g`
+    : `https://api.giphy.com/v1/gifs/trending?api_key=${encodeURIComponent(key)}&limit=24&rating=g`;
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    const data = (await response.json()) as { data?: GiphyItem[] };
+    res.json({ enabled: true, results: (data.data ?? []).map(giphyView).filter((g) => g.id && g.preview) });
+  } catch {
+    res.status(502).json({ error: "GIF search isn't answering. Try again." });
+  }
+});
+
+router.post("/academy/console/academies/:academyId/whatsapp/gifs", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const key = giphyKey();
+  const id = String(req.body?.id ?? "");
+  if (!key || !/^[A-Za-z0-9]{4,40}$/.test(id)) {
+    res.status(400).json({ error: "Pick a GIF" });
+    return;
+  }
+  try {
+    const info = (await (await fetch(`https://api.giphy.com/v1/gifs/${id}?api_key=${encodeURIComponent(key)}`, { signal: AbortSignal.timeout(10_000) })).json()) as { data?: GiphyItem };
+    const mp4 = info.data?.images?.downsized_small?.mp4 ?? info.data?.images?.original?.mp4 ?? info.data?.images?.fixed_width?.mp4;
+    if (!mp4 || !/^https:\/\/[a-z0-9.-]*giphy\.com\//.test(mp4)) throw new Error("No MP4 for this GIF");
+    const file = await fetch(mp4, { signal: AbortSignal.timeout(20_000) });
+    const bytes = Buffer.from(await file.arrayBuffer());
+    if (!file.ok || bytes.length === 0 || bytes.length > MAX_CHAT_MEDIA_BYTES) throw new Error("GIF download failed");
+    const media = await storeChatMedia(access.academyId, bytes, "video/mp4", "gif.mp4");
+    res.status(201).json({ media, gif: true });
+  } catch (error) {
+    logger.warn({ error: (error as Error).message }, "Picking a GIF failed");
+    res.status(502).json({ error: "That GIF couldn't be added. Try another." });
+  }
+});
+
+// ─── Starting a chat, and who a chat is handed to ────────────────────────────
+
+/** Is this number on WhatsApp? Used before opening a new chat. */
+router.post("/academy/console/academies/:academyId/whatsapp/check", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const phone = normalizePhone(String(req.body?.phone ?? ""));
+  if (!phone) {
+    res.status(400).json({ error: "Enter a number, e.g. 0791234567" });
+    return;
+  }
+  const settings = await getWhatsappSettings(access.academyId);
+  const session = senderSessionFor(settings);
+  let onWhatsapp: boolean | null = null;
+  if (session && wahaConfigured()) {
+    try {
+      onWhatsapp = Boolean(await checkNumber(session, phone));
+    } catch {
+      onWhatsapp = null;
+    }
+  }
+  const [contact] = await db.select({ name: academyContactsTable.name }).from(academyContactsTable)
+    .where(and(eq(academyContactsTable.academyId, access.academyId), eq(academyContactsTable.phone, phone)));
+  res.json({ phone, display: formatPhoneForDisplay(phone), onWhatsapp, name: contact?.name ?? null });
+});
+
+/** The academy's team, for "hand this chat to…". */
+router.get("/academy/console/academies/:academyId/whatsapp/assignees", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  res.json((await academyTeam(access.academyId)).map((m) => ({ ...m, me: m.id === access.user.id })));
+});
+
+async function academyTeam(academyId: number) {
+  const rows = await db.select({ id: usersTable.id, name: usersTable.name, role: academyMembersTable.role })
+    .from(academyMembersTable).innerJoin(usersTable, eq(usersTable.id, academyMembersTable.userId))
+    .where(eq(academyMembersTable.academyId, academyId));
+  const rank: Record<string, number> = { owner: 0, manager: 1, coach: 2 };
+  const byUser = new Map<number, { id: number; name: string; role: string }>();
+  for (const r of rows) {
+    const seen = byUser.get(r.id);
+    if (!seen || rank[r.role] < rank[seen.role]) byUser.set(r.id, { id: r.id, name: r.name, role: r.role });
+  }
+  return [...byUser.values()].sort((a, b) => rank[a.role] - rank[b.role] || a.name.localeCompare(b.name));
+}
+
+router.post("/academy/console/academies/:academyId/whatsapp/chats/:phone/assign", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const phone = chatKeyParam(req, res);
+  if (!phone) return;
+  const raw = req.body?.userId;
+  const userId = raw === null ? null : Number(raw);
+  if (userId !== null && !(Number.isSafeInteger(userId) && userId > 0)) {
+    res.status(400).json({ error: "Pick someone on the team" });
+    return;
+  }
+  if (userId !== null && !(await academyTeam(access.academyId)).some((m) => m.id === userId)) {
+    res.status(404).json({ error: "That person isn't on this academy's team" });
+    return;
+  }
+  if (isGroupKey(phone)) {
+    const group = await groupRow(access.academyId, phone);
+    if (!group) {
+      res.status(404).json({ error: "Group not found" });
+      return;
+    }
+    await db.update(academyWhatsappGroupsTable).set({ assignedUserId: userId, updatedAt: new Date() }).where(eq(academyWhatsappGroupsTable.id, group.id));
+  } else {
+    const contact = await upsertContact(access.academyId, phone, { source: "chat" });
+    await db.update(academyContactsTable).set({ assignedUserId: userId, updatedAt: new Date() }).where(eq(academyContactsTable.id, contact.id));
+  }
+  res.json({ phone, assignedUserId: userId });
+});
+
+// ─── Groups ──────────────────────────────────────────────────────────────────
+
+const GroupCreateBody = z.object({
+  subject: z.string().trim().min(1).max(100),
+  contactIds: z.array(z.number().int().positive()).max(1000).optional(),
+  audience: AudienceBody.optional(),
+  phones: z.array(z.string().max(40)).max(1000).optional(),
+});
+
+/** Create a WhatsApp group from the academy's number with picked people, a squad's families, or numbers. */
+router.post("/academy/console/academies/:academyId/whatsapp/groups", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const body = GroupCreateBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Name the group and pick who is in it" });
+    return;
+  }
+  const settings = await getWhatsappSettings(access.academyId);
+  const session = senderSessionFor(settings);
+  if (!session) {
+    res.status(409).json({ error: "Turn WhatsApp on first: link your number or choose Replay's number." });
+    return;
+  }
+  const phones = new Set<string>();
+  for (const raw of body.data.phones ?? []) {
+    const phone = normalizePhone(raw);
+    if (phone) phones.add(phone);
+  }
+  if (body.data.contactIds?.length) {
+    for (const r of await contactRecipients(access.academyId, body.data.contactIds)) phones.add(r.phone);
+  }
+  let squadId: number | null = null;
+  if (body.data.audience) {
+    if (!(await validateAudience(access.academyId, body.data.audience, res))) return;
+    for (const r of (await resolveAudience(access.academyId, body.data.audience)).recipients) phones.add(r.phone);
+    if (body.data.audience.squadIds?.length === 1) squadId = body.data.audience.squadIds[0];
+  }
+  const blocked = await blockedPhones(access.academyId);
+  const members = [...phones].filter((p) => !blocked.has(p));
+  if (members.length === 0) {
+    res.status(400).json({ error: "Pick at least one person with a WhatsApp number" });
+    return;
+  }
+  if (members.length > 1000) {
+    res.status(400).json({ error: "A WhatsApp group holds up to 1,000 people" });
+    return;
+  }
+  try {
+    const created = await createGroup(session, body.data.subject, members.map((p) => `${p}@c.us`));
+    const [row] = await db.insert(academyWhatsappGroupsTable).values({
+      academyId: access.academyId,
+      groupId: created.id,
+      session,
+      subject: body.data.subject,
+      origin: "replay",
+      squadId,
+      createdBy: access.user.id,
+    }).onConflictDoNothing().returning();
+    res.status(201).json({ phone: groupKey(created.id), group: row ? groupView(row) : null, members: members.length });
+  } catch (error) {
+    wahaFailure(res, error, "Creating the group failed");
+  }
+});
+
+/** Groups the academy's own number is already in, to follow one in Chats. */
+router.get("/academy/console/academies/:academyId/whatsapp/groups/available", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  if (!(await canManageChats(access))) {
+    res.status(403).json({ error: "Only the academy owner can add the phone's groups, unless he gives your role that permission.", code: "chats_manage" });
+    return;
+  }
+  const settings = await getWhatsappSettings(access.academyId);
+  if (settings.sender !== "own") {
+    res.status(409).json({ error: "Adding existing groups works with the academy's own linked number." });
+    return;
+  }
+  try {
+    const groups = await listGroups(academySessionName(access.academyId));
+    const followed = new Set((await db.select({ groupId: academyWhatsappGroupsTable.groupId }).from(academyWhatsappGroupsTable)
+      .where(eq(academyWhatsappGroupsTable.academyId, access.academyId))).map((g) => g.groupId));
+    res.json(groups.map((g) => ({ ...g, followed: followed.has(g.id) })).sort((a, b) => a.subject.localeCompare(b.subject)));
+  } catch (error) {
+    wahaFailure(res, error, "Listing the phone's groups failed");
+  }
+});
+
+router.post("/academy/console/academies/:academyId/whatsapp/groups/follow", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  if (!(await canManageChats(access))) {
+    res.status(403).json({ error: "Only the academy owner can add the phone's groups, unless he gives your role that permission.", code: "chats_manage" });
+    return;
+  }
+  const groupId = String(req.body?.groupId ?? "").replace(/@g\.us$/, "");
+  const subject = String(req.body?.subject ?? "").trim().slice(0, 100) || "Group";
+  if (!isGroupKey(groupKey(groupId))) {
+    res.status(400).json({ error: "Pick a group" });
+    return;
+  }
+  const settings = await getWhatsappSettings(access.academyId);
+  if (settings.sender !== "own") {
+    res.status(409).json({ error: "Adding existing groups works with the academy's own linked number." });
+    return;
+  }
+  const [row] = await db.insert(academyWhatsappGroupsTable).values({
+    academyId: access.academyId,
+    groupId,
+    session: academySessionName(access.academyId),
+    subject,
+    origin: "existing",
+    createdBy: access.user.id,
+  }).onConflictDoNothing().returning();
+  res.status(201).json({ phone: groupKey(groupId), group: row ? groupView(row) : null });
+});
+
+router.post("/academy/console/academies/:academyId/whatsapp/groups/:groupId/participants", async (req, res): Promise<void> => {
+  const access = await academyAccess(req, res);
+  if (!access) return;
+  const group = await groupRow(access.academyId, groupKey(rawParam(req.params.groupId)));
+  if (!group) {
+    res.status(404).json({ error: "Group not found" });
+    return;
+  }
+  const phones = (Array.isArray(req.body?.phones) ? req.body.phones as unknown[] : [])
+    .map((p) => normalizePhone(String(p))).filter((p): p is string => Boolean(p)).slice(0, 200);
+  const contactIds = Array.isArray(req.body?.contactIds) ? (req.body.contactIds as unknown[]).map(Number).filter((n) => Number.isSafeInteger(n) && n > 0) : [];
+  if (contactIds.length) for (const r of await contactRecipients(access.academyId, contactIds)) phones.push(r.phone);
+  if (phones.length === 0) {
+    res.status(400).json({ error: "Pick who to add" });
+    return;
+  }
+  try {
+    await addGroupParticipants(group.session, group.groupId, [...new Set(phones)].map((p) => `${p}@c.us`));
+    res.json({ added: new Set(phones).size });
+  } catch (error) {
+    wahaFailure(res, error, "Adding people to the group failed");
+  }
 });
 
 // ─── People (CRM) ────────────────────────────────────────────────────────────

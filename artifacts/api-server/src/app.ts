@@ -103,6 +103,8 @@ app.use(cookieParser(COOKIE_SECRET));
 app.use("/api/whatsapp/webhook", express.raw({ type: "*/*", limit: "5mb" }));
 // Meta signs lead webhooks the same way (X-Hub-Signature-256 over the raw body).
 app.use("/api/meta/webhook", express.raw({ type: "*/*", limit: "2mb" }));
+// A file sent in academy Chats arrives as its own bytes (no base64), up to 30 MB.
+app.use("/api/academy/console/academies/:academyId/whatsapp/media", express.raw({ type: "*/*", limit: "31mb" }));
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true }));
 

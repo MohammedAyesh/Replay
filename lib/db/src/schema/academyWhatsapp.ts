@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { academiesTable } from "./academies";
 import { academyPlayersTable } from "./academyPlayers";
+import { academySquadsTable } from "./academySquads";
 import { usersTable } from "./users";
 
 /**
@@ -87,6 +88,15 @@ export const academyWhatsappMessagesTable = pgTable("academy_whatsapp_messages",
   sentAt: timestamp("sent_at", { withTimezone: true }),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   readAt: timestamp("read_at", { withTimezone: true }),
+  /**
+   * What the message is when it isn't plain text: a photo, video, GIF, voice note, document,
+   * sticker, location or poll (see WhatsappContent in the API). `body` still carries the
+   * caption or a one-line summary, so lists and older readers keep working.
+   */
+  content: jsonb("content"),
+  /** In a group: who wrote it. */
+  authorPhone: text("author_phone"),
+  authorName: text("author_name"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("academy_whatsapp_messages_direction_check", sql`${table.direction} in ('out', 'in')`),
@@ -147,6 +157,8 @@ export const academyContactsTable = pgTable("academy_contacts", {
   personalAt: timestamp("personal_at", { withTimezone: true }),
   /** "Who is this?" put off for later. */
   linkDismissedAt: timestamp("link_dismissed_at", { withTimezone: true }),
+  /** The manager or coach this chat is handed to. */
+  assignedUserId: integer("assigned_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -172,3 +184,46 @@ export const academyContactPlayersTable = pgTable("academy_contact_players", {
 ]);
 
 export type AcademyContact = typeof academyContactsTable.$inferSelect;
+
+/**
+ * WhatsApp groups an academy follows in Chats: ones it created from Replay, or ones the owner
+ * added from the groups his own number is already in. Messages of any other group are never
+ * stored, so a family group on the academy's phone stays private. Messages use phone "g:<groupId>".
+ */
+export const academyWhatsappGroupsTable = pgTable("academy_whatsapp_groups", {
+  id: serial("id").primaryKey(),
+  academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
+  /** The group id without "@g.us". */
+  groupId: text("group_id").notNull(),
+  /** WAHA session the group lives on (the academy's own number, or Replay's). */
+  session: text("session").notNull(),
+  subject: text("subject").notNull(),
+  /** "replay" when created from the console, "existing" when added from the phone's groups. */
+  origin: text("origin").notNull().default("replay"),
+  squadId: integer("squad_id").references(() => academySquadsTable.id, { onDelete: "set null" }),
+  assignedUserId: integer("assigned_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  lastReadAt: timestamp("last_read_at", { withTimezone: true }),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  muted: boolean("muted").notNull().default(false),
+  createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("academy_whatsapp_groups_academy_group_unique").on(table.academyId, table.groupId),
+  index("academy_whatsapp_groups_group_idx").on(table.groupId),
+  check("academy_whatsapp_groups_origin_check", sql`${table.origin} in ('replay', 'existing')`),
+]);
+
+/** One row per person per poll: their current choice (a changed vote replaces it). */
+export const academyWhatsappPollVotesTable = pgTable("academy_whatsapp_poll_votes", {
+  id: serial("id").primaryKey(),
+  messageId: integer("message_id").notNull().references(() => academyWhatsappMessagesTable.id, { onDelete: "cascade" }),
+  voterPhone: text("voter_phone").notNull(),
+  voterName: text("voter_name"),
+  options: jsonb("options").notNull().default(sql`'[]'::jsonb`),
+  votedAt: timestamp("voted_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("academy_whatsapp_poll_votes_message_voter_unique").on(table.messageId, table.voterPhone),
+]);
+
+export type AcademyWhatsappGroup = typeof academyWhatsappGroupsTable.$inferSelect;

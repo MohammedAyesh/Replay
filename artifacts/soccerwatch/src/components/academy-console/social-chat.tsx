@@ -2,7 +2,8 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Archive, ArrowLeft, ArrowRight, BellOff, EyeOff, Facebook, Instagram, Loader2, MoreVertical, Send, ShieldOff, UserPlus, X } from "lucide-react";
 import { useSocialCopy } from "@/i18n/social-strings";
 import { useTeamCopy } from "@/i18n/team-strings";
-import { useSendSocial, useSocialLead, useSocialThread, useSocialThreadState, type LeadStage, type SocialThreadSummary } from "@/lib/academy-social-api";
+import { useAssignSocialThread, useSendSocial, useSocialLead, useSocialThread, useSocialThreadState, type LeadStage, type SocialThreadSummary } from "@/lib/academy-social-api";
+import { AssignMenu, AssigneeBadge } from "./chat-native";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +21,7 @@ function initials(name: string | null) {
   return s ? s.split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() : "?";
 }
 
-export function SocialChatRow({ thread, active, onClick }: { thread: SocialThreadSummary; active: boolean; onClick: () => void }) {
+export function SocialChatRow({ thread, active, onClick, academyId }: { thread: SocialThreadSummary; active: boolean; onClick: () => void; academyId?: number }) {
   const copy = useSocialCopy();
   const name = thread.name || (thread.username ? `@${thread.username}` : copy.chat[thread.channel]);
   const time = thread.lastAt ? new Date(thread.lastAt) : null;
@@ -38,7 +39,12 @@ export function SocialChatRow({ thread, active, onClick }: { thread: SocialThrea
           <span className="truncate text-sm font-semibold text-text" dir="auto">{name}</span>
           <span className="ms-auto shrink-0 text-[11px] text-muted-text">{label}</span>
         </span>
-        {thread.stage && <span className="mt-0.5 inline-block rounded-full bg-amber-300/10 px-1.5 text-[10px] font-semibold text-amber-200">{copy.chat.stages[thread.stage]}</span>}
+        {(thread.stage || thread.assignedUserId) && (
+          <span className="mt-0.5 flex flex-wrap items-center gap-1">
+            {thread.stage && <span className="inline-block rounded-full bg-amber-300/10 px-1.5 text-[10px] font-semibold text-amber-200">{copy.chat.stages[thread.stage]}</span>}
+            {academyId && <AssigneeBadge academyId={academyId} userId={thread.assignedUserId} />}
+          </span>
+        )}
         <span className="mt-0.5 flex items-center gap-1.5">
           <span className="truncate text-xs text-muted-text" dir="auto">{thread.lastDirection === "out" ? "↪ " : ""}{thread.lastBody}</span>
           {thread.muted && <BellOff className="ms-auto h-3.5 w-3.5 shrink-0 text-muted-text" aria-label="muted" />}
@@ -58,6 +64,7 @@ export function SocialThreadView({ academyId, threadId, canManage, onBack, onHid
   const send = useSendSocial(academyId, threadId);
   const state = useSocialThreadState(academyId);
   const lead = useSocialLead(academyId, threadId);
+  const assign = useAssignSocialThread(academyId);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<null | "personal" | "block">(null);
@@ -102,6 +109,7 @@ export function SocialThreadView({ academyId, threadId, canManage, onBack, onHid
             {STAGES.map((s) => <option key={s} value={s}>{copy.chat.stages[s]}</option>)}
           </select>
         )}
+        {data && <AssignMenu academyId={academyId} assignedUserId={data.assignedUserId ?? null} pending={assign.isPending} onAssign={(userId) => assign.mutate({ threadId, userId })} />}
         {data && !data.contact && (
           <Button type="button" variant="outline" size="sm" onClick={() => setPhoneOpen((v) => !v)} data-testid="button-social-add-people"><UserPlus className="me-1.5 h-4 w-4" aria-hidden="true" />{copy.chat.addToPeople}</Button>
         )}

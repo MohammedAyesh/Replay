@@ -319,21 +319,61 @@ export type ChatSummary = {
   muted: boolean;
   blocked: boolean;
   linkLater: boolean;
+  assignedUserId: number | null;
+  group: ChatGroup | null;
   contact: Contact | null;
+};
+
+export type ChatGroup = { id: number; groupId: string; subject: string; origin: "replay" | "existing"; squadId: number | null };
+
+/** A file as stored on the server (sent back unchanged when sending it). */
+export type MediaRef = { path: string; mimetype: string; filename?: string | null; size?: number | null };
+export type MediaView = { mimetype: string; filename: string | null; size: number | null; url: string | null; pending: boolean };
+
+export type ChatContent =
+  | { type: "image"; media: MediaView; caption?: string | null }
+  | { type: "video"; media: MediaView; caption?: string | null; gif?: boolean }
+  | { type: "audio"; media: MediaView; voice?: boolean }
+  | { type: "document"; media: MediaView; caption?: string | null }
+  | { type: "sticker"; media: MediaView }
+  | { type: "location"; latitude: number; longitude: number; name?: string | null; address?: string | null }
+  | { type: "poll"; name: string; options: string[]; multipleAnswers: boolean; voters: number; tally: Array<{ option: string; count: number; voters: string[] }> };
+
+/** What the composer sends: files by their stored reference. */
+export type OutgoingContent =
+  | { type: "image"; media: MediaRef; caption?: string | null }
+  | { type: "video"; media: MediaRef; caption?: string | null; gif?: boolean }
+  | { type: "audio"; media: MediaRef; voice?: boolean }
+  | { type: "document"; media: MediaRef; caption?: string | null }
+  | { type: "location"; latitude: number; longitude: number; name?: string | null }
+  | { type: "poll"; name: string; options: string[]; multipleAnswers: boolean };
+
+export type ChatMessage = Pick<WhatsappMessage, "id" | "direction" | "kind" | "body" | "status" | "error" | "createdAt" | "sentAt"> & {
+  content: ChatContent | null;
+  author: { phone: string | null; name: string | null } | null;
+  sentBy: string | null;
 };
 
 export type ChatThread = {
   phone: string;
   display: string;
+  group: ChatGroup | null;
+  /** The group lives on the academy's other WhatsApp number. */
+  wrongNumber: boolean;
   contact: Contact | null;
   optedOut: boolean;
   archived: boolean;
   muted: boolean;
   blocked: boolean;
   linkLater: boolean;
+  assignedUserId: number | null;
   canManage: boolean;
-  messages: Array<Pick<WhatsappMessage, "id" | "direction" | "kind" | "body" | "status" | "error" | "createdAt" | "sentAt">>;
+  messages: ChatMessage[];
 };
+
+/** Chat keys are a phone or "g:<groupId>": always encode them in a URL. */
+const chatPath = (academyId: number, phone: string | null, rest = "") =>
+  `/academy/console/academies/${academyId}/whatsapp/chats/${encodeURIComponent(phone ?? "")}${rest}`;
 
 export function useChats(academyId: number) {
   return useQuery({
@@ -346,7 +386,7 @@ export function useChats(academyId: number) {
 export function useChatThread(academyId: number, phone: string | null) {
   return useQuery({
     queryKey: key(academyId, "chat", phone),
-    queryFn: () => call<ChatThread>(`/academy/console/academies/${academyId}/whatsapp/chats/${phone}`),
+    queryFn: () => call<ChatThread>(chatPath(academyId, phone)),
     enabled: Boolean(phone),
     refetchInterval: 5_000,
   });
@@ -355,10 +395,10 @@ export function useChatThread(academyId: number, phone: string | null) {
 export function useSendChat(academyId: number, phone: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: string) =>
+    mutationFn: (message: string | OutgoingContent) =>
       call<{ id: number; outcome: "sent" | "queued" | "failed" }>(
-        `/academy/console/academies/${academyId}/whatsapp/chats/${phone}/messages`,
-        { method: "POST", body: json({ body }) },
+        chatPath(academyId, phone, "/messages"),
+        { method: "POST", body: json(typeof message === "string" ? { body: message } : { content: message }) },
       ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: key(academyId, "chat", phone) });
@@ -375,7 +415,7 @@ export function useChatState(academyId: number) {
   return useMutation({
     mutationFn: ({ phone, state }: { phone: string; state: ChatState }) =>
       call<{ phone: string; archived: boolean; muted: boolean; blocked: boolean; personal: boolean }>(
-        `/academy/console/academies/${academyId}/whatsapp/chats/${phone}/state`, { method: "POST", body: json(state) },
+        chatPath(academyId, phone, "/state"), { method: "POST", body: json(state) },
       ),
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
@@ -391,12 +431,118 @@ export function useChatWho(academyId: number) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ phone, action }: { phone: string; action: "none" | "later" | "ask" }) =>
-      call(`/academy/console/academies/${academyId}/whatsapp/chats/${phone}/who`, { method: "POST", body: json({ action }) }),
+      call(chatPath(academyId, phone, "/who"), { method: "POST", body: json({ action }) }),
     onSuccess: (_d, v) => {
       void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
       void qc.invalidateQueries({ queryKey: key(academyId, "chat", v.phone) });
       void qc.invalidateQueries({ queryKey: key(academyId, "contacts") });
     },
+  });
+}
+
+// ─── Files, GIFs, groups, assigning ─────────────────────────────────────────
+
+export const MAX_CHAT_FILE_BYTES = 30 * 1024 * 1024;
+
+/** Upload a file's bytes; a GIF comes back as a looping MP4 marked gif. */
+export async function uploadChatFile(academyId: number, file: Blob, filename: string): Promise<{ media: MediaRef; gif: boolean }> {
+  const response = await fetch(`${apiBase}/academy/console/academies/${academyId}/whatsapp/media?filename=${encodeURIComponent(filename)}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": file.type || "application/octet-stream" },
+    body: file,
+  });
+  const data = await response.json().catch(() => null) as { media?: MediaRef; gif?: boolean; error?: string } | null;
+  if (!response.ok || !data?.media) throw new WhatsappApiError(response.status, data?.error ?? `Upload failed (${response.status})`);
+  return { media: data.media, gif: data.gif === true };
+}
+
+export type GifResult = { id: string; title: string; preview: string | null; still: string | null };
+
+export function useGifSearch(academyId: number, q: string, enabled: boolean) {
+  return useQuery({
+    queryKey: key(academyId, "gifs", q),
+    queryFn: () => call<{ enabled: boolean; results: GifResult[] }>(`/academy/console/academies/${academyId}/whatsapp/gifs?q=${encodeURIComponent(q)}`),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function pickGif(academyId: number, id: string) {
+  return call<{ media: MediaRef; gif: boolean }>(`/academy/console/academies/${academyId}/whatsapp/gifs`, { method: "POST", body: json({ id }) });
+}
+
+export type TeamMember = { id: number; name: string; role: "owner" | "manager" | "coach"; me: boolean };
+
+export function useChatAssignees(academyId: number) {
+  return useQuery({
+    queryKey: key(academyId, "assignees"),
+    queryFn: () => call<TeamMember[]>(`/academy/console/academies/${academyId}/whatsapp/assignees`),
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function useAssignChat(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ phone, userId }: { phone: string; userId: number | null }) =>
+      call(chatPath(academyId, phone, "/assign"), { method: "POST", body: json({ userId }) }),
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
+      void qc.invalidateQueries({ queryKey: key(academyId, "chat", v.phone) });
+    },
+  });
+}
+
+export function checkChatNumber(academyId: number, phone: string) {
+  return call<{ phone: string; display: string; onWhatsapp: boolean | null; name: string | null }>(
+    `/academy/console/academies/${academyId}/whatsapp/check`, { method: "POST", body: json({ phone }) },
+  );
+}
+
+export type GroupInput = {
+  subject: string;
+  contactIds?: number[];
+  phones?: string[];
+  audience?: { roles: AudienceRole[]; squadIds: number[] | null; playerIds: null };
+};
+
+export function useCreateGroup(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: GroupInput) =>
+      call<{ phone: string; members: number }>(`/academy/console/academies/${academyId}/whatsapp/groups`, { method: "POST", body: json(input) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: key(academyId, "chats") }),
+  });
+}
+
+export type PhoneGroup = { id: string; subject: string; participants: number | null; followed: boolean };
+
+export function usePhoneGroups(academyId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: key(academyId, "phone-groups"),
+    queryFn: () => call<PhoneGroup[]>(`/academy/console/academies/${academyId}/whatsapp/groups/available`),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useFollowGroup(academyId: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (group: { groupId: string; subject: string }) =>
+      call<{ phone: string }>(`/academy/console/academies/${academyId}/whatsapp/groups/follow`, { method: "POST", body: json(group) }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: key(academyId, "chats") });
+      void qc.invalidateQueries({ queryKey: key(academyId, "phone-groups") });
+    },
+  });
+}
+
+export function useAddToGroup(academyId: number) {
+  return useMutation({
+    mutationFn: ({ groupId, contactIds, phones }: { groupId: string; contactIds?: number[]; phones?: string[] }) =>
+      call<{ added: number }>(`/academy/console/academies/${academyId}/whatsapp/groups/${encodeURIComponent(groupId)}/participants`, { method: "POST", body: json({ contactIds, phones }) }),
   });
 }
 
