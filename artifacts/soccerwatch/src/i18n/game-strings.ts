@@ -90,6 +90,10 @@ const en = {
     matchesTitle: "Which games did you play?",
     matchesLead: "Pick the games you played in. We've ticked the ones where you're on the squad list.",
     rostered: "on the squad",
+    nothingToClaim: "This game isn't in this part of the footage",
+    nothingToClaimLede: "The game you picked has no play in this recording, so there's nobody to find here yet.",
+    nothingToClaimOther: "Pick another game above, or go to the footage of your game.",
+    goToGame: "Go to my game's footage",
   },
   roster: {
     eyebrow: "Squad",
@@ -405,6 +409,10 @@ const ar: GameStrings = {
     matchesTitle: "أي ماتشات لعبت؟",
     matchesLead: "اختار الماتشات اللي لعبت فيها. علّمنا الماتشات اللي إنت فيها بالتشكيلة.",
     rostered: "بالتشكيلة",
+    nothingToClaim: "هالماتش مش بهالجزء من التسجيل",
+    nothingToClaimLede: "الماتش اللي اخترته ما فيه لعب بهالتسجيل، فما في حدا نلاقيه هون.",
+    nothingToClaimOther: "اختار ماتش ثاني من فوق، أو روح على تسجيل ماتشك.",
+    goToGame: "روح على تسجيل ماتشي",
   },
   roster: {
     eyebrow: "التشكيلة",

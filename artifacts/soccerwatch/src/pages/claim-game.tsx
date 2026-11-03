@@ -68,7 +68,7 @@ import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
   addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, clearPick, clearRosterPick, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
   newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
-  hkey, recordSwitch, restoreClaimVisitOrder, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
+  hkey, recordSwitch, restoreClaimVisitOrder, resumableSavedClaim, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts, dropOverlappingShortRosterParts, firstRosterChunk, materializeRosterParts, seedRosterParts } from "@/lib/game-claim/parts";
 import { enterKitAfterLoadingCurrentChunk } from "@/lib/game-claim/roster-navigation";
@@ -378,7 +378,12 @@ export function GameClaim({
   const ctxRef = useRef<Ctx>({ game, CH: chunks.current, S: newState(game) });
   const ctx = ctxRef.current;
   const S = ctx.S;
-  const [savedClaim, setSavedClaim] = useState(saved);
+  const [savedClaim, setSavedClaim] = useState(() => resumableSavedClaim(saved));
+  // The server holds a row for this claim even when it isn't worth resuming;
+  // Start still clears it.
+  const serverHadClaim = useRef(Boolean(saved));
+  // Start found no block to claim in the chosen game(s).
+  const [nothingToClaim, setNothingToClaim] = useState(false);
   const [claimCompleted, setClaimCompleted] = useState(serverCompleted);
   const [claimName, setClaimName] = useState(identityName);
   const namePromptHandled = useRef(Boolean(identityName));
@@ -397,6 +402,9 @@ export function GameClaim({
   const pendingContinuationNumber = useRef<string | null>(null);
   const pendingAutoKit = useRef<string | null>(null);
   const requestedMatchCode = new URLSearchParams(window.location.search).get("match");
+  // A link for a game that isn't on this recording (it used to be sent here for
+  // a 0.9 s overlap): say so instead of quietly claiming another game.
+  const requestedMatchMissing = Boolean(requestedMatchCode && !matches.some((match) => match.code === requestedMatchCode));
   const initialMatchChoices = saved?.matchChoices?.length
     ? saved.matchChoices
     : requestedMatchCode && matches.some((match) => match.code === requestedMatchCode)
@@ -928,11 +936,25 @@ export function GameClaim({
   };
 
   const startNew = async () => {
+    // A game with no block to claim (no play in this footage) used to go
+    // straight to the end screen and save itself as finished. Check first, on
+    // a copy, before anything is deleted or saved.
+    const trial: Ctx = {
+      game,
+      CH: chunks.current,
+      S: { ...newState(game), off: S.off.slice(), matchChoices: [...matchChoices], windowOff: S.windowOff },
+    };
+    if (applyMatchWindows(trial, matchChoices) === "done") {
+      setNothingToClaim(true);
+      return;
+    }
+    setNothingToClaim(false);
     // Starting again deletes the saved claim: ask first, as Done's "Start over" does.
     if (savedClaim && !window.confirm(copy.done.againConfirm)) return;
     pendingNextGuess.current = null;
     await settleSaves();
-    if (savedClaim || resetByAdmin) {
+    if (savedClaim || resetByAdmin || serverHadClaim.current) {
+      serverHadClaim.current = false;
       try {
         await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/game`, { method: "DELETE", credentials: "include" });
       } catch { /* the next save overwrites anyway */ }
@@ -953,7 +975,10 @@ export function GameClaim({
     const destination = applyMatchWindows(ctxRef.current, matchChoices);
     bump();
     if (destination === "done") {
-      go("done");
+      // Checked above; never land on the end screen without a pick.
+      ctxRef.current.S.step = "intro";
+      setNothingToClaim(true);
+      setVer((v) => v + 1);
       return;
     }
     const availableRoster = await loadRoster();
@@ -1380,7 +1405,16 @@ export function GameClaim({
         matches={matches} matchChoices={matchChoices} onMatchChoices={(choices) => {
           setMatchChoices(choices);
           S.matchChoices = choices;
+          setNothingToClaim(false);
         }}
+        nothingToClaim={nothingToClaim || requestedMatchMissing}
+        onGoToGame={(() => {
+          const code = requestedMatchMissing ? requestedMatchCode : null;
+          if (continuation && (code ? continuation.matchCode === code : matchChoices.includes(continuation.matchCode))) {
+            return () => setLocation(`/find/${continuation.recordingId}?match=${encodeURIComponent(continuation.matchCode)}`);
+          }
+          return code ? () => setLocation(matchReportPath(code)) : null;
+        })()}
         onMarkA={() => { const t = media.current?.now() ?? 0; setMarkA(t); setIntroT(t); }}
         onMarkB={() => {
           const a = markA;
@@ -2065,9 +2099,10 @@ function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
 
 /* ------------------------------------------------------------------ intro */
 
- function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin, coveragePercent, matches, matchChoices, onMatchChoices, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
+ function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin, coveragePercent, matches, matchChoices, onMatchChoices, nothingToClaim, onGoToGame, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
   ctx: Ctx; copy: GameStrings; eyebrow: string; mediaSlot: React.ReactNode; markA: number | null; saved: (ClaimState & { saved?: number }) | null;
   resetByAdmin: boolean; coveragePercent: number; matches: ClaimMatch[]; matchChoices: string[]; onMatchChoices: (choices: string[]) => void;
+  nothingToClaim: boolean; onGoToGame: (() => void) | null;
   onMarkA: () => void; onMarkB: () => void; onDel: (i: number) => void; onWatch: (i: number) => void; onStart: () => void; onResume: () => void;
 }) {
   const off = ctx.S.off;
@@ -2094,6 +2129,15 @@ function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
             })}
           </div>
         </Section>
+      )}
+      {nothingToClaim && (
+        <div role="alert" data-testid="find-nothing-to-claim" className="flex flex-col gap-2 rounded-2xl border border-violet/50 bg-violet/10 p-3.5">
+          <strong className="font-display text-base text-text">{copy.intro.nothingToClaim}</strong>
+          <p className="text-sm leading-6 text-muted-text">
+            {copy.intro.nothingToClaimLede}{matches.length >= 2 || onGoToGame ? ` ${copy.intro.nothingToClaimOther}` : ""}
+          </p>
+          {onGoToGame && <Row><Btn kind="primary" size="sm" testId="button-find-go-to-game" onClick={onGoToGame}>{copy.intro.goToGame}</Btn></Row>}
+        </div>
       )}
       {resetByAdmin && (
         <div role="status" className="rounded-2xl border border-line bg-surface p-3">

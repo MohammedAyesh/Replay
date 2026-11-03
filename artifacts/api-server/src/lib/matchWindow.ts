@@ -120,6 +120,34 @@ export function clipRangeToMatchWindow(
   return to > from ? { fromSeconds: from, toSeconds: to } : null;
 }
 
+/**
+ * Shorter than this, a booking's overlap with a recording is clock slack, not
+ * the match. Recordings run a few seconds past the hour (403: 7202.9 s from
+ * 20:00), so the 22:00 booking "overlapped" it by 0.9 s, became the first
+ * recording of that match, and Find yourself opened on that sliver: no block
+ * to claim, straight to the end screen. Find yourself skips blocks under 30 s
+ * of play, so nothing under a minute is ever claimable.
+ */
+export const MIN_BOOKING_SHARE_SECONDS = 60;
+
+/**
+ * A booking's share of a recording (tracking seconds), clipped to the match
+ * window. Null when nothing, or only a sliver, is left: under
+ * MIN_BOOKING_SHARE_SECONDS, or under a tenth of a recording shorter than ten
+ * minutes.
+ */
+export function bookingShareOfRecording(
+  fromSeconds: number,
+  toSeconds: number,
+  manifest: WindowManifest | null | undefined,
+): { fromSeconds: number; toSeconds: number } | null {
+  const share = clipRangeToMatchWindow(fromSeconds, toSeconds, manifest);
+  if (!share) return null;
+  const duration = manifest?.duration && manifest.duration > 0 ? manifest.duration : Infinity;
+  const floor = Math.min(MIN_BOOKING_SHARE_SECONDS, duration / 10);
+  return share.toSeconds - share.fromSeconds >= floor ? share : null;
+}
+
 /** The stretches outside the window, as off-pitch spans: [0,start] and [end,duration]. */
 export function outsideMatchWindowSpans(manifest: WindowManifest): Array<{ fromSeconds: number; toSeconds: number }> {
   const window = readMatchWindow(manifest);

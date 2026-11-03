@@ -833,6 +833,29 @@ export function clearPick(ctx: Ctx, k: number, rejectedCid?: string | null): voi
  * the later blocks opening on the wrong person, and the saved claim kept them.
  * Returns false (and changes nothing) when no block holds squad parts.
  */
+/**
+ * Whether a claim has anyone picked as the player in any block: a group, a
+ * squad-list part, a tap or an added piece. A saved claim without one has
+ * found nobody, whatever step it was saved at.
+ */
+export function claimHasPicks(state: Pick<ClaimState, "you"> | null | undefined): boolean {
+  return Object.values(state?.you ?? {}).some((y) => !y.skipped && Boolean(
+    y.cid || y.manual?.length || y.rosterParts?.length || y.added?.length || y.extra?.length,
+  ));
+}
+
+/**
+ * A saved claim the first screen should offer to resume. One that reached the
+ * end without a pick (a game with no block to claim used to save itself as
+ * finished) is not progress: offering "See my stats" for it sent the player
+ * to an empty end screen every time.
+ */
+export function resumableSavedClaim<T extends ClaimState>(saved: T | null | undefined): T | null {
+  if (!saved) return null;
+  if ((saved.step === "done" || saved.step === "stats") && !claimHasPicks(saved)) return null;
+  return saved;
+}
+
 export function clearRosterPick(ctx: Ctx): boolean {
   const isRoster = (piece: { id: string }) => piece.id.startsWith("roster:");
   const blocks = Object.values(ctx.S.you);

@@ -78,7 +78,7 @@ import { buildPlayerMetrics } from "./playerMetrics";
 import { matchFlow, mergeSpans, type MatchFlow, type RecordingFlowInput } from "./matchFlow";
 import { MatchPlayerReportBuilder, REPORT_BLOCK_SECONDS, type MatchPlayerReport } from "./matchPlayerReport";
 import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
-import { clipRangeToMatchWindow } from "./matchWindow";
+import { bookingShareOfRecording } from "./matchWindow";
 
 function teamFor(base: string | null, spans: readonly unknown[], offsetSec: number): string | null {
   return teamAtTime(base as TeamSpanTeam, spans as readonly TeamSpanAtTime[], offsetSec);
@@ -159,7 +159,7 @@ export async function recordingsForRoom(ctx: RoomContext, perField?: FieldRecord
     // The booking's share of the recording, then only the part of it that is
     // the match (manifest.provenance.matchWindow): a previous group's game
     // running over, or the empty pitch after it, is nobody's stats here.
-    const share = clipRangeToMatchWindow(
+    const share = bookingShareOfRecording(
       Math.max(0, (start - w.startMs) / 1000),
       Math.min(manifest.duration, (end - w.startMs) / 1000),
       manifest,
@@ -200,7 +200,14 @@ export async function roomsForRecording(recordingId: number): Promise<Array<{ ro
     // Clipped to the match window like recordingsForRoom; a booking that
     // only overlaps the footage outside it (the previous group's overrun)
     // is not a match this recording's claimants played in.
-    const share = clipRangeToMatchWindow(Math.max(0, (start - w.startMs) / 1000), (end - w.startMs) / 1000, row.manifest);
+    // Clamped to the footage: unclamped, a booking starting as the recording
+    // ends (a 0.9 s overrun) measured as the booking's whole length.
+    const footageSeconds = row.manifest?.duration && row.manifest.duration > 0 ? row.manifest.duration : (w.endMs - w.startMs) / 1000;
+    const share = bookingShareOfRecording(
+      Math.max(0, (start - w.startMs) / 1000),
+      Math.min(footageSeconds, (end - w.startMs) / 1000),
+      row.manifest,
+    );
     if (!share) continue;
     out.push({ room, ...share });
   }

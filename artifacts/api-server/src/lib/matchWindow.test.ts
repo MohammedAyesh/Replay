@@ -21,8 +21,10 @@ vi.mock("./clerkUserBridge", () => ({
 }));
 
 import {
+  bookingShareOfRecording,
   clipPartsToMatchWindow,
   clipRangeToMatchWindow,
+  MIN_BOOKING_SHARE_SECONDS,
   framesTouchMatchWindow,
   matchWindowSeconds,
   offPitchWithMatchWindow,
@@ -223,5 +225,24 @@ describe("the claim flow's roster", () => {
 
   it("is the roster unchanged without a window", () => {
     expect(rosterInsideMatchWindow(roster, plain as never)).toBe(roster);
+  });
+});
+
+describe("bookingShareOfRecording", () => {
+  // Recording 403 (26 Oct, 20:00) runs 7202.9 s, so the 22:00 booking DWLMTD
+  // "overlapped" it by 0.9 s and Find yourself for that match opened on 403.
+  const recording403 = { duration: 7202.9, provenance: {} };
+
+  it("drops a booking that only touches the recording's overrun", () => {
+    expect(bookingShareOfRecording(7200, 7202.9, recording403)).toBeNull();
+  });
+
+  it("keeps the booking the recording is for", () => {
+    expect(bookingShareOfRecording(0, 7200, recording403)).toEqual({ fromSeconds: 0, toSeconds: 7200 });
+  });
+
+  it("keeps a real share of a minute or more", () => {
+    expect(bookingShareOfRecording(7000, 7000 + MIN_BOOKING_SHARE_SECONDS, recording403)).not.toBeNull();
+    expect(bookingShareOfRecording(7000, 7000 + MIN_BOOKING_SHARE_SECONDS - 1, recording403)).toBeNull();
   });
 });

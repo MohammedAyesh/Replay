@@ -93,7 +93,7 @@ import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { recordingWindow } from "../lib/matchFeed";
-import { clipPartsToMatchWindow, clipRangeToMatchWindow, readMatchWindow } from "../lib/matchWindow";
+import { bookingShareOfRecording, clipPartsToMatchWindow, readMatchWindow } from "../lib/matchWindow";
 
 const router: IRouter = Router();
 
@@ -203,7 +203,7 @@ async function claimMatchChoices(ctx: ChainContext): Promise<{
     // The picker offers the booking only where it is the match: clipped to
     // manifest.provenance.matchWindow, and not at all when the booking only
     // covers footage outside it (another group's game running over).
-    const share = clipRangeToMatchWindow(
+    const share = bookingShareOfRecording(
       Math.max(0, (start - rw.startMs) / 1000),
       Math.min(source.manifest.duration, (end - rw.startMs) / 1000),
       source.manifest,
