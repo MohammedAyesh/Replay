@@ -186,10 +186,10 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Segmented label={copy.formatLabel} value={format} options={FORMATS} onChange={setFormat}
-            render={(f) => <>{copy.formats[f]} <span className="font-mono opacity-70">{copy.formatHints[f]}</span></>} />
-          <Segmented label={copy.languageLabel} value={postLocale} options={POST_LOCALES} onChange={setPostLocale}
-            render={(l) => <span lang={l}>{copy.languages[l]}</span>} />
+          <Segmented label={copy.formatLabel} value={format} options={FORMATS} onChange={(v) => setFormat(v as CreativeFormat)}
+            render={(f: CreativeFormat) => <>{copy.formats[f]} <span className="font-mono opacity-70">{copy.formatHints[f]}</span></>} />
+          <Segmented label={copy.languageLabel} value={postLocale} options={POST_LOCALES} onChange={(v) => setPostLocale(v as "ar" | "en")}
+            render={(l: "ar" | "en") => <span lang={l}>{copy.languages[l]}</span>} />
         </div>
       </div>
 
