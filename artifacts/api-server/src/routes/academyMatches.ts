@@ -46,7 +46,7 @@ function intParam(value: string | string[] | undefined): number | null {
 
 // ─── Loading a match ─────────────────────────────────────────────────────────
 
-type SessionRow = {
+export type SessionRow = {
   id: number;
   academyId: number;
   squadId: number | null;
@@ -60,7 +60,7 @@ type SessionRow = {
   opponentScore: number | null;
 };
 
-async function loadSession(academyId: number, sessionId: number): Promise<SessionRow | null> {
+export async function loadSession(academyId: number, sessionId: number): Promise<SessionRow | null> {
   const [row] = await db
     .select({
       id: academySessionsTable.id,
@@ -193,7 +193,7 @@ async function latestJob(recordingId: number) {
   return job ?? null;
 }
 
-type MatchContext = {
+export type MatchContext = {
   session: SessionRow;
   page: AcademyMatchPage;
   recordings: Awaited<ReturnType<typeof sessionRecordings>>;
@@ -203,7 +203,7 @@ type MatchContext = {
   roster: MatchRoster | null;
 };
 
-async function loadContext(session: SessionRow): Promise<MatchContext> {
+export async function loadContext(session: SessionRow): Promise<MatchContext> {
   const page = await loadPage(session);
   const recordings = await sessionRecordings(session);
   const recordingId = recordings.find((r) => r.id === page.recordingId)?.id ?? recordings[0]?.id ?? null;
@@ -222,7 +222,7 @@ type StatsView = {
 };
 
 /** Cached numbers while nothing they depend on changed; recomputed otherwise. */
-async function statsFor(ctx: MatchContext, force = false): Promise<StatsView | null> {
+export async function statsFor(ctx: MatchContext, force = false): Promise<StatsView | null> {
   if (!ctx.recordingId || !ctx.bundle || !ctx.roster) return null;
   const bindings = resolveBindings(ctx.lineup, ctx.roster);
   const fingerprint = statsFingerprint(ctx.bundle.id, bindings, await goalVoteCount(ctx.recordingId));
@@ -299,7 +299,7 @@ function sessionView(session: SessionRow) {
 
 // ─── Console ─────────────────────────────────────────────────────────────────
 
-async function consoleAccess(req: Request, res: Response, ownerOnly = false): Promise<{ user: AcademyConsoleUser; academyId: number; isOwner: boolean } | null> {
+export async function consoleAccess(req: Request, res: Response, ownerOnly = false): Promise<{ user: AcademyConsoleUser; academyId: number; isOwner: boolean } | null> {
   const user = await requireAcademyConsoleUser(req, res);
   if (!user) return null;
   const academyId = intParam(req.params.academyId);
@@ -316,7 +316,7 @@ async function consoleAccess(req: Request, res: Response, ownerOnly = false): Pr
   return { user, academyId, isOwner: roles.includes("owner") };
 }
 
-async function consoleSession(req: Request, res: Response, ownerOnly = false) {
+export async function consoleSession(req: Request, res: Response, ownerOnly = false) {
   const access = await consoleAccess(req, res, ownerOnly);
   if (!access) return null;
   const sessionId = intParam(req.params.sessionId);

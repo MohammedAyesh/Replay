@@ -7,7 +7,8 @@ import { creativeKeys, creativePath, type CreativeProject } from "@/lib/creative
  * drafts Replay prepared after the academy's matches and before its fixtures.
  */
 
-export type ForYouKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "countdown" | "callup" | "matchstats" | "weekly";
+export type ForYouKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "countdown" | "callup" | "matchstats" | "weekly"
+  | "improved" | "firstgoal" | "meet" | "streak" | "weekmoment";
 export type ForYouGroup = "after" | "upcoming" | "week";
 
 export type ForYouDraft = CreativeProject & {

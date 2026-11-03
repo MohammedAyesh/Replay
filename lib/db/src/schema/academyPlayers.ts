@@ -20,6 +20,13 @@ export const academyPlayersTable = pgTable("academy_players", {
   isActive: boolean("is_active").notNull().default(true),
   monthlyDiscountFils: integer("monthly_discount_fils").notNull().default(0),
   subscriptionExpiresOn: date("subscription_expires_on", { mode: "string" }),
+  /**
+   * The family agreed that photos and clips of this child may go on the
+   * academy's public pages (0066). Off until the owner ticks it: a child
+   * without it gets private clips only and is never put in a public post.
+   */
+  publicPostsConsent: boolean("public_posts_consent").notNull().default(false),
+  publicPostsConsentAt: timestamp("public_posts_consent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("academy_players_name_nonempty_check", sql`length(trim(${table.name})) > 0`),

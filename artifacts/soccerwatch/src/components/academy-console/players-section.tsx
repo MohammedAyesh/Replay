@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { FamilyLinkActions } from "@/components/academy-console/family-link-actions";
 import { AcademyPlayerGuardians } from "@/components/academy-console/player-guardians";
 import { PhotoshootDialog, PlayerPhotoThumb, PlayerPhotosDialog } from "@/components/academy-console/player-photos";
+import { ConsentCheckbox, ConsentSwitch } from "@/components/academy-console/player-consent";
 import { usePlayerPhotosCopy } from "@/i18n/player-photos-strings";
 import { useAcademyPlayerPhotos, type PlayerPhoto } from "@/lib/player-photos-api";
 
@@ -448,7 +449,12 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
                     <TableCell className="tabular-nums text-muted-text">{player.jerseyNumber ?? "—"}</TableCell>
                     <TableCell dir="auto" className="text-muted-text">{player.position || "—"}</TableCell>
                     <TableCell dir="auto" className="text-muted-text">{player.squadName || labels.unassigned}</TableCell>
-                    <TableCell>{renderStatus(player)}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col items-start gap-2">
+                        {renderStatus(player)}
+                        <ConsentSwitch academyId={academyId} playerId={player.id} canEdit={isOwner} />
+                      </div>
+                    </TableCell>
                     <TableCell>
                       <div className="flex flex-col items-start gap-2">
                         {player.userId ? (
@@ -488,6 +494,7 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
                 <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4 text-sm">
                   <div><dt className="text-xs text-muted-text">{labels.jerseyNumber}</dt><dd className="mt-1 font-semibold tabular-nums text-text">{player.jerseyNumber ?? "—"}</dd></div>
                   <div><dt className="text-xs text-muted-text">{labels.filterBySquad}</dt><dd dir="auto" className="mt-1 font-semibold text-text">{player.squadName || labels.unassigned}</dd></div>
+                  <div className="col-span-2"><ConsentSwitch academyId={academyId} playerId={player.id} canEdit={isOwner} /></div>
                   <div className="col-span-2">
                     <dt className="text-xs text-muted-text">{labels.linkedReplayAccount}</dt>
                     <dd className="mt-1 flex flex-col items-start gap-2 text-sm text-text">
@@ -620,6 +627,7 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
                 {formErrors.linkedUserEmail && <p id="academy-player-linked-email-error" className="text-sm text-destructive" role="alert">{formErrors.linkedUserEmail}</p>}
               </div>
             )}
+            {editingPlayer && <ConsentCheckbox academyId={academyId} playerId={editingPlayer.id} canEdit={isOwner} />}
             {saveError && (
               <p className="text-sm text-destructive" role="alert" data-testid="player-save-error">
                 {saveError === "linked-account" ? labels.unknownReplayAccount : labels.playerSaveError}

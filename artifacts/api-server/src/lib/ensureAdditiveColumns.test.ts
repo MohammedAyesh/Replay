@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -41,6 +41,21 @@ describe("ensureAdditiveColumns", () => {
     expect(idx[0]?.def).toMatch(/UNIQUE INDEX .* \(player_id\) WHERE is_primary/);
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0062_academy_player_photos.sql", import.meta.url), "utf8");
     for (const statement of PLAYER_PHOTOS_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("adds public-post consent and the every-child tables (0066), as the migration says", async () => {
+    for (const t of ["academy_player_clips", "academy_player_features", "academy_feature_settings"]) await pool.query(`DROP TABLE IF EXISTS "${t}"`);
+    await pool.query(`ALTER TABLE "academy_players" DROP COLUMN IF EXISTS "public_posts_consent", DROP COLUMN IF EXISTS "public_posts_consent_at"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(5);
+    const { rows } = await pool.query<{ column_name: string; column_default: string | null }>(`SELECT column_name, column_default FROM information_schema.columns WHERE table_name = 'academy_players' AND column_name LIKE 'public_posts%' ORDER BY column_name`);
+    expect(rows.map((r) => r.column_name)).toEqual(["public_posts_consent", "public_posts_consent_at"]);
+    expect(rows[0].column_default).toBe("false");
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0066_every_child_appears.sql", import.meta.url), "utf8");
+    for (const statement of [...PLAYER_FEATURES_STATEMENTS, ...FEATURE_SETTINGS_STATEMENTS, ...PLAYER_CLIPS_STATEMENTS]) expect(migration).toContain(`${statement};`);
+    expect(migration).toContain(`ALTER TABLE "academy_players" ADD COLUMN IF NOT EXISTS "public_posts_consent" boolean DEFAULT false NOT NULL;`);
+    // A family link token is 32 hex characters, nothing else.
+    await expect(pool.query(`INSERT INTO academy_player_clips (academy_id, session_id, player_id, token) VALUES (1, 1, 1, 'short')`)).rejects.toThrow();
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 

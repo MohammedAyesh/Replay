@@ -153,7 +153,8 @@ export async function goalVoteCount(recordingId: number): Promise<number> {
   return (await goalVotesFor([recordingId])).get(recordingId)?.length ?? 0;
 }
 
-function clip(parts: ClaimedPart[], fromSeconds: number, toSeconds: number, fps: number): ClaimedPart[] {
+/** A roster player's parts cut to a window (tracking seconds). */
+export function clip(parts: ClaimedPart[], fromSeconds: number, toSeconds: number, fps: number): ClaimedPart[] {
   const a = Math.floor(fromSeconds * fps);
   const b = Math.ceil(toSeconds * fps);
   return parts

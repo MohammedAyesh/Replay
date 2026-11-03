@@ -61,3 +61,4 @@ export * from "./academyCreative";
 export * from "./venues";
 export * from "./creativeMusic";
 export * from "./creativeTemplateMusic";
+export * from "./academyFeatures";

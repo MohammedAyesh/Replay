@@ -20,7 +20,7 @@ export function dayWord(startsAt: Date, now: Date, copy: Pick<CreativeForYouStri
 
 /** Why a draft is in the feed: "After Saturday's 3–1 win vs Al-Wehdat". */
 export function whyLine(reason: ForYouDraft["reason"], copy: CreativeForYouStrings, locale: "en" | "ar", now = new Date()): string {
-  if (reason.kind === "weekly") return copy.why.weekly;
+  if (reason.kind === "weekly" || reason.kind === "meet" || reason.kind === "streak" || reason.kind === "weekmoment") return copy.why[reason.kind];
   if (!reason.startsAt) return copy.why.generic;
   const day = dayWord(new Date(reason.startsAt), now, copy, locale);
   const vs = reason.opponent ? copy.vs(reason.opponent) : "";
@@ -35,6 +35,8 @@ export function whyLine(reason: ForYouDraft["reason"], copy: CreativeForYouStrin
     case "cleansheet": return copy.why.cleansheet(day, vs);
     case "potm": return copy.why.potm(day, vs);
     case "goal": return copy.why.goal(day, vs);
+    case "improved": return copy.why.improved(day, vs);
+    case "firstgoal": return copy.why.firstgoal(day, vs);
     default:
       if (!scored) return copy.why.played(day, vs);
       return reason.ownScore! > reason.opponentScore! ? copy.why.win(day, score, vs)

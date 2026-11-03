@@ -26,6 +26,7 @@ import {
 import { logger } from "../lib/logger";
 import { staffAccessFor } from "../lib/academyPermissions";
 import { runScheduledAutomations } from "../lib/whatsapp/automations";
+import { maybePrepareRecentClips } from "../lib/featured/sweep";
 import { maybeSyncMetaAds } from "../lib/meta/sync";
 import { maybeRunSocial } from "../lib/social/posts";
 import {
@@ -851,7 +852,12 @@ router.post("/whatsapp/tick", async (req, res): Promise<void> => {
       return "failed" as const;
     });
     const webhooks = await maybeRefreshWebhooks();
-    res.json({ scheduled, venues, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, ms: Date.now() - started });
+    // Children's private clips get prepared once a match is analysed (the owner sends them).
+    const playerClips = await maybePrepareRecentClips().catch((error) => {
+      logger.warn({ error: (error as Error)?.message }, "Private clip sweep failed");
+      return "failed" as const;
+    });
+    res.json({ scheduled, venues, dispatched, meta: typeof meta === "string" ? meta : "synced", social, webhooks, playerClips, ms: Date.now() - started });
   } catch (error) {
     // vps1 logs this body: say what broke (e.g. a table missing after a publish).
     logger.error({ error: (error as Error)?.message }, "WhatsApp tick failed");

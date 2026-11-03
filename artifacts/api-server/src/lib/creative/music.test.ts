@@ -186,7 +186,7 @@ describe("template soundtracks", () => {
     const lib = JSON.parse(fs.readFileSync(libraryFile, "utf8")) as { tracks: Array<{ key: string; mood: string }> };
     const moods = new Map(lib.tracks.map((t) => [t.key, t.mood]));
     const templates = CREATIVE_TEMPLATES.map((t) => t.key);
-    expect(templates).toHaveLength(31);
+    expect(templates).toHaveLength(36);
     for (const key of templates) expect(TEMPLATE_RECOMMENDED_MUSIC[key], `no recommendation for ${key}`).toBeTruthy();
     expect(Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => !templates.includes(k))).toEqual([]);
     for (const [key, r] of Object.entries(TEMPLATE_RECOMMENDED_MUSIC)) {
@@ -221,7 +221,7 @@ describe("template soundtracks", () => {
     try {
       expect((await sceneWithDefaultMusic(video("fulltime"), "fulltime")).music).toEqual({ trackId: anthem, volume: 0.35, startMs: 2000, fadeInMs: 0, fadeOutMs: 900, duck: true });
       const rows = await templateMusicRows();
-      expect(rows).toHaveLength(31);
+      expect(rows).toHaveLength(36);
       const row = rows.find((r) => r.key === "fulltime")!;
       expect(row.effective).toMatchObject({ trackIds: [anthem, warped], customised: true });
       expect(row.builtIn).toMatchObject({ trackIds: [electro, warped, anthem], keys: ["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"] });

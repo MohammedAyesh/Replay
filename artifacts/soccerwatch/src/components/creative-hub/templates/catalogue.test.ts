@@ -16,6 +16,7 @@ const KEYS = [
   "fulltime", "matchday", "potm", "goal", "lineup", "potmonth", "standings", "nextround", "champions", "freetrial", "cleansheet", "birthday",
   "pricing", "newgroup", "talk", "training", "welcome", "getwell", "staff", "alumni", "tournament", "poll", "map", "manifesto",
   "kickoff", "goalflash", "halftime", "livescore", "countdown", "callup", "matchstats",
+  "meetplayer", "improved", "streak", "firstgoal", "weekmoment",
 ];
 // Templates are drawn for these; 16:9 ("wide") is for clip videos only.
 const FORMATS = TEMPLATE_FORMATS;
@@ -38,12 +39,12 @@ for (const key of KEYS) for (const style of CREATIVE_STYLES) for (const format o
   all.push({ key, style, format, locale, scene: buildTemplateScene(key, style, format, locale) });
 
 describe("catalogue", () => {
-  it("lists the 31 templates once each", () => {
+  it("lists the 36 templates once each", () => {
     expect(CREATIVE_TEMPLATES.map((t) => t.key).sort()).toEqual([...KEYS].sort());
   });
 
-  it("marks goal, talk and training as video and puts the poll in a story first", () => {
-    expect(CREATIVE_TEMPLATES.filter((t) => t.kind === "video").map((t) => t.key).sort()).toEqual(["goal", "talk", "training"]);
+  it("marks goal, talk, training and the moment of the week as video and puts the poll in a story first", () => {
+    expect(CREATIVE_TEMPLATES.filter((t) => t.kind === "video").map((t) => t.key).sort()).toEqual(["goal", "talk", "training", "weekmoment"]);
     expect(CREATIVE_TEMPLATES.find((t) => t.key === "poll")?.formats[0]).toBe("story");
   });
 

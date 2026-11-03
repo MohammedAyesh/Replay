@@ -10,6 +10,7 @@ import {
   academyAdMediaTable,
   academyCreativeProjectsTable,
   academyMembersTable,
+  academyPlayerFeaturesTable,
   academyPlayersTable,
   academySocialAccountsTable,
   academySocialPostsTable,
@@ -351,5 +352,48 @@ describe("ads and channels", () => {
     await request(app).get(`${base()}/publish/channels`).set(auth(coachId)).expect(403);
     const other = await request(app).get(`${base(otherAcademyId)}/publish/channels`).set(auth(otherOwnerId)).expect(200);
     expect(other.body.social.status).toBe("none");
+  });
+});
+
+describe("every child appears: consent and the feature log", () => {
+  // A player post that draws its player (a {{player.number}} binding), as potm does.
+  const playerScene = { v: 1, format: "post", background: "@paper", locale: "ar", layers: [
+    { id: "n", kind: "text", text: "#{{player.number}}", font: "display", size: 80, weight: 800, color: "#000000", align: "center", dir: "auto", x: 0, y: 0, w: 500, h: 120 },
+  ] };
+  const playerPost = async (playerId: number) => project({ title: "Player of the match", templateKey: "potm", scene: playerScene, data: { player: { playerId, number: 7 } } });
+
+  it("refuses to post a child without public-post consent, posts him once the family agreed, and logs it as his solo public appearance", async () => {
+    const [kid] = await db.insert(academyPlayersTable).values({ academyId, squadId, name: "Hamza", jerseyNumber: 7, guardianPhone: "0790000109" }).returning();
+    const p = await playerPost(kid.id);
+    const refused = await request(app).post(`${base()}/projects/${p.id}/publish`).set(auth(ownerId)).send({ targets: ["instagram"] }).expect(409);
+    expect(refused.body.code).toBe("no_public_consent");
+    expect(refused.body.players).toEqual([{ playerId: kid.id, number: 7, name: "Hamza" }]);
+    expect(await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.academyId, academyId)).then((r) => r.length)).toBeGreaterThanOrEqual(0);
+
+    await db.update(academyPlayersTable).set({ publicPostsConsent: true }).where(eq(academyPlayersTable.id, kid.id));
+    await request(app).post(`${base()}/projects/${p.id}/publish`).set(auth(ownerId)).send({ targets: ["instagram"] }).expect(201);
+    const logged = await db.select().from(academyPlayerFeaturesTable).where(eq(academyPlayerFeaturesTable.playerId, kid.id));
+    expect(logged).toEqual([expect.objectContaining({ itemType: "post", itemId: String(p.id), visibility: "public", solo: true })]);
+    // Posting it again (another channel, again: true) does not count twice.
+    await request(app).post(`${base()}/projects/${p.id}/publish`).set(auth(ownerId)).send({ targets: ["facebook"] }).expect(201);
+    expect(await db.select().from(academyPlayerFeaturesTable).where(eq(academyPlayerFeaturesTable.playerId, kid.id))).toHaveLength(1);
+  });
+
+  it("a scheduled post taken back no longer counts", async () => {
+    const [kid] = await db.insert(academyPlayersTable).values({ academyId, squadId, name: "Laith", jerseyNumber: 8, publicPostsConsent: true }).returning();
+    const p = await playerPost(kid.id);
+    const res = await request(app).post(`${base()}/projects/${p.id}/publish`).set(auth(ownerId)).send({ targets: ["instagram"], scheduledAt: dateToAmmanLocal(new Date(Date.now() + 86_400_000)) }).expect(201);
+    expect(await db.select().from(academyPlayerFeaturesTable).where(eq(academyPlayerFeaturesTable.playerId, kid.id))).toHaveLength(1);
+    await request(app).delete(`${base()}/projects/${p.id}/publish/${res.body.post.id}`).set(auth(ownerId)).expect(200);
+    expect(await db.select().from(academyPlayerFeaturesTable).where(eq(academyPlayerFeaturesTable.playerId, kid.id))).toHaveLength(0);
+  });
+
+  it("a design sent to parents on WhatsApp is a private appearance, also for a child without consent", async () => {
+    const [kid] = await db.insert(academyPlayersTable).values({ academyId, squadId, name: "Tamim", jerseyNumber: 19, guardianPhone: "0790000119" }).returning();
+    const p = await playerPost(kid.id);
+    await request(app).post(`${base()}/projects/${p.id}/whatsapp`).set(auth(ownerId))
+      .send({ audience: { roles: ["parents"], squadIds: [squadId] }, message: "👏" }).expect(201);
+    const logged = await db.select().from(academyPlayerFeaturesTable).where(eq(academyPlayerFeaturesTable.playerId, kid.id));
+    expect(logged).toEqual([expect.objectContaining({ itemType: "whatsapp", visibility: "private", solo: true })]);
   });
 });

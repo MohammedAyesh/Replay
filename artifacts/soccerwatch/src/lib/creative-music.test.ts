@@ -80,7 +80,7 @@ describe("template recommendations", () => {
 
   it("has 1–3 tracks for every template in the catalogue and nothing else", () => {
     expect(Object.keys(TEMPLATE_RECOMMENDED_MUSIC).sort()).toEqual(CREATIVE_TEMPLATES.map((t) => t.key).sort());
-    expect(CREATIVE_TEMPLATES).toHaveLength(31);
+    expect(CREATIVE_TEMPLATES).toHaveLength(36);
     for (const [key, r] of Object.entries(TEMPLATE_RECOMMENDED_MUSIC)) {
       expect(r.tracks.length, key).toBeGreaterThanOrEqual(1);
       expect(r.tracks.length, key).toBeLessThanOrEqual(3);

@@ -108,7 +108,7 @@ const pick = (mood: MusicMood, tracks: string[], settings: Partial<TemplateMusic
   ({ ...TEMPLATE_MUSIC_DEFAULTS, ...settings, tracks, mood });
 
 /**
- * Every template's recommended music (CREATIVE_TEMPLATES, all 31; a test
+ * Every template's recommended music (CREATIVE_TEMPLATES, all 36; a test
  * fails when one is missing or names a track library.json doesn't have).
  * Admins can replace any of them in /admin (creative_template_music, 0064);
  * this is what "Reset to Replay's recommendation" goes back to.
@@ -146,6 +146,11 @@ export const TEMPLATE_RECOMMENDED_MUSIC: Record<string, BuiltInTemplateMusic> = 
   countdown: pick("epic", ["cc0/determined-pursuit", "cc0/adventure-intro"]),
   callup: pick("hype", ["cc0/now-thats-automation", "replay/stadium-stomp"]),
   matchstats: pick("fun", ["cc0/cafe-part-time", "cc0/synthwave-calm"]),
+  meetplayer: pick("fun", ["cc0/thats-what-friends-do", "cc0/elevate", "replay/little-legends"]),
+  improved: pick("epic", ["cc0/great-mission", "cc0/adventure-intro", "replay/rising-star"]),
+  streak: pick("fun", ["cc0/elevate", "cc0/beach-sports", "replay/little-legends"]),
+  firstgoal: pick("hype", ["cc0/energetic-electro-tune", "cc0/fight-for-a-better-future", "replay/matchday-anthem"]),
+  weekmoment: pick("hype", ["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"], { volume: 0.7 }),
 };
 
 /** The settings of a template's built-in pick (the defaults for a template without one). */

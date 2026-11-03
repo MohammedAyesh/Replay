@@ -41,6 +41,7 @@ import {
 } from "../lib/creative/publish";
 import { ensureCreativeMedia, PublishMediaError, renderIsDone } from "../lib/creative/publishMedia";
 import { mediaView } from "./academyAdMedia";
+import { logProjectFeature, projectPlayers, removeFeatures } from "../lib/featured/store";
 
 /**
  * Creative hub → Publish (owner only). Hands a rendered project to the
@@ -234,6 +235,16 @@ router.post(`${base}/projects/:projectId/publish`, async (req, res): Promise<voi
       res.status(409).json({ error: "No Facebook Page is connected.", code: "no_facebook" });
       return;
     }
+    // Children's rules: a child without public-post consent never goes on a public page.
+    const shown = await projectPlayers(row);
+    if (shown.withoutConsent.length) {
+      res.status(409).json({
+        error: "A player in this design has no public-post consent from his family. Take him out, or record the consent in Players.",
+        code: "no_public_consent",
+        players: shown.withoutConsent,
+      });
+      return;
+    }
     const before = readTargets(row.publishTargets);
     const repeat = alreadyPosted(before, await postsFor(access.academyId, before), placement.targets, row.renderedAt);
     if (repeat.length > 0 && !body.data.again) {
@@ -272,6 +283,8 @@ router.post(`${base}/projects/:projectId/publish`, async (req, res): Promise<voi
       scheduledAt: schedule.at?.toISOString() ?? null,
     })));
     const result = when ? post : await publishPost(post.id);
+    // Every child in it appeared (publicly) when it goes out.
+    await logProjectFeature(row, "public", when ?? new Date()).catch((err) => logger.warn({ err, projectId: row.id }, "Feature log failed"));
     const view = await synced(updated);
     res.status(201).json({
       project: publicProject(view.row),
@@ -304,6 +317,10 @@ router.delete(`${base}/projects/:projectId/publish/:postId`, async (req, res): P
       return;
     }
     const remaining = withoutPost(targets, postId);
+    // Taken back before it went out: it no longer counts as a public appearance.
+    if (!remaining.some((t) => t.channel === "instagram" || t.channel === "facebook")) {
+      await removeFeatures(access.academyId, "post", String(row.id)).catch(() => {});
+    }
     const handedOff = remaining.some((t) => t.channel === "instagram" || t.channel === "facebook" || t.channel === "whatsapp");
     const [updated] = await db.update(academyCreativeProjectsTable)
       .set({
@@ -426,6 +443,7 @@ router.post(`${base}/projects/:projectId/whatsapp`, async (req, res): Promise<vo
         squad: r.squadNames.join(settings.locale === "ar" ? "، " : ", "),
       })}\n\n${link}`,
     })));
+    await logProjectFeature(row, "private", scheduledFor).catch((err) => logger.warn({ err, projectId: row.id }, "Feature log failed"));
     const updated = await appendTargets(row, [{
       channel: "whatsapp",
       ref: `broadcast:${broadcast.id}`,

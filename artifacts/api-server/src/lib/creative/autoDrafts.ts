@@ -13,6 +13,8 @@ import {
 import { logger } from "../logger";
 import { academyPack } from "./packs";
 import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "./music";
+import { loadFeaturedFacts } from "../featured/draftFacts";
+import { consentedFacts, matchFeaturedPlans, playerData, rotatedPlayerOfMatch, weekFeaturedPlans, type FeaturedFacts, type FeaturedPlan } from "../featured/drafts";
 
 /**
  * Replay's library and the admins' template music for drafts' default
@@ -91,7 +93,8 @@ const DAY = 86_400_000;
 
 // ── Origin keys ─────────────────────────────────────────────────────────────
 
-export type DraftKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "countdown" | "callup" | "matchstats" | "weekly";
+export type DraftKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "countdown" | "callup" | "matchstats" | "weekly"
+  | "improved" | "firstgoal" | "meet" | "streak" | "weekmoment";
 export type FeedGroup = "after" | "upcoming" | "week";
 
 export const originKey = {
@@ -104,21 +107,32 @@ export const originKey = {
   matchstats: (sessionId: number) => `matchstats:session:${sessionId}`,
   goal: (momentId: string) => `goal:moment:${momentId}`,
   weekly: (isoWeek: string) => `weekly:${isoWeek}`,
+  improved: (sessionId: number) => `improved:session:${sessionId}`,
+  firstgoal: (playerId: number) => `firstgoal:player:${playerId}`,
+  meet: (isoWeek: string) => `meet:${isoWeek}`,
+  streak: (isoWeek: string) => `streak:${isoWeek}`,
+  weekmoment: (isoWeek: string) => `weekmoment:${isoWeek}`,
 };
 
+/** Kinds made once per ISO week. */
+const WEEK_KINDS = new Set<DraftKind>(["weekly", "meet", "streak", "weekmoment"]);
+
 export type ParsedOriginKey =
-  | { kind: Exclude<DraftKind, "goal" | "weekly">; sessionId: number }
+  | { kind: Exclude<DraftKind, "goal" | "weekly" | "firstgoal" | "meet" | "streak" | "weekmoment">; sessionId: number }
   | { kind: "goal"; momentId: string }
-  | { kind: "weekly"; week: string };
+  | { kind: "firstgoal"; playerId: number }
+  | { kind: "weekly" | "meet" | "streak" | "weekmoment"; week: string };
 
 export function parseOriginKey(key: string | null | undefined): ParsedOriginKey | null {
   if (!key) return null;
-  let m = /^(fulltime|cleansheet|potm|matchday|countdown|callup|matchstats):session:(\d+)$/.exec(key);
+  let m = /^(fulltime|cleansheet|potm|matchday|countdown|callup|matchstats|improved):session:(\d+)$/.exec(key);
   if (m) return { kind: m[1] as "fulltime", sessionId: Number(m[2]) };
   m = /^goal:moment:([\w-]+)$/.exec(key);
   if (m) return { kind: "goal", momentId: m[1] };
-  m = /^weekly:(\d{4}-W\d{2})$/.exec(key);
-  if (m) return { kind: "weekly", week: m[1] };
+  m = /^(weekly|meet|streak|weekmoment):(\d{4}-W\d{2})$/.exec(key);
+  if (m) return { kind: m[1] as "weekly", week: m[2] };
+  m = /^firstgoal:player:(\d+)$/.exec(key);
+  if (m) return { kind: "firstgoal", playerId: Number(m[1]) };
   return null;
 }
 
@@ -126,7 +140,7 @@ export function parseOriginKey(key: string | null | undefined): ParsedOriginKey 
 export const isFixtureKind = (kind: DraftKind) => kind === "matchday" || kind === "countdown" || kind === "callup";
 
 export const groupOf = (kind: DraftKind): FeedGroup =>
-  isFixtureKind(kind) ? "upcoming" : kind === "weekly" ? "week" : "after";
+  isFixtureKind(kind) ? "upcoming" : WEEK_KINDS.has(kind) ? "week" : "after";
 
 /** Which catalogue template each kind of draft is made from. */
 export const TEMPLATE_FOR: Record<DraftKind, string> = {
@@ -139,6 +153,11 @@ export const TEMPLATE_FOR: Record<DraftKind, string> = {
   callup: "callup",
   matchstats: "matchstats",
   weekly: "training",
+  improved: "improved",
+  firstgoal: "firstgoal",
+  meet: "meetplayer",
+  streak: "streak",
+  weekmoment: "weekmoment",
 };
 
 // ── Amman calendar ──────────────────────────────────────────────────────────
@@ -210,6 +229,11 @@ const AR = {
   callup: "قائمة الماتش",
   matchstats: "أرقام الماتش",
   weekly: "من تمرين الأسبوع",
+  improved: "الأكثر تطوّراً",
+  firstgoal: "أول جول",
+  meet: "تعرّفوا على اللاعب",
+  streak: "ما بغيب",
+  weekmoment: "لقطة الأسبوع",
   vs: "ضد",
 };
 const EN = {
@@ -222,6 +246,11 @@ const EN = {
   callup: "Squad call-up",
   matchstats: "Match stats",
   weekly: "This week's training",
+  improved: "Most improved",
+  firstgoal: "First goal",
+  meet: "Meet the player",
+  streak: "Attendance streak",
+  weekmoment: "Moment of the week",
   vs: "vs",
 };
 
@@ -238,12 +267,12 @@ export function draftTitle(kind: DraftKind, facts: SessionFacts | null, locale: 
       bits.push(s.squad);
     }
   }
-  if ((kind === "potm" || kind === "goal") && extra.player) bits.push(extra.player);
+  if ((kind === "potm" || kind === "goal" || kind === "improved" || kind === "firstgoal" || kind === "meet" || kind === "streak") && extra.player) bits.push(extra.player);
   return bits.join(" · ").slice(0, 120);
 }
 
 /** A player the owner put in a fixture's squad (academy_match_lineups, in_squad). */
-export type CallupPlayer = { name: string | null; number: number | null; position: string | null };
+export type CallupPlayer = { name: string | null; number: number | null; position: string | null; playerId?: number };
 
 /** Rows the call-up template has. */
 export const CALLUP_ROWS = 9;
@@ -294,6 +323,15 @@ export function planAutoDrafts(input: {
   existing: ReadonlySet<string>;
   locale?: CreativeLocale;
   callups?: ReadonlyMap<number, CallupPlayer[]>;
+  /**
+   * Every child appears (lib/featured): consent, rotation, pictures, history and
+   * streaks. With it, player drafts go by rotation, children without public-post
+   * consent are left out, and the five "every child" drafts are planned.
+   */
+  featured?: FeaturedFacts;
+  /** This week's finished filmed sessions, for the moment of the week. */
+  weekSessions?: SessionFacts[];
+  academyData?: CreativeData["academy"];
 }): DraftPlan[] {
   const locale = input.locale ?? FOR_YOU.locale;
   const out: DraftPlan[] = [];
@@ -304,11 +342,18 @@ export function planAutoDrafts(input: {
     out.push(plan);
   };
   const now = input.now.getTime();
+  const featured = input.featured;
+  const addFeatured = (plan: FeaturedPlan, facts: SessionFacts | null, moment: SessionMoment | null) => add({
+    kind: plan.kind, originKey: plan.originKey, templateKey: plan.templateKey, sessionId: plan.sessionId,
+    data: plan.data, moment, title: draftTitle(plan.kind, facts, locale, { player: plan.label }),
+  });
 
   for (const facts of input.sessions) {
     const s = facts.session;
     if (s.type !== "match") continue;
-    const base = buildSessionData(facts, locale);
+    // A child without public-post consent is left out of every list a draft shows (scorers, line-up).
+    const base = buildSessionData(featured ? consentedFacts(facts, featured) : facts, locale);
+    if (featured) delete base.player;
     const best = rankedMoments(facts)[0] ?? null;
     const starts = s.startsAt.getTime();
 
@@ -322,13 +367,18 @@ export function planAutoDrafts(input: {
           add({ kind: "cleansheet", originKey: originKey.cleansheet(s.id), templateKey: TEMPLATE_FOR.cleansheet, sessionId: s.id, data: team, moment: best, title: draftTitle("cleansheet", facts, locale) });
         }
       }
-      const potm = pickPlayerOfMatch(facts.players);
+      // With the feature log: whoever has waited longest among those who played; performance breaks ties.
+      const potm = featured ? rotatedPlayerOfMatch(facts.players, featured, input.now) : pickPlayerOfMatch(facts.players);
       if (potm) {
         const label = playerLabel(potm, facts.showNames);
         add({
           kind: "potm", originKey: originKey.potm(s.id), templateKey: TEMPLATE_FOR.potm, sessionId: s.id,
           // A player template reads the player's own numbers as stats.goals, stats.distanceKm, …
-          data: { ...base, stats: { ...(base.stats ?? {}), ...playerStatsSummary(potm.stats) } },
+          data: {
+            ...base,
+            ...(featured ? { player: playerData(potm, featured, s.squad) } : {}),
+            stats: { ...(base.stats ?? {}), ...playerStatsSummary(potm.stats) },
+          },
           moment: best, title: draftTitle("potm", facts, locale, { player: label }),
         });
       }
@@ -344,10 +394,11 @@ export function planAutoDrafts(input: {
       if (goalsAreOurs(facts)) {
         // A goal clip names its scorer only when one player scored them all.
         const { player: _potm, more: _more, ...team } = base;
-        const scorer = soleScorer(facts.players);
+        const sole = soleScorer(facts.players);
+        const scorer = sole && (!featured || featured.consent.has(sole.playerId)) ? sole : null;
         const label = scorer ? playerLabel(scorer, facts.showNames) : null;
         const data: CreativeData = scorer
-          ? { ...team, player: { name: facts.showNames ? playerLabel({ name: scorer.name, number: null }, true) : null, number: scorer.number, ...(s.squad ? { squad: s.squad } : {}) } }
+          ? { ...team, player: { ...(featured ? { playerId: scorer.playerId } : {}), name: facts.showNames ? playerLabel({ name: scorer.name, number: null }, true) : null, number: scorer.number, ...(s.squad ? { squad: s.squad } : {}) } as CreativeData["player"] }
           : team;
         const goals = [...facts.goals].sort((a, b) => b.weight - a.weight || a.atMs - b.atMs).slice(0, FOR_YOU.goalsPerMatch);
         for (const g of goals.sort((a, b) => a.atMs - b.atMs)) {
@@ -365,12 +416,28 @@ export function planAutoDrafts(input: {
           data: { ...fixture, custom: { days: "2" } }, moment: null, title: draftTitle("countdown", facts, locale),
         });
       }
-      const squad = input.callups?.get(s.id) ?? [];
+      const squad = (input.callups?.get(s.id) ?? []).filter((p) => !featured || p.playerId === undefined || featured.consent.has(p.playerId));
       if (daysUntil === 1 && squad.length) {
         add({
           kind: "callup", originKey: originKey.callup(s.id), templateKey: TEMPLATE_FOR.callup, sessionId: s.id,
           data: { ...fixture, custom: callupCustom(squad, facts.showNames, locale) }, moment: null, title: draftTitle("callup", facts, locale),
         });
+      }
+    }
+  }
+
+  if (featured) {
+    for (const facts of input.sessions) {
+      if (facts.session.type !== "match" || !isFinished(facts.session, input.now) || facts.session.startsAt.getTime() < now - FOR_YOU.pastDays * DAY) continue;
+      const base = buildSessionData(consentedFacts(facts, featured), locale);
+      delete base.player;
+      const best = rankedMoments(facts)[0] ?? null;
+      for (const plan of matchFeaturedPlans(facts, base, featured, input.now, locale)) addFeatured(plan, facts, best);
+    }
+    if (input.week) {
+      const academy = input.academyData ?? input.sessions[0]?.academy ?? input.week.training?.academy;
+      for (const plan of weekFeaturedPlans({ isoWeek: input.week.isoWeek, featured, weekSessions: input.weekSessions ?? [], academy, now: input.now, locale })) {
+        addFeatured(plan, null, null);
       }
     }
   }
@@ -506,6 +573,13 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     if (facts?.recording && isoWeekKey(facts.session.startsAt) === isoWeek && isFinished(facts.session, now)) { training = facts; break; }
   }
   const locale = FOR_YOU.locale;
+  // Every child appears: consent, rotation and the "every child" drafts. A failure here only drops those.
+  const featured = await loadFeaturedFacts(academyId, profile.showNames).catch((error) => {
+    logger.warn({ academyId, error: (error as Error).message }, "Creative hub: featured facts unavailable");
+    return undefined;
+  });
+  const weekSessions = [...sessions, ...(training ? [training] : [])]
+    .filter((f) => f.recording && isFinished(f.session, now) && isoWeekKey(f.session.startsAt) === isoWeek);
   const plans = planAutoDrafts({
     now,
     sessions,
@@ -513,6 +587,9 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     existing: new Set(existingRows.map((r) => r.key).filter((k): k is string => Boolean(k))),
     locale,
     callups,
+    featured,
+    weekSessions,
+    academyData: profile.academy,
   });
   const made = plans.map((p) => materializeDraft(p, academyId, style)).filter((r): r is DraftRow => r !== null);
   if (!made.length) return 0;
@@ -536,6 +613,7 @@ export async function loadCallups(academyId: number, sessionIds: number[]): Prom
   if (!sessionIds.length) return out;
   const rows = await db.select({
     sessionId: academyMatchLineupsTable.sessionId,
+    playerId: academyMatchLineupsTable.playerId,
     shirt: academyMatchLineupsTable.shirtNumber,
     jersey: academyPlayersTable.jerseyNumber,
     name: academyPlayersTable.name,
@@ -549,7 +627,7 @@ export async function loadCallups(academyId: number, sessionIds: number[]): Prom
     ));
   for (const r of rows) {
     const list = out.get(r.sessionId) ?? [];
-    list.push({ name: r.name, number: r.shirt ?? r.jersey ?? null, position: r.position ?? null });
+    list.push({ name: r.name, number: r.shirt ?? r.jersey ?? null, position: r.position ?? null, playerId: r.playerId });
     out.set(r.sessionId, list);
   }
   return out;
@@ -592,6 +670,6 @@ export function resetAutoDraftThrottle(): void {
 export function inFeed(parsed: ParsedOriginKey | null, createdAt: Date, session: { startsAt: Date } | null, now: Date): boolean {
   if (!parsed) return false;
   if (isFixtureKind(parsed.kind)) return session ? session.startsAt.getTime() > now.getTime() : false;
-  if (parsed.kind === "weekly") return parsed.week === isoWeekKey(now);
+  if ("week" in parsed) return parsed.week === isoWeekKey(now);
   return now.getTime() - createdAt.getTime() <= FOR_YOU.feedDays * DAY;
 }

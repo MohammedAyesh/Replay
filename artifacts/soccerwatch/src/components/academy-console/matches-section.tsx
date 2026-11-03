@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { PrivateClipsCard } from "@/components/academy-console/private-clips-card";
 import { ArrowLeft, ArrowRight, BarChart3, Check, ExternalLink, Loader2, RefreshCw, Sparkles, UserRoundX, Video } from "lucide-react";
 import { useMatchesCopy, type MatchesStrings } from "@/i18n/matches-strings";
 import {
@@ -53,8 +54,15 @@ function Card({ title, step, children, action, testId }: { title: string; step?:
 export function AcademyMatchesSection({ academyId, isOwner }: { academyId: number; isOwner: boolean }) {
   const copy = useMatchesCopy();
   const [tab, setTab] = useState<"matches" | "players">("matches");
-  const [openId, setOpenId] = useState<number | null>(null);
-  useEffect(() => { setOpenId(null); }, [academyId]);
+  // A link from the creative hub's squad grid opens a match at a step: ?match=<id>&step=who.
+  const linked = useMemo(() => {
+    const q = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+    const id = Number(q.get("match"));
+    return Number.isSafeInteger(id) && id > 0 ? { id, step: q.get("step") } : null;
+  }, []);
+  const [openId, setOpenId] = useState<number | null>(linked?.id ?? null);
+  const [first, setFirst] = useState(true);
+  useEffect(() => { if (first) { setFirst(false); return; } setOpenId(null); }, [academyId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <section className="space-y-5" data-testid="academy-matches" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
@@ -75,7 +83,7 @@ export function AcademyMatchesSection({ academyId, isOwner }: { academyId: numbe
           {tab === "matches" ? <MatchList academyId={academyId} copy={copy} onOpen={setOpenId} /> : <PlayerCompare academyId={academyId} copy={copy} />}
         </>
       ) : (
-        <MatchDetailView academyId={academyId} sessionId={openId} isOwner={isOwner} copy={copy} onBack={() => setOpenId(null)} />
+        <MatchDetailView academyId={academyId} sessionId={openId} isOwner={isOwner} copy={copy} onBack={() => setOpenId(null)} focus={linked?.id === openId ? linked.step : null} />
       )}
     </section>
   );
@@ -123,8 +131,13 @@ function MatchList({ academyId, copy, onOpen }: { academyId: number; copy: Copy;
   );
 }
 
-function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack }: { academyId: number; sessionId: number; isOwner: boolean; copy: Copy; onBack: () => void }) {
+function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack, focus }: { academyId: number; sessionId: number; isOwner: boolean; copy: Copy; onBack: () => void; focus?: string | null }) {
   const detail = useAcademyMatch(academyId, sessionId);
+  const loaded = Boolean(detail.data);
+  useEffect(() => {
+    if (!loaded || focus !== "who") return;
+    document.querySelector('[data-testid="match-who"]')?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [loaded, focus]);
   const Back = copy.locale === "ar" ? ArrowRight : ArrowLeft;
   const back = (
     <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm font-semibold text-muted-text hover:text-text" data-testid="button-matches-back">
@@ -150,6 +163,7 @@ function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack }: { acad
       <WhoCard academyId={academyId} data={data} copy={copy} />
       <StatsCard academyId={academyId} data={data} copy={copy} />
       <ShareCard academyId={academyId} data={data} isOwner={isOwner} copy={copy} />
+      {data.session.type === "match" && <PrivateClipsCard academyId={academyId} sessionId={sessionId} isOwner={isOwner} analysed={data.analysis.analysed} />}
     </div>
   );
 }

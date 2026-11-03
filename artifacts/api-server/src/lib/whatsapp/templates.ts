@@ -22,6 +22,7 @@ export type AutomationKey =
   | "subscription_expiring"
   | "payment_receipt"
   | "footage_ready"
+  | "player_clip"
   | "registration_received"
   | "registration_approved"
   | "announcement";
@@ -152,6 +153,19 @@ export const AUTOMATIONS: AutomationDefinition[] = [
     },
   },
   {
+    // A child's best moment from an analysed match, to his own family only (lib/featured/privateClips.ts).
+    // Prepared automatically; the owner sends each batch from Matches. A parent with two children gets one message.
+    key: "player_clip",
+    allowedAudiences: ["parents", "players"],
+    defaultAudiences: ["parents"],
+    timing: null,
+    placeholders: [...COMMON, "day", "date", "clips"],
+    template: {
+      ar: "{academy} 🎥\nأحلى لقطة من ماتش {day} {date}:\n{clips}",
+      en: "{academy} 🎥\nThe best moment from {day} {date}'s match:\n{clips}",
+    },
+  },
+  {
     key: "registration_received",
     allowedAudiences: [],
     defaultAudiences: [],
@@ -212,7 +226,7 @@ export type EffectiveAutomation = {
  * Announcements default to on (the owner still ticks "also send on WhatsApp" per
  * announcement); every other automation is off until the owner turns it on.
  */
-const DEFAULT_ENABLED: Partial<Record<AutomationKey, boolean>> = { announcement: true };
+const DEFAULT_ENABLED: Partial<Record<AutomationKey, boolean>> = { announcement: true, player_clip: true };
 
 export function effectiveAutomation(
   def: AutomationDefinition,

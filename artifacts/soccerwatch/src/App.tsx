@@ -37,6 +37,7 @@ import IdentityBoard from "@/pages/identity-board";
 import Owner from "@/pages/owner";
 import OwnerVar from "@/pages/owner-var";
 import OwnerShare from "@/pages/owner-share";
+import KidClipPage from "@/pages/kid-clip";
 import MatchPage from "@/pages/match";
 import Matches from "@/pages/matches";
 import FriendsPage from "@/pages/friends";
@@ -620,6 +621,7 @@ function AppRouter() {
         <Route path="/owner"><Owner /></Route>
         <Route path="/owner/var/:requestId"><OwnerVar /></Route>
         <Route path="/w/:token" component={OwnerShare} />
+        <Route path="/kc/:token" component={KidClipPage} />
         {MatchReportDevPreview && (
           <Route path="/__dev/match-report">
             <Suspense fallback={null}><MatchReportDevPreview /></Suspense>

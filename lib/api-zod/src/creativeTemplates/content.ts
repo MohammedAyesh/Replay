@@ -639,6 +639,94 @@ const DEFS: Def[] = [
     }),
     sample: (ar) => ({ academy: academy(ar), match: match(ar), stats: { possession: 58, opponentPossession: 42, shots: 14, passes: 312, passAccuracy: 81, dribbles: 9 } }),
   },
+  // ── Every child appears: posts that don't depend on talent ──────────────
+  // Each is about one child; drafts go to whoever has waited longest
+  // (lib/featured/rules.ts rotationOrder). "Most improved" compares a child
+  // with his own earlier matches only, never with other children.
+  {
+    key: "meetplayer", category: "players", title: { en: "Meet the player", ar: "تعرّفوا على اللاعب" }, formats: STILL,
+    content: (ar) => ({
+      arch: "hero",
+      kicker: ar ? "تعرّفوا على اللاعب" : "Meet the player",
+      headline: ar ? "تعرّفوا على بطلنا" : "Meet the player",
+      number: "{{player.number}}",
+      name: "{{player.name}}",
+      sub: "{{custom.fact}}",
+      meta: ["{{player.squad}} · {{player.position}}"],
+      pills: [],
+      media: true,
+      playerPhoto: true,
+    }),
+    sample: (ar) => ({
+      academy: academy(ar), player: player(ar, 8), media: photo("player"),
+      custom: { fact: ar ? "بحب المراوغة وبحلم يلعب للنشامى." : "Loves to dribble. Dreams of playing for Jordan." },
+    }),
+  },
+  {
+    key: "improved", category: "players", title: { en: "Most improved", ar: "الأكثر تطوّراً" }, formats: STILL,
+    content: (ar) => ({
+      arch: "hero",
+      kicker: ar ? "تطوّر حلو" : "On the rise",
+      headline: ar ? "الأكثر تطوّراً" : "Most improved",
+      number: "{{player.number}}",
+      name: "{{player.name}}",
+      stat: { value: "{{stats.value}}", label: "{{stats.label}}" },
+      sub: "{{custom.since}}",
+      meta: ["{{player.squad}} · {{match.date}}"],
+      pills: [],
+      media: true,
+      playerPhoto: true,
+    }),
+    sample: (ar) => ({
+      academy: academy(ar), match: match(ar), player: player(ar, 6), media: photo("player"),
+      stats: { value: 4, label: ar ? "مراوغات ناجحة" : "Dribbles won" },
+      custom: { since: ar ? "أكثر من معدّله بآخر مبارياته (1)" : "Up from his usual 1 in his last matches" },
+    }),
+  },
+  {
+    key: "streak", category: "academy-life", title: { en: "Attendance streak", ar: "ما بغيب" }, formats: STILL,
+    content: (ar) => ({
+      arch: "hero",
+      kicker: ar ? "ما بغيب أبداً" : "Never misses a session",
+      headline: ar ? "التزام بطل" : "Always there",
+      number: "{{player.number}}",
+      name: "{{player.name}}",
+      stat: { value: "{{custom.streak}}", label: ar ? "تمرين ورا بعض" : "sessions in a row" },
+      meta: ["{{player.squad}}"],
+      pills: [],
+      media: true,
+      playerPhoto: true,
+    }),
+    sample: (ar) => ({ academy: academy(ar), player: player(ar, 4), media: photo("player"), custom: { streak: "20" } }),
+  },
+  {
+    key: "firstgoal", category: "players", title: { en: "First goal", ar: "أول جول" }, formats: STILL,
+    content: (ar) => ({
+      arch: "hero",
+      kicker: ar ? "أول جول إله!" : "First goal!",
+      headline: ar ? "أول جول إله" : "His first goal",
+      number: "{{player.number}}",
+      name: "{{player.name}}",
+      meta: [scoreline(ar), squadDate],
+      pills: [],
+      media: true,
+      playerPhoto: true,
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: match(ar), player: player(ar, 15), media: photo("player") }),
+  },
+  {
+    key: "weekmoment", category: "players", title: { en: "Moment of the week", ar: "لقطة الأسبوع" }, formats: REEL,
+    content: (ar) => ({
+      arch: "video",
+      kicker: ar ? "لقطة الأسبوع" : "Moment of the week",
+      headline: "{{custom.headline}}",
+      meta: [squadDate],
+      pills: [],
+      media: true,
+      video: { variant: "training", durationMs: 15000 },
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: match(ar), media: photo("goal-clip"), custom: { headline: ar ? "أحلى لقطة من هالأسبوع" : "The best of this week" } }),
+  },
 ];
 
 /** Templates that read the academy's crest name line. */
