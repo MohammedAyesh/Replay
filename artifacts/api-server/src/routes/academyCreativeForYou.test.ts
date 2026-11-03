@@ -79,7 +79,8 @@ beforeAll(async () => {
     { academyId: otherAcademyId, type: "match", startsAt: new Date(now - 24 * HOUR), location: "Elsewhere", opponent: "X", ownScore: 1, opponentScore: 0 },
   ]).returning({ id: academySessionsTable.id });
   [wonId, fixtureId, otherSessionId] = sessions.map((s) => s.id);
-  const [player] = await db.insert(academyPlayersTable).values({ academyId, squadId: squad.id, name: "Ahmad Saleh", jerseyNumber: 10 }).returning({ id: academyPlayersTable.id });
+  // His parents ticked public-post consent: without it he is left out of every public draft (lib/featured).
+  const [player] = await db.insert(academyPlayersTable).values({ academyId, squadId: squad.id, name: "Ahmad Saleh", jerseyNumber: 10, publicPostsConsent: true }).returning({ id: academyPlayersTable.id });
   const [rec] = await db.insert(recordingsTable).values({
     fieldId: field.id, court: "1", date: "2026-10-31", timeSlot: "18:00", duration: "60:00", videoUrl: `https://vz.test/foryou-${tag}/playlist.m3u8`,
   } as typeof recordingsTable.$inferInsert).returning({ id: recordingsTable.id });
