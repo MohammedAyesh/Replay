@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
+import { withDirectSegments } from "@/lib/directSegments";
 import type { DeckCard, FocusPoint } from "@/lib/check-deck";
 
 /**
@@ -107,6 +108,9 @@ export const DeckVideo = memo(function DeckVideo({
     video.addEventListener("canplay", ready);
     video.addEventListener("progress", ready);
     const length = Math.max(4, card.end - card.start);
+    // Segments straight from Bunny first; the relayed playlist if they fail.
+    const directUrl = withDirectSegments(url);
+    let onDirect = directUrl !== url;
     if (url.includes(".m3u8") || url.includes("/hls-proxy/")) {
       if (Hls.isSupported()) {
         hls = new Hls({
@@ -125,6 +129,12 @@ export const DeckVideo = memo(function DeckVideo({
         });
         hls.on(Hls.Events.ERROR, (_e, data) => {
           if (!data.fatal || !hls) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && onDirect) {
+            onDirect = false;
+            hls.loadSource(url);
+            hls.startLoad(start);
+            return;
+          }
           if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
           else if (!done) set("failed");
         });
@@ -148,13 +158,21 @@ export const DeckVideo = memo(function DeckVideo({
           if (Math.abs(video.currentTime - start) > 0.25) video.currentTime = start;
         });
         hls.attachMedia(video);
-        hls.loadSource(url);
+        hls.loadSource(directUrl);
         hlsRef.current = hls;
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         // iPhone Safari: its own HLS; seek once the metadata is in
         video.preload = "auto";
-        video.src = url;
+        video.src = directUrl;
         video.addEventListener("loadedmetadata", () => { video.currentTime = start; }, { once: true });
+        if (onDirect) {
+          video.addEventListener("error", () => {
+            if (!onDirect) return;
+            onDirect = false;
+            video.src = url;
+            video.addEventListener("loadedmetadata", () => { video.currentTime = start; }, { once: true });
+          }, { once: true });
+        }
       } else {
         set("failed");
       }

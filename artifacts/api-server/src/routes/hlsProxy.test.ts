@@ -349,3 +349,34 @@ describe("hls-proxy manifest cache", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /hls-proxy/mp4 (the MP4 a player falls back to)", () => {
+  const MP4 = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+
+  it("sends a replayjo.com page to the CDN file itself", async () => {
+    const res = await request(app)
+      .get(`/api/hls-proxy/mp4?url=${encodeURIComponent(MP4)}`)
+      .set("Referer", "https://replayjo.com/fields/10");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(MP4);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends other pages, and relay=1, to the range-relaying route", async () => {
+    for (const req of [
+      request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent(MP4)}`).set("Referer", "https://x.replit.dev/fields/10"),
+      request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent(MP4)}&relay=1`).set("Referer", "https://replayjo.com/fields/10"),
+    ]) {
+      const res = await req;
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe(`/api/hls-proxy/segment?url=${encodeURIComponent(MP4)}`);
+    }
+  });
+
+  it("refuses anything that is not a Bunny progressive MP4", async () => {
+    const playlist = await request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent(UPSTREAM)}`);
+    expect(playlist.status).toBe(400);
+    const elsewhere = await request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent("https://example.com/a/play_720p.mp4")}`);
+    expect(elsewhere.status).toBe(400);
+  });
+});

@@ -436,6 +436,29 @@ router.get("/hls-proxy/manifest", async (req, res): Promise<void> => {
 });
 
 /**
+ * GET /api/hls-proxy/mp4?url=<encoded>
+ * The progressive MP4 a player switches to when HLS fails. After the same
+ * media check as every proxy route, a page Bunny accepts (replayjo.com) is
+ * sent to the CDN file itself; any other page, or `relay=1`, gets the
+ * range-relaying segment route as before.
+ */
+router.get("/hls-proxy/mp4", async (req, res): Promise<void> => {
+  const raw = req.query.url as string | undefined;
+  if (!raw || !isBunnyUrl(raw) || !isProgressiveMp4Fallback(raw)) {
+    res.status(400).send("Missing or disallowed url");
+    return;
+  }
+  if (!await isAuthorizedMediaRequest(req, raw)) {
+    res.status(404).send("Media not found");
+    return;
+  }
+  const direct = req.query.relay !== "1"
+    && wantsDirectSegments({ direct: "1" }, req.header("referer") ?? undefined, req.header("origin") ?? undefined);
+  res.set("Cache-Control", "private, no-store");
+  res.redirect(302, direct ? raw : `/api/hls-proxy/segment?url=${encodeURIComponent(raw)}`);
+});
+
+/**
  * GET /api/hls-proxy/segment?url=<encoded>
  * Streams an HLS segment or MP4 fallback from Bunny CDN, preserving byte ranges
  * so native video elements can seek in progressive MP4 playback.

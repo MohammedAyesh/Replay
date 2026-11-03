@@ -57,6 +57,7 @@ import {
   createSeekDragState,
   decidePlaybackRecovery,
   endSeekDrag,
+  cdnPlaybackSource,
   initialPlaybackSourceStage,
   playbackPositionForRestore,
   PLAYBACK_STALL_TIMEOUT_MS,
@@ -546,11 +547,14 @@ export function ClipPlayer({
   }, [sourceKey]);
   const isLiveDvr = Boolean(liveDvr);
   const maxLiveClipSeconds = Math.max(1, Math.min(600, liveDvr?.maxDurationSeconds ?? 600));
+  const cdnSrc = cdnPlaybackSource({ isLive, proxySrc, src });
   const activeSrc = sourceStage === "fallback"
     ? fallbackSrc ?? src
-    : sourceStage === "proxy"
-      ? proxySrc ?? src
-      : src;
+    : sourceStage === "cdn"
+      ? cdnSrc ?? proxySrc ?? src
+      : sourceStage === "proxy"
+        ? proxySrc ?? src
+        : src;
   const usingFallback = sourceStage === "fallback";
 
   const setPlaybackSourceStage = useCallback((stage: PlaybackSourceStage) => {

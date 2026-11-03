@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { getBunnyMp4FallbackSource } from "./bunnyPlayback";
 
 describe("getBunnyMp4FallbackSource", () => {
-  it("builds a same-origin proxied 720p fallback for Bunny HLS", () => {
+  it("builds the same-origin 720p fallback route for Bunny HLS", () => {
     const result = getBunnyMp4FallbackSource(
       "https://vz-123.b-cdn.net/abc-123/playlist.m3u8",
     );
 
     expect(result).toBe(
-      `/api/hls-proxy/segment?url=${encodeURIComponent(
+      `/api/hls-proxy/mp4?url=${encodeURIComponent(
         "https://vz-123.b-cdn.net/abc-123/play_720p.mp4",
       )}`,
     );

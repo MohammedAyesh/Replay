@@ -44,6 +44,7 @@ import {
   verifyShareToken,
 } from "../lib/shareCard";
 import { logger } from "../lib/logger";
+import { wantsDirectSegments } from "./hlsProxy";
 import { loadRoomByCode, matchWindow, rosterFor } from "../lib/matchRooms";
 
 const router: IRouter = Router();
@@ -167,7 +168,13 @@ function publicResourcePath(token: string, id: string): string {
   return `/w/${encodeURIComponent(token)}/resource/${encodeURIComponent(id)}`;
 }
 
-function rewriteOwnerManifest(token: string, rawManifest: string, sourceUrl: string): string {
+/**
+ * `direct` (granted by wantsDirectSegments: replayjo.com pages only) leaves
+ * media segment lines as Bunny URLs so the viewer fetches them from the CDN;
+ * nested playlists still come through the signed resource route, carrying the
+ * flag on. The share token still gates every playlist.
+ */
+function rewriteOwnerManifest(token: string, rawManifest: string, sourceUrl: string, direct = false): string {
   const base = new URL(sourceUrl);
   return rawManifest.split("\n").map((line) => {
     const trimmed = line.trim();
@@ -180,7 +187,10 @@ function rewriteOwnerManifest(token: string, rawManifest: string, sourceUrl: str
       } catch {
         absolute = new URL(raw, base).href;
       }
-      return publicResourcePath(token, streamResourceId(token, absolute));
+      const isPlaylist = /\.m3u8(?:$|\?)/i.test(new URL(absolute).pathname + new URL(absolute).search);
+      if (direct && !isPlaylist && new URL(absolute).hostname === BUNNY_CDN_HOSTNAME) return absolute;
+      const path = publicResourcePath(token, streamResourceId(token, absolute));
+      return direct && isPlaylist ? `${path}?direct=1` : path;
     };
 
     if (trimmed.startsWith("#")) {
@@ -671,6 +681,10 @@ router.get(["/w/:token/poster.jpg", "/api/w/:token/poster.jpg"], async (req, res
   await proxyStorageObject(req, res, posterPath, "image/jpeg", 31536000);
 });
 
+function ownerShareDirect(req: Request): boolean {
+  return wantsDirectSegments(req.query, req.header("referer") ?? undefined, req.header("origin") ?? undefined);
+}
+
 router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
   const share = await resolveOwnerShare(token);
@@ -690,7 +704,7 @@ router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (re
   const manifest = await response.text();
   res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
   res.setHeader("Cache-Control", "no-store");
-  res.send(rewriteOwnerManifest(token, manifest, rawUrl));
+  res.send(rewriteOwnerManifest(token, manifest, rawUrl, ownerShareDirect(req)));
 });
 
 router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceId"], async (req, res): Promise<void> => {
@@ -723,7 +737,7 @@ router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceI
     const manifest = await response.text();
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.setHeader("Cache-Control", "no-store");
-    res.send(rewriteOwnerManifest(token, manifest, upstreamUrl));
+    res.send(rewriteOwnerManifest(token, manifest, upstreamUrl, ownerShareDirect(req)));
     return;
   }
 

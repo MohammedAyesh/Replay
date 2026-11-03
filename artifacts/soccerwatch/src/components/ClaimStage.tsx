@@ -27,6 +27,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
+import { withDirectSegments } from "@/lib/directSegments";
 import { capPlaybackQuality } from "../lib/hlsQuality";
 import {
   Expand,
@@ -208,6 +209,9 @@ function useBunnyHls(
       firstFrameTimer = null;
     };
 
+    // Segments straight from Bunny first; the relayed playlist if they fail.
+    const directUrl = withDirectSegments(url);
+    let onDirect = directUrl !== url;
     const startPlayback = () => {
       if (url.includes(".m3u8") && Hls.isSupported()) {
         hls = new Hls({
@@ -218,7 +222,7 @@ function useBunnyHls(
         });
         hlsRef.current = hls;
         capPlaybackQuality(hls);
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(directUrl));
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           const requested = Math.max(0, startVideoTimeRef.current);
@@ -264,6 +268,12 @@ function useBunnyHls(
             }
             return;
           }
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && onDirect) {
+            onDirect = false;
+            hls.loadSource(url);
+            hls.startLoad(Math.max(0, video.currentTime || startVideoTimeRef.current));
+            return;
+          }
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             networkRetries += 1;
             if (networkRetries > 5) { clearFirstFrameTimer(); setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
@@ -287,12 +297,22 @@ function useBunnyHls(
           }
         });
       } else {
-        video.src = url;
+        video.src = directUrl;
         nativeMetadataHandler = () => {
           video.currentTime = Math.max(0, startVideoTimeRef.current);
         };
         video.addEventListener("loadedmetadata", nativeMetadataHandler, { once: true });
-        video.onerror = () => setVideoError("The recording could not be played.");
+        video.onerror = () => {
+          if (onDirect) {
+            onDirect = false;
+            video.src = url;
+            video.addEventListener("loadedmetadata", () => {
+              video.currentTime = Math.max(0, startVideoTimeRef.current);
+            }, { once: true });
+            return;
+          }
+          setVideoError("The recording could not be played.");
+        };
       }
     };
     startPlayback();

@@ -328,6 +328,27 @@ describe("admin clip re-clipping", () => {
     expect(row).toMatchObject({ exportStatus: "done", exportedUrl: errored.exportedUrl });
   });
 
+  it("sends an admin's preview of a finished Storage export straight to the CDN", async () => {
+    const clip = await createClip();
+    const exportedUrl = `https://storage.bunnycdn.com/clips/${clip.id}-abc123.mp4`;
+    await db.update(userClipsTable).set({ exportedUrl }).where(eq(userClipsTable.id, clip.id));
+
+    const direct = await request(app).get(`/api/admin/clips/${clip.id}/playback`);
+    expect(direct.status).toBe(302);
+    expect(direct.headers.location).toMatch(new RegExp(`/clips/${clip.id}-abc123\\.mp4$`));
+    expect(direct.headers.location).not.toContain("storage.bunnycdn.com");
+    expect(exportFetcher).not.toHaveBeenCalled();
+
+    // ?relay=1 is the preview's fallback: the old bounded relay.
+    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("exported"), {
+      status: 200,
+      headers: { "content-length": "8", "accept-ranges": "bytes" },
+    }));
+    const relayed = await request(app).get(`/api/admin/clips/${clip.id}/playback?relay=1`);
+    expect(relayed.status).toBeLessThan(300);
+    expect(exportFetcher).toHaveBeenCalledTimes(1);
+  });
+
   it("requires an admin to access exported clip playback", async () => {
     const clip = await createClip();
     mockedGetLocalUserId.mockResolvedValue(playerId);

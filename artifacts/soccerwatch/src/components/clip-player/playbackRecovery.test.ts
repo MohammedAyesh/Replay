@@ -7,6 +7,7 @@ import {
   createSeekDragState,
   decidePlaybackRecovery,
   endSeekDrag,
+  cdnPlaybackSource,
   initialPlaybackSourceStage,
   isFallbackSourceAvailable,
   playbackPositionForRestore,
@@ -143,12 +144,41 @@ describe("ClipPlayer playback recovery", () => {
     expect(clampPlaybackPosition(2_530, 3_600)).toBe(2_530);
   });
 
-  it("starts archived playback on the proxy even when hls.js is supported", () => {
-    expect(initialPlaybackSourceStage({
+  it("starts archived playback on the CDN-segment playlist", () => {
+    const options = {
       isLive: false,
       proxySrc: "/api/hls-proxy/manifest?url=encoded",
       src: "https://cdn.example.test/playlist.m3u8",
-    })).toBe("proxy");
+    };
+    expect(initialPlaybackSourceStage(options)).toBe("cdn");
+    expect(cdnPlaybackSource(options)).toBe("/api/hls-proxy/manifest?url=encoded&direct=1");
+  });
+
+  it("starts an owner share link on its CDN-segment playlist", () => {
+    const options = { isLive: false, src: "/w/abc123/manifest.m3u8" };
+    expect(initialPlaybackSourceStage(options)).toBe("cdn");
+    expect(cdnPlaybackSource(options)).toBe("/w/abc123/manifest.m3u8?direct=1");
+  });
+
+  it("keeps a proxy-less, non-app source on it as before", () => {
+    expect(initialPlaybackSourceStage({ isLive: false, src: "https://cdn.example.test/a.m3u8" })).toBe("direct");
+  });
+
+  it("drops a failed CDN source to the relayed playlist without retrying it", async () => {
+    expect(await decidePlaybackRecovery({
+      currentStage: "cdn",
+      hasProxy: true,
+      fallbackSrc: "/api/hls-proxy/mp4?url=x",
+      currentRetryAttempted: false,
+      isFallbackAvailable: vi.fn(),
+    })).toEqual({ type: "switch-source", stage: "proxy" });
+    // A share link has no separate proxy: its plain playlist is `src`.
+    expect(await decidePlaybackRecovery({
+      currentStage: "cdn",
+      hasProxy: false,
+      currentRetryAttempted: false,
+      isFallbackAvailable: vi.fn(),
+    })).toEqual({ type: "switch-source", stage: "direct" });
   });
 
   it("keeps live playback on its live source", () => {

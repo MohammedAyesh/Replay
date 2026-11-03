@@ -525,6 +525,24 @@ describe("public owner watch links", () => {
     expect(res.text).toContain("هذا الرابط لم يعد متاحاً.");
   });
 
+  it("leaves segments on Bunny for a replayjo.com page that asks for direct=1", async () => {
+    const direct = await request(app)
+      .get(`/w/${token}/manifest.m3u8?direct=1`)
+      .set("Referer", `https://replayjo.com/w/${token}`);
+    expect(direct.status).toBe(200);
+    const line = direct.text.trim().split("\n").at(-1)!;
+    expect(new URL(line).hostname).toBe(process.env.BUNNY_CDN_HOSTNAME);
+
+    // Any other page, or no flag, keeps the opaque token-bound resources.
+    for (const req of [
+      request(app).get(`/w/${token}/manifest.m3u8?direct=1`).set("Referer", "https://x.replit.dev/"),
+      request(app).get(`/w/${token}/manifest.m3u8`).set("Referer", `https://replayjo.com/w/${token}`),
+    ]) {
+      const res = await req;
+      expect(res.text.trim().split("\n").at(-1)).toMatch(new RegExp(`^/w/${token}/resource/`));
+    }
+  });
+
   it("rewrites manifests and segments through opaque token-bound resources", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {

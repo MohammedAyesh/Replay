@@ -42,6 +42,7 @@ import {
   BunnyVideoNotFoundError,
   getBunnyVideoInfo,
   getBunnyPlaybackUrl,
+  getClipExportCdnUrl,
 } from "../lib/bunny";
 import { extractBunnyVideoId } from "../lib/publicFootage";
 import { isOwnerRequestedRecordingTitle } from "../lib/recordingVisibility";
@@ -765,6 +766,16 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
       exportStatus: publicExportStatus(clip?.exportStatus) ?? "missing",
     } satisfies AdminClipPlaybackNotReady;
     res.status(404).json(body);
+    return;
+  }
+
+  // Same as /user-clips/:id/playback: a finished Storage export is played
+  // straight from Bunny's pull zone. `?relay=1` keeps the relay below, which
+  // the preview falls back to if the CDN copy will not play.
+  const cdnUrl = req.query.relay !== "1" ? getClipExportCdnUrl(clipId, clip.exportedUrl) : null;
+  if (cdnUrl) {
+    res.set("Cache-Control", "private, max-age=300");
+    res.redirect(302, cdnUrl);
     return;
   }
 

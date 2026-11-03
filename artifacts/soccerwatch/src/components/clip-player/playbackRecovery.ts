@@ -1,4 +1,12 @@
-export type PlaybackSourceStage = "direct" | "proxy" | "fallback";
+import { canPlayDirect, withDirectSegments } from "@/lib/directSegments";
+
+/**
+ * Where the player is reading from, in the order it tries them:
+ * "cdn" (the app's playlist with segments straight from Bunny), then "proxy"
+ * (the same playlist with every segment relayed), then "fallback" (the MP4).
+ * "direct" is the bare `src`, used for live and for players given no proxy.
+ */
+export type PlaybackSourceStage = "cdn" | "direct" | "proxy" | "fallback";
 
 export const PLAYBACK_STALL_TIMEOUT_MS = 8_000;
 
@@ -9,15 +17,27 @@ export type PlaybackSnapshot = {
 };
 
 export type RecoveryDecision =
-  | { type: "switch-source"; stage: "proxy" | "fallback" }
+  | { type: "switch-source"; stage: "direct" | "proxy" | "fallback" }
   | { type: "retry-current" }
   | { type: "error" };
+
+/** The CDN-segment playlist for a recording, or null (live, or nothing to ask). */
+export function cdnPlaybackSource(options: {
+  isLive: boolean;
+  proxySrc?: string;
+  src?: string;
+}): string | null {
+  if (options.isLive) return null;
+  const playlist = options.proxySrc ?? options.src;
+  return playlist && canPlayDirect(playlist) ? withDirectSegments(playlist) : null;
+}
 
 export function initialPlaybackSourceStage(options: {
   isLive: boolean;
   proxySrc?: string;
   src?: string;
 }): PlaybackSourceStage {
+  if (cdnPlaybackSource(options)) return "cdn";
   return !options.isLive && Boolean(options.proxySrc && options.proxySrc !== options.src)
     ? "proxy"
     : "direct";
@@ -46,6 +66,11 @@ export async function decidePlaybackRecovery(options: {
   currentRetryAttempted: boolean;
   isFallbackAvailable?: (url: string) => Promise<boolean>;
 }): Promise<RecoveryDecision> {
+  // A CDN failure (Referer refused, a CORS or network fault) goes straight to
+  // the relayed playlist, with no retry of the CDN first.
+  if (options.currentStage === "cdn") {
+    return { type: "switch-source", stage: options.hasProxy ? "proxy" : "direct" };
+  }
   if (options.currentStage === "direct" && options.hasProxy) {
     return { type: "switch-source", stage: "proxy" };
   }

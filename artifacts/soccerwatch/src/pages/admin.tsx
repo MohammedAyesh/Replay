@@ -12,6 +12,7 @@ import {
   Download, Upload,
 } from "lucide-react";
 import Hls from "hls.js";
+import { withDirectSegments } from "@/lib/directSegments";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
 import CreativePackPanel from "@/components/admin/CreativePackPanel";
@@ -383,7 +384,10 @@ function AdminClipPlayer({
     ? clip.exportStatus ?? "unknown"
     : "missing";
   const isPortrait = clip.aspectRatio === "9:16" || clip.aspectRatio === "9/16";
-  const playbackUrl = `${basePath}/api/admin/clips/${clip.id}/playback`;
+  // The route sends a finished export straight to Bunny's CDN; `?relay=1`
+  // is the server relay, tried once if the CDN copy does not play.
+  const [useRelay, setUseRelay] = useState(false);
+  const playbackUrl = `${basePath}/api/admin/clips/${clip.id}/playback${useRelay ? "?relay=1" : ""}`;
   const [playbackError, setPlaybackError] = useState(false);
 
   return (
@@ -417,13 +421,15 @@ function AdminClipPlayer({
                 </p>
               ) : (
                 <video
-                  key={`${clip.id}:${clip.exportedUrl}`}
+                  key={`${clip.id}:${clip.exportedUrl}:${useRelay ? "relay" : "cdn"}`}
                   src={playbackUrl}
-                  crossOrigin="use-credentials"
                   controls
                   playsInline
                   preload="metadata"
-                  onError={() => setPlaybackError(true)}
+                  onError={() => {
+                    if (!useRelay) setUseRelay(true);
+                    else setPlaybackError(true);
+                  }}
                   className="max-h-[72vh] max-w-full rounded-lg bg-black object-contain"
                   style={{
                     aspectRatio: isPortrait ? "9 / 16" : "16 / 9",
@@ -3640,9 +3646,18 @@ function HlsPlayer({ url, className }: { url: string; className?: string }) {
     if (Hls.isSupported()) {
       const hls = new Hls({ liveSyncDurationCount: 3 });
       hlsRef.current = hls;
+      // Segments straight from Bunny first; the relayed playlist if they fail.
+      const directUrl = withDirectSegments(url);
+      let onDirect = directUrl !== url;
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal || data.type !== Hls.ErrorTypes.NETWORK_ERROR || !onDirect) return;
+        onDirect = false;
+        hls.loadSource(url);
+        hls.startLoad(el.currentTime || 0);
+      });
       // Intentional omission: admin preview checks encode quality at full
       // source resolution rather than ordinary viewer playback.
-      hls.loadSource(url);
+      hls.loadSource(directUrl);
       hls.attachMedia(el);
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         // sort highest → lowest for the quality buttons
