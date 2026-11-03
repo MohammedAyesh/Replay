@@ -88,7 +88,8 @@ router.get(`${base}/clips`, async (req, res): Promise<void> => {
     const fieldIds = await venueFieldIds(access.academyId);
     if (fieldIds) {
       const origin = req.query.origin === "auto" || req.query.origin === "player" ? req.query.origin : null;
-      res.json(await venueLibraryClips(access.academyId, fieldIds, parseLibraryFilters(req.query as Record<string, unknown>), origin));
+      const sort = req.query.sort === "match" || req.query.sort === "player" ? req.query.sort : "newest";
+      res.json(await venueLibraryClips(access.academyId, fieldIds, parseLibraryFilters(req.query as Record<string, unknown>), origin, sort));
       return;
     }
     const showNames = await namesAllowed(access.academyId);

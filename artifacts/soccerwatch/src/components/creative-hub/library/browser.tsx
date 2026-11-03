@@ -12,6 +12,7 @@ import {
   useLibraryUploads,
   useUploadLibraryMedia,
   type ClipOrigin,
+  type ClipSort,
   type LibraryClip,
   type LibraryMatch,
   type LibraryMoment,
@@ -415,6 +416,30 @@ function clipBadge(c: LibraryClip, copy: LibraryCopy): string | null {
   return c.status === "processing" ? copy.processing : c.status === "live" ? copy.liveClip : c.status === "failed" ? copy.failedClip : null;
 }
 
+function ClipTile({ academyId, c, onSelect }: { academyId: number; c: LibraryClip; onSelect: (item: LibraryItem) => void }) {
+  const copy = useCreativeLibraryCopy();
+  const badge = clipBadge(c, copy);
+  const usable = c.status === "ready" || c.status === "processing";
+  return (
+    <li>
+      <button type="button" disabled={!usable} onClick={() => onSelect({ kind: "clip", clip: c })} data-testid={`library-clip-${c.clipId}`}
+        className="group block w-full text-start disabled:opacity-50">
+        <Thumb urls={stillUrls(academyId, c.source, c.thumbnailUrl)} video length={formatLength(c.durationMs)}
+          className={cn("w-full ring-turf transition group-hover:ring-2", c.aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-video")}>
+          {badge && <span className="absolute end-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">{badge}</span>}
+          {c.origin && (
+            <span className={cn("absolute start-1.5 top-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold", c.origin === "auto" ? "bg-floodlight text-void" : "bg-black/70 text-white")}>
+              {c.origin === "auto" && <Sparkles className="h-3 w-3" aria-hidden />}
+              {c.origin === "auto" ? copy.madeByReplay : c.madeBy ?? copy.origin.player}
+            </span>
+          )}
+        </Thumb>
+        <span className="mt-1 block truncate text-xs font-semibold text-text">{clipLabel(c, copy)}</span>
+      </button>
+    </li>
+  );
+}
+
 function ClipsView({ academyId, accept, filter, onSelect }: {
   academyId: number;
   accept: LibraryAccept;
@@ -423,51 +448,72 @@ function ClipsView({ academyId, accept, filter, onSelect }: {
 }) {
   const copy = useCreativeLibraryCopy();
   const [origin, setOrigin] = useState<ClipOrigin | null>(null);
-  const q = useLibraryClips(academyId, { squadId: filter.squadId, from: filter.from || null, to: filter.to || null, origin });
+  const [sort, setSort] = useState<ClipSort>("newest");
+  const q = useLibraryClips(academyId, { squadId: filter.squadId, from: filter.from || null, to: filter.to || null, origin, sort });
   // A picture slot can only take a clip we can take a frame of.
   const items = accept === "image" ? q.items.filter((c) => c.still) : q.items;
-  // A field's clips come from players and from Replay: say which, and filter by it.
+  // A field's clips come from players and from Replay: say which, filter by it, and sort by match or player.
   const counts = q.counts;
-  const originChips = counts && (counts.all > 0 || origin) ? (
-    <div className="mb-3 flex flex-wrap gap-1.5" role="group" data-testid="library-clip-origin">
-      {([null, "player", "auto"] as const).map((o) => (
-        <Chip key={o ?? "all"} active={origin === o} onClick={() => setOrigin(o)} testId={`library-origin-${o ?? "all"}`}>
-          {o === "auto" && <Sparkles className="h-3.5 w-3.5" aria-hidden />}
-          {copy.origin[o ?? "all"]} · {o ? counts[o] : counts.all}
-        </Chip>
-      ))}
+  const controls = counts && (counts.all > 0 || origin) ? (
+    <div className="mb-3 flex flex-wrap items-center gap-1.5" data-testid="library-clip-controls">
+      <div className="flex flex-wrap gap-1.5" role="group" data-testid="library-clip-origin">
+        {([null, "player", "auto"] as const).map((o) => (
+          <Chip key={o ?? "all"} active={origin === o} onClick={() => setOrigin(o)} testId={`library-origin-${o ?? "all"}`}>
+            {o === "auto" && <Sparkles className="h-3.5 w-3.5" aria-hidden />}
+            {copy.origin[o ?? "all"]} · {o ? counts[o] : counts.all}
+          </Chip>
+        ))}
+      </div>
+      <span className="mx-1 hidden h-5 w-px bg-line sm:block" aria-hidden />
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={copy.sortLabel} data-testid="library-clip-sort">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-text">{copy.sortLabel}</span>
+        {(["newest", "match", "player"] as const).map((s) => (
+          <Chip key={s} active={sort === s} onClick={() => setSort(s)} testId={`library-sort-${s}`}>{copy.sort[s]}</Chip>
+        ))}
+      </div>
     </div>
   ) : null;
-  if (q.isLoading) return <Skeletons />;
+  if (q.isLoading) return <>{controls}<Skeletons /></>;
   if (q.isError) return <Notice onRetry={() => void q.refetch()} retry={copy.retry}>{copy.failed}</Notice>;
-  if (!items.length) return <>{originChips}<Notice>{origin ? copy.noOriginClips[origin] : copy.noClips}</Notice></>;
+  if (!items.length) return <>{controls}<Notice>{origin ? copy.noOriginClips[origin] : copy.noClips}</Notice></>;
+
+  // By match / by player: consecutive runs of the same game or player, each under a header.
+  const groups: Array<{ key: string; title: string; sub: string | null; clips: LibraryClip[] }> = [];
+  if (sort !== "newest") {
+    for (const c of items) {
+      const key = sort === "match" ? c.match?.key ?? "none" : c.player?.key ?? "none";
+      let g = groups[groups.length - 1];
+      if (!g || g.key !== key) {
+        const title = sort === "match"
+          ? (c.match ? `${dayLabel(c.match.date, copy.locale)} · ${c.match.time}` : copy.otherClips)
+          : c.player?.name ?? copy.unknownPlayer;
+        const sub = sort === "match" ? c.match?.pitch ?? null : null;
+        g = { key, title, sub, clips: [] };
+        groups.push(g);
+      }
+      g.clips.push(c);
+    }
+  }
   return (
     <div data-testid="library-clips">
-      {originChips}
-      <Grid>
-        {items.map((c) => {
-          const badge = clipBadge(c, copy);
-          const usable = c.status === "ready" || c.status === "processing";
-          return (
-            <li key={c.clipId}>
-              <button type="button" disabled={!usable} onClick={() => onSelect({ kind: "clip", clip: c })} data-testid={`library-clip-${c.clipId}`}
-                className="group block w-full text-start disabled:opacity-50">
-                <Thumb urls={stillUrls(academyId, c.source, c.thumbnailUrl)} video length={formatLength(c.durationMs)}
-                  className={cn("w-full ring-turf transition group-hover:ring-2", c.aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-video")}>
-                  {badge && <span className="absolute end-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">{badge}</span>}
-                  {c.origin && (
-                    <span className={cn("absolute start-1.5 top-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold", c.origin === "auto" ? "bg-floodlight text-void" : "bg-black/70 text-white")}>
-                      {c.origin === "auto" && <Sparkles className="h-3 w-3" aria-hidden />}
-                      {c.origin === "auto" ? copy.madeByReplay : c.madeBy ?? copy.origin.player}
-                    </span>
-                  )}
-                </Thumb>
-                <span className="mt-1 block truncate text-xs font-semibold text-text">{clipLabel(c, copy)}</span>
-              </button>
-            </li>
-          );
-        })}
-      </Grid>
+      {controls}
+      {sort === "newest" ? (
+        <Grid>{items.map((c) => <ClipTile key={c.clipId} academyId={academyId} c={c} onSelect={onSelect} />)}</Grid>
+      ) : (
+        <div className="flex flex-col gap-5">
+          {groups.map((g) => (
+            <section key={g.key} data-testid={`library-clip-group-${g.key}`}>
+              <header className="mb-2 flex items-baseline justify-between gap-3 border-b border-line pb-1.5">
+                <h3 className="truncate text-sm font-bold text-text">
+                  {g.title}{g.sub ? <span className="font-semibold text-muted-text"> · {g.sub}</span> : null}
+                </h3>
+                <span className="shrink-0 text-xs text-muted-text">{copy.clipCount(q.groupSizes[g.key] ?? g.clips.length)}</span>
+              </header>
+              <Grid>{g.clips.map((c) => <ClipTile key={c.clipId} academyId={academyId} c={c} onSelect={onSelect} />)}</Grid>
+            </section>
+          ))}
+        </div>
+      )}
       <MoreButton show={Boolean(q.hasNextPage)} loading={q.isFetchingNextPage} onClick={() => void q.fetchNextPage()} label={copy.loadMore} />
     </div>
   );

@@ -103,7 +103,7 @@ async function clipScope(fieldIds: number[]) {
     if (id) byVideo.set(id, r);
   }
   const requests = fieldIds.length
-    ? await db.select({ id: footageRequestsTable.id }).from(footageRequestsTable).where(inArray(footageRequestsTable.fieldId, fieldIds))
+    ? await db.select({ id: footageRequestsTable.id, fieldId: footageRequestsTable.fieldId, startLocal: footageRequestsTable.startLocal }).from(footageRequestsTable).where(inArray(footageRequestsTable.fieldId, fieldIds))
     : [];
   const recById = new Map(recs.map((r) => [r.id, r]));
   const conditions: SQL[] = [];
@@ -112,7 +112,8 @@ async function clipScope(fieldIds: number[]) {
   if (requests.length) conditions.push(inArray(userClipsTable.footageRequestId, requests.map((r) => r.id)));
   const recordingOf = (clip: Pick<UserClipRow, "sourceRecordingId" | "videoId">): VenueRecording | null =>
     (clip.sourceRecordingId ? recById.get(clip.sourceRecordingId) : undefined) ?? byVideo.get(clip.videoId.toLowerCase()) ?? null;
-  return { recs, recById, where: conditions.length ? or(...conditions)! : null, recordingOf };
+  const requestById = new Map(requests.map((r) => [r.id, r]));
+  return { recs, recById, requestById, where: conditions.length ? or(...conditions)! : null, recordingOf };
 }
 
 /** A clip cut from the venue's footage, not deleted. */
@@ -308,8 +309,29 @@ export function firstNameOf(name: string | null | undefined): string | null {
   return first ? first.slice(0, 30) : null;
 }
 
-export async function venueLibraryClips(academyId: number, fieldIds: number[], f: LibraryFilters, origin: ClipOrigin | null) {
-  const { rows } = await venueClipRows(fieldIds, { from: f.from, until: f.until });
+export type ClipSort = "newest" | "match" | "player";
+
+/** The game a clip is from: a recording, or the owner's booked footage it was cut from. */
+type ClipMatch = { key: string; recordingId: number | null; date: string; time: string; pitch: string | null; startsAt: string };
+
+async function pitchNames(academyId: number): Promise<Map<number, string>> {
+  const rows = await db.select({ fieldId: venuePitchesTable.fieldId, name: venuePitchesTable.name }).from(venuePitchesTable)
+    .where(and(eq(venuePitchesTable.academyId, academyId), isNotNull(venuePitchesTable.fieldId)));
+  return new Map(rows.map((r) => [r.fieldId!, r.name]));
+}
+
+export async function venueLibraryClips(academyId: number, fieldIds: number[], f: LibraryFilters, origin: ClipOrigin | null, sort: ClipSort = "newest") {
+  const [{ rows, scope }, pitches] = await Promise.all([venueClipRows(fieldIds, { from: f.from, until: f.until }), pitchNames(academyId)]);
+  const matchOf = (clip: UserClipRow, recording: VenueRecording | null): ClipMatch | null => {
+    if (recording) {
+      const at = recordingStart(recording);
+      return { key: `rec:${recording.id}`, recordingId: recording.id, date: ammanDate(at), time: ammanClock(at), pitch: pitches.get(recording.fieldId) ?? (recording.court ? `Pitch ${recording.court}` : null), startsAt: at.toISOString() };
+    }
+    const req = clip.footageRequestId ? scope.requestById.get(clip.footageRequestId) : undefined;
+    if (!req) return null;
+    const at = new Date(`${req.startLocal.replace(" ", "T")}:00+03:00`);
+    return { key: `req:${req.id}`, recordingId: null, date: req.startLocal.slice(0, 10), time: req.startLocal.slice(11, 16), pitch: pitches.get(req.fieldId) ?? null, startsAt: Number.isNaN(at.getTime()) ? clip.createdAt.toISOString() : at.toISOString() };
+  };
   const clips = [];
   const counts = { all: 0, auto: 0, player: 0 };
   for (const { clip, creatorName, recording, origin: o } of rows) {
@@ -323,6 +345,7 @@ export async function venueLibraryClips(academyId: number, fieldIds: number[], f
     const end = Number(clip.endTime);
     const thumbTime = clip.thumbnailTime != null ? Number(clip.thumbnailTime) : start;
     const w = recording ? savedClipWindow(recording.id, start, end, thumbTime) : null;
+    const name = firstNameOf(creatorName);
     clips.push({
       clipId: clip.id,
       title: clip.title.slice(0, 80),
@@ -338,9 +361,28 @@ export async function venueLibraryClips(academyId: number, fieldIds: number[], f
       thumbnailUrl: !isLive && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
       videoUrl: status === "ready" ? `/api/academy/console/academies/${academyId}/studio/clips/${clip.id}/video` : null,
       origin: o,
-      madeBy: o === "auto" ? null : firstNameOf(creatorName),
+      madeBy: o === "auto" ? null : name,
+      /** Whose clip it is: who cut it, or who Replay made it for when he claimed the game. */
+      player: { key: `u:${clip.userId}`, name },
+      match: matchOf(clip, recording),
+      /** Where in the match (seconds into the video), for ordering clips inside a game. */
+      atSec: start,
     });
   }
+  if (sort === "match") {
+    // Newest game first; inside a game, in the order things happened. Clips with no known game last.
+    clips.sort((a, b) => (b.match?.startsAt ?? "").localeCompare(a.match?.startsAt ?? "") || (a.match?.key ?? "").localeCompare(b.match?.key ?? "") || a.atSec - b.atSec || a.clipId - b.clipId);
+  } else if (sort === "player") {
+    // Players by name; a player's clips newest game first, then in match order.
+    clips.sort((a, b) => (a.player.name ?? "\uffff").localeCompare(b.player.name ?? "\uffff") || a.player.key.localeCompare(b.player.key)
+      || (b.match?.startsAt ?? "").localeCompare(a.match?.startsAt ?? "") || a.atSec - b.atSec || a.clipId - b.clipId);
+  }
+  // Group sizes for the headers (the page only holds some of each group).
+  const groupSizes: Record<string, number> = {};
+  if (sort !== "newest") for (const c of clips) {
+    const key = sort === "match" ? c.match?.key ?? "none" : c.player.key;
+    groupSizes[key] = (groupSizes[key] ?? 0) + 1;
+  }
   const page = pageOf(clips, f);
-  return { clips: page.items, total: page.total, nextOffset: page.nextOffset, counts };
+  return { clips: page.items, total: page.total, nextOffset: page.nextOffset, counts, sort, groupSizes };
 }

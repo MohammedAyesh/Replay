@@ -125,6 +125,32 @@ describe("a field's creative library", () => {
     expect(auto.body.counts.all).toBe(4);
   });
 
+  it("sorts clips by match: newest game first, in match order inside it", async () => {
+    const res = await request(app).get(lib("/clips?sort=match")).set(auth(ownerId)).expect(200);
+    const order = res.body.clips.map((c: { clipId: number }) => c.clipId);
+    // 2 Nov 20:00 on Lower: the share (20:00 booking) and the recording; Replay's goal (0.37) before the hand-cut one (0.40); then 1 Nov.
+    expect(order.indexOf(clip.auto)).toBeLessThan(order.indexOf(clip.manual));
+    expect(order[order.length - 1]).toBe(clip.upper);
+    const manual = res.body.clips.find((c: { clipId: number }) => c.clipId === clip.manual);
+    expect(manual.match).toMatchObject({ key: `rec:${recordingId}`, recordingId, date: "2026-11-02", time: "20:00", pitch: "Lower" });
+    const share = res.body.clips.find((c: { clipId: number }) => c.clipId === clip.share);
+    expect(share.match).toMatchObject({ recordingId: null, date: "2026-11-02", time: "20:00", pitch: "Lower" });
+    expect(res.body.groupSizes[`rec:${recordingId}`]).toBe(2);
+  });
+
+  it("sorts clips by player, with Replay's clips under the player they were made for", async () => {
+    const [other] = await db.insert(usersTable).values({ name: `Ahmad K ${tag}`, email: `vlib-p2-${tag}@test.local` }).returning({ id: usersTable.id });
+    const [extra] = await db.insert(userClipsTable).values({ userId: other.id, videoId: `vlib-a-${tag}`, title: "Ahmad's volley", startTime: "0.6", endTime: "0.61", sourceRecordingId: recordingId }).returning({ id: userClipsTable.id });
+    const res = await request(app).get(lib("/clips?sort=player")).set(auth(ownerId)).expect(200);
+    const names = res.body.clips.map((c: { player: { name: string } }) => c.player.name);
+    expect(names[0]).toBe("Ahmad");
+    expect(names.slice(1).every((n: string) => n === "Yazan")).toBe(true);
+    const auto = res.body.clips.find((c: { clipId: number }) => c.clipId === clip.auto);
+    expect(auto).toMatchObject({ origin: "auto", madeBy: null, player: { name: "Yazan" } });
+    expect(res.body.groupSizes[`u:${playerId}`]).toBe(4);
+    await db.delete(userClipsTable).where(eq(userClipsTable.id, extra.id));
+  });
+
   it("shows a recording's saved clips as moments", async () => {
     const res = await request(app).get(lib(`/matches/${recordingId}/moments`)).set(auth(ownerId)).expect(200);
     expect(res.body.analysis).toBe("none");

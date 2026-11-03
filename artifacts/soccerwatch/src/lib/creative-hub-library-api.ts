@@ -89,7 +89,13 @@ export type LibraryClip = {
   origin?: "player" | "auto";
   /** A field's player-made clips: the maker's first name. */
   madeBy?: string | null;
+  /** A field's clips: whose clip it is (who cut it, or who Replay made it for). */
+  player?: { key: string; name: string | null };
+  /** A field's clips: the game it is from. */
+  match?: { key: string; recordingId: number | null; date: string; time: string; pitch: string | null; startsAt: string } | null;
 };
+
+export type ClipSort = "newest" | "match" | "player";
 
 export type ClipOrigin = "player" | "auto";
 
@@ -150,6 +156,7 @@ export type LibraryFilter = {
   to?: string | null;
   kind?: "image" | "video" | null;
   origin?: ClipOrigin | null;
+  sort?: ClipSort | null;
 };
 
 function qs(f: LibraryFilter, offset: number, limit: number): string {
@@ -161,6 +168,7 @@ function qs(f: LibraryFilter, offset: number, limit: number): string {
   if (f.to) p.set("to", f.to);
   if (f.kind) p.set("kind", f.kind);
   if (f.origin) p.set("origin", f.origin);
+  if (f.sort && f.sort !== "newest") p.set("sort", f.sort);
   p.set("offset", String(offset));
   p.set("limit", String(limit));
   return p.toString();
@@ -191,8 +199,9 @@ export function useLibraryMoments(academyId: number, sessionId: number | null, f
 }
 
 export function useLibraryClips(academyId: number, f: LibraryFilter) {
-  const q = usePaged<Page & { clips: LibraryClip[]; counts?: { all: number; player: number; auto: number } }>(academyId, "clips", "/library/clips", { squadId: f.squadId, from: f.from, to: f.to, origin: f.origin }, 24);
-  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [], counts: q.data?.pages[0]?.counts ?? null };
+  const q = usePaged<Page & { clips: LibraryClip[]; counts?: { all: number; player: number; auto: number }; groupSizes?: Record<string, number> }>(
+    academyId, "clips", "/library/clips", { squadId: f.squadId, from: f.from, to: f.to, origin: f.origin, sort: f.sort }, f.sort && f.sort !== "newest" ? 48 : 24);
+  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [], counts: q.data?.pages[0]?.counts ?? null, groupSizes: q.data?.pages[0]?.groupSizes ?? {} };
 }
 
 export function useLibraryUploads(academyId: number, f: LibraryFilter) {
