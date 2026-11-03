@@ -25,7 +25,15 @@ export type CreativeFormat = keyof typeof CREATIVE_FORMATS;
  * stadium night with light rays). Every style works for every academy: the
  * academy's own colours fill the @primary / @accent tokens.
  */
-export const CREATIVE_STYLES = ["broadcast", "street", "editorial", "luxury", "playful", "cinematic", "stadium"] as const;
+/** The seven house styles every academy can pick. */
+export const PUBLIC_STYLES = ["broadcast", "street", "editorial", "luxury", "playful", "cinematic", "stadium"] as const;
+/**
+ * Brand packs: a style made for one academy from its brand deck. Only the
+ * academy whose `creative_pack` names it sees it (see creativePacks.ts).
+ */
+export const PACK_STYLES = ["iris", "souqar", "barca", "juventus", "knights", "jufa"] as const;
+export type PackStyle = (typeof PACK_STYLES)[number];
+export const CREATIVE_STYLES = [...PUBLIC_STYLES, ...PACK_STYLES] as const;
 export type CreativeStyle = (typeof CREATIVE_STYLES)[number];
 
 /** A colour is a hex string or a brand token resolved at render time. */
@@ -48,6 +56,12 @@ const baseLayer = {
   hidden: z.boolean().optional(),
   /** Entrance animation for video scenes. */
   enter: z.enum(["none", "fade", "slide-up", "slide-left", "pop"]).optional(),
+  /**
+   * Shown only when every condition holds for the scene's data (see
+   * layerShownFor). A line-up draws its photo tiles when there are player
+   * photos and its numbers-only rows when there are none.
+   */
+  when: z.array(z.object({ path: z.string().max(120), not: z.boolean().optional() })).max(4).optional(),
 };
 
 /** Where a picture or a video comes from. Every source is the academy's own. */
@@ -62,8 +76,17 @@ export const mediaSourceSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("frame"), recordingId: z.number().int(), atMs: z.number().min(0) }),
   /** The academy crest from its brand kit. */
   z.object({ type: z.literal("crest") }),
-  /** Template artwork shipped with Replay, by key (e.g. "fulltime/broadcast"). */
-  z.object({ type: z.literal("artwork"), key: z.string().max(120) }),
+  /** Template artwork shipped with Replay, by key (e.g. "fulltime/broadcast"). `cutout`: it has a transparent background. */
+  z.object({ type: z.literal("artwork"), key: z.string().max(120), cutout: z.boolean().optional() }),
+  /**
+   * A player of the academy: his primary photo (academy_player_photos), else
+   * the avatar of his linked account. Only for an academy that shows players'
+   * names; the server refuses it otherwise. `cutout`: the photo has a
+   * transparent background (a layout draws it as a figure, not a card).
+   */
+  z.object({ type: z.literal("player"), playerId: z.number().int(), cutout: z.boolean().optional() }),
+  /** One photo from a player's gallery (academy_player_photos), same rule as "player". */
+  z.object({ type: z.literal("player-photo"), photoId: z.number().int(), cutout: z.boolean().optional() }),
   /** A {{binding}} that resolves to one of the sources above at render time (e.g. "{{player.photo}}"). */
   z.object({ type: z.literal("binding"), path: z.string().max(120) }),
 ]);
@@ -122,6 +145,13 @@ export const sceneLayerSchema = z.discriminatedUnion("kind", [
     /** May contain {{bindings}}. Newlines are kept. */
     text: z.string().max(2000),
     font: z.enum(["display", "condensed", "body", "serif", "script", "arabic", "arabic-display"]).default("body"),
+    /**
+     * A specific typeface from Replay's font library (creativeFonts.ts), e.g.
+     * "Bebas Neue". Overrides `font`; when the family can't be loaded the
+     * renderer falls back to `font`. Arabic text still uses `font`'s Arabic face
+     * unless the family itself is Arabic.
+     */
+    family: z.string().regex(/^[A-Za-z0-9 ]{2,40}$/).optional(),
     size: z.number().min(6).max(600),
     weight: z.number().min(100).max(900).default(700),
     italic: z.boolean().optional(),
@@ -153,6 +183,9 @@ export const sceneLayerSchema = z.discriminatedUnion("kind", [
 export type SceneLayer = z.infer<typeof sceneLayerSchema>;
 export type SceneLayerKind = SceneLayer["kind"];
 
+/** A line-up carries two versions of each row (photo tile and numbers-only), so scenes may be large. */
+export const MAX_SCENE_LAYERS = 200;
+
 export const sceneSchema = z.object({
   v: z.literal(1),
   format: z.enum(["post", "square", "story"]),
@@ -160,7 +193,7 @@ export const sceneSchema = z.object({
   durationMs: z.number().min(500).max(180_000).optional(),
   background: colorSchema.default("@paper"),
   /** Bottom to top. */
-  layers: z.array(sceneLayerSchema).max(120),
+  layers: z.array(sceneLayerSchema).max(MAX_SCENE_LAYERS),
   /** Optional soundtrack from Replay's library. */
   music: z.object({ trackKey: z.string().max(80), volume: z.number().min(0).max(1).default(0.6) }).optional(),
   /** Which template and style this came from (for re-styling). */
@@ -248,6 +281,12 @@ export type CreativeData = {
   media?: MediaSource;
   /** Extra pictures/footage for multi-slot templates: media2, media3 … via path "more.0", "more.1". */
   more?: MediaSource[];
+  /**
+   * Player photos of a list template's rows (line-up, call-up): "photos.0" is
+   * row 1. Present only when the academy shows players' names; a line-up
+   * without it draws numbers only.
+   */
+  photos?: Array<MediaSource | null>;
   custom?: Record<string, string>;
 };
 
@@ -289,6 +328,29 @@ export function layerVisibleAt(layer: SceneLayer, t: number | null): boolean {
   if (layer.startMs !== undefined && t < layer.startMs) return false;
   if (layer.endMs !== undefined && t >= layer.endMs) return false;
   return true;
+}
+
+/** Does a {{binding}} path hold something (not empty, not false, not an empty list)? */
+export function hasValueAt(data: CreativeData | null | undefined, path: string): boolean {
+  const v = lookup(data ?? {}, path);
+  if (v === undefined || v === null || v === false || v === "") return false;
+  if (Array.isArray(v)) return v.some((x) => x !== undefined && x !== null);
+  return true;
+}
+
+/** Does a layer's `when` hold for this data? A layer without one always shows. */
+export function layerShownFor(layer: SceneLayer, data: CreativeData | null | undefined): boolean {
+  if (!layer.when?.length) return true;
+  return layer.when.every((c) => hasValueAt(data, c.path) !== !!c.not);
+}
+
+/**
+ * The scene as it draws for this data: layers whose `when` fails are left
+ * out. Renderers call this once before drawing (the export and SceneCanvas).
+ */
+export function sceneForData(scene: Scene, data: CreativeData | null | undefined): Scene {
+  if (!scene.layers.some((l) => l.when?.length)) return scene;
+  return { ...scene, layers: scene.layers.filter((l) => layerShownFor(l, data)) };
 }
 
 export const isVideoScene = (scene: Scene) => scene.durationMs !== undefined;

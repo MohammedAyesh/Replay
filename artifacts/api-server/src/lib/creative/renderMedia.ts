@@ -34,6 +34,8 @@ import { mediaPlaylistFor, reelClip, reelClipOnBunny, segmentsFor } from "../goa
 import { logger } from "../logger";
 import { downloadToTemp } from "../meta/media";
 import { firstName, namesAllowed, studioLook } from "../../routes/academyStudio";
+import { academyPlayerPhoto, playerPictures, readAvatarFile, readPlayerPhotoFile, type PlayerPicture } from "../academyPlayerPhotos";
+import { avatarUrlFor } from "../matchRooms";
 import type { ConcreteSource, ImageResolver, MediaLayer } from "./render";
 import type { VideoResolver, VideoSourceFile } from "./renderVideo";
 import { tintKey, tintPicture } from "./renderTint";
@@ -93,7 +95,29 @@ export function serverData(access: AcademyOwnerAccess, ctx: CreativeContext, raw
   if (data.player && typeof data.player === "object") {
     data.player = { ...data.player, name: ctx.showNames ? firstName(data.player.name ?? null) : null };
   }
-  return data;
+  return ctx.showNames ? data : withoutPlayerPictures(data);
+}
+
+const isPlayerPicture = (src: unknown): boolean =>
+  !!src && typeof src === "object" && ((src as MediaSource).type === "player" || (src as MediaSource).type === "player-photo");
+
+/**
+ * The data with every player picture taken out (an academy that does not show
+ * players' names shows no player photos either): a line-up then draws its
+ * numbers-only rows (its row photos go whatever they are), a player post its
+ * number. Other pictures stay.
+ */
+export function withoutPlayerPictures(data: CreativeData): CreativeData {
+  const out: CreativeData = { ...data };
+  if (isPlayerPicture(out.media)) delete out.media;
+  if (Array.isArray(out.more)) out.more = out.more.map((m) => (isPlayerPicture(m) ? (null as unknown as MediaSource) : m));
+  // A line-up stays numbers-only: its photo tiles show only for an academy that shows names.
+  delete out.photos;
+  if (out.player && isPlayerPicture(out.player.photo)) {
+    const { photo: _photo, ...rest } = out.player;
+    out.player = rest;
+  }
+  return out;
 }
 
 // ── Bundled assets ───────────────────────────────────────────────────────────
@@ -260,9 +284,16 @@ async function dataUrlImage(dataUrl: string | null | undefined): Promise<Image |
  * point; an image layer of a clip draws the clip's own thumbnail.
  */
 export function creativeImageResolver(academyId: number, look: Pick<BrandLook, "crest">): ImageResolver {
+  let names: Promise<boolean> | null = null;
+  const allowed = () => (names ??= namesAllowed(academyId).catch(() => false));
   return async (layer: MediaLayer, src: ConcreteSource, scene?: { format: CreativeFormat }): Promise<Image | Canvas | null> => {
     const trimSec = layer.kind === "video" ? (layer.trimInMs ?? 0) / 1000 : 0;
     switch (src.type) {
+      case "player":
+      case "player-photo": {
+        const bytes = await playerPictureBytes(academyId, src, await allowed());
+        return bytes ? loadImage(bytes).catch(() => null) : null;
+      }
       case "crest":
         return (look.crest as Image | null) ?? null;
       case "artwork": {
@@ -290,6 +321,29 @@ export function creativeImageResolver(academyId: number, look: Pick<BrandLook, "
       }
     }
   };
+}
+
+/**
+ * A player's picture, scoped to the academy: a gallery photo of one of its
+ * players, a player's primary photo, else his linked account's avatar. Null
+ * for an academy that does not show players' names, and for anything of
+ * another academy.
+ */
+export async function playerPictureFor(
+  academyId: number, src: Extract<MediaSource, { type: "player" | "player-photo" }>, showNames: boolean,
+): Promise<NonNullable<PlayerPicture> | null> {
+  if (!showNames) return null;
+  if (src.type === "player-photo") {
+    const photo = await academyPlayerPhoto(academyId, src.photoId);
+    return photo ? { kind: "photo", photo } : null;
+  }
+  return (await playerPictures(academyId, [src.playerId])).get(src.playerId) ?? null;
+}
+
+async function playerPictureBytes(academyId: number, src: Extract<MediaSource, { type: "player" | "player-photo" }>, showNames: boolean): Promise<Buffer | null> {
+  const pic = await playerPictureFor(academyId, src, showNames);
+  if (!pic) return null;
+  return pic.kind === "photo" ? readPlayerPhotoFile(pic.photo) : readAvatarFile(pic.avatarPath);
 }
 
 // ── Footage (server) ─────────────────────────────────────────────────────────
@@ -431,6 +485,17 @@ export async function browserMedia(
   const academyId = access.academyId;
   const base = `/api/academy/console/academies/${academyId}`;
   switch (src.type) {
+    case "player":
+    case "player-photo": {
+      const pic = await playerPictureFor(academyId, src, await namesAllowed(academyId));
+      if (!pic) return null;
+      if (pic.kind === "avatar") {
+        const url = avatarUrlFor(pic.userId, pic.avatarPath);
+        return url ? { redirect: url } : null;
+      }
+      const bytes = await readPlayerPhotoFile(pic.photo);
+      return bytes ? { buffer: bytes, type: pic.photo.mime } : null;
+    }
     case "crest": {
       const [profile] = await db.select({ crestUrl: brandingProfilesTable.crestUrl, updatedAt: brandingProfilesTable.updatedAt }).from(brandingProfilesTable)
         .where(and(eq(brandingProfilesTable.scopeType, "academy"), eq(brandingProfilesTable.scopeId, academyId)));

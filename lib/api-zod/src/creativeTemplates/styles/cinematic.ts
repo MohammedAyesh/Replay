@@ -2,6 +2,7 @@ import type { Content } from "../content";
 import { crest, ellipse, media, rect, rule, text, type Box, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackHeight, stackUp, type StackItem } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
+import { rowsOrTiles, type TileLook } from "../players";
 
 /**
  * Cinematic: a film poster. The photo runs full-bleed under heavy black
@@ -111,6 +112,20 @@ const hero: StyleKit["hero"] = (c, k) => {
   ]);
 };
 
+/** Line-up photo tiles: a crimson haze rising from black, a glowing italic number, a black caption bar. */
+const TILE: TileLook = {
+  backdrop: (c, id, b) => {
+    rect(c, id, b, { gradient: { from: CLEAR, to: "@primary" }, opacity: 0.85 });
+    rect(c, `${id}-edge`, { x: b.x, y: b.y + b.h - 4, w: b.w, h: 4 }, { fill: "@accent" });
+  },
+  bar: (c, id, b) => rect(c, id, b, { fill: BLACK, opacity: 0.86 }),
+  num: { font: "condensed", color: "@primary", weight: 900, italic: true, shadow: GLOW },
+  name: { font: "condensed", color: WHITE, weight: 800, italic: true },
+  pos: { font: "condensed", color: "@accent", weight: 800 },
+  shadow: BLACK,
+  cardRadius: 0,
+};
+
 const list: StyleKit["list"] = (c, k) => {
   poster(c, { dim: 0.55 });
   corner(c, k);
@@ -121,7 +136,7 @@ const list: StyleKit["list"] = (c, k) => {
   const rows = k.rows ?? [];
   const lead = numericLead(k);
   const foot = (k.cta ? 56 : 0) + k.meta.length * 40 + 30;
-  rowBoxes(rows.length, top, c.B - foot, c.M, c.CW, { gap: 0, maxH: Math.round((lead ? 108 : 130) * c.k) }).forEach((b, i) => {
+  rowsOrTiles(c, k, { x: c.M, y: top + 10, w: c.CW, h: c.B - foot - top - 20 }, TILE, () => rowBoxes(rows.length, top, c.B - foot, c.M, c.CW, { gap: 0, maxH: Math.round((lead ? 108 : 130) * c.k) }).forEach((b, i) => {
     const id = `row-${i + 1}`;
     const row = rows[i];
     rule(c, `${id}-rule`, b.x, b.y + b.h - 2, b.w, "#FFFFFF2E", 2);
@@ -129,7 +144,7 @@ const list: StyleKit["list"] = (c, k) => {
     text(c, `${id}-lead`, row[0], { x: b.x, y: b.y + b.h * 0.12, w: lw, h: b.h * 0.76 }, { size: Math.round(b.h * (lead ? 0.74 : 0.4)), font: "condensed", weight: 900, italic: true, color: i === 0 ? "@accent" : "@primary", upper: true, num: lead, fit: true, ...(lead ? { shadow: GLOW } : {}) });
     text(c, `${id}-main`, row[1], { x: b.x + lw + 20, y: b.y + b.h * 0.24, w: b.w - lw - 20 - 220, h: b.h * 0.52 }, { size: Math.round(b.h * (lead ? 0.46 : 0.28)), font: lead ? "condensed" : "body", weight: lead ? 800 : 600, italic: lead, color: WHITE, upper: lead, fit: true });
     text(c, `${id}-trail`, row[2], { x: b.x + b.w - 210, y: b.y + b.h * 0.2, w: 210, h: b.h * 0.6 }, { size: Math.round(b.h * 0.5), font: "condensed", weight: 900, italic: true, color: WHITE, upper: true, align: "end", fit: true });
-  });
+  }));
   stackUp(c.B, [
     ...k.meta.map((m, i) => ({ h: 36, gap: 10, draw: (y: number) => meta(c, `meta-${i + 1}`, m, y) })),
     k.cta && { h: 46, draw: (y: number) => text(c, "cta", k.cta!, { x: c.M, y, w: c.CW, h: 46 }, { size: 38, font: "condensed", weight: 800, italic: true, color: WHITE, upper: true, fit: true }) },

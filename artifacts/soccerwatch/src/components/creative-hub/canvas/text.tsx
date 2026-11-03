@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { fillText, resolveColor, type CreativeBrand, type CreativeData, type SceneLayer } from "@workspace/api-zod";
 import {
   baselineIn,
@@ -12,6 +12,7 @@ import {
   type TextLayout,
 } from "./layout";
 import { roundRectPath } from "./shapes";
+import { installLibraryFontFaces, libraryCssFont, libraryFontsVersion, requestLibraryFace, subscribeLibraryFonts } from "./library-fonts";
 
 type TextLayer = Extract<SceneLayer, { kind: "text" }>;
 
@@ -20,14 +21,22 @@ type TextLayer = Extract<SceneLayer, { kind: "text" }>;
  * (layout.ts), measured with a canvas in the same faces the app loads from
  * Google Fonts (index.css: Rajdhani 600/700, Cairo 700/800). The API draws
  * Cairo's 900 where the browser has 800; otherwise the faces are the same.
+ * A layer's `family` uses the Creative font library: the very files the API
+ * draws with, served by the API (library-fonts.ts).
  */
 
-const CSS_FAMILY: Record<FontFace["family"], string> = { rajdhani: "Rajdhani", cairo: "Cairo" };
+const CSS_FAMILY: Record<"rajdhani" | "cairo", string> = { rajdhani: "Rajdhani", cairo: "Cairo" };
 /** The weights the app loads; the server's Cairo 900 shows as 800 here. */
 const cssWeight = (face: FontFace) => (face.family === "cairo" ? (face.weight === 900 ? 800 : 700) : face.weight === 600 ? 600 : 700);
 const ITALIC_SKEW_DEG = -Math.atan(0.25) * (180 / Math.PI);
 
-export const cssFont = (face: FontFace, size: number) => `${cssWeight(face)} ${size}px ${CSS_FAMILY[face.family]}`;
+export const cssFont = (face: FontFace, size: number) => {
+  if (face.family === "library") {
+    requestLibraryFace(face);
+    return libraryCssFont(face, size);
+  }
+  return `${cssWeight(face)} ${size}px ${CSS_FAMILY[face.family]}`;
+};
 
 let measureCtx: CanvasRenderingContext2D | null = null;
 function ctx2d(): CanvasRenderingContext2D | null {
@@ -59,9 +68,15 @@ let fontsReady = false;
 const fontsListeners = new Set<() => void>();
 let fontsStarted = false;
 
-/** Re-renders once the scene's faces have loaded, so layout is measured in the right font. */
-export function useFontsReady(): boolean {
+/**
+ * Re-renders once the scene's faces have loaded, so layout is measured in the
+ * right font: 0 until the house faces are in, then it changes again every time
+ * a library face arrives. Pass it to TextLayerView as `fonts`.
+ */
+export function useFontsReady(): number {
   const [ready, setReady] = useState(fontsReady);
+  const library = useSyncExternalStore(subscribeLibraryFonts, libraryFontsVersion, libraryFontsVersion);
+  useEffect(() => { installLibraryFontFaces(); }, []);
   useEffect(() => {
     if (fontsReady) { setReady(true); return; }
     const done = () => setReady(true);
@@ -76,7 +91,7 @@ export function useFontsReady(): boolean {
     }
     return () => { fontsListeners.delete(done); };
   }, []);
-  return ready;
+  return ready ? 1 + library : 0;
 }
 
 export type PreparedText = {
@@ -92,7 +107,7 @@ export function prepareText(layer: TextLayer, data: CreativeData): PreparedText 
   if (!text.trim()) return null;
   const dir = textDirection(layer, text);
   const face = fontFace(layer, text);
-  const arabic = face.family === "cairo";
+  const arabic = face.arabic;
   const spacingAt = (size: number) => (!hasArabic(text) && layer.letterSpacing ? (layer.letterSpacing * size) / layer.size : 0);
   const shown = (line: string) => (dir === "rtl" ? isolateLtrRuns(line) : line);
   const layout = layoutText(layer, text, dir, arabic, (t, size) => measure(face, shown(t), size, spacingAt(size)));
@@ -103,8 +118,8 @@ export function TextLayerView({ layer, brand, data, fonts, hidden }: {
   layer: TextLayer;
   brand: CreativeBrand;
   data: CreativeData;
-  /** Changes when fonts finish loading, to measure again. */
-  fonts: boolean;
+  /** Changes when fonts finish loading, to measure again (useFontsReady). */
+  fonts: number;
   /** Inline editing hides the drawn text. */
   hidden?: boolean;
 }) {

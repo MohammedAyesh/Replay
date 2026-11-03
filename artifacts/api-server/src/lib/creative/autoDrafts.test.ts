@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Scene, TemplateMeta } from "@workspace/api-zod";
 import {
+  callupCustom,
   draftTitle,
+  groupOf,
   inFeed,
   isFinished,
   isoWeekKey,
@@ -9,8 +11,10 @@ import {
   originKey,
   parseOriginKey,
   planAutoDrafts,
+  positionLabel,
   preferredStyle,
   shouldSync,
+  styleFor,
   type WeekFacts,
 } from "./autoDrafts";
 import { confirmedGoalMoments, type SessionFacts } from "./sessionData";
@@ -222,5 +226,84 @@ describe("auto drafts: style, throttle and feed", () => {
     expect(inFeed({ kind: "weekly", week: "2026-W44" }, created, null, NOW)).toBe(false);
     expect(inFeed({ kind: "fulltime", sessionId: 1 }, new Date("2026-10-01T09:00:00Z"), null, NOW)).toBe(false);
     expect(inFeed({ kind: "fulltime", sessionId: 1 }, created, null, NOW)).toBe(true);
+  });
+});
+
+describe("auto drafts: countdown, call-up, match stats and the pack style", () => {
+  // Monday noon in Amman: Wednesday's fixture is 2 days away, Tuesday's is tomorrow.
+  const wed = match(30, "2026-11-04T15:00:00Z", { opponent: "Faisaly" });
+  const tue = match(31, "2026-11-03T15:00:00Z", { opponent: "Jazeera" }, { showNames: true });
+  const analysed = match(32, "2026-11-01T10:00:00Z", { ownScore: 2, opponentScore: 1 }, {
+    team: { touches: [300, 250], possessionPercent: [58, 42], shots: [14, 6], passesCompleted: [312, 200], dribblesWon: [9, 4], completionPercent: 81 } as unknown as SessionFacts["team"],
+  });
+  const squad = [
+    { name: "Zaid Omar", number: 7, position: "forward" },
+    { name: "Omar Khaled", number: 1, position: "Goalkeeper" },
+    { name: "Ahmad Saleh", number: 4, position: "defender" },
+  ];
+
+  it("plans a countdown 2 days before, a call-up the day before (only with a squad), match stats after analysis", () => {
+    const plans = planAutoDrafts({ now: NOW, sessions: [wed, tue, analysed], week: null, existing: new Set(), callups: new Map([[31, squad]]) });
+    const keys = plans.map((p) => p.originKey).sort();
+    expect(keys).toEqual([
+      "callup:session:31", "countdown:session:30", "fulltime:session:32",
+      "matchday:session:30", "matchday:session:31", "matchstats:session:32",
+    ]);
+    const countdown = plans.find((p) => p.kind === "countdown")!;
+    expect(countdown).toMatchObject({ templateKey: "countdown", sessionId: 30, moment: null });
+    expect(countdown.data.custom).toEqual({ days: "2" });
+    expect(countdown.data.match).toMatchObject({ opponent: "Faisaly" });
+    expect(countdown.data.match?.ownScore).toBeUndefined();
+
+    const callup = plans.find((p) => p.kind === "callup")!;
+    // Goalkeeper first, then shirt order; names shown because this academy allows them.
+    expect(callup.data.custom).toEqual({ n1: "1", p1: "Omar", pos1: "حارس", n2: "4", p2: "Ahmad", pos2: "دفاع", n3: "7", p3: "Zaid", pos3: "هجوم" });
+    expect(callup.title).toBe("قائمة الماتش · ضد Jazeera");
+
+    const stats = plans.find((p) => p.kind === "matchstats")!;
+    expect(stats.data.stats).toMatchObject({ possession: "58%", opponentPossession: "42%", shots: 14, passes: 312, passAccuracy: "81%", dribbles: 9 });
+    expect(stats.data.media).toBeUndefined();
+
+    // No squad picked: no call-up. A day further out: no countdown yet.
+    const none = planAutoDrafts({ now: NOW, sessions: [tue], week: null, existing: new Set() }).map((p) => p.kind);
+    expect(none).toEqual(["matchday"]);
+    const early = planAutoDrafts({ now: new Date(NOW.getTime() - 86_400_000), sessions: [wed], week: null, existing: new Set() }).map((p) => p.kind);
+    expect(early).toEqual(["matchday"]);
+    // Stable keys: running again plans nothing.
+    expect(planAutoDrafts({ now: NOW, sessions: [wed, tue, analysed], week: null, existing: new Set(keys), callups: new Map([[31, squad]]) })).toEqual([]);
+  });
+
+  it("hides names in the call-up when the academy hides them, and keeps 9 rows at most", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ name: `Player ${i}`, number: 20 - i, position: "MF" }));
+    const rows = callupCustom(many, false, "en");
+    expect(Object.keys(rows)).toHaveLength(27);
+    expect(rows.n1).toBe("9");
+    expect(rows.p1).toBe("");
+    expect(rows.pos1).toBe("MF");
+    expect(positionLabel("Sweeper keeper", "en")).toBe("Sweeper keep");
+    expect(positionLabel("cb", "ar")).toBe("دفاع");
+  });
+
+  it("parses the new origin keys, groups them and keeps fixture drafts until kick-off", () => {
+    for (const kind of ["countdown", "callup", "matchstats"] as const) {
+      expect(parseOriginKey(originKey[kind](5))).toEqual({ kind, sessionId: 5 });
+    }
+    expect([groupOf("countdown"), groupOf("callup"), groupOf("matchstats")]).toEqual(["upcoming", "upcoming", "after"]);
+    expect(inFeed({ kind: "callup", sessionId: 1 }, NOW, { startsAt: new Date("2026-11-03T15:00:00Z") }, NOW)).toBe(true);
+    expect(inFeed({ kind: "countdown", sessionId: 1 }, NOW, { startsAt: new Date("2026-11-01T15:00:00Z") }, NOW)).toBe(false);
+  });
+
+  it("builds the new templates into valid drafts", () => {
+    const plans = planAutoDrafts({ now: NOW, sessions: [wed, tue, analysed], week: null, existing: new Set(), callups: new Map([[31, squad]]) });
+    for (const kind of ["countdown", "callup", "matchstats"] as const) {
+      const row = materializeDraft(plans.find((p) => p.kind === kind)!, 1, "broadcast");
+      expect(row, kind).not.toBeNull();
+      expect(row).toMatchObject({ templateKey: kind, origin: "auto", style: "broadcast" });
+    }
+  });
+
+  it("defaults drafts to the academy's own pack, and never to a pack from usage counts", async () => {
+    expect(await styleFor({ id: 1, creativePack: "iris" })).toBe("iris");
+    expect(preferredStyle([{ style: "juventus", count: 9 }, { style: "street", count: 1 }])).toBe("street");
   });
 });

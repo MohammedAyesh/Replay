@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CreativeStatus, CreativeStyle, Scene } from "@workspace/api-zod";
 import { call } from "@/lib/academy-studio-api";
+import type { CreativePackInfo } from "@/lib/creative-styles";
 
 /**
  * Academy console → Creative hub. Hand-written client for
@@ -115,6 +116,8 @@ export type CreativeBrandInfo = {
   showPlayerNames: boolean;
   instagram: string | null;
   phone: string | null;
+  /** The academy's own brand pack, if an admin assigned one (its style is offered first). */
+  pack: CreativePackInfo | null;
 };
 
 /** The academy's look for previews: what @primary, @accent, … resolve to, and the crest. */

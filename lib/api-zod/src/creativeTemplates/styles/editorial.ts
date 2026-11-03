@@ -2,6 +2,7 @@ import type { Content } from "../content";
 import { crest, ellipse, media, rect, rule, text, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackHeight, stackUp, type StackItem } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
+import { rowsOrTiles, type TileLook } from "../players";
 
 /**
  * Editorial: a club magazine page. Off-white paper, a serif headline set
@@ -140,6 +141,23 @@ const hero: StyleKit["hero"] = (c, k) => {
   }
 };
 
+/** Line-up photo tiles: a warm paper panel, a serif number in the brand colour, a ruled caption. */
+const TILE: TileLook = {
+  backdrop: (c, id, b) => {
+    rect(c, id, b, { fill: "#E7E1D4" });
+    rule(c, `${id}-rule`, b.x, b.y, b.w, INK, 2);
+  },
+  bar: (c, id, b) => {
+    rect(c, id, b, { fill: PAPER });
+    rule(c, `${id}-rule`, b.x, b.y, b.w, INK, 2);
+  },
+  num: { font: "serif", color: "@primary", weight: 400 },
+  name: { font: "serif", color: INK, weight: 500 },
+  pos: { font: "body", color: GREY, weight: 600 },
+  shadow: INK,
+  cardRadius: 0,
+};
+
 const list: StyleKit["list"] = (c, k) => {
   masthead(c, k);
   kicker(c, k.kicker, c.T + 124);
@@ -150,7 +168,7 @@ const list: StyleKit["list"] = (c, k) => {
   const rows = k.rows ?? [];
   const lead = numericLead(k);
   const foot = (k.cta ? 56 : 0) + k.meta.length * 40 + 30;
-  rowBoxes(rows.length, top + 6, c.B - foot, c.M, c.CW, { gap: 0, maxH: Math.round((lead ? 136 : 160) * c.k) }).forEach((b, i) => {
+  rowsOrTiles(c, k, { x: c.M, y: top + 20, w: c.CW, h: c.B - foot - 20 - top - 20 }, TILE, () => rowBoxes(rows.length, top + 6, c.B - foot, c.M, c.CW, { gap: 0, maxH: Math.round((lead ? 136 : 160) * c.k) }).forEach((b, i) => {
     const id = `row-${i + 1}`;
     const row = rows[i];
     if (lead) {
@@ -162,7 +180,7 @@ const list: StyleKit["list"] = (c, k) => {
     }
     text(c, `${id}-trail`, row[2], { x: b.x + b.w - 240, y: b.y + b.h * 0.2, w: 240, h: b.h * 0.6 }, { size: Math.round(b.h * (lead ? 0.36 : 0.34)), font: lead ? "body" : "serif", weight: lead ? 700 : 500, color: lead ? GREY : INK, upper: lead, align: "end", fit: true });
     rule(c, `${id}-rule`, b.x, b.y + b.h - 1, b.w, "#C9C3B6", 1);
-  });
+  }));
   stackUp(c.B, [
     ...k.meta.map((m, i) => ({ h: 36, gap: 8, draw: (y: number) => text(c, `meta-${i + 1}`, m, { x: c.M, y, w: c.CW, h: 36 }, { size: 26, font: "serif", italic: true, weight: 400, color: GREY, fit: true }) })),
     k.cta && { h: 40, draw: (y: number) => caps(c, "cta", k.cta!, c.M, y, c.CW, { color: INK, size: 26 }) },

@@ -248,7 +248,7 @@ export function setPlate(scene: Scene, change: PlateChange, build: typeof buildT
   if (plateOf(scene)) return updateLayer(scene, PLATE_LAYER_ID, patch);
   if (findLayer(scene, PLATE_LAYER_ID) || change.hidden) return scene;
   const style = scene.template?.style ?? "broadcast";
-  const fresh = templatePlateLayer(style, scene.format);
+  const fresh = templatePlateLayer(style, scene.format, scene.template?.key);
   // Where the template puts it: right above the layer under it in a fresh build (stadium's sky), else at the bottom.
   let index = 0;
   if (scene.template) {
@@ -461,7 +461,7 @@ export function dragWindow(
 
 const NUMERIC_FIELDS = new Set(["match.ownScore", "match.opponentScore", "player.number"]);
 export const isNumericField = (path: string) => NUMERIC_FIELDS.has(path);
-export const isMediaField = (path: string) => path === "media" || path === "player.photo" || /^more\.\d+$/.test(path);
+export const isMediaField = (path: string) => path === "media" || path === "player.photo" || /^(more|photos)\.\d+$/.test(path);
 
 export function getPath(data: CreativeData | null | undefined, path: string): unknown {
   let cur: unknown = data ?? {};

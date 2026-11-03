@@ -14,6 +14,7 @@ import {
 const KEYS = [
   "fulltime", "matchday", "potm", "goal", "lineup", "potmonth", "standings", "nextround", "champions", "freetrial", "cleansheet", "birthday",
   "pricing", "newgroup", "talk", "training", "welcome", "getwell", "staff", "alumni", "tournament", "poll", "map", "manifesto",
+  "kickoff", "goalflash", "halftime", "livescore", "countdown", "callup", "matchstats",
 ];
 const FORMATS = Object.keys(CREATIVE_FORMATS) as Array<keyof typeof CREATIVE_FORMATS>;
 const LOCALES = ["en", "ar"] as const;
@@ -35,7 +36,7 @@ for (const key of KEYS) for (const style of CREATIVE_STYLES) for (const format o
   all.push({ key, style, format, locale, scene: buildTemplateScene(key, style, format, locale) });
 
 describe("catalogue", () => {
-  it("lists the 24 templates once each", () => {
+  it("lists the 31 templates once each", () => {
     expect(CREATIVE_TEMPLATES.map((t) => t.key).sort()).toEqual([...KEYS].sort());
   });
 

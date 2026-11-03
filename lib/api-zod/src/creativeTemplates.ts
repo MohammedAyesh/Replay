@@ -1,6 +1,7 @@
 import type { CreativeData, CreativeFormat, CreativeStyle, Scene, SceneLayer } from "./creativeScene";
 import { DEFINITIONS, sampleFor } from "./creativeTemplates/content";
 import { buildScene, plateLayer } from "./creativeTemplates/build";
+export { packPlate } from "./creativeTemplates/build";
 import { STYLE_KITS } from "./creativeTemplates/styles";
 
 /**
@@ -20,7 +21,7 @@ import { STYLE_KITS } from "./creativeTemplates/styles";
  * mirrors everything for Arabic.
  */
 
-export type TemplateCategory = "matchday" | "results" | "players" | "recruitment" | "academy-life" | "community";
+export type TemplateCategory = "matchday" | "live" | "results" | "players" | "recruitment" | "academy-life" | "community";
 
 export type TemplateMeta = {
   key: string;
@@ -34,7 +35,7 @@ export type TemplateMeta = {
   fields: string[];
 };
 
-export const TEMPLATE_CATEGORIES: TemplateCategory[] = ["matchday", "results", "players", "recruitment", "academy-life", "community"];
+export const TEMPLATE_CATEGORIES: TemplateCategory[] = ["matchday", "live", "results", "players", "recruitment", "academy-life", "community"];
 
 const BINDING = /\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g;
 
@@ -74,6 +75,6 @@ export function templateSampleData(key: string, locale: "en" | "ar"): CreativeDa
  * artwork "bg/<style>/1", tinted @primary, the style's own strength). The
  * editor uses it to put a plate back into a design that has none.
  */
-export function templatePlateLayer(style: CreativeStyle, format: CreativeFormat): SceneLayer {
-  return plateLayer(STYLE_KITS[style] ? style : "broadcast", format, STYLE_KITS[style] ?? STYLE_KITS.broadcast);
+export function templatePlateLayer(style: CreativeStyle, format: CreativeFormat, templateKey?: string): SceneLayer {
+  return plateLayer(STYLE_KITS[style] ? style : "broadcast", format, STYLE_KITS[style] ?? STYLE_KITS.broadcast, templateKey);
 }

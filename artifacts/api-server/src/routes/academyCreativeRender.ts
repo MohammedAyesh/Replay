@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { CREATIVE_FORMATS, CREATIVE_STYLES, TINT_MODES, isVideoScene, mediaSourceSchema, sceneSchema, type CreativeFormat, type ResolvedTint, type TintMode } from "@workspace/api-zod";
+import { CREATIVE_FORMATS, CREATIVE_STYLES, TINT_MODES, isVideoScene, mediaSourceSchema, sceneForData, sceneSchema, type CreativeFormat, type ResolvedTint, type TintMode } from "@workspace/api-zod";
 import { CREATIVE_BASE, creativeOwner, loadCreativeProject, publicProject } from "../lib/creative/projects";
 import { logger } from "../lib/logger";
 import { renderScenePng } from "../lib/creative/render";
 import { isRendering, queueVideoRender, renderStillNow, sweepInterruptedRenders } from "../lib/creative/renderJobs";
 import { backgroundPlates, browserMedia, creativeImageResolver, loadCreativeContext, rescanPlates, serverData, tintedStill } from "../lib/creative/renderMedia";
 import { sendOutput } from "../lib/creative/renderStore";
+import { styleAllowedFor } from "../lib/creative/packs";
 import type { ConcreteSource } from "../lib/creative/render";
 
 /**
@@ -123,8 +124,9 @@ router.post(`${base}/preview`, async (req, res): Promise<void> => {
   try {
     const b = parsed.data;
     const ctx = await loadCreativeContext(access, temps);
+    const data = serverData(access, ctx, b.data);
     const png = await renderScenePng({
-      scene: b.scene, brand: ctx.brand, data: serverData(access, ctx, b.data),
+      scene: sceneForData(b.scene, data), brand: ctx.brand, data,
       images: creativeImageResolver(access.academyId, ctx.look),
       width: b.width,
       t: b.timeMs ?? null,
@@ -188,7 +190,7 @@ router.get(`${base}/artwork/backgrounds`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);
   if (!access) return;
   const style = queryString(req.query.style);
-  if (!style || !(CREATIVE_STYLES as readonly string[]).includes(style)) {
+  if (!style || !(CREATIVE_STYLES as readonly string[]).includes(style) || !styleAllowedFor(access.academy, style)) {
     res.status(400).json({ error: "Unknown style" });
     return;
   }

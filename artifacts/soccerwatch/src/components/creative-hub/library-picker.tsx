@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { MediaSource } from "@workspace/api-zod";
-import { Shield } from "lucide-react";
+import { FolderOpen, Shield, Users } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { useCreativeLibraryCopy } from "@/i18n/creative-library-strings";
 import { useCreativeBrand } from "@/lib/creative-hub-api";
 import { browserUrl } from "@/lib/creative-hub-library-api";
@@ -7,6 +9,7 @@ import { creativeMediaUrl } from "@/lib/creative-hub-media";
 import { pickFor } from "./library/actions";
 import { LibraryBrowser, type LibraryItem } from "./library/browser";
 import { LibrarySheet } from "./library/sheet";
+import { PlayerPicker } from "./library/players";
 
 /**
  * A compact picker over the academy's Library (clips, match moments, frames,
@@ -26,10 +29,16 @@ export type LibraryPickerProps = {
  * video → moments (their recording window), clips, uploaded videos
  * any   → everything; a moment or clip is picked as footage
  * Mounted = open; the Editor unmounts it (or onClose fires) to close.
+ *
+ * A second tab, Players, picks one of the squad and then from his photos
+ * (names allowed) or his clips and match moments. A pick from there carries
+ * meta.player (number, first name when allowed, position) so the Editor can
+ * offer to fill the template's player details; the props are unchanged.
  */
 export function LibraryPicker({ academyId, accept, onPick, onClose }: LibraryPickerProps) {
   const copy = useCreativeLibraryCopy();
   const brand = useCreativeBrand(academyId);
+  const [tab, setTab] = useState<"library" | "players">("library");
   const dir = copy.locale === "ar" ? "rtl" : "ltr";
   const pickAs = accept === "any" ? "video" : accept;
 
@@ -56,7 +65,17 @@ export function LibraryPicker({ academyId, accept, onPick, onClose }: LibraryPic
   return (
     <LibrarySheet open onClose={onClose} wide dir={dir} closeLabel={copy.close} testId="library-picker"
       title={accept === "image" ? copy.picker.image : accept === "video" ? copy.picker.video : copy.picker.title}>
-      <LibraryBrowser academyId={academyId} accept={accept} onSelect={select} extra={crest} dense />
+      <div className="mb-3 flex gap-1.5" role="tablist">
+        {([["library", copy.players.library, FolderOpen], ["players", copy.players.tab, Users]] as const).map(([key, label, Icon]) => (
+          <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)} data-testid={`library-picker-tab-${key}`}
+            className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold", tab === key ? "border-turf bg-turf/15 text-text" : "border-line text-muted-text hover:text-text")}>
+            <Icon className="h-4 w-4" aria-hidden />{label}
+          </button>
+        ))}
+      </div>
+      {tab === "library"
+        ? <LibraryBrowser academyId={academyId} accept={accept} onSelect={select} extra={crest} dense />
+        : <PlayerPicker academyId={academyId} accept={accept} onPick={(source, meta) => onPick(source, meta)} />}
     </LibrarySheet>
   );
 }

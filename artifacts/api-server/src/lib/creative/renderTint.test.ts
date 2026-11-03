@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createCanvas, loadImage, type Canvas } from "@napi-rs/canvas";
 import {
+  isPackStyle, packPlate,
   CREATIVE_STYLES,
   PLATE_LAYER_ID,
   buildTemplateScene,
@@ -129,10 +130,10 @@ describe("background plates in the catalogue", () => {
         const scene = buildTemplateScene("fulltime", style, format, "en");
         const plate = scene.layers.find((l) => l.id === PLATE_LAYER_ID);
         expect(plate, style).toMatchObject({
-          kind: "image", name: "bleed", src: { type: "artwork", key: `bg/${style}/1` }, fit: "cover",
+          kind: "image", name: "bleed", src: { type: "artwork", key: isPackStyle(style) ? packPlate(style, "fulltime") : `bg/${style}/1` }, fit: "cover",
           x: 0, y: 0, w: 1080, tint: { color: "@primary", mode: "color" },
         });
-        expect(templatePlateLayer(style, format)).toEqual(plate);
+        expect(templatePlateLayer(style, format, "fulltime")).toEqual(plate);
         expect(() => sceneSchema.parse(scene)).not.toThrow();
       }
     }

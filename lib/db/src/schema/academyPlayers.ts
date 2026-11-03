@@ -1,4 +1,4 @@
-import { boolean, check, date, integer, pgTable, serial, text, timestamp, unique } from "drizzle-orm/pg-core";
+import { boolean, check, date, index, integer, pgTable, serial, text, timestamp, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
@@ -32,3 +32,30 @@ export const academyPlayersTable = pgTable("academy_players", {
 export const insertAcademyPlayerSchema = createInsertSchema(academyPlayersTable).omit({ id: true, createdAt: true });
 export type InsertAcademyPlayer = z.infer<typeof insertAcademyPlayerSchema>;
 export type AcademyPlayer = typeof academyPlayersTable.$inferSelect;
+/**
+ * A player's photo gallery (0058). The academy uploads them (a team photoshoot,
+ * often cut-outs with a transparent background); one is the primary photo the
+ * Creative hub's line-ups use. The file lives in Bunny Storage (or on this
+ * machine without Storage) and is only ever served through the academy
+ * console. `transparent`: the picture has real transparency (a cut-out).
+ */
+export const academyPlayerPhotosTable = pgTable("academy_player_photos", {
+  id: serial("id").primaryKey(),
+  academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
+  playerId: integer("player_id").notNull().references(() => academyPlayersTable.id, { onDelete: "cascade" }),
+  path: text("path").notNull(),
+  mime: text("mime").notNull(),
+  width: integer("width").notNull(),
+  height: integer("height").notNull(),
+  transparent: boolean("transparent").notNull().default(false),
+  label: text("label"),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+}, (table) => [
+  check("academy_player_photos_mime_check", sql`${table.mime} in ('image/png', 'image/webp')`),
+  index("academy_player_photos_player_idx").on(table.playerId, table.createdAt),
+  uniqueIndex("academy_player_photos_primary_unique").on(table.playerId).where(sql`${table.isPrimary}`),
+]);
+
+export type AcademyPlayerPhoto = typeof academyPlayerPhotosTable.$inferSelect;

@@ -1,4 +1,5 @@
-import { pgTable, serial, text, integer, boolean, timestamp, unique, index, real } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, serial, text, integer, boolean, timestamp, unique, index, real, check } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { fieldsTable } from "./fields";
@@ -30,8 +31,17 @@ export const academiesTable = pgTable("academies", {
   joinCode: text("join_code"),
   liveAccess: boolean("live_access").notNull().default(false),
   cameraIds: text("camera_ids").notNull().default(""),
+  /**
+   * Creative hub brand pack (PACK_STYLES in api-zod creativeScene.ts), set by an admin.
+   * Only this academy is offered that pack's style. Null = house styles only.
+   */
+  creativePack: text("creative_pack"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [unique("academies_join_code_unique").on(table.joinCode)]);
+}, (table) => [
+  unique("academies_join_code_unique").on(table.joinCode),
+  // KEEP IN SYNC with PACK_STYLES, migrations/0057 and ensureAdditiveColumns (a test compares them).
+  check("academies_creative_pack_check", sql`${table.creativePack} is null or ${table.creativePack} in ('iris', 'souqar', 'barca', 'juventus', 'knights', 'jufa')`),
+]);
 
 export const academyRecordingsTable = pgTable("academy_recordings", {
   id: serial("id").primaryKey(),

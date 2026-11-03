@@ -31,10 +31,12 @@ import {
   type FontFace,
 } from "./renderLayout";
 import { tintPicture } from "./renderTint";
+import { ensureLibraryFonts, libraryFaceAvailable } from "./fonts";
 
 /**
- * Creative hub engine: a scene → PNG, with @napi-rs/canvas and the fonts the
- * clip branding and Studio already ship (see renderLayout.ts for the mapping).
+ * Creative hub engine: a scene → PNG, with @napi-rs/canvas, the fonts the
+ * clip branding and Studio already ship, and the Creative font library
+ * (fonts.ts; a layer's `family`). See renderLayout.ts fontFace for the mapping.
  *
  * Pure drawing: pictures arrive through `images`, so this module never touches
  * the database or the network (renderMedia.ts does that for the routes, tests
@@ -74,12 +76,14 @@ export type SceneRenderOptions = {
 };
 
 const ITALIC_SKEW = -0.25;
-const FAMILY: Record<FontFace["family"], Record<number, string>> = {
+const FAMILY: Record<"rajdhani" | "cairo", Record<number, string>> = {
   rajdhani: { 600: FONT.displaySemi, 700: FONT.display, 900: FONT.display },
   cairo: { 600: FONT.arabicBold, 700: FONT.arabicBold, 900: FONT.arabicBlack },
 };
 
+/** Every face is registered under its own name, so the string names exactly one file. */
 export function fontString(face: FontFace, size: number): string {
+  if (face.family === "library") return `${face.weight} ${size}px ${face.alias}`;
   return `${face.weight} ${size}px ${FAMILY[face.family][face.weight]}`;
 }
 
@@ -152,8 +156,8 @@ function drawTextLayer(ctx: SKRSContext2D, layer: Extract<SceneLayer, { kind: "t
   const text = displayText(layer, fillText(layer.text, data, false));
   if (!text.trim()) return;
   const dir = textDirection(layer, text);
-  const face = fontFace(layer, text);
-  const arabic = face.family === "cairo";
+  const face = fontFace(layer, text, libraryFaceAvailable);
+  const arabic = face.arabic;
   // Letter spacing breaks Arabic joins, so it applies to Latin text only.
   const spacing = (size: number) => (!hasArabic(text) && layer.letterSpacing ? (layer.letterSpacing * size) / layer.size : 0);
   const shown = (line: string) => (dir === "rtl" ? isolateLtrRuns(line) : line);
@@ -257,6 +261,7 @@ export function drawScene(
   pictures: Map<string, Image | Canvas | null>,
 ): void {
   ensureBrandingFonts();
+  ensureLibraryFonts();
   const { scene, brand } = opts;
   const data = opts.data ?? {};
   const { w: W, h: H } = sceneSize(scene);

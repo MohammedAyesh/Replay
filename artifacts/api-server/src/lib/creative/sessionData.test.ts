@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSessionData,
+  lineupRows,
   clipMoment,
   confirmedGoalMoments,
   pickPlayerOfMatch,
@@ -143,5 +144,42 @@ describe("creative session data: moments", () => {
   it("falls back to a still of the footage when nothing stands out", () => {
     const data = buildSessionData(facts(), "en");
     expect(data.media).toEqual({ type: "frame", recordingId: 900, atMs: 420_000 });
+  });
+});
+
+describe("creative session data: line-ups and player photos", () => {
+  const squad = [
+    { playerId: 11, name: "Omar Khaled", number: 7, position: "Forward" },
+    { playerId: 12, name: "Yazan Ali", number: 1, position: "Goalkeeper" },
+    { playerId: 13, name: "Karim Saleh", number: 4, position: "DF" },
+  ];
+  const pictures = new Map([[11, { cutout: true }], [12, { cutout: false }]]);
+
+  it("fills rows goalkeeper first, then by shirt; with names allowed first names and each row's photo", () => {
+    const rows = lineupRows(squad, true, "en", pictures);
+    expect(rows.custom).toMatchObject({ n1: "1", p1: "Yazan", pos1: "GK", n2: "4", p2: "Karim", pos2: "DF", n3: "7", p3: "Omar", pos3: "FW" });
+    expect(rows.photos).toEqual([{ type: "player", playerId: 12, cutout: false }, null, { type: "player", playerId: 11, cutout: true }]);
+    expect(lineupRows(squad, true, "ar").custom.pos1).toBe("حارس");
+  });
+
+  it("withholds names and photos when the academy doesn't show names", () => {
+    const rows = lineupRows(squad, false, "en", pictures);
+    expect(rows.custom).toMatchObject({ n1: "1", p1: "", n3: "7", p3: "" });
+    expect(rows.photos).toBeUndefined();
+    expect(JSON.stringify(rows)).not.toMatch(/Omar|Yazan|Karim/);
+  });
+
+  it("puts the squad and photos in the session data only as the names rule allows", () => {
+    const withPics = facts({ squad, pictures, showNames: true, players: [...facts().players.map((p, i) => ({ ...p, playerId: 11 + i }))] });
+    const on = buildSessionData(withPics, "en");
+    expect(on.custom?.p1).toBe("Yazan");
+    expect(on.photos?.[0]).toEqual({ type: "player", playerId: 12, cutout: false });
+    // Player of the match (most goals: playerId 11) carries his own cut-out.
+    expect(on.player?.photo).toEqual({ type: "player", playerId: 11, cutout: true });
+    const off = buildSessionData({ ...withPics, showNames: false }, "en");
+    expect(off.photos).toBeUndefined();
+    expect(off.player?.photo).toBeUndefined();
+    expect(off.custom?.p1).toBe("");
+    expect(off.custom?.n1).toBe("1");
   });
 });

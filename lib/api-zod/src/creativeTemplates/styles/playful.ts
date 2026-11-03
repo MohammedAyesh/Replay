@@ -2,6 +2,7 @@ import type { Content } from "../content";
 import { crest, ellipse, media, rect, text, type Box, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackHeight, stackUp, type StackItem } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
+import { rowsOrTiles, type TileLook } from "../players";
 
 /**
  * Playful: for the youngest squads. Cream paper, big soft blobs in the
@@ -129,6 +130,17 @@ const hero: StyleKit["hero"] = (c, k) => {
   stackDown(y, items);
 };
 
+/** Line-up photo tiles: a round-cornered brand card with an ink outline, a chunky number, a pill for the name. */
+const TILE: TileLook = {
+  backdrop: (c, id, b, i) => rect(c, id, b, { fill: i % 2 ? "@accent" : "@primary", radius: 36, stroke: { color: INK, width: 4 } }),
+  bar: (c, id, b) => rect(c, id, b, { fill: WHITE, radius: b.h / 2, stroke: { color: INK, width: 4 } }),
+  num: { font: "display", color: WHITE, weight: 900, stroke: { color: INK, width: 5 } },
+  name: { font: "display", color: INK, weight: 900 },
+  pos: { font: "display", color: "@primary", weight: 800 },
+  shadow: INK,
+  cardRadius: 30,
+};
+
 const list: StyleKit["list"] = (c, k) => {
   blobs(c, 1);
   head(c, k);
@@ -139,7 +151,7 @@ const list: StyleKit["list"] = (c, k) => {
   const rows = k.rows ?? [];
   const lead = numericLead(k);
   const foot = (k.cta ? 96 : 0) + k.meta.length * 40 + 30;
-  rowBoxes(rows.length, top, c.B - foot, c.M, c.CW, { gap: 14, maxH: Math.round((lead ? 100 : 124) * c.k) }).forEach((b, i) => {
+  rowsOrTiles(c, k, { x: c.M, y: top + 10, w: c.CW, h: c.B - foot - top - 20 }, TILE, () => rowBoxes(rows.length, top, c.B - foot, c.M, c.CW, { gap: 14, maxH: Math.round((lead ? 100 : 124) * c.k) }).forEach((b, i) => {
     const id = `row-${i + 1}`;
     const row = rows[i];
     rect(c, `${id}-bg`, b, { fill: WHITE, radius: b.h / 2, stroke: { color: INK, width: 4 } });
@@ -153,7 +165,7 @@ const list: StyleKit["list"] = (c, k) => {
     const mx = lead ? b.x + b.h + 16 : b.x + b.w * 0.34 + 30;
     text(c, `${id}-main`, row[1], { x: mx, y: b.y + b.h * 0.26, w: b.x + b.w - 210 - mx, h: b.h * 0.48 }, { size: Math.round(b.h * (lead ? 0.38 : 0.26)), font: "display", weight: lead ? 900 : 700, color: INK, fit: true });
     text(c, `${id}-trail`, row[2], { x: b.x + b.w - 200, y: b.y + b.h * 0.24, w: 170, h: b.h * 0.52 }, { size: Math.round(b.h * 0.38), font: "display", weight: 900, color: "@primary", align: "end", fit: true });
-  });
+  }));
   stackUp(c.B, [
     ...k.meta.map((m, i) => ({ h: 36, gap: 10, draw: (y: number) => text(c, `meta-${i + 1}`, m, { x: c.M, y, w: c.CW, h: 36 }, { size: 28, font: "display", weight: 800, color: INK, fit: true }) })),
     k.cta && { h: 80, draw: (y: number) => sticker(c, "cta", k.cta!, c.M, y, c.CW - 120, { h: 80, rot: -2, fill: "@primary", ink: WHITE }) },

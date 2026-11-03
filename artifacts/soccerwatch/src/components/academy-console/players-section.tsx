@@ -12,7 +12,7 @@ import {
   type AcademyPlayerSummary,
   type AcademyPlayerUpdate,
 } from "@workspace/api-client-react";
-import { Link2, Pencil, Plus, Search, ShieldCheck, UserRound, Users } from "lucide-react";
+import { Camera, Images, Link2, Pencil, Plus, Search, ShieldCheck, Users } from "lucide-react";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +36,9 @@ import {
 import { cn } from "@/lib/utils";
 import { FamilyLinkActions } from "@/components/academy-console/family-link-actions";
 import { AcademyPlayerGuardians } from "@/components/academy-console/player-guardians";
+import { PhotoshootDialog, PlayerPhotoThumb, PlayerPhotosDialog } from "@/components/academy-console/player-photos";
+import { usePlayerPhotosCopy } from "@/i18n/player-photos-strings";
+import { useAcademyPlayerPhotos, type PlayerPhoto } from "@/lib/player-photos-api";
 
 type PlayerForm = {
   name: string;
@@ -110,6 +113,15 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
   const [squadFilter, setSquadFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<PlayerStatusFilter>("all");
   const [familyLinkPlayer, setFamilyLinkPlayer] = useState<AcademyPlayerSummary | null>(null);
+  const [photosPlayer, setPhotosPlayer] = useState<AcademyPlayerSummary | null>(null);
+  const [shootOpen, setShootOpen] = useState(false);
+  const photoCopy = usePlayerPhotosCopy();
+  const photosQuery = useAcademyPlayerPhotos(academyId);
+  const mainPhoto = useMemo(() => {
+    const out = new Map<number, PlayerPhoto>();
+    for (const p of photosQuery.data ?? []) if (p.isPrimary || !out.has(p.playerId)) out.set(p.playerId, p);
+    return out;
+  }, [photosQuery.data]);
 
   const players = playersQuery.data ?? [];
   const squads = squadsQuery.data ?? [];
@@ -273,6 +285,16 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
         type="button"
         variant="outline"
         size="sm"
+        onClick={() => setPhotosPlayer(player)}
+        data-testid={`button-player-photos-${player.id}`}
+      >
+        <Images className="me-2 h-4 w-4" aria-hidden="true" />
+        {photoCopy.photos}
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
         disabled={updatePlayer.isPending}
         onClick={() => void togglePlayerStatus(player)}
         data-testid={`button-toggle-player-${player.id}`}
@@ -300,15 +322,27 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
           <h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-text">{labels.players}</h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-text">{labels.playersDescription}</p>
         </div>
-        <Button
-          type="button"
-          onClick={openCreateForm}
-          className="min-h-11 shrink-0 rounded-xl bg-floodlight px-4 font-bold text-void hover:bg-floodlight/90"
-          data-testid="button-create-player"
-        >
-          <Plus className="me-2 h-4 w-4" aria-hidden="true" />
-          {labels.addPlayer}
-        </Button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShootOpen(true)}
+            className="min-h-11 rounded-xl px-4 font-bold"
+            data-testid="button-photoshoot"
+          >
+            <Camera className="me-2 h-4 w-4" aria-hidden="true" />
+            {photoCopy.shoot}
+          </Button>
+          <Button
+            type="button"
+            onClick={openCreateForm}
+            className="min-h-11 rounded-xl bg-floodlight px-4 font-bold text-void hover:bg-floodlight/90"
+            data-testid="button-create-player"
+          >
+            <Plus className="me-2 h-4 w-4" aria-hidden="true" />
+            {labels.addPlayer}
+          </Button>
+        </div>
       </div>
 
       {statusError && <p className="rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive" role="alert" data-testid="player-status-error">{labels.playerStatusError}</p>}
@@ -405,7 +439,12 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
               <TableBody>
                 {visiblePlayers.map((player) => (
                   <TableRow key={player.id} className="border-line" data-testid={`academy-player-row-${player.id}`}>
-                    <TableCell dir="auto" className="font-semibold text-text">{player.name}</TableCell>
+                    <TableCell dir="auto" className="font-semibold text-text">
+                      <span className="flex items-center gap-3">
+                        <PlayerPhotoThumb photo={mainPhoto.get(player.id)} className="h-10 w-10" />
+                        {player.name}
+                      </span>
+                    </TableCell>
                     <TableCell className="tabular-nums text-muted-text">{player.jerseyNumber ?? "—"}</TableCell>
                     <TableCell dir="auto" className="text-muted-text">{player.position || "—"}</TableCell>
                     <TableCell dir="auto" className="text-muted-text">{player.squadName || labels.unassigned}</TableCell>
@@ -438,9 +477,7 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
               <article key={player.id} className="rounded-2xl border border-line bg-surface p-4" data-testid={`academy-player-card-${player.id}`}>
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex min-w-0 items-start gap-3">
-                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-raised text-turf">
-                      <UserRound className="h-5 w-5" aria-hidden="true" />
-                    </span>
+                    <PlayerPhotoThumb photo={mainPhoto.get(player.id)} className="h-12 w-12" />
                     <div className="min-w-0">
                       <h2 dir="auto" className="break-words font-display text-lg font-bold text-text">{player.name}</h2>
                       <p dir="auto" className="mt-1 text-sm text-muted-text">{player.position || "—"}</p>
@@ -599,6 +636,9 @@ export function AcademyPlayersSection({ academyId, isOwner }: {
           </form>
         </DialogContent>
       </Dialog>
+
+      <PlayerPhotosDialog academyId={academyId} player={photosPlayer} onClose={() => setPhotosPlayer(null)} />
+      <PhotoshootDialog academyId={academyId} players={players} open={shootOpen} onClose={() => setShootOpen(false)} />
 
       <Dialog
         open={familyLinkPlayer !== null}

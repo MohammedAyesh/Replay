@@ -1,7 +1,7 @@
-import { and, desc, eq, gte, isNotNull, lt, sql } from "drizzle-orm";
-import { academyCreativeProjectsTable, academySessionsTable, db, type Academy } from "@workspace/db";
+import { and, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
+import { academyCreativeProjectsTable, academyMatchLineupsTable, academyPlayersTable, academySessionsTable, db, type Academy } from "@workspace/db";
 import {
-  CREATIVE_STYLES,
+  PUBLIC_STYLES,
   CREATIVE_TEMPLATES,
   buildTemplateScene,
   sceneSchema,
@@ -11,6 +11,7 @@ import {
   type TemplateMeta,
 } from "@workspace/api-zod";
 import { logger } from "../logger";
+import { academyPack } from "./packs";
 import {
   academyCreativeProfile,
   buildSessionData,
@@ -23,6 +24,7 @@ import {
   playerStatsSummary,
   rankedMoments,
   soleScorer,
+  teamStatsSummary,
   windowSource,
   type CreativeLocale,
   type SessionFacts,
@@ -33,9 +35,14 @@ import {
  * Creative hub → For you: drafts Replay prepares on its own.
  *
  * After a finished match (last 14 days): full time, a clean sheet, player of
- * the match, and the academy's confirmed goals as short videos. Before a
- * fixture (next 7 days): a matchday post. Once a week: a clip from the
- * week's training, when a training was filmed.
+ * the match, the academy's confirmed goals as short videos, and the match
+ * stats once the match was analysed. Before a fixture (next 7 days): a
+ * matchday post; two days before (Amman calendar) a countdown; the day before
+ * a squad call-up, when the owner picked the squad (match line-up). Once a
+ * week: a clip from the week's training, when a training was filmed.
+ *
+ * Drafts use the academy's brand pack style when it has one (academies.
+ * creative_pack), else the style it uses most.
  *
  * Every draft carries origin 'auto' and a stable origin_key, inserted with
  * ON CONFLICT DO NOTHING on (academy_id, origin_key): running twice makes
@@ -67,7 +74,7 @@ const DAY = 86_400_000;
 
 // ── Origin keys ─────────────────────────────────────────────────────────────
 
-export type DraftKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "weekly";
+export type DraftKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "countdown" | "callup" | "matchstats" | "weekly";
 export type FeedGroup = "after" | "upcoming" | "week";
 
 export const originKey = {
@@ -75,6 +82,9 @@ export const originKey = {
   cleansheet: (sessionId: number) => `cleansheet:session:${sessionId}`,
   potm: (sessionId: number) => `potm:session:${sessionId}`,
   matchday: (sessionId: number) => `matchday:session:${sessionId}`,
+  countdown: (sessionId: number) => `countdown:session:${sessionId}`,
+  callup: (sessionId: number) => `callup:session:${sessionId}`,
+  matchstats: (sessionId: number) => `matchstats:session:${sessionId}`,
   goal: (momentId: string) => `goal:moment:${momentId}`,
   weekly: (isoWeek: string) => `weekly:${isoWeek}`,
 };
@@ -86,7 +96,7 @@ export type ParsedOriginKey =
 
 export function parseOriginKey(key: string | null | undefined): ParsedOriginKey | null {
   if (!key) return null;
-  let m = /^(fulltime|cleansheet|potm|matchday):session:(\d+)$/.exec(key);
+  let m = /^(fulltime|cleansheet|potm|matchday|countdown|callup|matchstats):session:(\d+)$/.exec(key);
   if (m) return { kind: m[1] as "fulltime", sessionId: Number(m[2]) };
   m = /^goal:moment:([\w-]+)$/.exec(key);
   if (m) return { kind: "goal", momentId: m[1] };
@@ -95,8 +105,11 @@ export function parseOriginKey(key: string | null | undefined): ParsedOriginKey 
   return null;
 }
 
+/** Drafts about a coming fixture: in the feed until kick-off. */
+export const isFixtureKind = (kind: DraftKind) => kind === "matchday" || kind === "countdown" || kind === "callup";
+
 export const groupOf = (kind: DraftKind): FeedGroup =>
-  kind === "matchday" ? "upcoming" : kind === "weekly" ? "week" : "after";
+  isFixtureKind(kind) ? "upcoming" : kind === "weekly" ? "week" : "after";
 
 /** Which catalogue template each kind of draft is made from. */
 export const TEMPLATE_FOR: Record<DraftKind, string> = {
@@ -105,6 +118,9 @@ export const TEMPLATE_FOR: Record<DraftKind, string> = {
   potm: "potm",
   goal: "goal",
   matchday: "matchday",
+  countdown: "countdown",
+  callup: "callup",
+  matchstats: "matchstats",
   weekly: "training",
 };
 
@@ -128,6 +144,13 @@ export function isoWeekKey(date: Date): string {
   const year = day.getUTCFullYear();
   const week = Math.ceil(((day.getTime() - Date.UTC(year, 0, 1)) / DAY + 1) / 7);
   return `${year}-W${String(week).padStart(2, "0")}`;
+}
+
+/** Whole Amman calendar days from `now` to `date` (0 = today, 1 = tomorrow). */
+export function ammanDaysUntil(date: Date, now: Date): number {
+  const a = ammanYmd(now);
+  const b = ammanYmd(date);
+  return Math.round((Date.UTC(b.y, b.m - 1, b.d) - Date.UTC(a.y, a.m - 1, a.d)) / DAY);
 }
 
 export function isFinished(s: { startsAt: Date; endsAt: Date | null }, now: Date): boolean {
@@ -166,6 +189,9 @@ const AR = {
   potm: "نجم المباراة",
   goal: "هدف",
   matchday: "يوم المباراة",
+  countdown: "العد التنازلي",
+  callup: "قائمة الماتش",
+  matchstats: "أرقام الماتش",
   weekly: "من تمرين الأسبوع",
   vs: "ضد",
 };
@@ -175,6 +201,9 @@ const EN = {
   potm: "Player of the match",
   goal: "Goal",
   matchday: "Matchday",
+  countdown: "Countdown",
+  callup: "Squad call-up",
+  matchstats: "Match stats",
   weekly: "This week's training",
   vs: "vs",
 };
@@ -186,7 +215,7 @@ export function draftTitle(kind: DraftKind, facts: SessionFacts | null, locale: 
   if (facts) {
     const s = facts.session;
     if (s.opponent) {
-      const score = s.ownScore !== null && s.opponentScore !== null && kind !== "matchday" ? ` ${s.ownScore}–${s.opponentScore}` : "";
+      const score = s.ownScore !== null && s.opponentScore !== null && !isFixtureKind(kind) ? ` ${s.ownScore}–${s.opponentScore}` : "";
       bits.push(`${w.vs} ${s.opponent}${score}`);
     } else if (s.squad) {
       bits.push(s.squad);
@@ -196,9 +225,50 @@ export function draftTitle(kind: DraftKind, facts: SessionFacts | null, locale: 
   return bits.join(" · ").slice(0, 120);
 }
 
+/** A player the owner put in a fixture's squad (academy_match_lineups, in_squad). */
+export type CallupPlayer = { name: string | null; number: number | null; position: string | null };
+
+/** Rows the call-up template has. */
+export const CALLUP_ROWS = 9;
+
+const POSITIONS: Array<{ re: RegExp; en: string; ar: string }> = [
+  { re: /^(gk|goal ?keeper|keeper|حارس)/i, en: "GK", ar: "حارس" },
+  { re: /^(df|def|defen[cs]e|defender|back|cb|lb|rb|دفاع|مدافع)/i, en: "DF", ar: "دفاع" },
+  { re: /^(mf|mid|midfield|midfielder|cm|dm|am|وسط)/i, en: "MF", ar: "وسط" },
+  { re: /^(fw|fwd|forward|striker|attack|attacker|winger|st|هجوم|مهاجم)/i, en: "FW", ar: "هجوم" },
+];
+
+/** A short position label ("GK" / "حارس"); anything unrecognised is kept, shortened. */
+export function positionLabel(raw: string | null | undefined, locale: CreativeLocale): string {
+  const v = (raw ?? "").trim();
+  if (!v) return "";
+  const hit = POSITIONS.find((p) => p.re.test(v));
+  return hit ? hit[locale === "ar" ? "ar" : "en"] : v.slice(0, 12);
+}
+
+/**
+ * The call-up template's rows (custom.n1/p1/pos1 … n9/p9/pos9): shirt order,
+ * goalkeepers first. Names only when the academy shows them, else blank (the
+ * number says who it is), as every other draft does.
+ */
+export function callupCustom(players: CallupPlayer[], showNames: boolean, locale: CreativeLocale): Record<string, string> {
+  const gk = (p: CallupPlayer) => (positionLabel(p.position, "en") === "GK" ? 0 : 1);
+  const rows = [...players]
+    .sort((a, b) => gk(a) - gk(b) || (a.number ?? 999) - (b.number ?? 999) || (a.name ?? "").localeCompare(b.name ?? ""))
+    .slice(0, CALLUP_ROWS);
+  const out: Record<string, string> = {};
+  rows.forEach((p, i) => {
+    out[`n${i + 1}`] = p.number !== null && p.number !== undefined ? String(p.number) : "";
+    out[`p${i + 1}`] = showNames ? playerLabel({ name: p.name, number: null }, true) ?? "" : "";
+    out[`pos${i + 1}`] = positionLabel(p.position, locale);
+  });
+  return out;
+}
+
 /**
  * The drafts these facts call for that do not exist yet. `existing` holds
  * every origin key the academy already has, skipped ones included.
+ * `callups` holds each fixture's squad (by session id), when the owner picked one.
  */
 export function planAutoDrafts(input: {
   now: Date;
@@ -206,6 +276,7 @@ export function planAutoDrafts(input: {
   week: WeekFacts | null;
   existing: ReadonlySet<string>;
   locale?: CreativeLocale;
+  callups?: ReadonlyMap<number, CallupPlayer[]>;
 }): DraftPlan[] {
   const locale = input.locale ?? FOR_YOU.locale;
   const out: DraftPlan[] = [];
@@ -244,6 +315,15 @@ export function planAutoDrafts(input: {
           moment: best, title: draftTitle("potm", facts, locale, { player: label }),
         });
       }
+      // The match stats card, once the analysis measured the team's numbers.
+      const teamStats = teamStatsSummary(facts.team);
+      if (Object.keys(teamStats).length) {
+        const { player: _player, more: _more, media: _media, ...match } = base;
+        add({
+          kind: "matchstats", originKey: originKey.matchstats(s.id), templateKey: TEMPLATE_FOR.matchstats, sessionId: s.id,
+          data: { ...match, stats: teamStats }, moment: null, title: draftTitle("matchstats", facts, locale),
+        });
+      }
       if (goalsAreOurs(facts)) {
         // A goal clip names its scorer only when one player scored them all.
         const { player: _potm, more: _more, ...team } = base;
@@ -261,6 +341,20 @@ export function planAutoDrafts(input: {
       // A fixture: no score and no footage yet.
       const { media: _media, more: _more, stats: _stats, player: _player, ...fixture } = base;
       add({ kind: "matchday", originKey: originKey.matchday(s.id), templateKey: TEMPLATE_FOR.matchday, sessionId: s.id, data: fixture, moment: null, title: draftTitle("matchday", facts, locale) });
+      const daysUntil = ammanDaysUntil(s.startsAt, input.now);
+      if (daysUntil === 2) {
+        add({
+          kind: "countdown", originKey: originKey.countdown(s.id), templateKey: TEMPLATE_FOR.countdown, sessionId: s.id,
+          data: { ...fixture, custom: { days: "2" } }, moment: null, title: draftTitle("countdown", facts, locale),
+        });
+      }
+      const squad = input.callups?.get(s.id) ?? [];
+      if (daysUntil === 1 && squad.length) {
+        add({
+          kind: "callup", originKey: originKey.callup(s.id), templateKey: TEMPLATE_FOR.callup, sessionId: s.id,
+          data: { ...fixture, custom: callupCustom(squad, facts.showNames, locale) }, moment: null, title: draftTitle("callup", facts, locale),
+        });
+      }
     }
   }
 
@@ -279,11 +373,15 @@ export function planAutoDrafts(input: {
   return out;
 }
 
-/** The most used style among the academy's projects, else the default. */
+/**
+ * The most used house style among the academy's projects, else the default.
+ * Pack styles never come from here (styleFor gives an academy its own pack).
+ */
 export function preferredStyle(counts: Array<{ style: string | null; count: number }>): CreativeStyle {
+  const order: readonly string[] = PUBLIC_STYLES;
   const valid = counts.filter((c): c is { style: CreativeStyle; count: number } =>
-    c.style !== null && (CREATIVE_STYLES as readonly string[]).includes(c.style) && c.count > 0);
-  valid.sort((a, b) => b.count - a.count || CREATIVE_STYLES.indexOf(a.style) - CREATIVE_STYLES.indexOf(b.style));
+    c.style !== null && order.includes(c.style) && c.count > 0);
+  valid.sort((a, b) => b.count - a.count || order.indexOf(a.style) - order.indexOf(b.style));
   return valid[0]?.style ?? FOR_YOU.defaultStyle;
 }
 
@@ -335,7 +433,11 @@ export function materializeDraft(
 
 // ── Sync (DB) ───────────────────────────────────────────────────────────────
 
-async function styleFor(academyId: number): Promise<CreativeStyle> {
+/** The academy's brand pack style if it has one, else its most used house style. */
+export async function styleFor(academy: Pick<Academy, "id" | "creativePack">): Promise<CreativeStyle> {
+  const pack = academyPack(academy);
+  if (pack) return pack.key;
+  const academyId = academy.id;
   const rows = await db.select({ style: academyCreativeProjectsTable.style, count: sql<number>`count(*)::int` })
     .from(academyCreativeProjectsTable)
     .where(and(eq(academyCreativeProjectsTable.academyId, academyId), isNotNull(academyCreativeProjectsTable.style)))
@@ -360,7 +462,7 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
       .limit(FOR_YOU.maxSessions),
     db.select({ key: academyCreativeProjectsTable.originKey }).from(academyCreativeProjectsTable)
       .where(and(eq(academyCreativeProjectsTable.academyId, academyId), isNotNull(academyCreativeProjectsTable.originKey))),
-    styleFor(academyId),
+    styleFor(academy),
     db.select({ id: academySessionsTable.id }).from(academySessionsTable)
       .where(and(
         eq(academySessionsTable.academyId, academyId),
@@ -376,6 +478,9 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     const facts = await loadSessionFacts(academyId, row.id, profile);
     if (facts) sessions.push(facts);
   }
+  // Squads only for tomorrow's fixtures (the call-up draft's day).
+  const callupIds = sessions.filter((f) => ammanDaysUntil(f.session.startsAt, now) === 1).map((f) => f.session.id);
+  const callups = await loadCallups(academyId, callupIds);
   const isoWeek = isoWeekKey(now);
   let training: SessionFacts | null = null;
   for (const row of trainingRows) {
@@ -390,6 +495,7 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     week: { isoWeek, training },
     existing: new Set(existingRows.map((r) => r.key).filter((k): k is string => Boolean(k))),
     locale,
+    callups,
   });
   const rows = plans.map((p) => materializeDraft(p, academyId, style)).filter((r): r is DraftRow => r !== null);
   if (!rows.length) return 0;
@@ -400,6 +506,31 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     })
     .returning({ id: academyCreativeProjectsTable.id });
   return inserted.length;
+}
+
+/** Each fixture's squad as the owner picked it (in_squad line-up rows), by session id. */
+export async function loadCallups(academyId: number, sessionIds: number[]): Promise<Map<number, CallupPlayer[]>> {
+  const out = new Map<number, CallupPlayer[]>();
+  if (!sessionIds.length) return out;
+  const rows = await db.select({
+    sessionId: academyMatchLineupsTable.sessionId,
+    shirt: academyMatchLineupsTable.shirtNumber,
+    jersey: academyPlayersTable.jerseyNumber,
+    name: academyPlayersTable.name,
+    position: academyPlayersTable.position,
+  }).from(academyMatchLineupsTable)
+    .innerJoin(academyPlayersTable, eq(academyPlayersTable.id, academyMatchLineupsTable.playerId))
+    .where(and(
+      inArray(academyMatchLineupsTable.sessionId, sessionIds),
+      eq(academyMatchLineupsTable.inSquad, true),
+      eq(academyPlayersTable.academyId, academyId),
+    ));
+  for (const r of rows) {
+    const list = out.get(r.sessionId) ?? [];
+    list.push({ name: r.name, number: r.shirt ?? r.jersey ?? null, position: r.position ?? null });
+    out.set(r.sessionId, list);
+  }
+  return out;
 }
 
 const lastSync = new Map<number, number>();
@@ -438,7 +569,7 @@ export function resetAutoDraftThrottle(): void {
  */
 export function inFeed(parsed: ParsedOriginKey | null, createdAt: Date, session: { startsAt: Date } | null, now: Date): boolean {
   if (!parsed) return false;
-  if (parsed.kind === "matchday") return session ? session.startsAt.getTime() > now.getTime() : false;
+  if (isFixtureKind(parsed.kind)) return session ? session.startsAt.getTime() > now.getTime() : false;
   if (parsed.kind === "weekly") return parsed.week === isoWeekKey(now);
   return now.getTime() - createdAt.getTime() <= FOR_YOU.feedDays * DAY;
 }

@@ -51,7 +51,7 @@ function TextEditor({ ed, layer, addButton }: { ed: EditorApi; layer: TextLayer;
           <div className="space-y-1.5">
             <p className="flex items-center gap-1.5 text-xs text-muted-text"><Braces className="h-3.5 w-3.5" />{copy.insertField}</p>
             <div className="flex flex-wrap gap-1.5">
-              {ed.fields.filter((f) => f !== "media" && f !== "player.photo" && !f.startsWith("more.")).map((f) => (
+              {ed.fields.filter((f) => f !== "media" && f !== "player.photo" && !f.startsWith("more.") && !f.startsWith("photos.")).map((f) => (
                 <Chip key={f} onClick={() => insert(f)} testId={`editor-binding-${f}`} className="min-h-8 px-2.5">{fieldLabel(copy, f)}</Chip>
               ))}
             </div>

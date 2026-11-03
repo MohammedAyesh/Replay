@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import {
-  CREATIVE_STYLES,
   CREATIVE_TEMPLATES,
   TEMPLATE_CATEGORIES,
   buildTemplateScene,
@@ -16,6 +15,7 @@ import { useCreativeTemplatesCopy } from "@/i18n/creative-templates-strings";
 import { useCreateCreativeProject, useCreativeBrand, useCreativeSessionData } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
 import { useLibraryMatches } from "@/lib/creative-hub-library-api";
+import { offeredStyles } from "@/lib/creative-styles";
 import { cn } from "@/lib/utils";
 import { projectTitle, seedKind, seedMedia, startingData } from "./templates/data";
 import { useElementWidth } from "./templates/hooks";
@@ -76,7 +76,7 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
 
   const kind = seedKind(active);
   const [category, setCategory] = useState<TemplateCategory | "all">("all");
-  const [style, setStyle] = useState<CreativeStyle>("broadcast");
+  const [picked, setStyle] = useState<CreativeStyle | null>(null);
   const [format, setFormat] = useState<CreativeFormat>(kind === "video" ? "story" : "post");
   const [postLocale, setPostLocale] = useState<"ar" | "en">(copy.locale);
   const create = useCreateCreativeProject(academyId);
@@ -86,6 +86,9 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
 
   const brand = brandQ.data?.brand ?? FALLBACK_BRAND;
   const info = brandQ.data;
+  // House styles plus the academy's own pack, first; the pack is the default look.
+  const styles = useMemo(() => offeredStyles(info?.pack), [info?.pack]);
+  const style: CreativeStyle = picked && styles.includes(picked) ? picked : styles[0];
   const academy = useMemo(() => ({
     nameEn: info?.brand.nameEn ?? "",
     nameAr: info?.brand.nameAr ?? null,
@@ -173,7 +176,7 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
         <div>
           <p className="mb-1.5 text-xs font-semibold text-muted-text">{copy.styleLabel}</p>
           <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="radiogroup" aria-label={copy.styleLabel}>
-            {CREATIVE_STYLES.map((s) => (
+            {styles.map((s) => (
               <button key={s} type="button" role="radio" aria-checked={style === s} onClick={() => setStyle(s)} title={copy.styleHints[s]}
                 data-testid={`creative-templates-style-${s}`}
                 className={cn("w-[84px] shrink-0 rounded-xl border p-1 text-start transition-colors", style === s ? "border-turf" : "border-line hover:border-muted-text")}>

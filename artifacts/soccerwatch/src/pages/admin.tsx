@@ -14,6 +14,7 @@ import {
 import Hls from "hls.js";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
+import CreativePackPanel from "@/components/admin/CreativePackPanel";
 import { StreamingPanel } from "@/components/StreamingPanel";
 import StatPaymentsTab from "@/components/admin/StatPaymentsTab";
 import { ReportsTab } from "@/components/admin/ReportsTab";
@@ -2846,6 +2847,7 @@ function AcademiesTab() {
                       onCancel={cancelEdit}
                       title="Edit Academy"
                     />
+                    <CreativePackPanel academyId={academy.id} />
                   </div>
                 )}
 

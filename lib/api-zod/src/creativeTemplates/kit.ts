@@ -12,6 +12,8 @@ import { CREATIVE_FORMATS, type CreativeFormat, type MediaSource, type SceneLaye
  */
 
 export type Locale = "en" | "ar";
+/** A layer's show-condition (SceneLayer.when). */
+export type LayerCondition = { path: string; not?: boolean };
 export type Box = { x: number; y: number; w: number; h: number };
 export type LatinFont = "display" | "condensed" | "body" | "serif" | "script";
 export type Timing = { startMs?: number; endMs?: number; enter?: "none" | "fade" | "slide-up" | "slide-left" | "pop" };
@@ -39,6 +41,7 @@ export class Ctx {
   readonly ar: boolean;
   readonly layers: SceneLayer[] = [];
   private readonly ids = new Set<string>();
+  private readonly conditions: LayerCondition[] = [];
 
   constructor(readonly format: CreativeFormat, readonly locale: Locale) {
     this.H = CREATIVE_FORMATS[format].h;
@@ -60,8 +63,19 @@ export class Ctx {
   push(layer: SceneLayer): SceneLayer {
     if (this.ids.has(layer.id)) throw new Error(`duplicate layer id ${layer.id}`);
     this.ids.add(layer.id);
+    if (this.conditions.length) layer = { ...layer, when: [...(layer.when ?? []), ...this.conditions] } as SceneLayer;
     this.layers.push(layer);
     return layer;
+  }
+
+  /** Every layer drawn inside `draw` shows only when `when` holds for the data (SceneLayer.when). */
+  only<T>(when: LayerCondition[], draw: () => T): T {
+    this.conditions.push(...when);
+    try {
+      return draw();
+    } finally {
+      this.conditions.splice(this.conditions.length - when.length, when.length);
+    }
   }
 }
 
@@ -170,7 +184,7 @@ export function text(c: Ctx, id: string, value: string, b: Box, o: TextOpts): Sc
   return c.push(layer as SceneLayer);
 }
 
-type ImageOpts = Common & { fit?: "cover" | "contain"; radius?: number; cutout?: boolean };
+type ImageOpts = Common & { fit?: "cover" | "contain"; radius?: number; cutout?: boolean; when?: LayerCondition[] };
 
 export function image(c: Ctx, id: string, src: MediaSource, b: Box, o: ImageOpts = {}): SceneLayer {
   return c.push({
@@ -180,6 +194,7 @@ export function image(c: Ctx, id: string, src: MediaSource, b: Box, o: ImageOpts
     fit: o.fit ?? "cover",
     ...(o.radius !== undefined ? { radius: o.radius } : {}),
     ...(o.cutout ? { cutout: true } : {}),
+    ...(o.when?.length ? { when: o.when } : {}),
   } as SceneLayer);
 }
 

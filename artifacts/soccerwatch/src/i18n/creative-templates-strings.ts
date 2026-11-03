@@ -1,6 +1,18 @@
-import type { CreativeFormat, CreativeStyle, TemplateCategory } from "@workspace/api-zod";
+import type { CreativeFormat, CreativeStyle, PackStyle, TemplateCategory } from "@workspace/api-zod";
 import { useLocale } from "./context";
 import { useConsoleWording } from "@/lib/console-kind";
+
+/**
+ * Brand pack styles, by pack: shown only to the academy the pack was made for
+ * (lib/creative-styles.ts), named after it. Shared with the editor strings.
+ */
+export const packStyleLabels = {
+  en: { iris: "IRIS look", souqar: "Souqar look", barca: "Barça look", juventus: "Juventus look", knights: "Knights look", jufa: "JUFA look" },
+  ar: { iris: "ستايل IRIS", souqar: "ستايل Souqar", barca: "ستايل برشلونة", juventus: "ستايل يوفنتوس", knights: "ستايل Knights", jufa: "ستايل JUFA" },
+} satisfies Record<"en" | "ar", Record<PackStyle, string>>;
+
+const packHints = (hint: string) =>
+  ({ iris: hint, souqar: hint, barca: hint, juventus: hint, knights: hint, jufa: hint }) satisfies Record<PackStyle, string>;
 
 /**
  * Creative hub → Templates tab. Arabic is Ammani, as across the console.
@@ -12,6 +24,7 @@ const en = {
   all: "All",
   categories: {
     matchday: "Matchday",
+    live: "In-game",
     results: "Results",
     players: "Players",
     recruitment: "Join us",
@@ -27,6 +40,7 @@ const en = {
     playful: "Playful",
     cinematic: "Cinematic",
     stadium: "Stadium",
+    ...packStyleLabels.en,
   } satisfies Record<CreativeStyle, string>,
   styleHints: {
     broadcast: "TV match graphics",
@@ -36,6 +50,7 @@ const en = {
     playful: "Bright, for the little ones",
     cinematic: "Dark and dramatic",
     stadium: "Floodlit night",
+    ...packHints("Your academy's own look, from its brand deck"),
   } satisfies Record<CreativeStyle, string>,
   formatLabel: "Size",
   formats: { post: "Post", square: "Square", story: "Story" } satisfies Record<CreativeFormat, string>,
@@ -68,6 +83,7 @@ const ar: typeof en = {
   all: "الكل",
   categories: {
     matchday: "يوم الماتش",
+    live: "خلال الماتش",
     results: "النتائج",
     players: "اللاعبين",
     recruitment: "التسجيل",
@@ -83,6 +99,7 @@ const ar: typeof en = {
     playful: "للصغار",
     cinematic: "سينمائي",
     stadium: "ستاد",
+    ...packStyleLabels.ar,
   },
   styleHints: {
     broadcast: "زي جرافيكس المباريات عالتلفزيون",
@@ -92,6 +109,7 @@ const ar: typeof en = {
     playful: "ملوّن للأعمار الصغيرة",
     cinematic: "غامق ودرامي",
     stadium: "ليلة تحت الأضواء",
+    ...packHints("الستايل الخاص بأكاديميتكم، من هويّتها"),
   },
   formatLabel: "المقاس",
   formats: { post: "بوست", square: "مربّع", story: "ستوري" },

@@ -1,12 +1,13 @@
 import fs from "fs";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response } from "express";
 import { z } from "zod";
 import { academyCreativeProjectsTable, brandingProfilesTable, db } from "@workspace/db";
 import { CREATIVE_STATUSES, CREATIVE_STYLES, sceneSchema, type CreativeBrand } from "@workspace/api-zod";
 import { displayPhone, instagramHandle } from "../lib/academyOwner";
 import { namesAllowed, studioLook } from "./academyStudio";
 import { CREATIVE_BASE, creativeOwner, loadCreativeProject, publicProject } from "../lib/creative/projects";
+import { academyPack, publicPack, styleAllowedFor } from "../lib/creative/packs";
 
 /**
  * Academy console → Creative hub: projects (owner only).
@@ -43,7 +44,8 @@ const patchBody = z.object({
 
 /**
  * GET …/creative/brand — what scene tokens resolve to (@primary, @accent, …),
- * the crest URL, contact lines and whether players' names may be shown.
+ * the crest URL, contact lines, whether players' names may be shown, and the
+ * academy's brand pack ({ key, name, franchise } or null; see lib/creative/packs.ts).
  */
 router.get(`${base}/brand`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);
@@ -75,11 +77,26 @@ router.get(`${base}/brand`, async (req, res): Promise<void> => {
       showPlayerNames: showNames,
       instagram: look.instagram ?? instagramHandle(access.academy.instagramUrl),
       phone: look.bookingPhone ?? displayPhone(access.academy.whatsappPhone) ?? access.academy.contactPhone ?? null,
+      pack: publicPack(academyPack(access.academy)),
     });
   } finally {
     for (const t of temps) fs.unlink(t, () => {});
   }
 });
+
+/**
+ * A pack style is only for the academy it was made for: refuse (400) a project
+ * whose style, or whose scene's template style, is someone else's pack.
+ */
+function refuseForeignPack(
+  academy: { creativePack: string | null },
+  styles: Array<string | null | undefined>,
+  res: Response,
+): boolean {
+  if (styles.every((s) => styleAllowedFor(academy, s))) return false;
+  res.status(400).json({ error: "That style isn't available to this academy.", code: "style_not_allowed" });
+  return true;
+}
 
 router.get(`${base}/projects`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);
@@ -101,6 +118,7 @@ router.post(`${base}/projects`, async (req, res): Promise<void> => {
   const parsed = createBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid project", issues: parsed.error.issues.slice(0, 5) }); return; }
   const b = parsed.data;
+  if (refuseForeignPack(access.academy, [b.style, b.scene.template?.style], res)) return;
   const [row] = await db.insert(academyCreativeProjectsTable).values({
     academyId: access.academyId,
     kind: b.kind ?? (b.scene.durationMs ? "video" : "image"),
@@ -131,6 +149,7 @@ router.patch(`${base}/projects/:projectId`, async (req, res): Promise<void> => {
   const parsed = patchBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Invalid change", issues: parsed.error.issues.slice(0, 5) }); return; }
   const b = parsed.data;
+  if (refuseForeignPack(access.academy, [b.style, b.scene?.template?.style], res)) return;
   const set: Partial<typeof academyCreativeProjectsTable.$inferInsert> = { updatedAt: new Date() };
   if (b.title !== undefined) set.title = b.title;
   if (b.templateKey !== undefined) set.templateKey = b.templateKey;

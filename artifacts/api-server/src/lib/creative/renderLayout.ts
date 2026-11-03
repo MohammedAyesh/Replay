@@ -1,4 +1,4 @@
-import type { SceneLayer } from "@workspace/api-zod";
+import { faceAlias, libraryFont, matchLibraryFace, type SceneLayer } from "@workspace/api-zod";
 
 /**
  * Creative hub engine: the layout maths both renderers share.
@@ -31,26 +31,72 @@ export function isolateLtrRuns(text: string): string {
 // ── Fonts ────────────────────────────────────────────────────────────────────
 
 /**
- * The faces a text layer uses. Replay ships Rajdhani (600, 700) and Cairo
- * (700, 900) for the clip branding and Studio; every scene font maps onto
- * those, so an export never falls back to a system face. Anything with Arabic
- * in it is set in Cairo whatever the layer's font: Rajdhani has no Arabic.
+ * The faces a text layer uses.
+ *
+ * House faces: Replay ships Rajdhani (600, 700) and Cairo (700, 900) for the
+ * clip branding and Studio; every scene `font` maps onto those, so an export
+ * never falls back to a system face. Anything with Arabic in it is set in
+ * Cairo whatever the layer's font: Rajdhani has no Arabic.
  *
  *   display, condensed, script → Rajdhani (script is drawn slanted)
  *   body, serif               → Rajdhani (serif has no face of its own yet)
  *   arabic, arabic-display     → Cairo (display is the black weight)
+ *
+ * Library faces (creativeFonts.ts): a layer's `family` overrides `font` when
+ * the family is in the library (and, on the server, its file registered):
+ *   - the face is picked by CSS weight matching (matchLibraryFace); italic
+ *     uses the family's italic file, else the upright face drawn slanted;
+ *     `font: "script"` does not slant a library face (the family is the look);
+ *   - text with Arabic in it uses the family only if the family is Arabic
+ *     (Cairo, Tajawal, IBM Plex Sans Arabic, Baloo Bhaijaan 2); otherwise the
+ *     house mapping above applies, so Bebas Neue never draws tofu;
+ *   - an unknown family, or one whose file is missing, falls back to `font`.
+ * `arabic` drives the taller line height: Arabic text, or an Arabic family on
+ * an arabic / arabic-display layer, as the house Cairo does.
  */
-export type FontFace = { family: "rajdhani" | "cairo"; weight: 600 | 700 | 900; italic: boolean };
+export type HouseFace = { family: "rajdhani" | "cairo"; weight: 600 | 700 | 900; italic: boolean; arabic: boolean };
+export type LibraryFace = {
+  family: "library";
+  /** The library family ("Bebas Neue"). */
+  name: string;
+  /** The file drawn, and the name it is registered under on both sides. */
+  file: string;
+  alias: string;
+  /** The weight of that file. */
+  weight: number;
+  /** Drawn slanted (no italic file for the weight asked for). */
+  italic: boolean;
+  arabic: boolean;
+};
+export type FontFace = HouseFace | LibraryFace;
 
-export function fontFace(layer: Pick<TextLayer, "font" | "weight" | "italic">, text: string): FontFace {
+/** Is a library file usable? The server answers from what it registered; the browser loads on demand. */
+export type FaceAvailable = (file: string) => boolean;
+
+export function fontFace(
+  layer: Pick<TextLayer, "font" | "weight" | "italic" | "family">,
+  text: string,
+  available: FaceAvailable = () => true,
+): FontFace {
   const weight = layer.weight ?? 700;
   const font = layer.font ?? "body";
-  const italic = !!layer.italic || font === "script";
-  if (font === "arabic" || font === "arabic-display" || hasArabic(text)) {
-    const black = font === "arabic-display" ? weight >= 600 : weight >= 800;
-    return { family: "cairo", weight: black ? 900 : 700, italic };
+  const arabicFont = font === "arabic" || font === "arabic-display";
+  const lib = libraryFont(layer.family);
+  if (lib && (lib.isArabic || !hasArabic(text))) {
+    const { face, synthItalic } = matchLibraryFace(lib, weight, !!layer.italic);
+    if (available(face.file)) {
+      return {
+        family: "library", name: lib.family, file: face.file, alias: faceAlias(face), weight: face.weight,
+        italic: synthItalic, arabic: lib.isArabic && (arabicFont || hasArabic(text)),
+      };
+    }
   }
-  return { family: "rajdhani", weight: weight >= 650 ? 700 : 600, italic };
+  const italic = !!layer.italic || font === "script";
+  if (arabicFont || hasArabic(text)) {
+    const black = font === "arabic-display" ? weight >= 600 : weight >= 800;
+    return { family: "cairo", weight: black ? 900 : 700, italic, arabic: true };
+  }
+  return { family: "rajdhani", weight: weight >= 650 ? 700 : 600, italic, arabic: false };
 }
 
 /** Rendered text direction for a layer and its (filled) text. */

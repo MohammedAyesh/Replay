@@ -1,8 +1,10 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { eq, and, count, desc } from "drizzle-orm";
 import { z } from "zod";
 import multer from "multer";
-import { db, academiesTable, academyRecordingsTable, fieldsTable, recordingsTable, usersTable } from "@workspace/db";
+import { db, academiesTable, academyRecordingsTable, brandingProfilesTable, fieldsTable, recordingsTable, usersTable } from "@workspace/db";
+import { CREATIVE_PACKS, PACK_STYLES } from "@workspace/api-zod";
+import { academyPack } from "../lib/creative/packs";
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { isBunnyStorageConfigured, uploadBufferToBunnyStorage, BUNNY_STORAGE_HOSTNAME, BUNNY_STORAGE_ZONE, BUNNY_STORAGE_API_KEY } from "../lib/bunny";
 import { createPublicFootageContext, isPublicRecordingInContext } from "../lib/publicFootage";
@@ -380,6 +382,71 @@ router.delete("/admin/academies/:id/recordings/:recordingId", async (req, res): 
     );
 
   res.status(204).send();
+});
+
+// ── Creative hub brand pack (admin) ──────────────────────────────────────────
+//
+// An admin gives an academy its brand pack (academies.creative_pack, one of
+// PACK_STYLES); only that academy then sees the pack's style in the Creative
+// hub. Assigning a pack never touches the academy's colours: "apply colours"
+// is a separate, explicit action that copies the pack palette's primary and
+// accent into the academy's branding profile.
+
+const CreativePackBody = z.object({ pack: z.enum(PACK_STYLES).nullable() });
+
+const packOptions = () => PACK_STYLES.map((key) => {
+  const p = CREATIVE_PACKS[key];
+  return { key, name: p.name, franchise: !!p.franchise, primary: p.palette.primary, accent: p.palette.accent };
+});
+
+async function adminAcademy(req: Request, res: Response) {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return null; }
+  const id = parseInt(String(req.params.id), 10);
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return null; }
+  const [academy] = await db.select().from(academiesTable).where(eq(academiesTable.id, id));
+  if (!academy) { res.status(404).json({ error: "Academy not found" }); return null; }
+  return { adminId, academy };
+}
+
+/** GET /admin/academies/:id/creative-pack → { pack, packs } */
+router.get("/admin/academies/:id/creative-pack", async (req, res): Promise<void> => {
+  const ctx = await adminAcademy(req, res);
+  if (!ctx) return;
+  res.json({ pack: academyPack(ctx.academy)?.key ?? null, packs: packOptions() });
+});
+
+/** PUT /admin/academies/:id/creative-pack { pack: key | null } → { pack, packs } */
+router.put("/admin/academies/:id/creative-pack", async (req, res): Promise<void> => {
+  const ctx = await adminAcademy(req, res);
+  if (!ctx) return;
+  const body = CreativePackBody.safeParse(req.body);
+  if (!body.success) { res.status(400).json({ error: "pack must be one of the brand packs, or null" }); return; }
+  const [academy] = await db.update(academiesTable).set({ creativePack: body.data.pack })
+    .where(eq(academiesTable.id, ctx.academy.id)).returning();
+  res.json({ pack: academyPack(academy)?.key ?? null, packs: packOptions() });
+});
+
+/**
+ * POST /admin/academies/:id/creative-pack/apply-colours → { primaryColor, accentColor }
+ * Sets the academy's branding profile colours to its pack's palette (creates the
+ * profile if there is none). 400 when the academy has no pack.
+ */
+router.post("/admin/academies/:id/creative-pack/apply-colours", async (req, res): Promise<void> => {
+  const ctx = await adminAcademy(req, res);
+  if (!ctx) return;
+  const pack = academyPack(ctx.academy);
+  if (!pack) { res.status(400).json({ error: "This academy has no brand pack" }); return; }
+  const colours = { primaryColor: pack.palette.primary, accentColor: pack.palette.accent };
+  const now = new Date();
+  await db.insert(brandingProfilesTable).values({
+    scopeType: "academy", scopeId: ctx.academy.id, nameEn: ctx.academy.name, nameAr: ctx.academy.nameAr ?? null,
+    ...colours, updatedBy: ctx.adminId,
+  }).onConflictDoUpdate({
+    target: [brandingProfilesTable.scopeType, brandingProfilesTable.scopeId],
+    set: { ...colours, updatedBy: ctx.adminId, updatedAt: now },
+  });
+  res.json(colours);
 });
 
 export default router;

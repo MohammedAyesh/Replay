@@ -5,7 +5,7 @@ import multer from "multer";
 import { academyAdMediaTable, db } from "@workspace/db";
 import { CREATIVE_BASE, creativeOwner, projectIdParam } from "../lib/creative/projects";
 import { parseLibraryFilters } from "../lib/creative/library";
-import { libraryClips, libraryMatches, libraryPlayers, librarySessionMoments, libraryUpload, libraryUploads } from "../lib/creative/libraryData";
+import { libraryClips, libraryMatches, libraryPlayerMedia, libraryPlayers, librarySessionMoments, libraryUpload, libraryUploads } from "../lib/creative/libraryData";
 import { logger } from "../lib/logger";
 import { MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, probeVideo, storeVideo, videoStill } from "../lib/meta/media";
 import { namesAllowed } from "./academyStudio";
@@ -19,7 +19,8 @@ import { namesAllowed } from "./academyStudio";
  *   GET  …/creative/library/clips                         clips the academy's members made
  *   GET  …/creative/library/uploads                       photos and videos (shared with Ads → Media)
  *   POST …/creative/library/uploads                       add a photo or a short video
- *   GET  …/creative/library/players                       shirt numbers (first names if allowed), squads
+ *   GET  …/creative/library/players                       shirt numbers (first names if allowed), squads, primary photos (names allowed)
+ *   GET  …/creative/library/players/:playerId/media       the Player picker: his photos (names allowed), clips, match moments
  *
  * Filters (query): squadId, player (shirt number, "7" or "#7"), type
  * (goal,chance,highlight,saved), from / to (Amman days, YYYY-MM-DD), kind
@@ -174,6 +175,21 @@ router.get(`${base}/players`, async (req, res): Promise<void> => {
     res.json(await libraryPlayers(access.academyId, f.squadId, showNames));
   } catch (error) {
     failed(res, error, "Creative library: players failed");
+  }
+});
+
+router.get(`${base}/players/:playerId/media`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  const playerId = projectIdParam(req.params.playerId);
+  if (!playerId) { res.status(400).json({ error: "Invalid player id" }); return; }
+  try {
+    const out = await libraryPlayerMedia(access.academyId, playerId, await namesAllowed(access.academyId));
+    if (!out) { res.status(404).json({ error: "Not found" }); return; }
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json(out);
+  } catch (error) {
+    failed(res, error, "Creative library: player media failed");
   }
 });
 

@@ -2,6 +2,7 @@ import type { Content } from "../content";
 import { crest, ellipse, media, rect, slant, text, type Box, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackHeight, stackUp, type StackItem } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
+import { rowsOrTiles, type TileLook } from "../players";
 
 /**
  * Stadium: a bright night under the floodlights. A deep gradient from the
@@ -146,6 +147,20 @@ const hero: StyleKit["hero"] = (c, k) => {
   stackDown(y, items);
 };
 
+/** Line-up photo tiles: frosted glass under floodlight glow, a glowing number, an accent bar. */
+const TILE: TileLook = {
+  backdrop: (c, id, b) => {
+    rect(c, id, b, { fill: GLASS, radius: 22, stroke: { color: GLASS_EDGE, width: 2 } });
+    ellipse(c, `${id}-glow`, { x: b.x + b.w * 0.1, y: b.y + b.h * 0.08, w: b.w * 0.8, h: b.h * 0.7 }, { fill: "@primary", opacity: 0.55 });
+  },
+  bar: (c, id, b) => rect(c, id, b, { fill: "@accent", radius: 16 }),
+  num: { font: "display", color: WHITE, weight: 900, shadow: { color: "@primary", blur: 36, x: 0, y: 0 } },
+  name: { font: "display", color: NIGHT, weight: 900 },
+  pos: { font: "display", color: NIGHT, weight: 700 },
+  shadow: NIGHT,
+  cardRadius: 18,
+};
+
 const list: StyleKit["list"] = (c, k) => {
   night(c);
   const top = lockup(c, k, {}, 100);
@@ -155,7 +170,7 @@ const list: StyleKit["list"] = (c, k) => {
   const rows = k.rows ?? [];
   const lead = numericLead(k);
   const foot = (k.cta ? 90 : 0) + k.meta.length * 44 + 24;
-  rowBoxes(rows.length, top + 100 + hs + 40, c.B - foot, c.M, c.CW, { gap: 12, maxH: Math.round((lead ? 100 : 124) * c.k) }).forEach((b, i) => {
+  rowsOrTiles(c, k, { x: c.M, y: top + 100 + hs + 40, w: c.CW, h: c.B - foot - 20 - (top + 100 + hs + 40) }, TILE, () => rowBoxes(rows.length, top + 100 + hs + 40, c.B - foot, c.M, c.CW, { gap: 12, maxH: Math.round((lead ? 100 : 124) * c.k) }).forEach((b, i) => {
     const id = `row-${i + 1}`;
     const row = rows[i];
     rect(c, `${id}-bg`, b, { fill: i === 0 ? "#FFFFFF33" : GLASS, radius: 20, stroke: { color: GLASS_EDGE, width: 2 } });
@@ -164,7 +179,7 @@ const list: StyleKit["list"] = (c, k) => {
     text(c, `${id}-lead`, row[0], { x: b.x + 18, y: b.y + b.h * 0.24, w: lw - 36, h: b.h * 0.52 }, { size: Math.round(b.h * (lead ? 0.46 : 0.3)), font: "display", weight: 900, color: i === 0 ? NIGHT : WHITE, upper: true, align: "center", num: lead, fit: true });
     text(c, `${id}-main`, row[1], { x: b.x + lw + 20, y: b.y + b.h * 0.26, w: b.w - lw - 20 - 210, h: b.h * 0.48 }, { size: Math.round(b.h * (lead ? 0.38 : 0.26)), font: lead ? "display" : "body", weight: lead ? 800 : 600, color: WHITE, upper: lead, fit: true });
     text(c, `${id}-trail`, row[2], { x: b.x + b.w - 200, y: b.y + b.h * 0.24, w: 176, h: b.h * 0.52 }, { size: Math.round(b.h * 0.4), font: "display", weight: 900, color: "@accent", upper: true, align: "end", fit: true });
-  });
+  }));
   stackUp(c.B, [
     ...k.meta.map((m, i) => ({ h: 36, gap: 8, draw: (y: number) => text(c, `meta-${i + 1}`, m, { x: c.M, y, w: c.CW, h: 36 }, { size: 28, font: "display", weight: 700, color: SOFT, upper: true, align: "center", fit: true }) })),
     k.cta && { h: 76, draw: (y: number) => tagPill(c, "cta", k.cta!, c.M + 80, y + 6, c.CW - 160) },

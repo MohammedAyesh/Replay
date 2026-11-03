@@ -1,5 +1,7 @@
+import type { CreativeStyle } from "@workspace/api-zod";
 import { useLocale } from "./context";
 import { useConsoleWording } from "@/lib/console-kind";
+import { packStyleLabels } from "./creative-templates-strings";
 
 /**
  * Academy console → Creative hub → Editor. Owner only. English is the type;
@@ -88,7 +90,7 @@ const en = {
   fitContain: "Show it all",
   cutout: "Cut out the background",
   muted: "Mute sound",
-  mediaKinds: { clip: "Saved clip", recording: "Match moment", upload: "Your upload", frame: "Still from a match", crest: "Academy crest", artwork: "Template artwork", binding: "From Details" } as Record<string, string>,
+  mediaKinds: { clip: "Saved clip", recording: "Match moment", upload: "Your upload", frame: "Still from a match", crest: "Academy crest", artwork: "Template artwork", binding: "From Details", player: "Player's main photo", "player-photo": "Player photo" } as Record<string, string>,
   slotEmpty: "Empty slot: pick something from your library.",
   videoOnlyInVideo: "Videos go in video templates. Pick a video template to use footage.",
 
@@ -112,7 +114,7 @@ const en = {
 
   // Style
   styleHint: "Same post, another look. Your text and pictures stay.",
-  styles: { broadcast: "Broadcast", street: "Street", editorial: "Editorial", luxury: "Luxury", playful: "Playful", cinematic: "Cinematic", stadium: "Stadium" },
+  styles: { broadcast: "Broadcast", street: "Street", editorial: "Editorial", luxury: "Luxury", playful: "Playful", cinematic: "Cinematic", stadium: "Stadium", ...packStyleLabels.en } as Record<CreativeStyle, string>,
   noTemplate: "This design wasn't made from a template, so it has no other styles.",
   background: "Background",
   backgroundHint: "Artwork behind your design, coloured with your academy's colours.",
@@ -149,6 +151,9 @@ const en = {
   } as Record<string, string>,
   playerNameHint: "Only shown if your academy shows player names.",
   more: (n: number) => `Picture ${n}`,
+  rowPhoto: (n: number) => `Player ${n} photo`,
+  fillPlayer: (who: string) => `Fill in ${who}'s details`,
+  fillPlayerHint: "Shirt number, position and first name (when your academy shows names).",
   pick: "Pick",
   clear: "Clear",
   addCustom: "Add your own line",
@@ -253,7 +258,7 @@ const ar: typeof en = {
   fitContain: "بيّنها كلها",
   cutout: "شيل الخلفية",
   muted: "بدون صوت",
-  mediaKinds: { clip: "كليب محفوظ", recording: "لقطة من مباراة", upload: "إشي رفعته", frame: "صورة من مباراة", crest: "شعار الأكاديمية", artwork: "رسمة القالب", binding: "من التفاصيل" },
+  mediaKinds: { clip: "كليب محفوظ", recording: "لقطة من مباراة", upload: "إشي رفعته", frame: "صورة من مباراة", crest: "شعار الأكاديمية", artwork: "رسمة القالب", binding: "من التفاصيل", player: "صورة اللاعب الأساسية", "player-photo": "صورة لاعب" },
   slotEmpty: "المكان فاضي: اختار إشي من مكتبتك.",
   videoOnlyInVideo: "الفيديو بنحط بقوالب الفيديو. اختار قالب فيديو عشان تستعمل التصوير.",
 
@@ -274,7 +279,7 @@ const ar: typeof en = {
   noLayers: "لسّا ما في طبقات.",
 
   styleHint: "نفس البوست بشكل تاني. نصوصك وصورك بضلّوا.",
-  styles: { broadcast: "بث", street: "ستريت", editorial: "مجلة", luxury: "فخم", playful: "ملوّن", cinematic: "سينمائي", stadium: "ملعب" },
+  styles: { broadcast: "بث", street: "ستريت", editorial: "مجلة", luxury: "فخم", playful: "ملوّن", cinematic: "سينمائي", stadium: "ملعب", ...packStyleLabels.ar },
   noTemplate: "هالتصميم مش معمول من قالب، فما إله ستايلات تانية.",
   background: "الخلفية",
   backgroundHint: "رسمة ورا التصميم، بتتلوّن بألوان أكاديميتك.",
@@ -309,6 +314,9 @@ const ar: typeof en = {
   },
   playerNameHint: "ما بطلع إلا إذا أكاديميتك بتبيّن أسماء اللاعبين.",
   more: (n: number) => `الصورة ${n}`,
+  rowPhoto: (n: number) => `صورة اللاعب ${n}`,
+  fillPlayer: (who: string) => `عبّي معلومات ${who}`,
+  fillPlayerHint: "رقم القميص والمركز والاسم الأول (إذا أكاديميتك بتظهر الأسماء).",
   pick: "اختار",
   clear: "امسح",
   addCustom: "ضيف سطر إلك",
@@ -348,6 +356,8 @@ export function fieldLabel(copy: CreativeEditorStrings, path: string): string {
   if (named) return named;
   const more = /^more\.(\d+)$/.exec(path);
   if (more) return copy.more(Number(more[1]) + 2);
+  const row = /^photos\.(\d+)$/.exec(path);
+  if (row) return copy.rowPhoto(Number(row[1]) + 1);
   const last = path.split(".").pop() ?? path;
   return last.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }

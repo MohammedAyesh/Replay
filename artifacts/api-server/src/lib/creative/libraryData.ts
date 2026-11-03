@@ -8,7 +8,10 @@
  *             recordings, and clips the academy's members saved from them
  *   clips     user_clips made under this academy by its members (as Studio)
  *   uploads   academy_ad_media of this academy (shared with Ads → Media)
- *   players   the academy's active players: shirt number, first name if allowed
+ *   players   the academy's active players: shirt number, first name if allowed,
+ *             and (names allowed) the primary photo
+ *   player    one player's media for the Player picker: his photo gallery (names
+ *             allowed), his own clips, and match moments the analysis bound to him
  *
  * Names: libraryPlayer() is the only way a player reaches a response, so the
  * academy's "show player names" setting is applied here, whatever the browser
@@ -31,6 +34,8 @@ import {
   type TrackingManifest,
 } from "@workspace/db";
 import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { academyPlayerPhotosTable, usersTable } from "@workspace/db";
+import { photoView } from "../academyPlayerPhotos";
 import { logger } from "../logger";
 import { academyClipStatus } from "../userClipExportState";
 import {
@@ -52,6 +57,17 @@ import { analysisMoments, filterMoments, trackPlayerLookup, type LibraryMoment }
 import type { MediaSource } from "@workspace/api-zod";
 
 const MAX_SESSIONS = 1000;
+
+/**
+ * Which academy player a LibraryPlayer stands for. The browser never sees the
+ * player id on a moment; the Player picker's filter (playerMedia) reads it here.
+ */
+const playerIdOf = new WeakMap<LibraryPlayer, number>();
+function taggedPlayer(p: SessionPlayer, showNames: boolean): LibraryPlayer {
+  const out = libraryPlayer(p, showNames);
+  playerIdOf.set(out, p.playerId);
+  return out;
+}
 
 /** A Bunny thumbnail through the API's proxy, as Studio does; null when it can't be made. */
 function thumbAt(videoUrl: string | null | undefined, seconds: number): string | null {
@@ -264,7 +280,7 @@ async function recordingAnalysisMoments(
     const bound = new Map<string, LibraryPlayer>();
     for (const b of resolveBindings(lineup.lineup, roster)) {
       const p = lineup.info.get(b.playerId);
-      if (p) bound.set(b.rosterPlayerId, libraryPlayer(p, showNames));
+      if (p) bound.set(b.rosterPlayerId, taggedPlayer(p, showNames));
     }
     const games = (play.phases ?? []).filter((p) => p.kind === "game");
     const stored = readMatchWindow(manifest);
@@ -322,7 +338,7 @@ async function savedMoments(
     const kickOff = (manifest?.provenance as { matchWindow?: { startSeconds?: number } } | undefined)?.matchWindow?.startSeconds ?? 0;
     const tracking = Number(clip.startTime) - (manifest?.videoStartSeconds ?? 0);
     const who = playerByUser.get(clip.userId);
-    const player = who ? libraryPlayer(who, showNames) : null;
+    const player = who ? taggedPlayer(who, showNames) : null;
     const window: RecordingWindow = { recordingId: w.recordingId, fromMs: w.fromMs, toMs: w.toMs };
     out.push({
       id: `saved:${clip.id}`,
@@ -490,6 +506,7 @@ export async function libraryPlayers(academyId: number, squadId: number | null, 
       number: academyPlayersTable.jerseyNumber,
       squadId: academyPlayersTable.squadId,
       squad: academySquadsTable.name,
+      position: academyPlayersTable.position,
     }).from(academyPlayersTable)
       .leftJoin(academySquadsTable, eq(academySquadsTable.id, academyPlayersTable.squadId))
       .where(and(...where))
@@ -498,9 +515,120 @@ export async function libraryPlayers(academyId: number, squadId: number | null, 
     db.select({ id: academySquadsTable.id, name: academySquadsTable.name }).from(academySquadsTable)
       .where(eq(academySquadsTable.academyId, academyId)).orderBy(asc(academySquadsTable.name)),
   ]);
+  // Photos only for an academy that shows names (most players are children).
+  const primary = showNames && players.length
+    ? await db.select().from(academyPlayerPhotosTable)
+      .where(and(eq(academyPlayerPhotosTable.academyId, academyId), eq(academyPlayerPhotosTable.isPrimary, true), inArray(academyPlayerPhotosTable.playerId, players.map((p) => p.playerId))))
+    : [];
+  const photoBy = new Map(primary.map((p) => [p.playerId, photoView(p)]));
   return {
     showNames,
     squads,
-    players: players.map((p) => ({ playerId: p.playerId, squadId: p.squadId, ...libraryPlayer(p, showNames) })),
+    players: players.map((p) => ({
+      playerId: p.playerId,
+      squadId: p.squadId,
+      ...libraryPlayer(p, showNames),
+      position: p.position ?? null,
+      photo: photoBy.get(p.playerId) ?? null,
+    })),
   };
 }
+
+/** Recent sessions with footage this player was picked for (or, with no line-up, his squad's), newest first. */
+async function playerSessions(academyId: number, player: { id: number; squadId: number | null }, limit: number): Promise<number[]> {
+  const recordings = await academySessionRecordings(academyId);
+  const ids = [...new Set(recordings.map((r) => r.sessionId))];
+  if (!ids.length) return [];
+  const [lineups, sessions] = await Promise.all([
+    db.select({ sessionId: academyMatchLineupsTable.sessionId, playerId: academyMatchLineupsTable.playerId, inSquad: academyMatchLineupsTable.inSquad })
+      .from(academyMatchLineupsTable).where(inArray(academyMatchLineupsTable.sessionId, ids)),
+    db.select({ id: academySessionsTable.id, squadId: academySessionsTable.squadId, startsAt: academySessionsTable.startsAt })
+      .from(academySessionsTable).where(and(eq(academySessionsTable.academyId, academyId), inArray(academySessionsTable.id, ids)))
+      .orderBy(desc(academySessionsTable.startsAt), desc(academySessionsTable.id)),
+  ]);
+  const withLineup = new Set(lineups.map((l) => l.sessionId));
+  const picked = new Set(lineups.filter((l) => l.playerId === player.id && l.inSquad).map((l) => l.sessionId));
+  return sessions
+    .filter((s) => picked.has(s.id) || (!withLineup.has(s.id) && (s.squadId === null || s.squadId === player.squadId)))
+    .slice(0, limit)
+    .map((s) => s.id);
+}
+
+/** Sessions the Player picker looks through for a player's moments (each reads its match analysis). */
+export const PLAYER_MEDIA_SESSIONS = 6;
+
+/**
+ * One player's media for the Player picker. Photos (his gallery) only when the
+ * academy shows names; clips he made under the academy; moments of recent
+ * matches where the analysis bound a track to him, and clips he saved there.
+ */
+export async function libraryPlayerMedia(academyId: number, playerId: number, showNames: boolean) {
+  const [p] = await db.select({
+    id: academyPlayersTable.id,
+    name: academyPlayersTable.name,
+    number: academyPlayersTable.jerseyNumber,
+    position: academyPlayersTable.position,
+    squadId: academyPlayersTable.squadId,
+    squad: academySquadsTable.name,
+    userId: academyPlayersTable.userId,
+    avatarPath: usersTable.avatarPath,
+  }).from(academyPlayersTable)
+    .leftJoin(academySquadsTable, eq(academySquadsTable.id, academyPlayersTable.squadId))
+    .leftJoin(usersTable, eq(usersTable.id, academyPlayersTable.userId))
+    .where(and(eq(academyPlayersTable.id, playerId), eq(academyPlayersTable.academyId, academyId)));
+  if (!p) return null;
+
+  const photos = showNames
+    ? (await db.select().from(academyPlayerPhotosTable)
+      .where(and(eq(academyPlayerPhotosTable.academyId, academyId), eq(academyPlayerPhotosTable.playerId, p.id)))
+      .orderBy(desc(academyPlayerPhotosTable.isPrimary), desc(academyPlayerPhotosTable.createdAt), desc(academyPlayerPhotosTable.id)))
+      .map((row) => ({ ...photoView(row), source: { type: "player-photo", photoId: row.id, cutout: row.transparent } as Extract<MediaSource, { type: "player-photo" }> }))
+    : [];
+
+  // His own clips, made under this academy.
+  const clipRows = p.userId
+    ? await db.select().from(userClipsTable)
+      .where(and(eq(userClipsTable.academyId, academyId), eq(userClipsTable.userId, p.userId), eq(userClipsTable.isHidden, false)))
+      .orderBy(desc(userClipsTable.createdAt), desc(userClipsTable.id)).limit(60)
+    : [];
+  const clips = clipRows
+    .filter((c) => !c.hiddenReason && !c.videoId.startsWith("live:") && academyClipStatus(c) !== "expired")
+    .map((clip) => {
+      const start = Number(clip.startTime);
+      const end = Number(clip.endTime);
+      const thumbTime = clip.thumbnailTime != null ? Number(clip.thumbnailTime) : start;
+      return {
+        clipId: clip.id,
+        title: showNames ? clip.title.slice(0, 80) : null,
+        date: ammanDate(clip.createdAt),
+        durationMs: Math.max(0, Math.round((end - start) * 1000)),
+        source: { type: "clip", clipId: clip.id } as Extract<MediaSource, { type: "clip" }>,
+        thumbnailUrl: isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
+      };
+    });
+
+  const moments: Array<LibraryMoment & { sessionId: number }> = [];
+  const seenClips = new Set(clips.map((c) => c.clipId));
+  for (const sessionId of await playerSessions(academyId, { id: p.id, squadId: p.squadId }, PLAYER_MEDIA_SESSIONS)) {
+    const out = await librarySessionMoments(academyId, sessionId, { ...EVERYTHING }, showNames).catch((error) => {
+      logger.warn({ academyId, sessionId, error: (error as Error).message }, "Creative library: player moments failed");
+      return null;
+    });
+    for (const m of out?.moments ?? []) {
+      if (!m.player || playerIdOf.get(m.player) !== p.id) continue;
+      if (m.clipId !== null && seenClips.has(m.clipId)) continue;
+      moments.push({ ...m, sessionId });
+    }
+  }
+
+  return {
+    showNames,
+    player: { playerId: p.id, squadId: p.squadId, ...libraryPlayer(p, showNames), position: p.position ?? null },
+    hasAvatar: showNames && Boolean(p.userId && p.avatarPath),
+    photos,
+    clips,
+    moments,
+  };
+}
+
+const EVERYTHING: LibraryFilters = { squadId: null, playerNumber: null, types: [], from: null, until: null, kind: null, sessionType: null, offset: 0, limit: 1000 };

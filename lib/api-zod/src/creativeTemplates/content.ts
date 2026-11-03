@@ -9,7 +9,7 @@ import type { Locale } from "./kit";
  */
 
 export type Arch = "score" | "fixture" | "hero" | "list" | "promo" | "video";
-export type TemplateCategory = "matchday" | "results" | "players" | "recruitment" | "academy-life" | "community";
+export type TemplateCategory = "matchday" | "live" | "results" | "players" | "recruitment" | "academy-life" | "community";
 
 export type Content = {
   key: string;
@@ -40,6 +40,14 @@ export type Content = {
   /** [lead (number / position), main, trail (points / price / role)]. */
   rows?: Array<[string, string, string]>;
   options?: [string, string];
+  /**
+   * A line-up: each row is a player. With player photos (data.photos, only
+   * for an academy that shows names) a style draws photo tiles; without, its
+   * numbers-only rows.
+   */
+  playerRows?: boolean;
+  /** A player post that shows the player's own cut-out photo (player.photo) when there is one. */
+  playerPhoto?: boolean;
   /** Whether the main picture slot is used. */
   media: boolean;
   video?: { variant: "goal" | "talk" | "training"; durationMs: number; captions?: string[] };
@@ -127,6 +135,7 @@ const DEFS: Def[] = [
       meta: [scoreline(ar), "{{player.squad}} · {{match.date}}"],
       pills: [],
       media: true,
+      playerPhoto: true,
     }),
     sample: (ar) => ({ academy: academy(ar), match: match(ar), player: player(ar), media: photo("player") }),
   },
@@ -153,6 +162,7 @@ const DEFS: Def[] = [
       headline: ar ? "ضد {{match.opponent}}" : "vs {{match.opponent}}",
       rowsHead: ["#", ar ? "اللاعب" : "Player", ar ? "المركز" : "Pos"],
       rows: [1, 2, 3, 4, 5, 6, 7].map((i) => [`{{custom.n${i}}}`, `{{custom.p${i}}}`, `{{custom.pos${i}}}`] as [string, string, string]),
+      playerRows: true,
       meta: ["{{match.date}} · {{match.time}}", "{{match.place}}"],
       pills: [],
       media: false,
@@ -178,6 +188,7 @@ const DEFS: Def[] = [
       meta: ["{{player.squad}} · {{player.position}}", ar ? "{{stats.matches}} مباريات · {{stats.assists}} أسيست" : "{{stats.matches}} matches · {{stats.assists}} assists"],
       pills: [],
       media: true,
+      playerPhoto: true,
     }),
     sample: (ar) => ({
       academy: academy(ar), player: player(ar, 7), stats: { goals: 6, matches: 4, assists: 3 },
@@ -269,6 +280,7 @@ const DEFS: Def[] = [
       meta: [scoreline(ar), squadDate],
       pills: [],
       media: true,
+      playerPhoto: true,
     }),
     sample: (ar) => ({ academy: academy(ar), match: { ...match(ar), ownScore: 2, opponentScore: 0 }, player: { ...player(ar, 1), position: ar ? "حارس" : "Goalkeeper" }, media: photo("keeper") }),
   },
@@ -284,6 +296,7 @@ const DEFS: Def[] = [
       meta: ["{{player.squad}}"],
       pills: [],
       media: true,
+      playerPhoto: true,
     }),
     sample: (ar) => ({ academy: academy(ar), player: player(ar, 11), media: photo("player") }),
   },
@@ -381,6 +394,7 @@ const DEFS: Def[] = [
       meta: ["{{player.squad}} · {{player.position}}"],
       pills: [],
       media: true,
+      playerPhoto: true,
     }),
     sample: (ar) => ({ academy: academy(ar), player: player(ar, 14), media: photo("player") }),
   },
@@ -513,6 +527,117 @@ const DEFS: Def[] = [
         body: ar ? "احترام، شغل جماعي، ومتعة بكل تمرين." : "Respect, teamwork and fun in every session.",
       },
     }),
+  },
+  // ── In-game: posted while the match is on (from the live stream) ──────────
+  {
+    key: "kickoff", category: "live", title: { en: "Kick-off", ar: "بلّش الماتش" }, formats: ["story", "post", "square"],
+    content: (ar) => ({
+      arch: "fixture",
+      kicker: ar ? "بلّش الماتش" : "Kick-off",
+      vs: { ownName: "{{match.ownName}}", oppName: "{{match.opponent}}", label: ar ? "ضد" : "vs" },
+      meta: ["{{match.competition}}", "{{match.squad}}"],
+      pills: [ar ? "لايف هلأ" : "Live now", "{{match.place}}"],
+      cta: ar ? "تابعوا لايف على ريبلاي" : "Watch live on Replay",
+      media: true,
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: match(ar), media: photo("pitch") }),
+  },
+  {
+    key: "goalflash", category: "live", title: { en: "Goal flash", ar: "جول!" }, formats: ["story", "post", "square"],
+    content: (ar) => ({
+      arch: "score",
+      kicker: ar ? "جووول!" : "Goal!",
+      score: { ownName: "{{match.ownName}}", oppName: "{{match.opponent}}", own: "{{match.ownScore}}", opp: "{{match.opponentScore}}" },
+      sub: ar ? "#{{player.number}} · الدقيقة {{custom.minute}}" : "#{{player.number}} · {{custom.minute}}'",
+      meta: ["{{match.squad}} · {{match.competition}}"],
+      pills: [],
+      badge: ar ? "لايف" : "Live",
+      media: true,
+      playerPhoto: true,
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: { ...match(ar), ownScore: 2, opponentScore: 1 }, player: player(ar, 9), custom: { minute: "34" }, media: photo("goal-a") }),
+  },
+  {
+    key: "halftime", category: "live", title: { en: "Half time", ar: "بين الشوطين" }, formats: ["story", "post", "square"],
+    content: (ar) => ({
+      arch: "score",
+      kicker: ar ? "بين الشوطين" : "Half time",
+      score: { ownName: "{{match.ownName}}", oppName: "{{match.opponent}}", own: "{{match.ownScore}}", opp: "{{match.opponentScore}}" },
+      sub: "{{match.scorers}}",
+      meta: ["{{match.squad}} · {{match.competition}}"],
+      pills: [],
+      media: true,
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: { ...match(ar), ownScore: 1, opponentScore: 0, scorers: ar ? "#9" : "#9" }, media: photo("action") }),
+  },
+  {
+    key: "livescore", category: "live", title: { en: "Live score", ar: "النتيجة هلأ" }, formats: ["story", "post", "square"],
+    content: (ar) => ({
+      arch: "score",
+      kicker: ar ? "لايف · الدقيقة {{custom.minute}}" : "Live · {{custom.minute}}'",
+      score: { ownName: "{{match.ownName}}", oppName: "{{match.opponent}}", own: "{{match.ownScore}}", opp: "{{match.opponentScore}}" },
+      sub: ar ? "تابعوا لايف على ريبلاي" : "Watch live on Replay",
+      meta: ["{{match.squad}} · {{match.place}}"],
+      pills: [],
+      badge: ar ? "لايف" : "Live",
+      media: true,
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: { ...match(ar), ownScore: 2, opponentScore: 2 }, custom: { minute: "62" }, media: photo("action") }),
+  },
+  // ── Pre-game extras ──────────────────────────────────────────────────────
+  {
+    key: "countdown", category: "matchday", title: { en: "Countdown", ar: "العد التنازلي" }, formats: ["story", "post", "square"],
+    content: (ar) => ({
+      arch: "promo",
+      kicker: ar ? "ضد {{match.opponent}}" : "vs {{match.opponent}}",
+      headline: ar ? "باقي {{custom.days}} أيام" : "{{custom.days}} days to go",
+      sub: "{{match.competition}}",
+      pills: ["{{match.date}}", "{{match.time}}", "{{match.place}}"],
+      meta: [],
+      media: true,
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: match(ar), custom: { days: "2" }, media: photo("pitch") }),
+  },
+  {
+    key: "callup", category: "matchday", title: { en: "Squad call-up", ar: "قائمة الماتش" }, formats: ["post", "story", "square"],
+    content: (ar) => ({
+      arch: "list",
+      kicker: ar ? "قائمة الماتش" : "Squad call-up",
+      headline: ar ? "ضد {{match.opponent}}" : "vs {{match.opponent}}",
+      rowsHead: ["#", ar ? "اللاعب" : "Player", ar ? "المركز" : "Pos"],
+      rows: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((i) => [`{{custom.n${i}}}`, `{{custom.p${i}}}`, `{{custom.pos${i}}}`] as [string, string, string]),
+      playerRows: true,
+      meta: ["{{match.date}} · {{match.time}}", "{{match.place}}"],
+      pills: [],
+      media: false,
+    }),
+    sample: (ar) => ({
+      academy: academy(ar), match: match(ar),
+      // Numbers only by default: names appear only when the academy allows them.
+      custom: Object.fromEntries(([[1, "GK"], [2, "DF"], [4, "DF"], [5, "DF"], [6, "MF"], [8, "MF"], [10, "MF"], [7, "FW"], [9, "FW"]] as const)
+        .flatMap(([n, pos], i) => [[`n${i + 1}`, String(n)], [`p${i + 1}`, ""], [`pos${i + 1}`, ar ? ({ GK: "حارس", DF: "دفاع", MF: "وسط", FW: "هجوم" } as Record<string, string>)[pos] : pos]])),
+    }),
+  },
+  // ── Post-game extras ─────────────────────────────────────────────────────
+  {
+    key: "matchstats", category: "results", title: { en: "Match stats", ar: "أرقام الماتش" }, formats: ["post", "story", "square"],
+    content: (ar) => ({
+      arch: "list",
+      kicker: ar ? "أرقام الماتش" : "Match stats",
+      headline: scoreline(ar),
+      rowsHead: ["{{match.ownName}}", "", "{{match.opponent}}"],
+      rows: [
+        ["{{stats.possession}}%", ar ? "الاستحواذ" : "Possession", "{{stats.opponentPossession}}%"],
+        ["{{stats.shots}}", ar ? "تسديدات" : "Shots", ""],
+        ["{{stats.passes}}", ar ? "تمريرات" : "Passes", ""],
+        ["{{stats.passAccuracy}}%", ar ? "دقة التمرير" : "Pass accuracy", ""],
+        ["{{stats.dribbles}}", ar ? "مراوغات ناجحة" : "Dribbles won", ""],
+      ],
+      meta: [squadDate],
+      pills: [],
+      media: false,
+    }),
+    sample: (ar) => ({ academy: academy(ar), match: match(ar), stats: { possession: 58, opponentPossession: 42, shots: 14, passes: 312, passAccuracy: 81, dribbles: 9 } }),
   },
 ];
 

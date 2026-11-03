@@ -29,6 +29,9 @@ export function whyLine(reason: ForYouDraft["reason"], copy: CreativeForYouStrin
   const score = scored ? `⁦${reason.ownScore}–${reason.opponentScore}⁩` : "";
   switch (reason.kind) {
     case "matchday": return copy.why.matchday(day, vs);
+    case "countdown": return copy.why.countdown(day, vs);
+    case "callup": return copy.why.callup(day, vs);
+    case "matchstats": return copy.why.matchstats(day, vs);
     case "cleansheet": return copy.why.cleansheet(day, vs);
     case "potm": return copy.why.potm(day, vs);
     case "goal": return copy.why.goal(day, vs);

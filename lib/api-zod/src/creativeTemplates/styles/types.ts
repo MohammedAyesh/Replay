@@ -1,5 +1,5 @@
 import type { Content } from "../content";
-import type { Ctx } from "../kit";
+import type { Box, Ctx } from "../kit";
 import type { VideoSkin } from "../parts";
 
 /** One visual family: a hand-made layout for every archetype plus its video skin. */
@@ -17,6 +17,17 @@ export type StyleKit = {
   list: (c: Ctx, k: Content) => void;
   promo: (c: Ctx, k: Content) => void;
   skin: VideoSkin;
+  /**
+   * Player posts' own photo (see build.ts addPlayerFigure): where the figure
+   * stands (default: bottom of the main picture, far side), how its shadow and
+   * card frame look, and the id of the layer it goes right above (default:
+   * the main picture).
+   */
+  figure?: {
+    box?: (c: Ctx, media: Box) => Box;
+    look?: { shadow?: string; card?: { stroke: string; radius?: number } };
+    above?: string;
+  };
 };
 
 /** Hero templates: the big words, and the small tag above them. */

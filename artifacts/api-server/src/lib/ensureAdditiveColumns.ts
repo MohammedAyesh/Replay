@@ -2,6 +2,25 @@ import type { pool as dbPool } from "@workspace/db";
 
 type Pool = typeof dbPool;
 
+/** academies.creative_pack: a PACK_STYLES key or null (0057). Exported for the test that compares it with PACK_STYLES. */
+export const CREATIVE_PACK_COLUMN =
+  `text CONSTRAINT "academies_creative_pack_check" CHECK ("creative_pack" is null or "creative_pack" in ('iris', 'souqar', 'barca', 'juventus', 'knights', 'jufa'))`;
+
+/** 0058: players' photo galleries. Exported for the test that compares it with the migration file. */
+export const PLAYER_PHOTOS_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academy_player_photos" (
+  "id" serial PRIMARY KEY,
+  "academy_id" integer NOT NULL CONSTRAINT "academy_player_photos_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "player_id" integer NOT NULL CONSTRAINT "academy_player_photos_player_id_academy_players_id_fk" REFERENCES "academy_players"("id") ON DELETE CASCADE,
+  "path" text NOT NULL, "mime" text NOT NULL, "width" integer NOT NULL, "height" integer NOT NULL,
+  "transparent" boolean DEFAULT false NOT NULL, "label" text, "is_primary" boolean DEFAULT false NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "created_by" integer CONSTRAINT "academy_player_photos_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  CONSTRAINT "academy_player_photos_mime_check" CHECK ("mime" in ('image/png', 'image/webp')))`,
+  `CREATE INDEX IF NOT EXISTS "academy_player_photos_player_idx" ON "academy_player_photos" ("player_id", "created_at")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "academy_player_photos_primary_unique" ON "academy_player_photos" ("player_id") WHERE "is_primary"`,
+];
+
 /**
  * Additive, idempotent schema the code depends on. If a publish reaches a database that
  * never got it (the push ran on dev only), every `select *` on those tables fails with
@@ -77,6 +96,8 @@ const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   { table: "venue_bookings", column: "change_count", type: "integer DEFAULT 0 NOT NULL" },
   { table: "venue_bookings", column: "policy", type: "jsonb" },
   { table: "venue_bookings", column: "cancelled_by", type: "text" },
+  // 0061_academy_creative_pack.sql
+  { table: "academies", column: "creative_pack", type: CREATIVE_PACK_COLUMN },
 ];
 
 const TABLES: Array<{ table: string; statements: string[] }> = [
@@ -337,6 +358,11 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
       `CREATE TABLE IF NOT EXISTS "venue_payouts" ( "id" serial PRIMARY KEY, "academy_id" integer NOT NULL CONSTRAINT "venue_payouts_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE, "amount_fils" integer NOT NULL, "method" text DEFAULT 'cliq' NOT NULL, "note" text, "created_by" integer CONSTRAINT "venue_payouts_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL, "created_at" timestamp with time zone DEFAULT now() NOT NULL)`,
       `CREATE INDEX IF NOT EXISTS "venue_payouts_academy_idx" ON "venue_payouts" ("academy_id")`,
     ],
+  },
+  // 0062_academy_player_photos.sql (the statements are the migration's, one per statement)
+  {
+    table: "academy_player_photos",
+    statements: PLAYER_PHOTOS_STATEMENTS,
   },
 ];
 

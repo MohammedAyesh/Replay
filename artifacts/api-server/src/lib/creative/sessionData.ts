@@ -19,6 +19,7 @@ import { latestBundle, type AcademyPlayerStats, type AcademyTeamStats } from "..
 import { GOAL_REVIEW, goalVotesFor, type GoalVote } from "../goalReview";
 import { durationSeconds } from "../matchFeed";
 import { ammanDayLabel, ammanTime, firstName } from "../../routes/academyStudio";
+import { playerPictures } from "../academyPlayerPhotos";
 
 /**
  * Creative hub: the facts of one academy session (a match or a training) as
@@ -55,6 +56,12 @@ export type SessionPlayerFacts = {
   stats: Partial<AcademyPlayerStats> | null;
 };
 
+/** A player picked for the match (line-up, in squad) or, before a line-up exists, in the session's squad. */
+export type SquadPlayer = { playerId: number; name: string | null; number: number | null; position: string | null };
+
+/** That a player has a picture, and whether it is a cut-out (transparent background). */
+export type PictureFact = { cutout: boolean };
+
 export type SessionFacts = {
   session: {
     id: number;
@@ -75,9 +82,61 @@ export type SessionFacts = {
   recording: { id: number; durationSeconds: number; videoStartSeconds: number } | null;
   goals: SessionMoment[];
   clips: SessionMoment[];
+  /** The match squad: the line-up's in-squad players, else the session squad's roster. */
+  squad?: SquadPlayer[];
+  /** Players with a picture, by player id. Loaded only when the academy shows names. */
+  pictures?: Map<number, PictureFact>;
 };
 
 // ── Pure rules ──────────────────────────────────────────────────────────────
+
+/** Rows a line-up template has (call-up 9; the line-up reads the first 7). */
+export const LINEUP_ROWS = 9;
+
+const POSITIONS: Array<{ re: RegExp; en: string; ar: string }> = [
+  { re: /^(gk|goal ?keeper|keeper|حارس)/i, en: "GK", ar: "حارس" },
+  { re: /^(df|def|defen[cs]e|defender|back|cb|lb|rb|دفاع|مدافع)/i, en: "DF", ar: "دفاع" },
+  { re: /^(mf|mid|midfield|midfielder|cm|dm|am|وسط)/i, en: "MF", ar: "وسط" },
+  { re: /^(fw|fwd|forward|striker|attack|attacker|winger|st|هجوم|مهاجم)/i, en: "FW", ar: "هجوم" },
+];
+
+/** A short position label ("GK" / "حارس"); anything unrecognised is kept, shortened (as autoDrafts.positionLabel). */
+export function rowPosition(raw: string | null | undefined, locale: CreativeLocale): string {
+  const v = (raw ?? "").trim();
+  if (!v) return "";
+  const hit = POSITIONS.find((p) => p.re.test(v));
+  return hit ? hit[locale === "ar" ? "ar" : "en"] : v.slice(0, 12);
+}
+
+/** The player picture a design reads: always the player's own source, so the server decides what it shows. */
+export const playerSource = (playerId: number, pic: PictureFact): MediaSource => ({ type: "player", playerId, cutout: pic.cutout });
+
+/**
+ * A line-up's rows (custom.n1/p1/pos1 … n9/p9/pos9) and their photos
+ * (photos[i] is row i+1): goalkeepers first, then shirt order, as the call-up
+ * draft. Names (first name) and photos only when the academy shows names;
+ * otherwise numbers and positions only and no photos at all.
+ */
+export function lineupRows(
+  squad: SquadPlayer[], showNames: boolean, locale: CreativeLocale, pictures?: Map<number, PictureFact>,
+): { custom: Record<string, string>; photos?: Array<MediaSource | null> } {
+  const gk = (p: SquadPlayer) => (rowPosition(p.position, "en") === "GK" ? 0 : 1);
+  const rows = [...squad]
+    .sort((a, b) => gk(a) - gk(b) || (a.number ?? 999) - (b.number ?? 999) || (a.name ?? "").localeCompare(b.name ?? ""))
+    .slice(0, LINEUP_ROWS);
+  const custom: Record<string, string> = {};
+  rows.forEach((p, i) => {
+    custom[`n${i + 1}`] = p.number !== null && p.number !== undefined ? String(p.number) : "";
+    custom[`p${i + 1}`] = showNames ? firstName(p.name) ?? "" : "";
+    custom[`pos${i + 1}`] = rowPosition(p.position, locale);
+  });
+  if (!showNames || !pictures?.size) return { custom };
+  const photos = rows.map((p) => {
+    const pic = pictures.get(p.playerId);
+    return pic ? playerSource(p.playerId, pic) : null;
+  });
+  return photos.some(Boolean) ? { custom, photos } : { custom };
+}
 
 /** How a player is named on a post: a first name when the academy allows names, else "#<shirt>". */
 export function playerLabel(p: { name: string | null; number: number | null }, showNames: boolean): string | null {
@@ -289,14 +348,22 @@ export function buildSessionData(facts: SessionFacts, locale: CreativeLocale): C
   const stats: Record<string, string | number> = { ...teamStatsSummary(facts.team) };
   const potm = session.type === "match" ? pickPlayerOfMatch(facts.players) : null;
   if (potm) {
+    const pic = showNames ? facts.pictures?.get(potm.playerId) : undefined;
     data.player = {
       name: showNames ? firstName(potm.name) : null,
       number: potm.number,
       ...(session.squad ? { squad: session.squad } : {}),
+      ...(pic ? { photo: playerSource(potm.playerId, pic) } : {}),
     };
     Object.assign(stats, playerStatsSummary(potm.stats, "potm"));
   }
   if (Object.keys(stats).length) data.stats = stats;
+
+  if (facts.squad?.length) {
+    const rows = lineupRows(facts.squad, showNames, locale, facts.pictures);
+    data.custom = { ...(data.custom ?? {}), ...rows.custom };
+    if (rows.photos) data.photos = rows.photos;
+  }
 
   const moments = rankedMoments(facts);
   if (moments.length) {
@@ -359,7 +426,7 @@ export async function loadSessionFacts(academyId: number, sessionId: number, pro
     .where(and(eq(academySessionsTable.id, sessionId), eq(academySessionsTable.academyId, academyId)));
   if (!s) return null;
 
-  const [statRows, lineups, recs, pages] = await Promise.all([
+  const [statRows, lineups, recs, pages, squad] = await Promise.all([
     db.select({
       playerId: academyMatchPlayerStatsTable.playerId,
       stats: academyMatchPlayerStatsTable.stats,
@@ -377,8 +444,16 @@ export async function loadSessionFacts(academyId: number, sessionId: number, pro
       .orderBy(asc(recordingsTable.id)),
     db.select({ recordingId: academyMatchPagesTable.recordingId, teamStats: academyMatchPagesTable.teamStats })
       .from(academyMatchPagesTable).where(and(eq(academyMatchPagesTable.sessionId, s.id), eq(academyMatchPagesTable.academyId, academyId))),
+    loadMatchSquad(academyId, s.id, s.squadId),
   ]);
   const shirt = new Map(lineups.map((l) => [l.playerId, l.shirt]));
+  const pictureIds = [...new Set([...squad.map((p) => p.playerId), ...statRows.map((r) => r.playerId)])];
+  const pictures = new Map<number, PictureFact>();
+  if (profile.showNames && pictureIds.length) {
+    for (const [id, pic] of await playerPictures(academyId, pictureIds).catch(() => new Map())) {
+      pictures.set(id, { cutout: pic.kind === "photo" && pic.photo.transparent });
+    }
+  }
   const players: SessionPlayerFacts[] = statRows.map((r) => ({
     playerId: r.playerId,
     name: r.name ?? null,
@@ -439,5 +514,39 @@ export async function loadSessionFacts(academyId: number, sessionId: number, pro
     recording,
     goals,
     clips,
+    squad,
+    pictures,
   };
+}
+
+/**
+ * The match squad: the line-up's in-squad players of this academy (shirt for
+ * the match, else the player's own); with no line-up saved, the active
+ * players of the session's squad (a call-up before the owner picked anyone).
+ */
+export async function loadMatchSquad(academyId: number, sessionId: number, squadId: number | null): Promise<SquadPlayer[]> {
+  const rows = await db.select({
+    playerId: academyMatchLineupsTable.playerId,
+    inSquad: academyMatchLineupsTable.inSquad,
+    shirt: academyMatchLineupsTable.shirtNumber,
+    jersey: academyPlayersTable.jerseyNumber,
+    name: academyPlayersTable.name,
+    position: academyPlayersTable.position,
+  }).from(academyMatchLineupsTable)
+    .innerJoin(academyPlayersTable, eq(academyPlayersTable.id, academyMatchLineupsTable.playerId))
+    .where(and(eq(academyMatchLineupsTable.sessionId, sessionId), eq(academyPlayersTable.academyId, academyId)));
+  if (rows.length) {
+    return rows.filter((r) => r.inSquad).map((r) => ({ playerId: r.playerId, name: r.name, number: r.shirt ?? r.jersey ?? null, position: r.position ?? null }));
+  }
+  if (!squadId) return [];
+  const roster = await db.select({
+    playerId: academyPlayersTable.id,
+    name: academyPlayersTable.name,
+    number: academyPlayersTable.jerseyNumber,
+    position: academyPlayersTable.position,
+  }).from(academyPlayersTable)
+    .where(and(eq(academyPlayersTable.academyId, academyId), eq(academyPlayersTable.squadId, squadId), eq(academyPlayersTable.isActive, true)))
+    .orderBy(asc(academyPlayersTable.jerseyNumber), asc(academyPlayersTable.id))
+    .limit(60);
+  return roster.map((r) => ({ playerId: r.playerId, name: r.name, number: r.number ?? null, position: r.position ?? null }));
 }

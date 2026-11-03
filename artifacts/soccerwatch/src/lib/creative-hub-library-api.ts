@@ -99,10 +99,37 @@ export type LibraryUpload = {
   videoUrl: string | null;
 };
 
+/** A photo in a player's gallery (academy console → Players). `url` is an API path. */
+export type PlayerPhoto = {
+  photoId: number;
+  playerId: number;
+  width: number;
+  height: number;
+  /** a cut-out: transparent background */
+  transparent: boolean;
+  label: string | null;
+  isPrimary: boolean;
+  createdAt: string;
+  url: string;
+};
+
 export type LibraryPlayers = {
   showNames: boolean;
   squads: Array<{ id: number; name: string }>;
-  players: Array<LibraryPlayer & { playerId: number; squadId: number | null }>;
+  /** `photo`: the primary photo, only when the academy shows names. */
+  players: Array<LibraryPlayer & { playerId: number; squadId: number | null; position?: string | null; photo?: PlayerPhoto | null }>;
+};
+
+/** GET …/creative/library/players/:playerId/media: the Player picker's gallery. */
+export type LibraryPlayerMedia = {
+  showNames: boolean;
+  player: LibraryPlayer & { playerId: number; squadId: number | null; position: string | null };
+  /** his linked account has an avatar (used when he has no photo) */
+  hasAvatar: boolean;
+  /** empty unless the academy shows names */
+  photos: Array<PlayerPhoto & { source: Extract<MediaSource, { type: "player-photo" }> }>;
+  clips: Array<{ clipId: number; title: string | null; date: string; durationMs: number; source: ClipSource; thumbnailUrl: string | null }>;
+  moments: Array<LibraryMoment & { sessionId: number }>;
 };
 
 export type LibraryFilter = {
@@ -168,6 +195,15 @@ export function useLibraryPlayers(academyId: number) {
     queryKey: libraryKey(academyId, "players"),
     staleTime: 60_000,
     queryFn: () => call<LibraryPlayers>(creativePath(academyId, "/library/players")),
+  });
+}
+
+export function useLibraryPlayerMedia(academyId: number, playerId: number | null) {
+  return useQuery({
+    queryKey: libraryKey(academyId, "player-media", playerId ?? 0),
+    enabled: playerId !== null,
+    staleTime: 30_000,
+    queryFn: () => call<LibraryPlayerMedia>(creativePath(academyId, `/library/players/${playerId}/media`)),
   });
 }
 

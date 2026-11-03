@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import {
   CREATIVE_FORMATS,
   isVideoScene,
+  layerShownFor,
   layerVisibleAt,
   parsePlateKey,
   PLATE_LAYER_ID,
@@ -108,7 +109,8 @@ export function SceneCanvas({
     setGesture((g) => (g?.committed ? null : g));
   }, [scene.layers]);
 
-  const visible = scene.layers.filter((l) => layerVisibleAt(l, t));
+  // Layers with a `when` show only for data that meets it (a line-up's photo tiles), as in the export.
+  const visible = scene.layers.filter((l) => layerVisibleAt(l, t) && layerShownFor(l, d));
   const boxOf = (l: SceneLayer): Box => (gesture?.id === l.id ? gesture.box : boxOfLayer(l));
 
   const toCanvas = useCallback((clientX: number, clientY: number): [number, number] => {

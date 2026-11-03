@@ -2,6 +2,7 @@ import type { Content } from "../content";
 import { seam, crest, media, rect, slant, text, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackUp } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
+import { rowsOrTiles, type TileLook } from "../players";
 
 /**
  * Broadcast: TV match graphics. Void base, slanted slabs, a score bug,
@@ -146,6 +147,21 @@ const hero: StyleKit["hero"] = (c, k) => {
   footer(c);
 };
 
+/** Line-up photo tiles: a dark panel with a brand slash, the number in the accent, a brand bar. */
+const TILE: TileLook = {
+  backdrop: (c, id, b, i) => {
+    rect(c, id, b, { fill: i % 2 ? PANEL : PANEL2 });
+    slant(c, `${id}-slash`, { x: b.x + b.w * 0.55, y: b.y, w: b.w * 0.3, h: b.h }, -14, { fill: "@primary", opacity: 0.55 });
+    rect(c, `${id}-top`, { x: b.x, y: b.y, w: b.w, h: 6 }, { fill: "@accent" });
+  },
+  bar: (c, id, b) => rect(c, id, b, { fill: "@primary" }),
+  num: { font: "condensed", color: "@accent", weight: 800 },
+  name: { font: "condensed", color: WHITE, weight: 800 },
+  pos: { font: "condensed", color: "@accent" },
+  shadow: VOID,
+  cardRadius: 0,
+};
+
 const list: StyleKit["list"] = (c, k) => {
   slant(c, "deco", { x: c.W - 460, y: 0, w: 460, h: 420 }, -18, { fill: "@primary", opacity: 0.22 });
   slant(c, "deco-2", { x: c.W - 250, y: 0, w: 120, h: 420 }, -18, { fill: "@accent", opacity: 0.18 });
@@ -159,6 +175,7 @@ const list: StyleKit["list"] = (c, k) => {
   const footH = k.cta ? 150 : 90;
   const head = k.rowsHead;
   const boxes = rowBoxes(rows.length, y + (head ? 44 : 0), c.B - footH, c.M, c.CW, { maxH: Math.round((numericLead(k) ? 112 : 136) * c.k) });
+  rowsOrTiles(c, k, { x: c.M, y, w: c.CW, h: c.B - footH - 24 - y }, TILE, () => {
   if (head && boxes.every((b) => b.x === c.M)) {
     text(c, "head-lead", head[0], numericLead(k) ? { x: c.M, y, w: 120, h: 32 } : { x: c.M + 24, y, w: 260, h: 32 }, { size: 24, font: "condensed", color: MUTED, upper: true, ls: 2, align: numericLead(k) ? "center" : "start" });
     if (numericLead(k)) text(c, "head-main", head[1], { x: c.M + 150, y, w: 500, h: 32 }, { size: 24, font: "condensed", color: MUTED, upper: true, ls: 2 });
@@ -177,6 +194,7 @@ const list: StyleKit["list"] = (c, k) => {
     const mainW = b.w - lw - 28 - tw - 24;
     text(c, `${id}-main`, row[1], { x: mainX, y: b.y + b.h * (lead ? 0.24 : 0.3), w: mainW, h: b.h * (lead ? 0.52 : 0.4) }, { size: Math.round(b.h * (lead ? 0.42 : 0.28)), font: lead ? "condensed" : "body", weight: lead ? 700 : 600, color: lead ? WHITE : "#C9D0DE", upper: lead, fit: true });
     text(c, `${id}-trail`, row[2], { x: b.x + b.w - tw - 24, y: b.y + b.h * 0.24, w: tw, h: b.h * 0.52 }, { size: Math.round(b.h * 0.42), font: "condensed", weight: 800, color: "@accent", upper: true, align: "end", fit: true });
+  });
   });
   stackUp(c.B, [
     ...k.meta.map((m, i) => ({ h: 38, gap: 10, draw: (yy: number) => text(c, `meta-${i + 1}`, m, { x: c.M, y: yy, w: c.CW, h: 38 }, { size: 28, font: "condensed", color: MUTED, upper: true, ls: 2, fit: true }) })),

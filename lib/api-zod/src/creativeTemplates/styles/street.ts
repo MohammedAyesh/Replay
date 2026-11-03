@@ -2,6 +2,7 @@ import type { Content } from "../content";
 import { crest, ellipse, media, rect, text, type Ctx, type Timing } from "../kit";
 import { has, pin, rowBoxes, stackDown, stackUp } from "../parts";
 import { heroWords, numericLead, optionKey, type StyleKit } from "./types";
+import { rowsOrTiles, type TileLook } from "../players";
 
 /**
  * Street: loud. Huge stacked condensed capitals that run off the edges,
@@ -124,6 +125,17 @@ const hero: StyleKit["hero"] = (c, k) => {
   corner(c, k);
 };
 
+/** Line-up photo tiles: a slab of brand paint, a white number, a strip of tape for the name. */
+const TILE: TileLook = {
+  backdrop: (c, id, b, i) => rect(c, id, b, { fill: i % 2 ? "@primary" : "@accent", rotation: i % 2 ? 1.5 : -1.5 }),
+  bar: (c, id, b, i) => rect(c, id, { x: b.x - 6, y: b.y, w: b.w + 12, h: b.h }, { fill: WHITE, rotation: i % 2 ? -1 : 1 }),
+  num: { font: "condensed", color: WHITE, weight: 900, stroke: { color: INK, width: 6 } },
+  name: { font: "condensed", color: INK, weight: 900 },
+  pos: { font: "condensed", color: "@primary", weight: 900 },
+  shadow: INK,
+  cardRadius: 0,
+};
+
 const list: StyleKit["list"] = (c, k) => {
   rect(c, "paint", { x: 0, y: 0, w: c.W, h: c.pick(380, 330, 520) }, { fill: "@primary" });
   shout(c, "kicker", k.kicker, c.T + 90, c.pick(170, 140, 190), { rot: -5 });
@@ -132,7 +144,7 @@ const list: StyleKit["list"] = (c, k) => {
   const rows = k.rows ?? [];
   const footH = (k.cta ? 96 : 0) + 60;
   const lead = numericLead(k);
-  rowBoxes(rows.length, headY + 140, c.B - footH, c.M, c.CW, { gap: 14, maxH: Math.round((lead ? 104 : 130) * c.k) }).forEach((b, i) => {
+  rowsOrTiles(c, k, { x: c.M, y: headY + 140, w: c.CW, h: c.B - footH - 30 - headY - 140 }, TILE, () => rowBoxes(rows.length, headY + 140, c.B - footH, c.M, c.CW, { gap: 14, maxH: Math.round((lead ? 104 : 130) * c.k) }).forEach((b, i) => {
     const id = `row-${i + 1}`;
     const row = rows[i];
     const first = i === 0;
@@ -142,7 +154,7 @@ const list: StyleKit["list"] = (c, k) => {
     text(c, `${id}-lead`, row[0], { x: b.x + 12, y: b.y + b.h * 0.12, w: lw, h: b.h * 0.76 }, { size: Math.round(b.h * (lead ? 0.72 : 0.42)), font: "condensed", weight: 900, color: first ? INK : "@accent", upper: true, num: lead, fit: true });
     text(c, `${id}-main`, row[1], { x: b.x + lw + 30, y: b.y + b.h * 0.2, w: b.w - lw - 30 - 220, h: b.h * 0.6 }, { size: Math.round(b.h * (lead ? 0.5 : 0.32)), font: lead ? "condensed" : "body", weight: 800, color: first ? INK : WHITE, upper: lead, fit: true });
     text(c, `${id}-trail`, row[2], { x: b.x + b.w - 216, y: b.y + b.h * 0.18, w: 200, h: b.h * 0.64 }, { size: Math.round(b.h * 0.5), font: "condensed", weight: 900, color: first ? INK : WHITE, upper: true, align: "end", fit: true });
-  });
+  }));
   stackUp(c.B, [
     k.cta && { h: 80, gap: 16, draw: (y) => tape(c, "cta", k.cta!, c.M, y, c.CW - 40, { h: 80, rot: -2 }) },
     { h: 36, draw: (y) => text(c, "meta", k.meta.join("  /  "), { x: c.M, y, w: c.CW, h: 36 }, { size: 26, font: "condensed", weight: 800, color: WHITE, upper: true, ls: 4, fit: true }) },

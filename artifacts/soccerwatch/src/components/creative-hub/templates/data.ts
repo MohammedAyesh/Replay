@@ -12,7 +12,10 @@ import type { TemplateSeed } from "../types";
  *   - a player's name appears only when the academy shows names, and never a
  *     sample name on a real match;
  *   - the picture is the seed, then the match's own footage, then the latest
- *     frame of the academy's footage, then Replay's sample artwork.
+ *     frame of the academy's footage, then Replay's sample artwork;
+ *   - players' photos (a line-up's row photos, a player post's player.photo)
+ *     come only from a real match and only when the academy shows names; a
+ *     line-up without them draws numbers only.
  */
 
 export type StartingInput = {
@@ -65,13 +68,15 @@ export function startingData(input: StartingInput): CreativeData {
   };
 
   if (real && session!.player) {
-    data.player = { ...session!.player, name: academy.showPlayerNames ? session!.player.name ?? null : null };
+    const { photo, ...rest } = session!.player;
+    data.player = { ...rest, name: academy.showPlayerNames ? session!.player.name ?? null : null, ...(academy.showPlayerNames && photo ? { photo } : {}) };
   } else if (sample.player) {
     data.player = { ...sample.player, name: academy.showPlayerNames && !real ? sample.player.name ?? null : null };
   }
 
   const own = (i: number) => stills[i];
   data.media = seedMedia(seed) ?? (real ? session!.media : undefined) ?? own(0) ?? sample.media;
+  if (real && academy.showPlayerNames && session!.photos?.some(Boolean)) data.photos = session!.photos;
   if (sample.more) data.more = sample.more.map((m, i) => (real ? session!.more?.[i] : undefined) ?? own(i) ?? m);
   if (data.match) data.match = clean(data.match);
   return clean(data);

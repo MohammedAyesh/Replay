@@ -1,11 +1,25 @@
 import type { CSSProperties } from "react";
-import type { CreativeBrand, CreativeStyle } from "@workspace/api-zod";
+import { CREATIVE_PACKS, isPackStyle, type CreativeBrand, type CreativeStyle } from "@workspace/api-zod";
 
 /**
  * A thumbnail-sized sketch of each look in the academy's own colours, so the
- * style switcher shows what a style does rather than just naming it.
+ * style switcher shows what a style does rather than just naming it. A brand
+ * pack shows the house style it is built on, marked with a star in the pack's
+ * own accent (it is the academy's own look).
  */
 export function StyleSwatch({ style, brand }: { style: CreativeStyle; brand: CreativeBrand }) {
+  if (isPackStyle(style)) {
+    const pack = CREATIVE_PACKS[style];
+    return (
+      <div style={{ position: "relative", width: "100%", height: "100%" }} aria-hidden>
+        <StyleSwatch style={pack.base} brand={brand} />
+        <span style={{
+          position: "absolute", top: 4, insetInlineEnd: 4, width: 14, height: 14, borderRadius: "50%",
+          background: pack.palette.ink, color: pack.palette.accent, fontSize: 10, lineHeight: "14px", textAlign: "center",
+        }}>★</span>
+      </div>
+    );
+  }
   const p = brand.primary;
   const a = brand.accent;
   const box: CSSProperties = { position: "relative", width: "100%", height: "100%", overflow: "hidden", borderRadius: 10 };
@@ -69,4 +83,5 @@ export function StyleSwatch({ style, brand }: { style: CreativeStyle; brand: Cre
         </div>
       );
   }
+  return null;
 }

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
+import creativeFontsRouter from "./creativeFonts";
 import authRouter from "./auth";
 import fieldsRouter from "./fields";
 import recordingsRouter from "./recordings";
@@ -67,6 +68,7 @@ import academyStudioRouter from "./academyStudio";
 import academyCreativeRouter from "./academyCreative";
 import academyCreativeForYouRouter from "./academyCreativeForYou";
 import academyCreativeLibraryRouter from "./academyCreativeLibrary";
+import academyPlayerPhotosRouter from "./academyPlayerPhotos";
 import academyCreativeTemplatesRouter from "./academyCreativeTemplates";
 import academyCreativeRenderRouter from "./academyCreativeRender";
 import academyCreativePublishRouter from "./academyCreativePublish";
@@ -80,6 +82,7 @@ import consoleHomeRouter from "./consoleHome";
 const router: IRouter = Router();
 
 router.use(healthRouter);
+router.use(creativeFontsRouter);
 // Before every academy console route: what the owner lets managers and coaches see and do.
 router.use(academyAccessGate);
 router.use(authRouter);
@@ -126,6 +129,7 @@ router.use(academyStudioRouter);
 router.use(academyCreativeRouter);
 router.use(academyCreativeForYouRouter);
 router.use(academyCreativeLibraryRouter);
+router.use(academyPlayerPhotosRouter);
 router.use(academyCreativeTemplatesRouter);
 router.use(academyCreativeRenderRouter);
 router.use(academyCreativePublishRouter);

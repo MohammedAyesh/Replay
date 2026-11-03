@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useCreativeBrand } from "@/lib/creative-hub-api";
+import type { PickedPlayer } from "@/components/creative-hub/library/players";
 import { ImagePlus, Plus, X } from "lucide-react";
 import type { MediaSource } from "@workspace/api-zod";
 import { fieldLabel, useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
@@ -13,8 +15,18 @@ export function DataPanel({ ed }: { ed: EditorApi }) {
   const copy = useCreativeEditorCopy();
   const [newKey, setNewKey] = useState("");
   const [extra, setExtra] = useState<string[]>([]);
+  const showNames = useCreativeBrand(ed.academyId).data?.showPlayerNames === true;
+  const [offer, setOffer] = useState<PickedPlayer | null>(null);
   const customKeys = [...Object.keys(ed.data.custom ?? {}).map((k) => `custom.${k}`), ...extra];
-  const fields = [...new Set([...ed.fields, ...customKeys])];
+  // A line-up's row photos only exist for an academy that shows players' names (the server drops them otherwise).
+  const fields = [...new Set([...ed.fields, ...customKeys])].filter((f) => showNames || !/^photos\.\d+$/.test(f));
+  const playerFields = ed.fields.some((f) => f.startsWith("player."));
+  const fillPlayer = (p: PickedPlayer) => {
+    if (p.number !== null) ed.setData("player.number", p.number);
+    if (p.position) ed.setData("player.position", p.position);
+    if (showNames && p.firstName) ed.setData("player.name", p.firstName);
+    setOffer(null);
+  };
 
   const addCustom = () => {
     const key = newKey.trim().replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 40);
@@ -26,6 +38,19 @@ export function DataPanel({ ed }: { ed: EditorApi }) {
   return (
     <div className="space-y-4" data-testid="editor-data-panel">
       <p className="text-xs text-muted-text">{copy.dataHint}</p>
+      {offer ? (
+        <div className="space-y-2 rounded-xl border border-turf/50 bg-turf/10 p-3" data-testid="editor-data-fill-player">
+          <p className="text-xs text-muted-text">{copy.fillPlayerHint}</p>
+          <div className="flex gap-2">
+            <Button type="button" size="sm" className="min-h-9 flex-1 rounded-xl" onClick={() => fillPlayer(offer)}>
+              {copy.fillPlayer(showNames && offer.firstName ? offer.firstName : offer.number !== null ? `#${offer.number}` : "")}
+            </Button>
+            <button type="button" aria-label={copy.clear} onClick={() => setOffer(null)} className="grid h-9 w-9 place-items-center rounded-lg text-muted-text hover:text-text">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
       {fields.map((path) => {
         const id = `field-${path.replace(/\./g, "-")}`;
         const label = fieldLabel(copy, path);
@@ -37,7 +62,12 @@ export function DataPanel({ ed }: { ed: EditorApi }) {
               <div className="flex items-center gap-2 rounded-xl border border-line bg-surface p-2 ps-3">
                 <span className="flex-1 truncate text-sm text-text">{src ? copy.mediaKinds[src.type] ?? src.type : "—"}</span>
                 <Button type="button" size="sm" variant="outline" className="min-h-9 rounded-xl" data-testid={`editor-data-pick-${path}`}
-                  onClick={() => ed.pick(path === "media" ? "any" : "image", (picked) => ed.setData(path, picked))}>
+                  onClick={() => ed.pick(path === "media" ? "any" : "image", (picked, meta) => {
+                    ed.setData(path, picked);
+                    // Picked from the Player picker: offer his number, position and (names allowed) first name.
+                    const who = (meta as { player?: PickedPlayer }).player;
+                    if (who && playerFields) setOffer(who);
+                  })}>
                   <ImagePlus className="h-4 w-4" />{copy.pick}
                 </Button>
                 {src ? (

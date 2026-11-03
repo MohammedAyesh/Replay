@@ -1,39 +1,47 @@
 import { useEffect, useMemo, useState } from "react";
 import { Ban, Check } from "lucide-react";
 import {
-  CREATIVE_FORMATS, CREATIVE_STYLES, parsePlateKey, resolveColor, resolveTint,
+  CREATIVE_FORMATS, parsePlateKey, resolveColor, resolveTint,
   type CreativeStyle, type LayerTint, type Scene,
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
 import { changeStyle, plateOf } from "@/lib/creative-editor-state";
+import { useCreativeBrand } from "@/lib/creative-hub-api";
 import { creativeMediaUrl, useCreativeBackgrounds } from "@/lib/creative-hub-media";
+import { offeredStyles } from "@/lib/creative-styles";
 import { cn } from "@/lib/utils";
 import { SceneCanvas } from "../scene-canvas";
 import { NumberSlider, Section, panelEmpty } from "./controls";
 import type { EditorApi } from "./editor-api";
 
-/** The seven looks, each previewed with the manager's own text and pictures carried over. */
+/**
+ * The seven house looks, plus the academy's own brand pack first when it has
+ * one (never another academy's), each previewed with the manager's own text
+ * and pictures carried over.
+ */
 export function StylePanel({ ed }: { ed: EditorApi }) {
   const copy = useCreativeEditorCopy();
+  const brandInfo = useCreativeBrand(ed.academyId);
+  const styles = useMemo(() => offeredStyles(brandInfo.data?.pack), [brandInfo.data?.pack]);
   const current = ed.scene.template?.style ?? null;
   const previews = useMemo(() => {
     if (!ed.scene.template) return null;
-    const out = {} as Record<CreativeStyle, Scene>;
-    for (const s of CREATIVE_STYLES) out[s] = s === current ? ed.scene : changeStyle(ed.scene, s);
+    const out = {} as Partial<Record<CreativeStyle, Scene>>;
+    for (const s of styles) out[s] = s === current ? ed.scene : changeStyle(ed.scene, s);
     return out;
-  }, [ed.scene, current]);
+  }, [ed.scene, current, styles]);
   if (!previews) return <p className={panelEmpty}>{copy.noTemplate}</p>;
   return (
     <div className="space-y-5">
       <div className="space-y-3" data-testid="editor-style-panel">
         <p className="text-xs text-muted-text">{copy.styleHint}</p>
         <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-3">
-          {CREATIVE_STYLES.map((s) => (
+          {styles.map((s) => (
             <button key={s} type="button" onClick={() => ed.setStyle(s)} aria-pressed={current === s} data-testid={`editor-style-${s}`}
               className={cn("group relative flex flex-col items-center gap-1.5 rounded-xl border p-1.5 transition-colors",
                 current === s ? "border-turf bg-turf/10" : "border-line bg-surface hover:border-muted-text")}>
               <div className="pointer-events-none w-full overflow-hidden rounded-lg">
-                <SceneCanvas scene={previews[s]} brand={ed.brand} data={ed.data} width={96} mediaUrl={ed.mediaUrl} className="mx-auto" />
+                <SceneCanvas scene={previews[s] ?? ed.scene} brand={ed.brand} data={ed.data} width={96} mediaUrl={ed.mediaUrl} className="mx-auto" />
               </div>
               <span className="text-[11px] font-semibold text-text">{copy.styles[s]}</span>
               {current === s ? <Check className="absolute end-2 top-2 h-4 w-4 rounded-full bg-turf p-0.5 text-void" /> : null}

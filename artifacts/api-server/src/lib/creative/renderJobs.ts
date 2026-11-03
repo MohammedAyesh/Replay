@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { academyCreativeProjectsTable, db, type AcademyCreativeProject } from "@workspace/db";
-import { sceneSchema, type Scene } from "@workspace/api-zod";
+import { sceneForData, sceneSchema, type Scene } from "@workspace/api-zod";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { logger } from "../logger";
 import { renderScenePng } from "./render";
@@ -62,8 +62,9 @@ export async function renderStillNow(access: AcademyOwnerAccess, row: AcademyCre
     const scene = sceneOf(row);
     await setStatus(row.id, { renderStatus: "rendering", renderError: null });
     const ctx = await loadCreativeContext(access, temps);
+    const data = serverData(access, ctx, row.data);
     const png = await renderScenePng({
-      scene, brand: ctx.brand, data: serverData(access, ctx, row.data), images: creativeImageResolver(access.academyId, ctx.look),
+      scene: sceneForData(scene, data), brand: ctx.brand, data, images: creativeImageResolver(access.academyId, ctx.look),
     });
     dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "creative-still-"));
     const file = path.join(dir, "out.png");
@@ -102,8 +103,9 @@ async function runVideo(access: AcademyOwnerAccess, row: AcademyCreativeProject,
       const ctx = await loadCreativeContext(access, temps);
       const out = path.join(dir, "out.mp4");
       const started = Date.now();
+      const data = serverData(access, ctx, row.data);
       await renderSceneMp4({
-        scene, brand: ctx.brand, data: serverData(access, ctx, row.data),
+        scene: sceneForData(scene, data), brand: ctx.brand, data,
         images: creativeImageResolver(access.academyId, ctx.look),
         videos: creativeVideoResolver(access.academyId, dir, temps),
         musicPath: musicPath(scene.music?.trackKey),

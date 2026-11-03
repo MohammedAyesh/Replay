@@ -28,4 +28,13 @@ describe("for you: why it's suggested", () => {
       .toBe("Tomorrow vs Al-Wehdat: let your fans know");
     expect(whyLine(reason({ kind: "weekly", startsAt: null }), forYouStrings.ar, "ar", NOW)).toBe(forYouStrings.ar.why.weekly);
   });
+
+  it("explains the countdown, call-up and match stats drafts", () => {
+    const fixture = { startsAt: "2026-11-04T15:00:00Z", ownScore: null, opponentScore: null };
+    expect(whyLine(reason({ kind: "countdown", ...fixture }), forYouStrings.en, "en", NOW)).toBe("Wednesday's game vs Al-Wehdat is two days away: build it up");
+    expect(whyLine(reason({ kind: "countdown", ...fixture }), forYouStrings.ar, "ar", NOW)).toBe("مباراة الأربعاء ضد Al-Wehdat بعد يومين: حمّسوا جمهوركم");
+    expect(whyLine(reason({ kind: "callup", startsAt: "2026-11-03T15:00:00Z", ownScore: null, opponentScore: null }), forYouStrings.ar, "ar", NOW))
+      .toBe("القائمة اللي اخترتوها لمباراة بكرا ضد Al-Wehdat");
+    expect(whyLine(reason({ kind: "matchstats" }), forYouStrings.en, "en", NOW)).toBe("The numbers from Saturday's game vs Al-Wehdat, from the analysis");
+  });
 });
