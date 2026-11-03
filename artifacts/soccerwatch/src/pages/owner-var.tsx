@@ -64,13 +64,16 @@ function useVarStatus(requestId: number, enabled: boolean) {
   return { status, error, loading, refresh: load };
 }
 
-export default function OwnerVar() {
+/** VAR marking for a booked match. Standalone at /owner/var/:id, or inside the Field console. */
+export default function OwnerVar({ requestId: embeddedId, onBack }: { requestId?: number; onBack?: () => void } = {}) {
   const [, params] = useRoute("/owner/var/:requestId");
   const [, setLocation] = useLocation();
+  const embedded = embeddedId != null;
+  const back = () => (onBack ? onBack() : setLocation("/owner?tab=footage"));
   const { t, locale } = useTranslation();
   const { isSignedIn, isGuest, isLoading: authLoading } = useAuth();
   const queryClient = useQueryClient();
-  const requestId = Number(params?.requestId ?? 0);
+  const requestId = embeddedId ?? Number(params?.requestId ?? 0);
   const isArabic = locale === "ar";
   const copy = t.ownerVar;
 
@@ -119,13 +122,13 @@ export default function OwnerVar() {
   }, []);
 
   if (authLoading || statusState.loading) {
-    return <main className="flex min-h-[100dvh] flex-1 items-center justify-center bg-void px-6 text-sm text-muted-foreground">{copy.loading}</main>;
+    return <main className={embedded ? "grid min-h-64 place-items-center text-sm text-muted-foreground" : "flex min-h-[100dvh] flex-1 items-center justify-center bg-void px-6 text-sm text-muted-foreground"}>{copy.loading}</main>;
   }
 
   return (
-    <main dir={isArabic ? "rtl" : "ltr"} className="flex min-h-[100dvh] flex-1 flex-col overflow-y-auto bg-void text-text">
+    <main dir={isArabic ? "rtl" : "ltr"} className={embedded ? "flex flex-col overflow-hidden rounded-2xl border border-line bg-surface text-text" : "flex min-h-[100dvh] flex-1 flex-col overflow-y-auto bg-void text-text"}>
       <header className="flex items-center gap-3 border-b border-line px-4 py-4">
-        <button type="button" onClick={() => setLocation("/owner?tab=footage")} aria-label={copy.back} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-raised">
+        <button type="button" onClick={back} aria-label={copy.back} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-raised">
           <ArrowLeft className="h-4 w-4 rtl:rotate-180" />
         </button>
         <div className="min-w-0">
@@ -142,7 +145,7 @@ export default function OwnerVar() {
         <section className="m-4 rounded-2xl border border-line bg-surface p-4">
           <p className="font-bold">{copy.matchOver}</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">{copy.matchOverDesc}</p>
-          <button type="button" onClick={() => setLocation("/owner?tab=footage")} className="mt-3 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground">{copy.openFootage}</button>
+          <button type="button" onClick={back} className="mt-3 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground">{copy.openFootage}</button>
         </section>
       ) : !open ? (
         <section className="m-4 rounded-2xl border border-line bg-surface p-4 text-sm">

@@ -57,6 +57,8 @@ import { useAuth } from "@/lib/auth";
 import { useTranslation } from "@/i18n";
 import type { Strings } from "@/i18n/strings";
 import { useToast } from "@/hooks/use-toast";
+import { useVenueCopy } from "@/i18n/venue-strings";
+import { SectionHeader, Stat } from "@/components/field-console/shared";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -290,8 +292,14 @@ function requestSort(a: OwnerRequest, b: OwnerRequest): number {
   return b.startLocal.localeCompare(a.startLocal);
 }
 
-export default function Owner() {
+/**
+ * Footage & billing for field owners. Standalone at /owner (inside the app shell), and embedded
+ * as a section of the Field console (/field/footage), where it takes the console's header style
+ * and opens VAR inside the console too.
+ */
+export default function Owner({ embedded = false, onOpenVar }: { embedded?: boolean; onOpenVar?: (requestId: number) => void } = {}) {
   const { t, locale } = useTranslation();
+  const venueCopy = useVenueCopy();
   const copy = ownerCopy(t);
   const { isGuest, isLoading: authLoading, isSignedIn } = useAuth();
   const [location, setLocation] = useLocation();
@@ -314,6 +322,7 @@ export default function Owner() {
   useEffect(() => {
     if (!authLoading && !isSignedIn) setLocation("/sign-in");
   }, [authLoading, isSignedIn, setLocation]);
+  const openVar = (requestId: number) => (embedded && onOpenVar ? onOpenVar(requestId) : setLocation(`/owner/var/${requestId}`));
 
   const fieldsQuery = useListOwnerFields({
     query: {
@@ -600,7 +609,7 @@ export default function Owner() {
 
   return (
     <OwnerRateContext.Provider value={ownerRateFils}>
-    <main className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-28 pt-2 sm:px-5" data-testid="page-owner" data-route={location}>
+    <main className={embedded ? "flex flex-col" : "flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-28 pt-2 sm:px-5"} data-testid="page-owner" data-route={location}>
       {activeVarRequests.length > 0 && (
         <section className="mb-3 rounded-2xl border border-live/40 bg-live/10 p-3" data-testid="owner-var-live-banner">
           <div className="flex items-start gap-2">
@@ -609,12 +618,43 @@ export default function Owner() {
               <p className="text-xs font-bold text-text">{locale === "ar" ? "مراجعة VAR متاحة الآن" : "VAR review is live now"}</p>
               <p className="mt-1 text-[11px] leading-4 text-muted-text">{locale === "ar" ? "افتح المباراة لوضع العلامات على اللحظات المهمة." : "Open the match to mark the important moments."}</p>
             </div>
-            <button type="button" onClick={() => setLocation(`/owner/var/${activeVarRequests[0].id}`)} className="shrink-0 rounded-xl bg-floodlight px-3 py-2 text-[11px] font-bold text-void">
+            <button type="button" onClick={() => openVar(activeVarRequests[0].id)} className="shrink-0 rounded-xl bg-floodlight px-3 py-2 text-[11px] font-bold text-void">
               {locale === "ar" ? "فتح VAR" : "Open VAR"}
             </button>
           </div>
         </section>
       )}
+      {embedded ? (
+        <div className="space-y-5" data-testid="owner-header">
+          <SectionHeader
+            title={venueCopy.console.footage}
+            description={venueCopy.console.footageDescription}
+            action={(
+              <Button type="button" onClick={() => { setTab("request"); setRequestMode("book"); }} className="min-h-11 bg-floodlight font-bold text-void" data-testid="button-owner-book">
+                <Plus className="me-2 h-4 w-4" aria-hidden="true" />{locale === "ar" ? "احجز تسجيل لماتش جاي" : "Book a recording"}
+              </Button>
+            )}
+          />
+          {fields.length > 1 && (
+            <label className="block max-w-sm" htmlFor="owner-field-select">
+              <span className="mb-1.5 block text-xs font-semibold text-muted-text">{copy.field}</span>
+              <span className="relative block">
+                <select id="owner-field-select" value={fieldId || ""} onChange={(event) => selectField(event.target.value)} data-testid="select-owner-field" aria-label={copy.field}
+                  className="min-h-11 w-full appearance-none rounded-xl border border-line bg-raised px-3 pe-10 text-sm font-semibold text-text outline-none focus:border-turf">
+                  {fields.map((field: OwnerField) => <option key={field.id} value={field.id}>{field.name}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute end-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-text" aria-hidden="true" />
+              </span>
+            </label>
+          )}
+          <div className="grid grid-cols-3 gap-3" data-testid="owner-live-summary">
+            <Stat label={copy.status.recording ?? copy.active} value={recordingCount} tone={recordingCount ? "live" : undefined} />
+            <Stat label={copy.status.ready ?? copy.myFootage} value={readyCount} tone="floodlight" />
+            <Stat label={copy.due} value={`${formatJod(selectedField?.balanceFils ?? 0)} ${locale === "ar" ? "د.أ" : "JOD"}`} tone={(selectedField?.balanceFils ?? 0) > 0 ? "violet" : undefined} />
+          </div>
+        </div>
+      ) : (
+      <>
       <Link href="/field" className="mb-3 flex items-center gap-3 rounded-2xl border border-floodlight/30 bg-floodlight/[0.06] p-3" data-testid="owner-field-console-link">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-floodlight text-void"><Trophy className="h-4 w-4" /></span>
         <span className="min-w-0 flex-1">
@@ -671,6 +711,9 @@ export default function Owner() {
         </div>
       </section>
 
+      </>
+      )}
+      {!embedded && (
       <button
         type="button"
         onClick={() => { setTab("request"); setRequestMode("book"); }}
@@ -680,7 +723,8 @@ export default function Owner() {
         <Plus className="h-4 w-4" aria-hidden="true" />
         {locale === "ar" ? "احجز تسجيل لماتش جاي" : "Book a recording for an upcoming match"}
       </button>
-      <nav className="mt-4 grid grid-cols-4 gap-1 rounded-2xl border border-line bg-surface p-1" aria-label={copy.title} data-testid="owner-tabs">
+      )}
+      <nav className={embedded ? "mt-6 flex flex-wrap gap-1.5" : "mt-4 grid grid-cols-4 gap-1 rounded-2xl border border-line bg-surface p-1"} aria-label={copy.title} data-testid="owner-tabs">
         {([
           ["footage", copy.myFootage, Film],
           ["request", copy.pastFootage, Plus],
@@ -693,7 +737,9 @@ export default function Owner() {
             onClick={() => setTab(value)}
             aria-selected={tab === value}
             data-testid={`tab-owner-${value}`}
-            className={`flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-2 text-xs font-semibold transition-colors ${tab === value ? "bg-turf text-void" : "text-muted-foreground hover:bg-raised hover:text-foreground"}`}
+            className={embedded
+              ? `flex min-h-10 items-center gap-1.5 rounded-xl border px-3.5 text-sm font-semibold transition-colors ${tab === value ? "border-turf bg-turf/10 text-turf" : "border-line bg-raised text-muted-text hover:text-text"}`
+              : `flex min-h-11 items-center justify-center gap-1.5 rounded-xl px-2 text-xs font-semibold transition-colors ${tab === value ? "bg-turf text-void" : "text-muted-foreground hover:bg-raised hover:text-foreground"}`}
           >
             <Icon className="h-3.5 w-3.5" aria-hidden="true" />
             {label}
@@ -755,7 +801,7 @@ export default function Owner() {
           onCopy={copyShareLink}
           onRevoke={(request) => runLinkAction(request, "revoke")}
           onNewLink={(request) => runLinkAction(request, "new")}
-          onOpenVar={(requestId) => setLocation(`/owner/var/${requestId}`)}
+          onOpenVar={openVar}
           isCancelling={cancelRequest.isPending}
            onCancellationSubmit={(request, reason) => {
              createCancellation.mutate(

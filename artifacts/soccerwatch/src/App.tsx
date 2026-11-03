@@ -617,8 +617,8 @@ function AppRouter() {
         <Route path="/field/*?" component={FieldConsole} />
         <Route path="/v/:slug" component={VenueSitePage} />
         <Route path="/account/blocked" component={BlockedPlayers} />
-        <Route path="/owner" component={Owner} />
-        <Route path="/owner/var/:requestId" component={OwnerVar} />
+        <Route path="/owner"><Owner /></Route>
+        <Route path="/owner/var/:requestId"><OwnerVar /></Route>
         <Route path="/w/:token" component={OwnerShare} />
         {MatchReportDevPreview && (
           <Route path="/__dev/match-report">

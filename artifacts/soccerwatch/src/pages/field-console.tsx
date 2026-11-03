@@ -50,11 +50,13 @@ import { PaymentsSection } from "@/components/field-console/payments-section";
 import { AgentSection } from "@/components/field-console/agent-section";
 import { WebsiteSection } from "@/components/field-console/website-section";
 import { Skeleton } from "@/components/field-console/shared";
+import Owner from "@/pages/owner";
+import OwnerVar from "@/pages/owner-var";
 
-const SECTIONS: FieldSection[] = ["dashboard", "bookings", "customers", "chats", "people", "agent", "whatsapp", "pitches", "payments", "website", "ads", "social", "creative", "studio", "branding", "profile", "team"];
+const SECTIONS: FieldSection[] = ["footage", "dashboard", "bookings", "customers", "chats", "people", "agent", "whatsapp", "pitches", "payments", "website", "ads", "social", "creative", "studio", "branding", "profile", "team"];
 /** Which Team permission each screen falls under (lib/academyPermissions.ts on the server). */
 const PERMISSION: Partial<Record<FieldSection, string>> = { customers: "people" };
-const OWNER_ONLY: FieldSection[] = ["pitches", "payments", "website", "ads", "social", "creative", "studio", "branding", "team"];
+const OWNER_ONLY: FieldSection[] = ["footage", "pitches", "payments", "website", "ads", "social", "creative", "studio", "branding", "team"];
 const SESSION_KEY = "replay_field_console_venue";
 
 function readSelected(): number | null {
@@ -84,8 +86,14 @@ export default function FieldConsole() {
     return part && SECTIONS.includes(part) ? part : "dashboard";
   }, [location]);
 
+  // /field/footage/var/<id>: VAR for one booked match, inside the console.
+  const varId = useMemo(() => {
+    const m = location.split(/[?#]/)[0].match(/^\/field\/footage\/var\/(\d+)/);
+    return m ? Number(m[1]) : null;
+  }, [location]);
+
   const canSee = (s: FieldSection) => {
-    if (s === "team" || s === "creative") return isOwner;
+    if (s === "team" || s === "creative" || s === "footage") return isOwner;
     if (isOwner) return true;
     const perm = PERMISSION[s] ?? s;
     return access.data ? access.data.sections.includes(perm) : !OWNER_ONLY.includes(s);
@@ -141,6 +149,7 @@ export default function FieldConsole() {
       { id: "chats", label: copy.nav.chats, icon: MessagesSquare },
       { id: "people", label: copy.nav.people, icon: ContactIcon },
       { id: "agent", label: copy.nav.agent, icon: Bot },
+      { id: "footage", label: copy.console.footage, icon: Video },
     ] },
     { label: copy.console.marketing, items: [
       { id: "ads", label: copy.nav.ads, icon: Target },
@@ -199,9 +208,6 @@ export default function FieldConsole() {
             </div>
           );
         })}
-        {isOwner && (
-          <Link href="/owner" className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-semibold text-muted-text hover:bg-raised hover:text-text"><Video className="h-4 w-4" />{copy.console.footage}</Link>
-        )}
       </nav>
       <div className="border-t border-line p-4">
         <button type="button" onClick={() => setLocale(locale === "ar" ? "en" : "ar")} className="flex min-h-11 w-full items-center justify-between rounded-xl border border-line bg-raised px-3 text-sm font-semibold text-text hover:border-turf">
@@ -245,6 +251,7 @@ export default function FieldConsole() {
               : section === "branding" ? <AcademyBrandingSection academyId={id} />
               : section === "profile" ? <AcademyProfileSection academyId={id} />
               : section === "team" ? <AcademyTeamSection academyId={id} />
+              : section === "footage" ? (varId ? <OwnerVar requestId={varId} onBack={() => setLocation("/field/footage")} /> : <Owner embedded onOpenVar={(requestId) => setLocation(`/field/footage/var/${requestId}`)} />)
               : null}
           </div>
         </main>
