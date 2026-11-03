@@ -4,8 +4,8 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
-import { academiesTable, creativeMusicTracksTable, db, fieldsTable } from "@workspace/db";
-import { MUSIC_LICENSES, MUSIC_MOODS, type Scene } from "@workspace/api-zod";
+import { academiesTable, creativeMusicTracksTable, creativeTemplateMusicTable, db, fieldsTable } from "@workspace/db";
+import { CREATIVE_TEMPLATES, MUSIC_LICENSES, MUSIC_MOODS, TEMPLATE_RECOMMENDED_MUSIC, type Scene } from "@workspace/api-zod";
 import {
   addTrack,
   analyzeMusic,
@@ -15,6 +15,7 @@ import {
   resolveSceneMusic,
   sceneWithDefaultMusic,
   seedReplayMusic,
+  templateMusicRows,
   titleFromFileName,
   isMusicUpload,
   tracksFor,
@@ -178,21 +179,67 @@ describe("whose music a render may use", () => {
 
 describe("template soundtracks", () => {
   const video = (key: string): Scene => ({ v: 1, format: "story", durationMs: 15000, background: "#000000", locale: "en", layers: [], template: { key, style: "broadcast" } });
+  const libraryFile = path.join(path.dirname(new URL(import.meta.url).pathname), "../../../assets/creative/music/library.json");
+  const idOf = async (key: string) => (await db.select().from(creativeMusicTracksTable).where(eq(creativeMusicTracksTable.key, key)))[0]!.id;
 
-  it("gives goal hype, training fun and talk chill (low, ducked) from the library, and leaves the rest alone", async () => {
-    const lib = (await db.select().from(creativeMusicTracksTable).where(eq(creativeMusicTracksTable.scope, "replay"))).filter((t) => t.status === "active").sort((a, b) => a.id - b.id);
-    const first = (mood: string) => lib.find((t) => t.mood === mood)!.id;
+  it("recommends bundled tracks for every template, each one in library.json with the mood the fallback uses", () => {
+    const lib = JSON.parse(fs.readFileSync(libraryFile, "utf8")) as { tracks: Array<{ key: string; mood: string }> };
+    const moods = new Map(lib.tracks.map((t) => [t.key, t.mood]));
+    const templates = CREATIVE_TEMPLATES.map((t) => t.key);
+    expect(templates).toHaveLength(31);
+    for (const key of templates) expect(TEMPLATE_RECOMMENDED_MUSIC[key], `no recommendation for ${key}`).toBeTruthy();
+    expect(Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => !templates.includes(k))).toEqual([]);
+    for (const [key, r] of Object.entries(TEMPLATE_RECOMMENDED_MUSIC)) {
+      for (const track of r.tracks) expect(moods.has(track), `${key} names ${track}, which library.json doesn't have`).toBe(true);
+      expect(moods.get(r.tracks[0]!), `${key}'s fallback mood is its first track's`).toBe(r.mood);
+    }
+  });
+
+  it("starts every video template on its first recommended track, with its settings, and leaves the rest alone", async () => {
+    await seedReplayMusic();
+    await db.delete(creativeTemplateMusicTable);
     const goal = await sceneWithDefaultMusic(video("goal"), "goal");
-    expect(goal.music).toMatchObject({ trackId: first("hype"), volume: 0.7, duck: false });
-    expect((await sceneWithDefaultMusic(video("training"), "training")).music).toMatchObject({ trackId: first("fun") });
-    expect((await sceneWithDefaultMusic(video("talk"), "talk")).music).toMatchObject({ trackId: first("chill"), volume: 0.25, duck: true });
+    expect(goal.music).toEqual({ trackId: await idOf("cc0/energetic-electro-tune"), volume: 0.7, startMs: 0, fadeInMs: 300, fadeOutMs: 1500, duck: false });
+    expect((await sceneWithDefaultMusic(video("training"), "training")).music).toMatchObject({ trackId: await idOf("cc0/elevate"), volume: 0.55 });
+    expect((await sceneWithDefaultMusic(video("talk"), "talk")).music).toMatchObject({ trackId: await idOf("cc0/chill-lofi"), volume: 0.25, duck: true, fadeInMs: 1000 });
+    // Any template now: a still template's design made into a video too.
+    expect((await sceneWithDefaultMusic(video("fulltime"), "fulltime")).music).toMatchObject({ trackId: await idOf("cc0/energetic-electro-tune"), volume: 0.6 });
+    expect((await sceneWithDefaultMusic(video("alumni"), "alumni")).music).toMatchObject({ trackId: await idOf("replay/proud-moments") });
 
     const still: Scene = { ...video("goal"), durationMs: undefined };
     expect((await sceneWithDefaultMusic(still, "goal")).music).toBeUndefined();
     const chosen: Scene = { ...video("goal"), music: { trackId: 999, volume: 0.1 } };
     expect((await sceneWithDefaultMusic(chosen, "goal")).music).toEqual({ trackId: 999, volume: 0.1 });
-    expect((await sceneWithDefaultMusic(video("fulltime"), "fulltime")).music).toBeUndefined();
-    // No track of the mood in the library: no music.
+    expect((await sceneWithDefaultMusic(video("nope"), "nope")).music).toBeUndefined();
+    // An empty library: no music.
     expect((await sceneWithDefaultMusic(video("goal"), "goal", [])).music).toBeUndefined();
+  });
+
+  it("uses an admin's choice over Replay's, skips a hidden track, falls back to the mood, and resets", async () => {
+    const [electro, warped, anthem] = await Promise.all(["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"].map(idOf));
+    await db.insert(creativeTemplateMusicTable).values({ templateKey: "fulltime", trackIds: [anthem, warped], volume: 0.35, duck: true, fadeInMs: 0, fadeOutMs: 900, startMs: 2000 });
+    try {
+      expect((await sceneWithDefaultMusic(video("fulltime"), "fulltime")).music).toEqual({ trackId: anthem, volume: 0.35, startMs: 2000, fadeInMs: 0, fadeOutMs: 900, duck: true });
+      const rows = await templateMusicRows();
+      expect(rows).toHaveLength(31);
+      const row = rows.find((r) => r.key === "fulltime")!;
+      expect(row.effective).toMatchObject({ trackIds: [anthem, warped], customised: true });
+      expect(row.builtIn).toMatchObject({ trackIds: [electro, warped, anthem], keys: ["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"] });
+      expect(rows.find((r) => r.key === "goal")!.effective.customised).toBe(false);
+
+      await db.update(creativeMusicTracksTable).set({ status: "hidden" }).where(eq(creativeMusicTracksTable.id, anthem));
+      expect((await sceneWithDefaultMusic(video("fulltime"), "fulltime")).music).toMatchObject({ trackId: warped, volume: 0.35 });
+      await db.update(creativeMusicTracksTable).set({ status: "hidden" }).where(eq(creativeMusicTracksTable.id, warped));
+      // Nothing of the list left: the first active hype track stands in.
+      const hype = (await db.select().from(creativeMusicTracksTable).where(eq(creativeMusicTracksTable.scope, "replay")))
+        .filter((t) => t.status === "active" && t.mood === "hype").sort((a, b) => a.id - b.id)[0]!;
+      expect((await sceneWithDefaultMusic(video("fulltime"), "fulltime")).music).toMatchObject({ trackId: hype.id, volume: 0.35 });
+
+      await db.delete(creativeTemplateMusicTable).where(eq(creativeTemplateMusicTable.templateKey, "fulltime"));
+      expect((await sceneWithDefaultMusic(video("fulltime"), "fulltime")).music).toMatchObject({ trackId: electro, volume: 0.6 });
+    } finally {
+      await db.update(creativeMusicTracksTable).set({ status: "active" }).where(inArray(creativeMusicTracksTable.id, [anthem, warped]));
+      await db.delete(creativeTemplateMusicTable).where(eq(creativeTemplateMusicTable.templateKey, "fulltime"));
+    }
   });
 });

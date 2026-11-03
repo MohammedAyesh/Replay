@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Music2, Pause, Play, Trash2, Upload, X } from "lucide-react";
+import { Check, Loader2, Music2, Pause, Play, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { MUSIC_MOODS, clampMusicStart, hasMusic, type MusicMood, type SceneMusic } from "@workspace/api-zod";
 import { useCreativeMusicCopy } from "@/i18n/creative-music-strings";
-import { musicFileUrl, useCreativeMusic, useDeleteCreativeMusic, type MusicTrack } from "@/lib/creative-hub-music-api";
-import { formatTrackLength, sceneTrack, windowOnTrack } from "@/lib/creative-music";
+import {
+  musicFileUrl, useCreativeMusic, useDeleteCreativeMusic, useTemplateMusicRecommendations, type MusicTrack,
+} from "@/lib/creative-hub-music-api";
+import { formatTrackLength, recommendedMusicChange, sceneTrack, windowOnTrack } from "@/lib/creative-music";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Chip, IconButton, NumberSlider, Section, Toggle, panelEmpty } from "./controls";
@@ -17,7 +19,9 @@ type Shelf = "replay" | "academy";
 const FRESH: Omit<SceneMusic, "trackId"> = { volume: 0.6, startMs: 0, fadeInMs: 300, fadeOutMs: 1200, duck: false };
 
 /**
- * Editor → Music (video scenes): the soundtrack. Browse Replay's library and
+ * Editor → Music (video scenes): the soundtrack. "Recommended for <template>"
+ * on top lists the template's recommended tracks (an admin's choice, else
+ * Replay's). Browse Replay's library and
  * the academy's own uploads by mood, listen, pick one, then choose where it
  * starts on the waveform, its volume, fades and ducking. "Upload music" adds
  * the academy's own (rights confirmed).
@@ -26,6 +30,9 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
   const copy = useCreativeMusicCopy();
   const tracks = useCreativeMusic(ed.academyId, ed.isVideo);
   const remove = useDeleteCreativeMusic(ed.academyId);
+  const templateKey = ed.template?.key ?? null;
+  const recommendations = useTemplateMusicRecommendations(ed.academyId, ed.isVideo && !!templateKey);
+  const rec = templateKey ? recommendations.data?.[templateKey] ?? null : null;
   const [shelf, setShelf] = useState<Shelf>("replay");
   const [mood, setMood] = useState<MusicMood | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -38,6 +45,10 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
   useEffect(() => { if (ed.playing) audition.stop(); }, [ed.playing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const list = useMemo(() => (tracks.data ?? []).filter((t) => t.scope === shelf && (!mood || t.mood === mood)), [tracks.data, shelf, mood]);
+  const recommended = useMemo(() => {
+    const byId = new Map((tracks.data ?? []).map((t) => [t.trackId, t]));
+    return (rec?.trackIds ?? []).map((id) => byId.get(id)).filter((t): t is MusicTrack => !!t && t.scope === "replay");
+  }, [tracks.data, rec]);
 
   if (!ed.isVideo) return <p className={panelEmpty}>{copy.onlyVideo}</p>;
 
@@ -51,6 +62,23 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
     delete base.trackKey;
     ed.updateScene({ music: { ...base, trackId: t.trackId, startMs: 0 } });
   };
+  const applyRecommended = (t: MusicTrack) => {
+    if (!rec) return;
+    audition.stop();
+    ed.updateScene({ music: recommendedMusicChange(music, rec, t.trackId) });
+  };
+  const row = (t: MusicTrack, onUse: () => void, testPrefix = "") => (
+    <TrackRow key={t.trackId} track={t} inUse={current?.trackId === t.trackId} testPrefix={testPrefix}
+      auditioning={audition.id === t.trackId} loading={audition.id === t.trackId && audition.loading}
+      progressMs={audition.id === t.trackId ? audition.ms : null}
+      onAudition={() => { ed.setPlaying(false); audition.toggle(t); }}
+      onUse={onUse}
+      onDelete={t.mine ? () => {
+        if (!window.confirm(copy.deleteConfirm)) return;
+        if (audition.id === t.trackId) audition.stop();
+        remove.mutate(t.trackId);
+      } : undefined} />
+  );
 
   return (
     <div className="space-y-5" data-testid="editor-music-panel">
@@ -68,6 +96,15 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
               onChange={setMusic} onRemove={() => ed.updateScene({ music: undefined })} />
           )}
       </Section>
+
+      {recommended.length > 0 && ed.template ? (
+        <Section title={copy.recommendedFor(ed.template.title[copy.locale])}>
+          <div data-testid="music-recommended" className="space-y-2">
+            <p className="flex items-center gap-1.5 text-xs text-muted-text"><Sparkles className="h-3.5 w-3.5 shrink-0 text-turf" aria-hidden />{copy.recommendedHint}</p>
+            <ul className="space-y-2">{recommended.map((t) => row(t, () => applyRecommended(t), "rec-"))}</ul>
+          </div>
+        </Section>
+      ) : null}
 
       <Section title={copy.tool} aside={
         <Button type="button" size="sm" variant="outline" className="min-h-9 rounded-xl" onClick={() => { audition.stop(); setUploadOpen(true); }} data-testid="music-upload-open">
@@ -98,18 +135,7 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
           <p className={panelEmpty}>{shelf === "academy" && !mood ? copy.noOwn : copy.noneInMood}</p>
         ) : (
           <ul className="space-y-2" data-testid="music-track-list">
-            {list.map((t) => (
-              <TrackRow key={t.trackId} track={t} inUse={current?.trackId === t.trackId}
-                auditioning={audition.id === t.trackId} loading={audition.id === t.trackId && audition.loading}
-                progressMs={audition.id === t.trackId ? audition.ms : null}
-                onAudition={() => { ed.setPlaying(false); audition.toggle(t); }}
-                onUse={() => use(t)}
-                onDelete={t.mine ? () => {
-                  if (!window.confirm(copy.deleteConfirm)) return;
-                  if (audition.id === t.trackId) audition.stop();
-                  remove.mutate(t.trackId);
-                } : undefined} />
-            ))}
+            {list.map((t) => row(t, () => use(t)))}
           </ul>
         )}
       </Section>
@@ -166,15 +192,15 @@ function CurrentTrack({ track, music, sceneMs, timeMs, playing, onChange, onRemo
   );
 }
 
-function TrackRow({ track, inUse, auditioning, loading, progressMs, onAudition, onUse, onDelete }: {
+function TrackRow({ track, inUse, auditioning, loading, progressMs, onAudition, onUse, onDelete, testPrefix = "" }: {
   track: MusicTrack; inUse: boolean; auditioning: boolean; loading: boolean; progressMs: number | null;
-  onAudition: () => void; onUse: () => void; onDelete?: () => void;
+  onAudition: () => void; onUse: () => void; onDelete?: () => void; testPrefix?: string;
 }) {
   const copy = useCreativeMusicCopy();
   return (
-    <li className={cn("space-y-2 rounded-xl border p-2.5", inUse ? "border-turf bg-turf/5" : "border-line bg-surface")} data-testid={`music-track-${track.trackId}`}>
+    <li className={cn("space-y-2 rounded-xl border p-2.5", inUse ? "border-turf bg-turf/5" : "border-line bg-surface")} data-testid={`music-${testPrefix}track-${track.trackId}`}>
       <div className="flex items-center gap-2">
-        <IconButton label={auditioning ? copy.pause : copy.play} onClick={onAudition} active={auditioning} testId={`music-play-${track.trackId}`}>
+        <IconButton label={auditioning ? copy.pause : copy.play} onClick={onAudition} active={auditioning} testId={`music-${testPrefix}play-${track.trackId}`}>
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : auditioning ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
         </IconButton>
         <div className="min-w-0 flex-1">
@@ -184,7 +210,7 @@ function TrackRow({ track, inUse, auditioning, loading, progressMs, onAudition, 
           </span>
         </div>
         {onDelete ? <IconButton label={copy.deleteTrack} onClick={onDelete} className="hover:text-live"><Trash2 className="h-4 w-4" /></IconButton> : null}
-        <Button type="button" size="sm" variant={inUse ? "outline" : "default"} className="min-h-10 shrink-0 rounded-xl px-3" onClick={onUse} disabled={inUse} data-testid={`music-use-${track.trackId}`}>
+        <Button type="button" size="sm" variant={inUse ? "outline" : "default"} className="min-h-10 shrink-0 rounded-xl px-3" onClick={onUse} disabled={inUse} data-testid={`music-${testPrefix}use-${track.trackId}`}>
           {inUse ? <><Check className="h-4 w-4" />{copy.using}</> : copy.use}
         </Button>
       </div>

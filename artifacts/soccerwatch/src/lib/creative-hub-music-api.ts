@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { MusicMood } from "@workspace/api-zod";
+import type { MusicMood, TemplateMusicRecommendation } from "@workspace/api-zod";
 import { apiUrl, call } from "@/lib/academy-studio-api";
 import { creativePath } from "@/lib/creative-hub-api";
 
@@ -10,6 +10,7 @@ import { creativePath } from "@/lib/creative-hub-api";
  *   PATCH  …/creative/music/:id            the academy's own
  *   DELETE …/creative/music/:id            the academy's own
  *   GET    …/creative/music/:id/file       the .m4a (Range), via musicFileUrl
+ *   GET    …/creative/music/recommendations every template's recommended music (Replay's tracks)
  */
 
 export type MusicTrack = {
@@ -35,7 +36,22 @@ export type MusicTrack = {
 
 export const musicKeys = {
   all: (academyId: number) => ["creative", academyId, "music"] as const,
+  recommendations: (academyId: number) => ["creative", academyId, "music", "recommendations"] as const,
 };
+
+/**
+ * Every template's recommended music by template key (the admin's choice, else
+ * Replay's pick): ordered Replay track ids, the first the one a video starts
+ * with, and how it plays.
+ */
+export function useTemplateMusicRecommendations(academyId: number, enabled = true) {
+  return useQuery({
+    queryKey: musicKeys.recommendations(academyId),
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: () => call<{ templates: Record<string, TemplateMusicRecommendation> }>(creativePath(academyId, "/music/recommendations")).then((r) => r.templates),
+  });
+}
 
 /** Every track the academy may use (Replay's first, then its own). The panel filters locally. */
 export function useCreativeMusic(academyId: number, enabled = true) {

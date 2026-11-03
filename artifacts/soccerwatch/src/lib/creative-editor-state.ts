@@ -1,6 +1,7 @@
 import {
   buildTemplateScene,
   CREATIVE_FORMATS,
+  hasMusic,
   parsePlateKey,
   PLATE_LAYER_ID,
   templatePlateLayer,
@@ -11,6 +12,7 @@ import {
   type MediaSource,
   type Scene,
   type SceneLayer,
+  type SceneMusic,
 } from "@workspace/api-zod";
 
 /**
@@ -44,6 +46,13 @@ export type EditorState = {
   lastAt: number;
   /** Bumped on every change to the scene; the autosave watches it. */
   revision: number;
+  /**
+   * The template's recommended music (setAutoMusic), put on the design the
+   * first time it turns from a still into a video without music; once only,
+   * so music the manager removes stays removed.
+   */
+  autoMusic: SceneMusic | null;
+  autoMusicUsed: boolean;
 };
 
 export type EditorAction =
@@ -57,29 +66,40 @@ export type EditorAction =
   | { type: "setFormat"; format: CreativeFormat }
   | { type: "setStyle"; style: CreativeStyle }
   | { type: "setPlate"; change: PlateChange; key?: string; at?: number }
+  | { type: "setAutoMusic"; music: SceneMusic | null }
   | { type: "checkpoint" }
   | { type: "undo" }
   | { type: "redo" };
 
 export function createEditorState(scene: Scene): EditorState {
-  return { scene, past: [], future: [], lastKey: null, lastAt: 0, revision: 0 };
+  return { scene, past: [], future: [], lastKey: null, lastAt: 0, revision: 0, autoMusic: null, autoMusicUsed: false };
+}
+
+/**
+ * `next` with `music` on it when this change turns a still (`prev`) into a
+ * video and the video has no music; otherwise `next` itself.
+ */
+export function withAutoMusic(prev: Scene, next: Scene, music: SceneMusic | null | undefined): Scene {
+  if (!music || prev.durationMs !== undefined || next.durationMs === undefined || hasMusic(next.music)) return next;
+  return { ...next, music: { ...music } };
 }
 
 export const canUndo = (s: EditorState) => s.past.length > 0;
 export const canRedo = (s: EditorState) => s.future.length > 0;
 
 /** Record a new scene; merge it into the previous undo step when it continues the same gesture. */
-function commit(state: EditorState, scene: Scene, key: string | null = null, at = 0): EditorState {
-  if (scene === state.scene) return state;
+function commit(state: EditorState, changed: Scene, key: string | null = null, at = 0): EditorState {
+  if (changed === state.scene) return state;
+  const scene = state.autoMusicUsed ? changed : withAutoMusic(state.scene, changed, state.autoMusic);
   const coalesce = key !== null && key === state.lastKey && at - state.lastAt <= COALESCE_MS;
   const past = coalesce ? state.past : [...state.past, state.scene].slice(-HISTORY_LIMIT);
-  return { scene, past, future: [], lastKey: key, lastAt: at, revision: state.revision + 1 };
+  return { ...state, scene, past, future: [], lastKey: key, lastAt: at, revision: state.revision + 1, autoMusicUsed: state.autoMusicUsed || scene !== changed };
 }
 
 export function editorReducer(state: EditorState, action: EditorAction): EditorState {
   switch (action.type) {
     case "load":
-      return { ...createEditorState(action.scene), revision: state.revision };
+      return { ...createEditorState(action.scene), revision: state.revision, autoMusic: state.autoMusic, autoMusicUsed: state.autoMusicUsed };
     case "updateLayer":
       return commit(state, updateLayer(state.scene, action.id, action.change), action.key ?? null, action.at ?? 0);
     case "addLayer":
@@ -98,17 +118,19 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return commit(state, changeStyle(state.scene, action.style));
     case "setPlate":
       return commit(state, setPlate(state.scene, action.change), action.key ?? null, action.at ?? 0);
+    case "setAutoMusic":
+      return JSON.stringify(state.autoMusic) === JSON.stringify(action.music) ? state : { ...state, autoMusic: action.music };
     case "checkpoint":
       return { ...state, lastKey: null };
     case "undo": {
       if (!state.past.length) return state;
       const prev = state.past[state.past.length - 1]!;
-      return { scene: prev, past: state.past.slice(0, -1), future: [state.scene, ...state.future], lastKey: null, lastAt: 0, revision: state.revision + 1 };
+      return { ...state, scene: prev, past: state.past.slice(0, -1), future: [state.scene, ...state.future], lastKey: null, lastAt: 0, revision: state.revision + 1 };
     }
     case "redo": {
       if (!state.future.length) return state;
       const [next, ...rest] = state.future;
-      return { scene: next!, past: [...state.past, state.scene], future: rest, lastKey: null, lastAt: 0, revision: state.revision + 1 };
+      return { ...state, scene: next!, past: [...state.past, state.scene], future: rest, lastKey: null, lastAt: 0, revision: state.revision + 1 };
     }
   }
 }

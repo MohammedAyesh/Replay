@@ -290,3 +290,46 @@ describe("against the real template catalogue", () => {
     }
   });
 });
+
+describe("a still that becomes a video gets its template's recommended music once", () => {
+  const rec = { trackId: 41, volume: 0.6, startMs: 0, fadeInMs: 300, fadeOutMs: 1500, duck: false };
+
+  it("puts the recommendation on when the design first gains a duration, as one undo step", () => {
+    let s = run(createEditorState(base()), { type: "setAutoMusic", music: rec });
+    expect(s.revision).toBe(0);
+    s = run(s, { type: "updateLayer", id: "title", change: { text: "GAME OVER" } });
+    expect(s.scene.music).toBeUndefined();
+    s = run(s, { type: "updateScene", change: { durationMs: 15_000 } });
+    expect(s.scene.music).toEqual(rec);
+    expect(s.autoMusicUsed).toBe(true);
+    // Undo takes the duration and the music away together; redo brings both back.
+    s = run(s, { type: "undo" });
+    expect(s.scene.durationMs).toBeUndefined();
+    expect(s.scene.music).toBeUndefined();
+    s = run(s, { type: "redo" });
+    expect(s.scene.music).toEqual(rec);
+  });
+
+  it("never adds it back once the manager removes it, nor a second time", () => {
+    let s = run(createEditorState(base()), { type: "setAutoMusic", music: rec },
+      { type: "updateScene", change: { durationMs: 15_000 } },
+      { type: "updateScene", change: { music: undefined } });
+    expect(s.scene.music).toBeUndefined();
+    s = run(s, { type: "updateScene", change: { durationMs: 20_000 } });
+    expect(s.scene.music).toBeUndefined();
+    // Back to a still and a video again: still once only.
+    s = run(s, { type: "updateScene", change: { durationMs: undefined } }, { type: "updateScene", change: { durationMs: 10_000 } });
+    expect(s.scene.music).toBeUndefined();
+  });
+
+  it("leaves music the design has, videos it loaded as, and designs without a recommendation alone", () => {
+    const own = { trackId: 7, volume: 0.2 };
+    const withOwn = run(createEditorState({ ...base(), music: own }), { type: "setAutoMusic", music: rec }, { type: "updateScene", change: { durationMs: 15_000 } });
+    expect(withOwn.scene.music).toEqual(own);
+    const video = run(createEditorState({ ...base(), durationMs: 15_000 }), { type: "setAutoMusic", music: rec }, { type: "updateScene", change: { durationMs: 20_000 } });
+    expect(video.scene.music).toBeUndefined();
+    const none = run(createEditorState(base()), { type: "setAutoMusic", music: null }, { type: "updateScene", change: { durationMs: 15_000 } });
+    expect(none.scene.music).toBeUndefined();
+    expect(none.autoMusicUsed).toBe(false);
+  });
+});

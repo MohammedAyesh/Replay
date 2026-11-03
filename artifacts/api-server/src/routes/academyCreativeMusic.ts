@@ -2,9 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import multer from "multer";
-import { and, eq } from "drizzle-orm";
-import { creativeMusicTracksTable, db } from "@workspace/db";
-import { MUSIC_LICENSES, MUSIC_MOODS, MUSIC_UPLOAD_MAX_BYTES } from "@workspace/api-zod";
+import { and, eq, inArray } from "drizzle-orm";
+import { creativeMusicTracksTable, creativeTemplateMusicTable, db } from "@workspace/db";
+import { CREATIVE_TEMPLATES, MUSIC_LICENSES, MUSIC_MOODS, MUSIC_UPLOAD_MAX_BYTES, parseTemplateMusicInput } from "@workspace/api-zod";
 import { requireAcademyConsoleUser, requireAcademyMembership } from "../lib/academyAccess";
 import { academyIdParam } from "../lib/academyOwner";
 import { CREATIVE_BASE, creativeOwner } from "../lib/creative/projects";
@@ -21,6 +21,7 @@ import {
   ownTrack,
   replayTrack,
   sendMusicFile,
+  templateMusicRows,
   titleFromFileName,
   trackView,
   tracksFor,
@@ -39,12 +40,21 @@ import { logger } from "../lib/logger";
  *   DELETE …/creative/music/:trackId                      the academy's own
  *   GET    …/creative/music/:trackId/file                 the .m4a (Range); any member of the academy,
  *                                                         Replay's tracks or the academy's own only
+ *   GET    …/creative/music/recommendations               every template's recommended music now
+ *                                                         (Replay's active tracks only)
  *
  * Admin (users.is_admin), Replay's library:
  *   GET    /admin/creative/music                          every Replay track, hidden ones too
  *   POST   /admin/creative/music                          upload (file, title?, artist?, mood, bpm?, license?)
  *   PATCH  /admin/creative/music/:trackId                 { title?, artist?, mood?, bpm?, status?, license? }
  *   GET    /admin/creative/music/:trackId/file
+ *
+ * Admin, template music (creative_template_music, 0064):
+ *   GET    /admin/creative/music/templates                every template: what it recommends now,
+ *                                                         Replay's own pick, whether it's customised
+ *   PUT    /admin/creative/music/templates/:templateKey   { trackIds (0–5 active Replay tracks, in order),
+ *                                                           volume 0–1, duck, fadeInMs, fadeOutMs, startMs }
+ *   DELETE /admin/creative/music/templates/:templateKey   back to Replay's recommendation
  *
  * An upload is transcoded to AAC .m4a, measured (duration, loudness,
  * waveform) and stored like other academy media. An academy's upload needs its
@@ -183,6 +193,23 @@ router.delete(`${base}/:trackId`, async (req, res): Promise<void> => {
   }
 });
 
+router.get(`${base}/recommendations`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  try {
+    const rows = await templateMusicRows();
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({
+      templates: Object.fromEntries(rows.map((r) => [r.key, {
+        trackIds: r.effective.trackIds, volume: r.effective.volume, duck: r.effective.duck,
+        fadeInMs: r.effective.fadeInMs, fadeOutMs: r.effective.fadeOutMs, startMs: r.effective.startMs,
+      }])),
+    });
+  } catch (error) {
+    failed(res, error, "Creative music: recommendations failed");
+  }
+});
+
 router.get(`${base}/:trackId/file`, async (req, res): Promise<void> => {
   try {
     const user = await requireAcademyConsoleUser(req, res);
@@ -196,6 +223,62 @@ router.get(`${base}/:trackId/file`, async (req, res): Promise<void> => {
     await sendMusicFile(req, res, track);
   } catch (error) {
     failed(res, error, "Creative music: file failed");
+  }
+});
+
+// ── Admin: template music ────────────────────────────────────────────────────
+
+const templateKeyParam = (v: unknown): string | null =>
+  (typeof v === "string" && CREATIVE_TEMPLATES.some((t) => t.key === v) ? v : null);
+
+router.get(`${adminBase}/templates`, async (req, res): Promise<void> => {
+  if (!(await adminAccess(req, res))) return;
+  try {
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ templates: await templateMusicRows() });
+  } catch (error) {
+    failed(res, error, "Creative music: template list failed");
+  }
+});
+
+router.put(`${adminBase}/templates/:templateKey`, async (req, res): Promise<void> => {
+  const admin = await adminAccess(req, res);
+  if (!admin) return;
+  const key = templateKeyParam(req.params.templateKey);
+  if (!key) { res.status(404).json({ error: "Unknown template" }); return; }
+  const parsed = parseTemplateMusicInput(req.body);
+  if (!parsed.ok) { res.status(400).json({ error: parsed.error, field: parsed.field }); return; }
+  const v = parsed.value;
+  try {
+    // Only Replay's own active tracks can be recommended to every academy.
+    if (v.trackIds.length) {
+      const found = await db.select({ id: creativeMusicTracksTable.id }).from(creativeMusicTracksTable)
+        .where(and(inArray(creativeMusicTracksTable.id, v.trackIds), eq(creativeMusicTracksTable.scope, "replay"), eq(creativeMusicTracksTable.status, "active")));
+      if (found.length !== v.trackIds.length) {
+        res.status(400).json({ error: "Every track must be an active track of Replay's library", field: "trackIds" });
+        return;
+      }
+    }
+    const set = { trackIds: v.trackIds, volume: v.volume, duck: v.duck, fadeInMs: v.fadeInMs, fadeOutMs: v.fadeOutMs, startMs: v.startMs, updatedBy: admin.id, updatedAt: new Date() };
+    await db.insert(creativeTemplateMusicTable).values({ templateKey: key, ...set })
+      .onConflictDoUpdate({ target: creativeTemplateMusicTable.templateKey, set });
+    const row = (await templateMusicRows()).find((r) => r.key === key)!;
+    res.json({ template: row });
+  } catch (error) {
+    failed(res, error, "Creative music: template save failed");
+  }
+});
+
+router.delete(`${adminBase}/templates/:templateKey`, async (req, res): Promise<void> => {
+  if (!(await adminAccess(req, res))) return;
+  const key = templateKeyParam(req.params.templateKey);
+  if (!key) { res.status(404).json({ error: "Unknown template" }); return; }
+  try {
+    await db.delete(creativeTemplateMusicTable).where(eq(creativeTemplateMusicTable.templateKey, key));
+    const row = (await templateMusicRows()).find((r) => r.key === key)!;
+    res.json({ template: row });
+  } catch (error) {
+    failed(res, error, "Creative music: template reset failed");
   }
 });
 

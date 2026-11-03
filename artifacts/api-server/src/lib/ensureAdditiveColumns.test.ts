@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -56,6 +56,21 @@ describe("ensureAdditiveColumns", () => {
     await expect(pool.query(`INSERT INTO creative_music_tracks (scope, title, mood, duration_ms, path, license) VALUES ('replay', 'x', 'loud', 1000, 'p', 'l')`)).rejects.toThrow();
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0063_creative_music.sql", import.meta.url), "utf8");
     for (const statement of CREATIVE_MUSIC_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates creative_template_music (0064), as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "creative_template_music"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(1);
+    const { rows: cols } = await pool.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name = 'creative_template_music' ORDER BY column_name`);
+    expect(cols.map((c) => c.column_name)).toEqual(["duck", "fade_in_ms", "fade_out_ms", "start_ms", "template_key", "track_ids", "updated_at", "updated_by", "volume"]);
+    await pool.query(`INSERT INTO creative_template_music (template_key, volume, fade_in_ms, fade_out_ms) VALUES ('t-0064', 0.5, 300, 1500)`);
+    const { rows } = await pool.query(`SELECT track_ids, duck, start_ms FROM creative_template_music WHERE template_key = 't-0064'`);
+    expect(rows).toEqual([{ track_ids: [], duck: false, start_ms: 0 }]);
+    await expect(pool.query(`INSERT INTO creative_template_music (template_key, volume, fade_in_ms, fade_out_ms) VALUES ('t-0064', 0.5, 300, 1500)`)).rejects.toThrow();
+    await pool.query(`DELETE FROM creative_template_music WHERE template_key = 't-0064'`);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0064_creative_template_music.sql", import.meta.url), "utf8");
+    for (const statement of CREATIVE_TEMPLATE_MUSIC_STATEMENTS) expect(migration).toContain(`${statement};`);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 });

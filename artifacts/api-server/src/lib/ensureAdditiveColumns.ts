@@ -40,6 +40,17 @@ export const CREATIVE_MUSIC_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "creative_music_tracks_key_unique" ON "creative_music_tracks" ("key") WHERE "key" is not null`,
 ];
 
+/** 0064: admins' recommended music per template. Exported for the test that compares it with the migration file. */
+export const CREATIVE_TEMPLATE_MUSIC_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "creative_template_music" (
+  "template_key" text PRIMARY KEY,
+  "track_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "volume" real NOT NULL, "duck" boolean DEFAULT false NOT NULL,
+  "fade_in_ms" integer NOT NULL, "fade_out_ms" integer NOT NULL, "start_ms" integer DEFAULT 0 NOT NULL,
+  "updated_by" integer CONSTRAINT "creative_template_music_updated_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL)`,
+];
+
 /**
  * Additive, idempotent schema the code depends on. If a publish reaches a database that
  * never got it (the push ran on dev only), every `select *` on those tables fails with
@@ -387,6 +398,11 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   {
     table: "creative_music_tracks",
     statements: CREATIVE_MUSIC_STATEMENTS,
+  },
+  // 0064_creative_template_music.sql (the statements are the migration's, one per statement)
+  {
+    table: "creative_template_music",
+    statements: CREATIVE_TEMPLATE_MUSIC_STATEMENTS,
   },
 ];
 

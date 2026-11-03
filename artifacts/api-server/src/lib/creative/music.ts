@@ -7,19 +7,23 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import type { Request, Response } from "express";
 import { and, asc, eq, inArray, isNull, or, type SQL } from "drizzle-orm";
-import { creativeMusicTracksTable, db, type CreativeMusicTrack } from "@workspace/db";
+import { creativeMusicTracksTable, creativeTemplateMusicTable, db, type CreativeMusicTrack, type CreativeTemplateMusic } from "@workspace/db";
 import {
   MUSIC_LICENSES,
   MUSIC_MAX_DURATION_MS,
   MUSIC_MIN_DURATION_MS,
   MUSIC_MOODS,
   MUSIC_WAVEFORM_PEAKS,
-  TEMPLATE_MUSIC,
+  CREATIVE_TEMPLATES,
+  TEMPLATE_RECOMMENDED_MUSIC,
+  builtInTemplateMusic,
+  effectiveTemplateMusic,
   hasMusic,
-  templateDefaultMusic,
+  recommendationSceneMusic,
   type MusicMood,
   type Scene,
   type SceneMusic,
+  type TemplateMusicRecommendation,
 } from "@workspace/api-zod";
 import { fetchExportObject } from "../backupExport";
 import { bunnyStorageUrlFor, deleteBunnyStoragePath, isBunnyStorageConfigured, uploadFileToBunnyStoragePath } from "../bunny";
@@ -506,18 +510,99 @@ export async function resolveSceneMusic(academyId: number, music: SceneMusic | u
   return { path: file, durationMs: row?.durationMs ?? null, loudnessLufs: row?.loudnessLufs ?? null };
 }
 
+// ── Template recommendations ─────────────────────────────────────────────────
+
+/** An admin's row as a recommendation. */
+export const overrideOf = (row: CreativeTemplateMusic): TemplateMusicRecommendation => ({
+  trackIds: Array.isArray(row.trackIds) ? row.trackIds.filter((id) => Number.isSafeInteger(id)) : [],
+  volume: row.volume, duck: row.duck, fadeInMs: row.fadeInMs, fadeOutMs: row.fadeOutMs, startMs: row.startMs,
+});
+
+/** Every admin choice (creative_template_music), by template key. */
+export async function templateMusicOverrides(): Promise<Map<string, CreativeTemplateMusic>> {
+  const rows = await db.select().from(creativeTemplateMusicTable);
+  return new Map(rows.map((r) => [r.templateKey, r]));
+}
+
+const recommendable = (library: CreativeMusicTrack[]) => library.map((t) => ({ trackId: t.id, key: t.key, mood: t.mood }));
+
+export type TemplateMusicRow = {
+  key: string;
+  title: { en: string; ar: string };
+  category: string;
+  kind: "image" | "video";
+  formats: string[];
+  /** What videos from the template start with now (Replay's active tracks only). */
+  effective: TemplateMusicRecommendation & { customised: boolean; fallback: boolean };
+  /** Replay's own pick (keys looked up in the library; keys it lacks are left out). */
+  builtIn: TemplateMusicRecommendation & { keys: string[] };
+  /** The admin's saved list as saved (hidden tracks included), when customised. */
+  saved: TemplateMusicRecommendation | null;
+  updatedAt: string | null;
+};
+
 /**
- * A video made from a template starts with a soundtrack of the template's
- * mood (TEMPLATE_MUSIC: goal → hype, training → fun, talk → chill, low and
- * ducked) when Replay's library has one. A scene that already has music, a
- * still, or another template is returned as it is; so is any failure.
+ * Every template's recommended music, in catalogue order: the admin's choice
+ * when there is one, else Replay's; hidden or deleted tracks skipped (see
+ * effectiveTemplateMusic). `library`: Replay's active library (read when absent).
  */
-export async function sceneWithDefaultMusic(scene: Scene, templateKey: string | null | undefined, library?: CreativeMusicTrack[]): Promise<Scene> {
-  if (scene.durationMs === undefined || scene.music || !templateKey || !TEMPLATE_MUSIC[templateKey]) return scene;
+export async function templateMusicRows(library?: CreativeMusicTrack[], overrides?: Map<string, CreativeTemplateMusic>): Promise<TemplateMusicRow[]> {
+  if (!library) await ensureReplayMusic();
+  const tracks = recommendable(library ?? await replayLibrary());
+  const saved = overrides ?? await templateMusicOverrides();
+  return CREATIVE_TEMPLATES.map((t) => {
+    const row = saved.get(t.key);
+    const override = row ? overrideOf(row) : null;
+    const builtIn = builtInTemplateMusic(t.key, tracks)!;
+    return {
+      key: t.key,
+      title: t.title,
+      category: t.category,
+      kind: t.kind,
+      formats: t.formats,
+      effective: effectiveTemplateMusic(t.key, override, tracks)!,
+      builtIn: { ...builtIn, keys: [...(TEMPLATE_RECOMMENDED_MUSIC[t.key]?.tracks ?? [])] },
+      saved: override,
+      updatedAt: row?.updatedAt.toISOString() ?? null,
+    };
+  });
+}
+
+/** The music a video made from `templateKey` starts with now, or null (no template, no track left). */
+export async function recommendedMusicFor(
+  templateKey: string,
+  library?: CreativeMusicTrack[],
+  overrides?: Map<string, CreativeTemplateMusic>,
+): Promise<SceneMusic | null> {
+  if (!library) await ensureReplayMusic();
+  const tracks = recommendable(library ?? await replayLibrary());
+  let override: TemplateMusicRecommendation | null = null;
+  if (overrides) {
+    const row = overrides.get(templateKey);
+    override = row ? overrideOf(row) : null;
+  } else {
+    const [row] = await db.select().from(creativeTemplateMusicTable).where(eq(creativeTemplateMusicTable.templateKey, templateKey));
+    override = row ? overrideOf(row) : null;
+  }
+  return recommendationSceneMusic(effectiveTemplateMusic(templateKey, override, tracks));
+}
+
+/**
+ * A video made from a template starts with the template's recommended music
+ * (the admin's choice in /admin, else Replay's pick; its first track that is
+ * still in Replay's library, else a track of the template's mood). A scene
+ * that already has music, a still, or a scene without a template is returned
+ * as it is; so is any failure.
+ */
+export async function sceneWithDefaultMusic(
+  scene: Scene,
+  templateKey: string | null | undefined,
+  library?: CreativeMusicTrack[],
+  overrides?: Map<string, CreativeTemplateMusic>,
+): Promise<Scene> {
+  if (scene.durationMs === undefined || scene.music || !templateKey || !TEMPLATE_RECOMMENDED_MUSIC[templateKey]) return scene;
   try {
-    if (!library) await ensureReplayMusic();
-    const tracks = library ?? await replayLibrary();
-    const music = templateDefaultMusic(templateKey, tracks.map((t) => ({ trackId: t.id, mood: t.mood })));
+    const music = await recommendedMusicFor(templateKey, library, overrides);
     return music ? { ...scene, music } : scene;
   } catch (err) {
     logger.warn({ err: (err as Error)?.message, templateKey }, "Creative music: default track lookup failed");

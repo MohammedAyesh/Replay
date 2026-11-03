@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import { eq } from "drizzle-orm";
-import { academiesTable, academyMembersTable, creativeMusicTracksTable, db, fieldsTable, usersTable } from "@workspace/db";
+import { academiesTable, academyMembersTable, creativeMusicTracksTable, creativeTemplateMusicTable, db, fieldsTable, usersTable } from "@workspace/db";
 import { buildTemplateScene } from "@workspace/api-zod";
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -229,13 +229,14 @@ describe("Creative music: admin manages Replay's library", () => {
 });
 
 describe("Creative music: templates start with a track", () => {
-  it("a goal video from its template gets a hype track; a still and a design with music are left alone", async () => {
+  it("a goal video from its template gets its recommended track; a still and a design with music are left alone", async () => {
+    await db.delete(creativeTemplateMusicTable);
     const scene = buildTemplateScene("goal", "broadcast", "story", "en");
     const res = await request(app).post(`/api/academy/console/academies/${academyA}/creative/projects`).set(auth(ownerA)).send({ scene }).expect(201);
     const music = res.body.project.scene.music;
     expect(music).toMatchObject({ volume: 0.7, duck: false });
     const [track] = await db.select().from(creativeMusicTracksTable).where(eq(creativeMusicTracksTable.id, music.trackId));
-    expect(track).toMatchObject({ scope: "replay", mood: "hype", status: "active" });
+    expect(track).toMatchObject({ scope: "replay", key: "cc0/energetic-electro-tune", mood: "hype", status: "active" });
 
     const talk = await request(app).post(`/api/academy/console/academies/${academyA}/creative/projects`).set(auth(ownerA))
       .send({ scene: buildTemplateScene("talk", "broadcast", "story", "en") }).expect(201);
@@ -248,5 +249,104 @@ describe("Creative music: templates start with a track", () => {
     const own = await request(app).post(`/api/academy/console/academies/${academyA}/creative/projects`).set(auth(ownerA))
       .send({ scene: { ...scene, music: { trackId: aTrack, volume: 0.4 } } }).expect(201);
     expect(own.body.project.scene.music).toEqual({ trackId: aTrack, volume: 0.4 });
+  });
+});
+
+describe("Creative music: template music in /admin", () => {
+  const admin = (p = "") => `/api/admin/creative/music/templates${p}`;
+  const idOf = async (key: string) => (await db.select().from(creativeMusicTracksTable).where(eq(creativeMusicTracksTable.key, key)))[0]!.id;
+  const body = (trackIds: number[], extra: Record<string, unknown> = {}) => ({ trackIds, volume: 0.45, duck: true, fadeInMs: 500, fadeOutMs: 2000, startMs: 3000, ...extra });
+  const goalProject = () => request(app).post(`/api/academy/console/academies/${academyA}/creative/projects`).set(auth(ownerA))
+    .send({ scene: buildTemplateScene("goal", "broadcast", "story", "en") }).expect(201);
+
+  it("is admin only: an academy owner, a coach and an outsider can't read, save or reset", async () => {
+    await db.delete(creativeTemplateMusicTable);
+    for (const who of [ownerA, coachA, outsider]) {
+      expect((await request(app).get(admin()).set(auth(who))).status).toBe(403);
+      expect((await request(app).put(admin("/goal")).set(auth(who)).send(body([]))).status).toBe(403);
+      expect((await request(app).delete(admin("/goal")).set(auth(who))).status).toBe(403);
+    }
+    expect((await request(app).get(admin())).status).toBe(401);
+    expect(await db.$count(creativeTemplateMusicTable)).toBe(0);
+  });
+
+  it("lists all 31 templates with what they recommend and Replay's pick", async () => {
+    const res = await request(app).get(admin()).set(auth(adminId)).expect(200);
+    expect(res.body.templates).toHaveLength(31);
+    const goal = res.body.templates.find((t: { key: string }) => t.key === "goal");
+    const ids = await Promise.all(["cc0/energetic-electro-tune", "cc0/fight-for-a-better-future", "replay/matchday-anthem"].map(idOf));
+    expect(goal).toMatchObject({ title: { en: "Goal clip" }, category: "players", kind: "video", saved: null, updatedAt: null,
+      effective: { trackIds: ids, volume: 0.7, customised: false }, builtIn: { trackIds: ids } });
+    expect(res.body.templates.find((t: { key: string }) => t.key === "fulltime")).toMatchObject({ kind: "image", effective: { volume: 0.6, fadeInMs: 300, fadeOutMs: 1500, duck: false } });
+  });
+
+  it("refuses what isn't valid: an unknown template, bad settings, a hidden, academy or missing track", async () => {
+    const anthem = await idOf("replay/matchday-anthem");
+    expect((await request(app).put(admin("/nope")).set(auth(adminId)).send(body([anthem]))).status).toBe(404);
+    const bad = async (b: unknown) => (await request(app).put(admin("/goal")).set(auth(adminId)).send(b as object));
+    expect((await bad(body([anthem], { volume: 1.5 }))).body.field).toBe("volume");
+    expect((await bad(body([anthem], { fadeInMs: -10 }))).body.field).toBe("fadeInMs");
+    expect((await bad(body([anthem], { fadeOutMs: 99_000 }))).body.field).toBe("fadeOutMs");
+    expect((await bad(body([anthem], { startMs: 11 * 60_000 }))).body.field).toBe("startMs");
+    expect((await bad(body([anthem], { duck: "yes" }))).body.field).toBe("duck");
+    expect((await bad(body([1, 2, 3, 4, 5, 6]))).body.field).toBe("trackIds");
+    expect((await bad(body([anthem, anthem]))).body.field).toBe("trackIds");
+    // Only Replay's active tracks: not an academy's own, not a hidden one, not one that doesn't exist.
+    const own = await bad(body([anthem, aTrack]));
+    expect(own.status).toBe(400);
+    expect(own.body.field).toBe("trackIds");
+    expect((await bad(body([2_000_000_000]))).status).toBe(400);
+    const stomp = await idOf("replay/stadium-stomp");
+    await db.update(creativeMusicTracksTable).set({ status: "hidden" }).where(eq(creativeMusicTracksTable.id, stomp));
+    try {
+      expect((await bad(body([stomp]))).status).toBe(400);
+    } finally {
+      await db.update(creativeMusicTracksTable).set({ status: "active" }).where(eq(creativeMusicTracksTable.id, stomp));
+    }
+    expect(await db.$count(creativeTemplateMusicTable)).toBe(0);
+  });
+
+  it("saves a template's music; new goal videos and academies' recommendations follow it; reset goes back to Replay's", async () => {
+    const [anthem, chill, electro] = await Promise.all(["replay/matchday-anthem", "cc0/chill-lofi", "cc0/energetic-electro-tune"].map(idOf));
+    const saved = await request(app).put(admin("/goal")).set(auth(adminId)).send(body([anthem, chill])).expect(200);
+    expect(saved.body.template).toMatchObject({ key: "goal", effective: { trackIds: [anthem, chill], volume: 0.45, duck: true, startMs: 3000, customised: true } });
+    const [row] = await db.select().from(creativeTemplateMusicTable).where(eq(creativeTemplateMusicTable.templateKey, "goal"));
+    expect(row).toMatchObject({ trackIds: [anthem, chill], updatedBy: adminId });
+
+    expect((await goalProject()).body.project.scene.music).toEqual({ trackId: anthem, volume: 0.45, startMs: 3000, fadeInMs: 500, fadeOutMs: 2000, duck: true });
+    const recs = await request(app).get(url(academyA, "/recommendations")).set(auth(ownerA)).expect(200);
+    expect(recs.body.templates.goal).toEqual({ trackIds: [anthem, chill], volume: 0.45, duck: true, fadeInMs: 500, fadeOutMs: 2000, startMs: 3000 });
+    expect(Object.keys(recs.body.templates)).toHaveLength(31);
+
+    // A hidden track is skipped everywhere it's recommended.
+    await db.update(creativeMusicTracksTable).set({ status: "hidden" }).where(eq(creativeMusicTracksTable.id, anthem));
+    try {
+      expect((await goalProject()).body.project.scene.music).toMatchObject({ trackId: chill, volume: 0.45 });
+      expect((await request(app).get(url(academyB, "/recommendations")).set(auth(ownerB))).body.templates.goal.trackIds).toEqual([chill]);
+    } finally {
+      await db.update(creativeMusicTracksTable).set({ status: "active" }).where(eq(creativeMusicTracksTable.id, anthem));
+    }
+
+    // No tracks at all: the admin chose no music.
+    await request(app).put(admin("/goal")).set(auth(adminId)).send(body([])).expect(200);
+    expect((await goalProject()).body.project.scene.music).toBeUndefined();
+
+    const reset = await request(app).delete(admin("/goal")).set(auth(adminId)).expect(200);
+    expect(reset.body.template).toMatchObject({ saved: null, effective: { customised: false, volume: 0.7 } });
+    expect(reset.body.template.effective.trackIds[0]).toBe(electro);
+    expect(await db.$count(creativeTemplateMusicTable, eq(creativeTemplateMusicTable.templateKey, "goal"))).toBe(0);
+    expect((await goalProject()).body.project.scene.music).toMatchObject({ trackId: electro, volume: 0.7 });
+    expect((await request(app).delete(admin("/nope")).set(auth(adminId))).status).toBe(404);
+  });
+
+  it("gives an academy's console only Replay's tracks in recommendations, and only to its owner", async () => {
+    const recs = await request(app).get(url(academyA, "/recommendations")).set(auth(ownerA)).expect(200);
+    const ids = Object.values(recs.body.templates as Record<string, { trackIds: number[] }>).flatMap((r) => r.trackIds);
+    expect(ids.length).toBeGreaterThan(31);
+    const rows = await db.select().from(creativeMusicTracksTable).where(eq(creativeMusicTracksTable.scope, "replay"));
+    const replay = new Set(rows.filter((r) => r.status === "active").map((r) => r.id));
+    expect(ids.every((id) => replay.has(id))).toBe(true);
+    expect((await request(app).get(url(academyA, "/recommendations")).set(auth(ownerB))).status).toBe(403);
+    expect((await request(app).get(url(academyA, "/recommendations")).set(auth(outsider))).status).toBe(403);
   });
 });

@@ -1,9 +1,11 @@
 import {
   clampMusicStart,
+  hasMusic,
   musicFadeGainAt,
   musicLoudnessGainDb,
   musicTrackTimeAt,
   type SceneMusic,
+  type TemplateMusicRecommendation,
 } from "@workspace/api-zod";
 
 /**
@@ -116,3 +118,15 @@ export const formatTrackLength = (ms: number) => {
   const s = Math.round(Math.max(0, ms) / 1000);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 };
+
+/**
+ * Using a recommended track: a video without music takes the template's
+ * settings with it; one that has music keeps its volume, fades and ducking
+ * and starts the new track where the recommendation says.
+ */
+export function recommendedMusicChange(current: SceneMusic | undefined, rec: TemplateMusicRecommendation, trackId: number): SceneMusic {
+  if (!hasMusic(current)) return { trackId, volume: rec.volume, startMs: rec.startMs, fadeInMs: rec.fadeInMs, fadeOutMs: rec.fadeOutMs, duck: rec.duck };
+  const next: SceneMusic = { ...current, trackId, startMs: rec.startMs };
+  delete next.trackKey;
+  return next;
+}

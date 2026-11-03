@@ -12,15 +12,21 @@ import {
 } from "@workspace/api-zod";
 import { logger } from "../logger";
 import { academyPack } from "./packs";
-import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic } from "./music";
+import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "./music";
 
-/** Replay's library for drafts' default soundtracks; empty when it can't be read (drafts are made without music). */
+/**
+ * Replay's library and the admins' template music for drafts' default
+ * soundtracks; an empty library when it can't be read (drafts are made
+ * without music), Replay's own picks when the admin choices can't be.
+ */
 async function replayLibraryForDrafts() {
   try {
     await ensureReplayMusic();
-    return await replayLibrary();
+    const library = await replayLibrary();
+    const overrides = await templateMusicOverrides().catch(() => new Map());
+    return { library, overrides };
   } catch {
-    return [];
+    return { library: [], overrides: new Map() };
   }
 }
 import {
@@ -510,9 +516,11 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
   });
   const made = plans.map((p) => materializeDraft(p, academyId, style)).filter((r): r is DraftRow => r !== null);
   if (!made.length) return 0;
-  // Video drafts get their template's default soundtrack, as a manager's own would.
-  const library = made.some((r) => r.kind === "video") ? await replayLibraryForDrafts() : [];
-  const rows = await Promise.all(made.map(async (r) => (r.kind === "video" ? { ...r, scene: await sceneWithDefaultMusic(r.scene as Scene, r.templateKey, library) } : r)));
+  // Video drafts get their template's recommended soundtrack, as a manager's own would.
+  const music = made.some((r) => r.kind === "video") ? await replayLibraryForDrafts() : { library: [], overrides: new Map() };
+  const rows = await Promise.all(made.map(async (r) => (r.kind === "video"
+    ? { ...r, scene: await sceneWithDefaultMusic(r.scene as Scene, r.templateKey, music.library, music.overrides) }
+    : r)));
   const inserted = await db.insert(academyCreativeProjectsTable).values(rows)
     .onConflictDoNothing({
       target: [academyCreativeProjectsTable.academyId, academyCreativeProjectsTable.originKey],

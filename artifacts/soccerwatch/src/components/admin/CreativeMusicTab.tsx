@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { MUSIC_MOODS, MUSIC_UPLOAD_ACCEPT, MUSIC_UPLOAD_MAX_BYTES, type MusicMood } from "@workspace/api-zod";
 import type { MusicTrack } from "@/lib/creative-hub-music-api";
+import { TemplateMusicSection } from "./TemplateMusicSection";
 
 /**
  * Admin → Creative music: Replay's music library for every academy's Creative
@@ -10,7 +11,10 @@ import type { MusicTrack } from "@/lib/creative-hub-music-api";
  * Bundled tracks come from scripts/creative-music/generate.py ("Replay
  * original (generated)") and scripts/creative-music/import_cc0.py (CC0 tracks
  * from OpenGameArt, source page in the licence), and are seeded on boot.
- * API: GET/POST /admin/creative/music, PATCH /admin/creative/music/:id, GET …/:id/file.
+ * Template music (TemplateMusicSection): which tracks each template
+ * recommends, in order, and how they play.
+ * API: GET/POST /admin/creative/music, PATCH /admin/creative/music/:id, GET …/:id/file,
+ * GET /admin/creative/music/templates, PUT|DELETE …/templates/:key.
  */
 
 const basePath = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
@@ -53,6 +57,7 @@ export default function CreativeMusicTab() {
         <h2 className="text-lg font-bold text-white">Creative music</h2>
         <p className="text-sm text-zinc-400">Replay&apos;s soundtrack library for academies&apos; video posts. Only upload music Replay may use and say how in Licence.</p>
       </div>
+      <TemplateMusicSection call={call} tracks={tracks} playing={playing} onPlay={play} />
       <UploadForm onAdded={(t) => setTracks((cur) => [...(cur ?? []), t])} />
       {error ? <p className="text-sm text-red-400" role="alert">{error}</p> : null}
       {!tracks ? <p className="text-sm text-zinc-500">Loading…</p> : tracks.length === 0 ? <p className="text-sm text-zinc-500">No tracks yet.</p> : (

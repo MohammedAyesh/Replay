@@ -4,7 +4,7 @@ import {
   Shapes, Smartphone, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import {
-  CREATIVE_TEMPLATES, resolveSource,
+  CREATIVE_TEMPLATES, recommendationSceneMusic, resolveSource,
   type CreativeBrand, type CreativeData, type MediaSource, type SceneLayer,
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
@@ -15,7 +15,7 @@ import {
   useCreativeBrand, useCreativeProject, useUpdateCreativeProject, type CreativeBrandInfo, type CreativeProject,
 } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
-import { musicFileUrl, useCreativeMusic } from "@/lib/creative-hub-music-api";
+import { musicFileUrl, useCreativeMusic, useTemplateMusicRecommendations } from "@/lib/creative-hub-music-api";
 import { sceneTrack } from "@/lib/creative-music";
 import { apiUrl } from "@/lib/academy-studio-api";
 import { Button } from "@/components/ui/button";
@@ -122,6 +122,13 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     [musicTrack?.trackId, musicTrack?.durationMs, musicTrack?.loudnessLufs], // eslint-disable-line react-hooks/exhaustive-deps
   );
   useMusicPreview(musicSource, scene.music, scene.durationMs, timeMs, playing && !previewOpen);
+
+  // A design from a still template that turns into a video gets the template's
+  // recommended music once (the reducer puts it on; removing it is final).
+  const templateKey = scene.template?.key ?? project.templateKey ?? null;
+  const recommendations = useTemplateMusicRecommendations(academyId, !!templateKey);
+  const recommended = templateKey ? recommendations.data?.[templateKey] ?? null : null;
+  useEffect(() => { dispatch({ type: "setAutoMusic", music: recommendationSceneMusic(recommended) }); }, [recommended]);
 
   // ── Autosave ────────────────────────────────────────────────────────────
   const { status, flush } = useAutosave(

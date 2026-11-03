@@ -43,6 +43,8 @@ const en = {
   laneEmpty: "Add music",
   by: (artist: string) => `by ${artist}`,
   bpm: (n: number) => `${n} BPM`,
+  recommendedFor: (template: string) => `Recommended for ${template}`,
+  recommendedHint: "Picked to suit this template. Tap Use to put one on.",
 
   // Upload
   uploadTitle: "Upload music",
@@ -103,6 +105,8 @@ const ar: typeof en = {
   laneEmpty: "ضيف موسيقى",
   by: (artist: string) => `لـ ${artist}`,
   bpm: (n: number) => `${n} BPM`,
+  recommendedFor: (template: string) => `مقترحة لـ«${template}»`,
+  recommendedHint: "اخترناها عشان تزبط مع هالقالب. اكبس «استعملها» وبتنحط عالفيديو.",
 
   uploadTitle: "ارفع موسيقى",
   uploadHint: "MP3 أو M4A أو AAC أو WAV، لحد 20 ميغا و10 دقايق.",

@@ -121,7 +121,7 @@ router.post(`${base}/projects`, async (req, res): Promise<void> => {
   const b = parsed.data;
   if (refuseForeignPack(access.academy, [b.style, b.scene.template?.style], res)) return;
   const templateKey = b.templateKey ?? b.scene.template?.key ?? null;
-  // A video template starts with a track of its mood from Replay's library (none when the library has none).
+  // A video starts with its template's recommended music (an admin's choice, else Replay's pick; none when no track is left).
   const scene = await sceneWithDefaultMusic(b.scene, templateKey);
   const [row] = await db.insert(academyCreativeProjectsTable).values({
     academyId: access.academyId,
