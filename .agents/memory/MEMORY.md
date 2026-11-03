@@ -10,7 +10,7 @@
 - [Owner footage title format](owner-footage-title-format.md) — owner title markers set the default for new imports; persisted visibility remains authoritative.
 - [Live clip synthetic videoId](live-clip-videoId.md) — academy live clips store `live:<cameraId>` not a Bunny GUID; server must guard URL generation and export for these.
 - [Live capture worker contract](live-capture-worker-contract.md) — POST returns `job`; poll known jobs without a 60-minute timeout, and require `available:true` for ball-follow.
-- [Bunny HLS and MP4 routing](bunny-cdn-referer.md) — Proxy HLS first; large progressive MP4 needs bounded upstream ranges streamed with correct client range headers.
+- [Bunny HLS and MP4 routing](bunny-cdn-referer.md) — Keep manifests proxied for access checks; prefer direct Bunny segments on the accepted origin with relay fallback, and bound progressive MP4 ranges.
 - [Bunny Stream renditions](bunny-stream-renditions.md) — manual quality choices require encoded HLS renditions; MP4 fallback must be enabled before upload or existing originals must be re-encoded.
 - [Collection preview thumbnail paths](collection-preview-thumbnail-paths.md) — collection GUIDs can differ from preview video IDs and custom thumbnail filenames; proxy the selected raw preview URL, not a fabricated collection-GUID path.
 - [Clip intro — playback vs export](clip-intro-playback-export.md) — intro is suppressed in all playback responses (hardcoded null); export path calls resolveIntroVideoUrl and prepends at correct dimensions.
