@@ -59,6 +59,7 @@ const en = {
     reviewSchedule: "Review and schedule",
     videoQueued: "Videos go out within a minute or two: Instagram needs time to process them.",
     musicNote: "Music your academy uploaded must be yours to use: Instagram and Facebook may mute copyrighted audio.",
+    photoVideoNote: "This design has music, so it goes out as a short video: a Reel (a video on Facebook) or a video story. Instagram can't put music on a photo.",
   },
   whatsapp: {
     title: "WhatsApp",
@@ -183,6 +184,7 @@ const ar: typeof en = {
     reviewSchedule: "راجِع وجدوِل",
     videoQueued: "الفيديو بنزل خلال دقيقة أو ثنتين: إنستغرام بدّه وقت يجهّزه.",
     musicNote: "الموسيقى اللي رفعتوها لازم تكون إلكم أو معكم حق فيها: إنستغرام وفيسبوك ممكن يكتموا الصوت المحمي.",
+    photoVideoNote: "هالتصميم فيه موسيقى، فبنزل كفيديو قصير: ريل (وفيديو عفيسبوك) أو ستوري فيديو. إنستغرام ما بحط موسيقى على صورة.",
   },
   whatsapp: {
     title: "واتساب",

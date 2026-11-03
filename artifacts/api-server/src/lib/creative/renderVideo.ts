@@ -9,6 +9,9 @@ import {
   MUSIC_TARGET_LUFS,
   resolveColor,
   resolveSource,
+  slowZoomOrigin,
+  slowZoomsLayer,
+  SLOW_ZOOM_TO,
   type Scene,
   type SceneLayer,
 } from "@workspace/api-zod";
@@ -29,13 +32,20 @@ import { ENTER_MS, SLIDE_PX, videoParts } from "./renderLayout";
  * layers becomes one PNG per distinct visibility interval, switched on with
  * enable='gte(t,a)*lt(t,b)'. A layer with an entrance (fade, slide-up,
  * slide-left; pop is drawn as a fade) gets a PNG of its own so it can move.
- * Z-order is exactly the scene's.
+ * Z-order is exactly the scene's. With the scene's slow zoom on, the
+ * background and full-bleed photos (slowZoomsLayer) get a PNG of their own
+ * (neighbours with the same origin and window share one) that ffmpeg's
+ * zoompan scales from 1 to SLOW_ZOOM_TO about the layer's origin, as
+ * slowZoomAt does in the editor and in frame previews.
  *
  * Audio: each footage layer that is not muted and has sound, at its speed,
  * delayed to its start; the optional soundtrack (see musicFilters: from its
  * start point, looped, brought to MUSIC_TARGET_LUFS, at its volume, faded, and
  * ducked under the footage's sound when asked); or silence, so the file
  * always has an AAC track (Instagram and WhatsApp want one).
+ *
+ * A scene without footage (a photo with music) is capped to a bitrate that
+ * keeps the file under PHOTO_VIDEO_TARGET_BYTES, so a story stays small.
  */
 
 type VideoLayer = Extract<SceneLayer, { kind: "video" }>;
@@ -54,6 +64,7 @@ const FFMPEG_TIMEOUT_MS = Math.max(60_000, Number(process.env.CREATIVE_FFMPEG_TI
 export type StackItem =
   | { type: "stills"; layers: SceneLayer[] }
   | { type: "animated"; layer: SceneLayer }
+  | { type: "zoom"; layers: SceneLayer[]; origin: { x: number; y: number } }
   | { type: "video"; layer: VideoLayer };
 
 const animated = (l: SceneLayer) => !!l.enter && l.enter !== "none";
@@ -64,12 +75,23 @@ export function liveLayers(scene: Scene): SceneLayer[] {
   return scene.layers.filter((l) => !l.hidden && (l.startMs ?? 0) < d && (l.endMs === undefined || l.endMs > (l.startMs ?? 0)));
 }
 
-/** The scene as a stack of footage, animated layers and runs of plain layers. */
-export function planStack(scene: Scene, isFootage: (layer: SceneLayer) => boolean): StackItem[] {
+/**
+ * The scene as a stack of footage, animated layers, slowly zooming layers and
+ * runs of plain layers. Zooming neighbours share an item when they zoom about
+ * the same point and show for the same window.
+ */
+export function planStack(scene: Scene, isFootage: (layer: SceneLayer) => boolean, zooms: (layer: SceneLayer) => boolean = () => false): StackItem[] {
   const out: StackItem[] = [];
+  const windowOf = (l: SceneLayer) => `${l.startMs ?? 0}:${l.endMs ?? ""}`;
   for (const layer of liveLayers(scene)) {
     if (layer.kind === "video" && isFootage(layer)) out.push({ type: "video", layer });
     else if (animated(layer)) out.push({ type: "animated", layer });
+    else if (zooms(layer)) {
+      const origin = slowZoomOrigin(layer, scene.format);
+      const last = out[out.length - 1];
+      if (last?.type === "zoom" && last.origin.x === origin.x && last.origin.y === origin.y && windowOf(last.layers[0]!) === windowOf(layer)) last.layers.push(layer);
+      else out.push({ type: "zoom", layers: [layer], origin });
+    }
     else {
       const last = out[out.length - 1];
       if (last?.type === "stills") last.layers.push(layer);
@@ -117,7 +139,11 @@ export function atempoChain(speed: number): string[] {
 }
 
 export type Track =
-  | { type: "png"; path: string; fromMs: number; toMs: number; enter?: SceneLayer["enter"]; startMs?: number }
+  | {
+    type: "png"; path: string; fromMs: number; toMs: number; enter?: SceneLayer["enter"]; startMs?: number;
+    /** Slow zoom about this point (canvas px), over the whole scene. */
+    zoom?: { x: number; y: number };
+  }
   | { type: "video"; layer: VideoLayer; file: VideoSourceFile };
 
 const sec = (ms: number) => (ms / 1000).toFixed(3);
@@ -209,6 +235,27 @@ function entranceXY(enter: SceneLayer["enter"], startMs: number, x: string, y: s
   return { x, y };
 }
 
+/**
+ * zoompan for a full-canvas overlay: one output frame per looped input frame,
+ * scale 1 → SLOW_ZOOM_TO linearly over the scene (on = output frame number),
+ * the origin kept where it is (x + ox/zoom = ox).
+ */
+export function slowZoomFilter(origin: { x: number; y: number }, durationMs: number, size: { w: number; h: number }): string {
+  const frames = Math.max(1, Math.round((durationMs / 1000) * FPS));
+  const z = `1+${(SLOW_ZOOM_TO - 1).toFixed(4)}*min(1,on/${frames})`;
+  return `zoompan=z='${z}':x='${origin.x.toFixed(2)}*(1-1/zoom)':y='${origin.y.toFixed(2)}*(1-1/zoom)':d=1:s=${size.w}x${size.h}:fps=${FPS}`;
+}
+
+/** The file size a video without footage aims under (a story with music; Instagram is happiest with small files). */
+export const PHOTO_VIDEO_TARGET_BYTES = 7.5 * 1024 * 1024;
+
+/** The video bitrate cap (kbit/s) for a scene without footage: the target size over the duration, less the audio, 1.5–4 Mbit/s. */
+export function photoVideoMaxrateKbps(durationMs: number): number {
+  const seconds = Math.max(0.5, durationMs / 1000);
+  const total = (PHOTO_VIDEO_TARGET_BYTES * 8) / seconds / 1000;
+  return Math.round(Math.max(1500, Math.min(4000, total - 128 - 32)));
+}
+
 const fadeIn = (enter: SceneLayer["enter"], startMs: number) =>
   enter && enter !== "none" ? `,fade=t=in:st=${sec(startMs)}:d=${sec(ENTER_MS)}:alpha=1` : "";
 
@@ -279,7 +326,8 @@ export function buildFfmpegArgs(opts: {
       inputs.push("-loop", "1", "-framerate", String(FPS), "-t", sec(D), "-i", track.path);
       const start = track.startMs ?? track.fromMs;
       const xy = entranceXY(track.enter, start, "0", "0");
-      filters.push(`[${k}:v]format=rgba${fadeIn(track.enter, start)}[p${n}]`);
+      const zoom = track.zoom ? `,${slowZoomFilter(track.zoom, D, { w: W, h: H })}` : "";
+      filters.push(`[${k}:v]format=rgba${zoom}${fadeIn(track.enter, start)}[p${n}]`);
       filters.push(`[${prev}][p${n}]overlay=x='${xy.x}':y='${xy.y}':enable='gte(t,${sec(track.fromMs)})*lt(t,${sec(track.toMs)})'[${next}]`);
       prev = next;
       return;
@@ -352,12 +400,15 @@ export function buildFfmpegArgs(opts: {
     audioMap = `${k}:a`;
   }
   filters.push(`[${prev}]format=yuv420p[vout]`);
+  const footageless = !tracks.some((t) => t.type === "video");
+  const cap = footageless ? photoVideoMaxrateKbps(D) : null;
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
     ...inputs,
     "-filter_complex", filters.join(";"),
     "-map", "[vout]", "-map", audioMap,
     ...EXPORT_ENCODE_ARGS.video,
+    ...(cap ? ["-maxrate", `${cap}k`, "-bufsize", `${cap * 2}k`] : []),
     ...EXPORT_ENCODE_ARGS.audio,
     "-movflags", "+faststart",
     "-t", sec(D),
@@ -420,8 +471,9 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
     if (file) footage.set(layer.id, file);
   }));
 
-  // 2. Overlays, drawn by the still renderer.
-  const stack = planStack(scene, (l) => footage.has(l.id));
+  // 2. Overlays, drawn by the still renderer (unzoomed: ffmpeg zooms the background and photos).
+  const zooms = (l: SceneLayer) => !!scene.slowZoom && slowZoomsLayer(l, l.kind === "image" ? resolveSource(l.src, data) : null, scene.format);
+  const stack = planStack(scene, (l) => footage.has(l.id), zooms);
   const tracks: Track[] = [];
   let png = 0;
   const still = async (ids: Set<string>) => {
@@ -436,6 +488,9 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
     } else if (item.type === "animated") {
       const l = item.layer;
       tracks.push({ type: "png", path: await still(new Set([l.id])), fromMs: l.startMs ?? 0, toMs: Math.min(l.endMs ?? D, D), enter: l.enter, startMs: l.startMs ?? 0 });
+    } else if (item.type === "zoom") {
+      const first = item.layers[0]!;
+      tracks.push({ type: "png", path: await still(new Set(item.layers.map((l) => l.id))), fromMs: first.startMs ?? 0, toMs: Math.min(first.endMs ?? D, D), zoom: item.origin });
     } else {
       for (const iv of overlayIntervals(item.layers, D)) {
         tracks.push({ type: "png", path: await still(new Set(iv.ids)), fromMs: iv.fromMs, toMs: iv.toMs });

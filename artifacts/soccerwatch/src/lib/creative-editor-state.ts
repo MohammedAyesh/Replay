@@ -1,7 +1,10 @@
 import {
   buildTemplateScene,
+  clampPhotoVideoMs,
   CREATIVE_FORMATS,
   hasMusic,
+  isPhotoVideo,
+  PHOTO_VIDEO_DEFAULT_MS,
   parsePlateKey,
   PLATE_LAYER_ID,
   templatePlateLayer,
@@ -62,7 +65,16 @@ export type EditorAction =
   | { type: "removeLayer"; id: string }
   | { type: "duplicateLayer"; id: string; newId?: string }
   | { type: "moveLayer"; id: string; to: "up" | "down" | "top" | "bottom" | number }
-  | { type: "updateScene"; change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding">>; key?: string; at?: number }
+  | { type: "updateScene"; change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding" | "slowZoom">>; key?: string; at?: number }
+  /**
+   * Editor → Music on a still: put music on it, which makes it a short video
+   * (photoVideoFrom). `music` is the track the manager picked; without one the
+   * template's recommendation (setAutoMusic) goes on. No music, no change.
+   * On a video it just sets the music.
+   */
+  | { type: "addMusic"; music?: SceneMusic | null; durationMs?: number }
+  /** A photo video back to the photo it was (photoFrom): music, duration and zoom go. */
+  | { type: "backToPhoto" }
   | { type: "setFormat"; format: CreativeFormat }
   | { type: "setStyle"; style: CreativeStyle }
   | { type: "setPlate"; change: PlateChange; key?: string; at?: number }
@@ -82,6 +94,42 @@ export function createEditorState(scene: Scene): EditorState {
 export function withAutoMusic(prev: Scene, next: Scene, music: SceneMusic | null | undefined): Scene {
   if (!music || prev.durationMs !== undefined || next.durationMs === undefined || hasMusic(next.music)) return next;
   return { ...next, music: { ...music } };
+}
+
+// ── Photos with music ───────────────────────────────────────────────────────
+
+/** A layer's timing in a scene of `durationMs`: kept when it still makes sense, else the whole scene. */
+function spanLayer(layer: SceneLayer, durationMs: number): SceneLayer {
+  if (layer.startMs === undefined && layer.endMs === undefined) return layer;
+  const start = clamp(layer.startMs ?? 0, 0, durationMs);
+  const end = clamp(layer.endMs ?? durationMs, 0, durationMs);
+  const next = { ...layer };
+  delete next.startMs;
+  delete next.endMs;
+  if (end - start < 500) return next;
+  if (start > 0) next.startMs = start;
+  if (end < durationMs) next.endMs = end;
+  return next;
+}
+
+/**
+ * A still as a short video with music (Instagram takes music only inside a
+ * video): the design held on screen for `durationMs` (the format's default,
+ * kept within 5–30 s), every layer on screen the whole time unless it had a
+ * sensible timing of its own, the music on, and the slow zoom on.
+ */
+export function photoVideoFrom(scene: Scene, music: SceneMusic, durationMs?: number): Scene {
+  const D = clampPhotoVideoMs(durationMs ?? PHOTO_VIDEO_DEFAULT_MS[scene.format] ?? PHOTO_VIDEO_DEFAULT_MS.post);
+  return { ...scene, durationMs: D, layers: scene.layers.map((l) => spanLayer(l, D)), music: { ...music }, slowZoom: true };
+}
+
+/** A photo video back to a still: no duration, no music, no zoom (stills ignore layer timing). */
+export function photoFrom(scene: Scene): Scene {
+  const next = { ...scene };
+  delete next.durationMs;
+  delete next.music;
+  delete next.slowZoom;
+  return next;
 }
 
 export const canUndo = (s: EditorState) => s.past.length > 0;
@@ -118,6 +166,17 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return commit(state, changeStyle(state.scene, action.style));
     case "setPlate":
       return commit(state, setPlate(state.scene, action.change), action.key ?? null, action.at ?? 0);
+    case "addMusic": {
+      const music = action.music ?? state.autoMusic;
+      if (!hasMusic(music)) return state;
+      const next = state.scene.durationMs === undefined
+        ? photoVideoFrom(state.scene, music, action.durationMs)
+        : { ...state.scene, music: { ...music } };
+      // Asked for: the template's once-only music has had its turn.
+      return { ...commit(state, next), autoMusicUsed: true };
+    }
+    case "backToPhoto":
+      return isPhotoVideo(state.scene) ? commit(state, photoFrom(state.scene)) : state;
     case "setAutoMusic":
       return JSON.stringify(state.autoMusic) === JSON.stringify(action.music) ? state : { ...state, autoMusic: action.music };
     case "checkpoint":
@@ -363,7 +422,7 @@ const bindingPath = (l: SceneLayer | undefined) => (isMedia(l) && l.src.type ===
  * on top of the template is carried over, matched by layer id: text they
  * edited, pictures/videos they put in a slot (with the video's trim, speed and
  * slow motion), layers they hid, layers they removed, layers they added, the
- * duration and the music. Without a template the scene is left alone.
+ * duration, the music and the slow zoom. Without a template the scene is left alone.
  */
 export function changeStyle(scene: Scene, style: CreativeStyle, build: typeof buildTemplateScene = buildTemplateScene): Scene {
   const tpl = scene.template;
@@ -420,6 +479,7 @@ export function changeStyle(scene: Scene, style: CreativeStyle, build: typeof bu
     template: { key: tpl.key, style },
     durationMs: scene.durationMs !== orig.durationMs ? scene.durationMs : next.durationMs,
     music: scene.music ?? next.music,
+    ...(scene.slowZoom ? { slowZoom: true } : {}),
   };
 }
 

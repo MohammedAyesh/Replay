@@ -3,8 +3,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { CreativeBrand, Scene, SceneLayer } from "@workspace/api-zod";
-import { DUCK, atempoChain, audioMixFilters, buildFfmpegArgs, musicFilters, musicMixFor, overlayIntervals, planStack, renderSceneMp4, type MusicMix } from "./renderVideo";
+import { createCanvas } from "@napi-rs/canvas";
+import {
+  buildTemplateScene, sceneForData, slowZoomAt, slowZoomsLayer, templateSampleData, SLOW_ZOOM_TO, type CreativeBrand, type Scene, type SceneLayer,
+} from "@workspace/api-zod";
+import { renderSceneCanvas } from "./render";
+import {
+  DUCK, atempoChain, audioMixFilters, buildFfmpegArgs, musicFilters, musicMixFor, overlayIntervals, photoVideoMaxrateKbps, planStack,
+  renderSceneMp4, slowZoomFilter, type MusicMix,
+} from "./renderVideo";
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "creative-video-test-"));
 afterAll(() => fs.rmSync(work, { recursive: true, force: true }));
@@ -50,7 +57,7 @@ describe("video overlay intervals", () => {
       ],
     };
     const stack = planStack(scene, (l) => l.id === "vid");
-    expect(stack.map((s) => (s.type === "stills" ? s.layers.map((l) => l.id).join("+") : `${s.type}:${s.layer.id}`)))
+    expect(stack.map((s) => (s.type === "stills" || s.type === "zoom" ? s.layers.map((l) => l.id).join("+") : `${s.type}:${s.layer.id}`)))
       .toEqual(["bg", "video:vid", "bar", "animated:title", "logo"]);
     // Footage that could not be loaded is drawn as a still with its neighbours.
     expect(planStack(scene, () => false)[0]).toMatchObject({ type: "stills" });
@@ -320,4 +327,94 @@ describe("video renderer", () => {
     expect(level(6.85, 0.12)).toBeLessThan(level(5, 0.5) - 10);
     expect(level(0, 0.05)).toBeLessThan(level(1, 0.5) - 10);
   }, 60_000);
+});
+
+describe("slow zoom (a photo turned into a video)", () => {
+  const img = (id: string, extra: Partial<SceneLayer> = {}): SceneLayer =>
+    ({ id, kind: "image", src: { type: "artwork", key: "bg/broadcast/1" }, fit: "cover", x: 0, y: 0, w: 1080, h: 1350, ...extra }) as SceneLayer;
+
+  it("zooms only the background and full-bleed photos, 1 → 1.06 over the scene", () => {
+    const art = { type: "artwork", key: "bg/broadcast/1" } as const;
+    expect(slowZoomsLayer(img("plate"), art, "post")).toBe(true);
+    expect(slowZoomsLayer(img("card", { x: 100, w: 400, h: 400 }), art, "post")).toBe(false);
+    expect(slowZoomsLayer(img("crest"), { type: "crest" }, "post")).toBe(false);
+    expect(slowZoomsLayer(img("fig", { fit: "contain" }), art, "post")).toBe(false);
+    expect(slowZoomsLayer(img("cut"), { type: "player", playerId: 1, cutout: true }, "post")).toBe(false);
+    expect(slowZoomsLayer(img("tilt", { rotation: 3 }), art, "post")).toBe(false);
+    expect(slowZoomsLayer(img("in", { enter: "fade" }), art, "post")).toBe(false);
+    expect(slowZoomsLayer(rect("shape", { w: 1080, h: 1350 }), art, "post")).toBe(false);
+    const scene = { durationMs: 10_000, slowZoom: true };
+    expect(slowZoomAt(scene, 0)).toBe(1);
+    expect(slowZoomAt(scene, 5_000)).toBeCloseTo(1.03, 6);
+    expect(slowZoomAt(scene, 99_000)).toBeCloseTo(SLOW_ZOOM_TO, 6);
+    expect(slowZoomAt({ durationMs: 10_000 }, 5_000)).toBe(1);
+  });
+
+  it("gives zooming neighbours one overlay and caps the bitrate of a scene without footage", () => {
+    const scene: Scene = { v: 1, format: "post", durationMs: 15_000, background: "#000000", locale: "en", slowZoom: true,
+      layers: [img("plate"), img("photo"), rect("bar"), img("card", { x: 100, w: 300, h: 300 })] };
+    const stack = planStack(scene, () => false, (l) => l.id === "plate" || l.id === "photo");
+    expect(stack.map((s) => s.type)).toEqual(["zoom", "stills"]);
+    expect(stack[0]).toMatchObject({ layers: [{ id: "plate" }, { id: "photo" }], origin: { x: 540, y: 675 } });
+    expect(slowZoomFilter({ x: 540, y: 675 }, 15_000, { w: 1080, h: 1350 }))
+      .toBe("zoompan=z='1+0.0600*min(1,on/450)':x='540.00*(1-1/zoom)':y='675.00*(1-1/zoom)':d=1:s=1080x1350:fps=30");
+    const args = buildFfmpegArgs({ scene, backgroundHex: "#000000", tracks: [{ type: "png", path: "/a.png", fromMs: 0, toMs: 15_000, zoom: { x: 540, y: 675 } }], out: "/x.mp4" });
+    expect(args.join(" ")).toContain("format=rgba,zoompan=");
+    expect(args.join(" ")).toContain(`-maxrate ${photoVideoMaxrateKbps(15_000)}k`);
+    // 10–15 s stay at 4 Mbit/s; 30 s comes down so the file stays under the target.
+    expect(photoVideoMaxrateKbps(10_000)).toBe(4000);
+    expect(photoVideoMaxrateKbps(30_000)).toBeLessThan(2100);
+  });
+
+  /** Raw RGB of a whole frame at t seconds. */
+  const frameRgb = (file: string, t: number) =>
+    execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-ss", t.toFixed(3), "-i", file, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], { maxBuffer: 64 * 1024 * 1024 });
+  /** Mean absolute difference between an RGB frame and a canvas (RGBA). */
+  const meanDiff = (rgb: Buffer, rgba: Uint8ClampedArray) => {
+    let sum = 0;
+    const n = rgb.length / 3;
+    for (let i = 0; i < n; i++) for (let c = 0; c < 3; c++) sum += Math.abs(rgb[i * 3 + c]! - rgba[i * 4 + c]!);
+    return sum / (n * 3);
+  };
+
+  for (const [key, format, durationMs] of [["lineup", "post", 15_000], ["birthday", "story", 10_000]] as const) {
+    it(`renders a ${key} ${format} with music: H.264 + AAC, ${durationMs / 1000} s, small, the background zooming as the editor shows it`, async () => {
+      const song = path.join(work, `${key}-song.m4a`);
+      execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=330:duration=4", "-c:a", "aac", "-ac", "2", song]);
+      // A fine checkerboard for every picture, so a zoom shows up everywhere.
+      const checker = createCanvas(1080, 1920);
+      const c = checker.getContext("2d");
+      for (let y = 0; y < 1920; y += 30) for (let x = 0; x < 1080; x += 30) {
+        c.fillStyle = (x + y) / 30 % 2 ? "#E03030" : "#20A0F0";
+        c.fillRect(x, y, 30, 30);
+      }
+      const data = templateSampleData(key, "en");
+      // As renderJobs does: the layers this data shows (a line-up without photos draws numbers only).
+      const base = sceneForData(buildTemplateScene(key, "broadcast", format, "en"), data);
+      const scene: Scene = { ...base, durationMs, slowZoom: true, music: { trackId: 1, volume: 0.6, fadeInMs: 300, fadeOutMs: 1500 } };
+      const images = async (_l: unknown, src: { type: string }) => (src.type === "crest" ? null : checker);
+      const out = path.join(work, `${key}.mp4`);
+      await renderSceneMp4({ scene, brand: BRAND, data, images, videos: async () => null, music: { path: song, loudnessLufs: null }, workDir: work, out });
+
+      const info = probe(out);
+      expect(info.streams.find((x) => x.codec_type === "video")).toMatchObject({ codec_name: "h264", width: 1080, height: format === "story" ? 1920 : 1350 });
+      expect(info.streams.find((x) => x.codec_type === "audio")?.codec_name).toBe("aac");
+      expect(Math.abs(Number(info.format.duration) - durationMs / 1000)).toBeLessThan(0.15);
+      expect(fs.statSync(out).size).toBeLessThan(8 * 1024 * 1024);
+      const err = spawnSync("ffmpeg", ["-nostdin", "-hide_banner", "-ss", "2", "-t", "1", "-i", out, "-vn", "-af", "volumedetect", "-f", "null", "-"], { encoding: "utf8" }).stderr;
+      expect(Number(/mean_volume: (-?[\d.]+) dB/.exec(err)?.[1] ?? -99)).toBeGreaterThan(-35);
+
+      // The export's frame near the end matches the still renderer's frame at that time (zoomed), not its first frame.
+      const T = durationMs / 1000 - 0.5;
+      const frame = frameRgb(out, T);
+      const at = async (t: number) => {
+        const cv = await renderSceneCanvas({ scene, brand: BRAND, data, images, t, entrances: true });
+        return cv.getContext("2d").getImageData(0, 0, cv.width, cv.height).data;
+      };
+      const synced = meanDiff(frame, await at(Math.round(T * 30) * (1000 / 30)));
+      const unzoomed = meanDiff(frame, await at(0));
+      expect(slowZoomAt(scene, T * 1000)).toBeGreaterThan(1.05);
+      expect(synced).toBeLessThan(unzoomed * 0.6);
+    }, 180_000);
+  }
 });

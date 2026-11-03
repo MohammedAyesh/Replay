@@ -1,4 +1,4 @@
-import type { CreativeBrand, CreativeData, CreativeFormat, CreativeStyle, MediaSource, Scene, SceneLayer, TemplateMeta } from "@workspace/api-zod";
+import type { CreativeBrand, CreativeData, CreativeFormat, CreativeStyle, MediaSource, Scene, SceneLayer, SceneMusic, TemplateMeta } from "@workspace/api-zod";
 import type { LayerChange, PlateChange } from "@/lib/creative-editor-state";
 
 /** What the editor's panels and timeline get to read and change. Built once per render in editor.tsx. */
@@ -9,7 +9,11 @@ export type EditorApi = {
   select: (id: string | null) => void;
   /** Change one layer. Changes with the same `key` close together become one undo step. */
   update: (id: string, change: LayerChange, key?: string) => void;
-  updateScene: (change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding">>, key?: string) => void;
+  updateScene: (change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding" | "slowZoom">>, key?: string) => void;
+  /** Put music on the design; a still becomes a short video (one undo step). Without `music`, the template's recommendation. */
+  addMusic: (music?: SceneMusic) => void;
+  /** A photo video back to a photo: music, duration and zoom removed (one undo step). */
+  backToPhoto: () => void;
   /** Add a layer on top and select it. */
   add: (layer: SceneLayer) => void;
   remove: (id: string) => void;

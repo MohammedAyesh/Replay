@@ -9,6 +9,9 @@ import {
   resolveColor,
   resolveSource,
   resolveTint,
+  slowZoomAt,
+  slowZoomOrigin,
+  slowZoomsLayer,
   type CreativeBrand,
   type CreativeData,
   type Scene,
@@ -71,6 +74,10 @@ export type SceneCanvasProps = {
  *     double-click edits text in place (⌘/Ctrl+Enter or click away saves, Esc
  *     cancels). Locked layers select but never move. A gesture is reported
  *     once, when it ends.
+ *   - Slow zoom (video scenes with scene.slowZoom): the background and
+ *     full-bleed photos (slowZoomsLayer) scale by slowZoomAt(t) about
+ *     slowZoomOrigin, the same numbers the export's zoompan and frame
+ *     previews use.
  */
 
 type MediaLayer = Extract<SceneLayer, { kind: "image" | "video" }>;
@@ -195,6 +202,9 @@ export function SceneCanvas({
           {visible.map((layer) => {
             const box = boxOf(layer);
             const enter = video && timeMs !== undefined ? entranceAt(layer, t ?? 0) : { alpha: 1, dx: 0, dy: 0 };
+            const zoom = video && timeMs !== undefined && gesture?.id !== layer.id && layer.kind === "image" && slowZoomsLayer(layer, resolveSource(layer.src, d), scene.format)
+              ? slowZoomAt(scene, t ?? 0) : 1;
+            const origin = zoom !== 1 ? slowZoomOrigin(layer, scene.format) : null;
             const alpha = (layer.opacity ?? 1) * enter.alpha;
             const editing = editingId === layer.id && layer.kind === "text";
             const interactive = editable && !(layer.id === PLATE_LAYER_ID && layer.locked);
@@ -211,7 +221,8 @@ export function SceneCanvas({
                 onDoubleClick={editable && layer.kind === "text" && onTextChange ? (e) => { e.stopPropagation(); setEditingId(layer.id); } : undefined}
                 style={{
                   position: "absolute", left: box.x, top: box.y, width: box.w, height: box.h,
-                  transform: `translate(${enter.dx}px, ${enter.dy}px) rotate(${box.rotation}deg)`, transformOrigin: "50% 50%",
+                  transform: `translate(${enter.dx}px, ${enter.dy}px) rotate(${box.rotation}deg)${zoom !== 1 ? ` scale(${zoom})` : ""}`,
+                  transformOrigin: origin ? `${origin.x - box.x}px ${origin.y - box.y}px` : "50% 50%",
                   opacity: alpha,
                   pointerEvents: interactive ? "auto" : "none",
                   cursor: interactive ? (layer.locked ? "default" : "move") : undefined,

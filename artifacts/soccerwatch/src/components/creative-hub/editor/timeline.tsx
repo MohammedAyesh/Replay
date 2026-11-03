@@ -1,6 +1,6 @@
 import { useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { Music2, Pause, Play, Plus, Scissors } from "lucide-react";
-import type { SceneLayer } from "@workspace/api-zod";
+import { isPhotoVideo, PHOTO_VIDEO_MAX_MS, PHOTO_VIDEO_MIN_MS, type SceneLayer } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
 import { useCreativeMusicCopy } from "@/i18n/creative-music-strings";
 import { laneBars } from "@/lib/creative-music";
@@ -33,6 +33,8 @@ export function Timeline({ ed, music }: { ed: EditorApi; music?: MusicLane }) {
   const layers = [...ed.scene.layers].reverse();
   const video = ed.selected?.kind === "video" ? ed.selected : null;
   const pct = (ms: number) => `${(duration ? (ms / duration) * 100 : 0).toFixed(3)}%`;
+  // A photo with music is a short video: 5–30 s.
+  const [minS, maxS] = isPhotoVideo(ed.scene) ? [PHOTO_VIDEO_MIN_MS / 1000, PHOTO_VIDEO_MAX_MS / 1000] : [0.5, 180];
 
   return (
     <div className="space-y-3 rounded-2xl border border-line bg-surface p-3" dir="ltr" data-testid="editor-timeline">
@@ -43,10 +45,10 @@ export function Timeline({ ed, music }: { ed: EditorApi; music?: MusicLane }) {
         <span className="font-mono text-xs text-text"><bdi>{formatMs(ed.timeMs)}</bdi> <span className="text-muted-text">/ {formatMs(duration)}</span></span>
         <label className="ms-auto flex items-center gap-1.5 text-xs text-muted-text">
           {copy.total}
-          <input type="number" min={0.5} max={180} step={0.5} value={Math.round(duration / 100) / 10} data-testid="editor-duration"
+          <input type="number" min={minS} max={maxS} step={0.5} value={Math.round(duration / 100) / 10} data-testid="editor-duration"
             onChange={(e) => {
               const s = Number(e.target.value);
-              if (Number.isFinite(s) && s >= 0.5 && s <= 180) ed.updateScene({ durationMs: Math.round(s * 1000) }, "duration");
+              if (Number.isFinite(s) && s >= minS && s <= maxS) ed.updateScene({ durationMs: Math.round(s * 1000) }, "duration");
             }}
             className="h-9 w-16 rounded-lg border border-line bg-raised px-2 text-end font-mono text-xs text-text" />
           {copy.seconds}

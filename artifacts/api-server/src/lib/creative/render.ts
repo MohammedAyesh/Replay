@@ -7,6 +7,9 @@ import {
   resolveColor,
   resolveSource,
   resolveTint,
+  slowZoomAt,
+  slowZoomOrigin,
+  slowZoomsLayer,
   type CreativeBrand,
   type CreativeFormat,
   type CreativeData,
@@ -48,6 +51,9 @@ import { ensureLibraryFonts, libraryFaceAvailable } from "./fonts";
  *   image  cover / contain, radius, tint (renderTint.ts; cutout is not done yet: drawn as is)
  *   video  its still (a thumbnail) — the MP4 renderer plays the footage
  * then rotation, opacity and hidden, as SceneCanvas does in the browser.
+ * A frame of a video scene (entrances at t) also draws the slow zoom
+ * (slowZoomAt) on the background and photos; the MP4 renderer draws those
+ * layers unzoomed (t null) and zooms them in ffmpeg with the same numbers.
  */
 
 export type ConcreteSource = Exclude<MediaSource, { type: "binding" }>;
@@ -290,7 +296,16 @@ export function drawScene(
       dy = e.dy;
     }
     if (alpha <= 0) continue;
+    const zoom = opts.entrances && t !== null && slowZoomsLayer(layer, layer.kind === "image" ? resolveSource(layer.src, data) : null, scene.format)
+      ? slowZoomAt(scene, t) : 1;
     const draw = (c: SKRSContext2D) => {
+      if (zoom !== 1) {
+        // About the layer's zoom origin (its box centre; zoomed layers are never rotated).
+        const o = slowZoomOrigin(layer, scene.format);
+        c.translate(o.x, o.y);
+        c.scale(zoom, zoom);
+        c.translate(-o.x, -o.y);
+      }
       c.translate(layer.x + dx + layer.w / 2, layer.y + dy + layer.h / 2);
       if (layer.rotation) c.rotate((layer.rotation * Math.PI) / 180);
       c.translate(-layer.w / 2, -layer.h / 2);

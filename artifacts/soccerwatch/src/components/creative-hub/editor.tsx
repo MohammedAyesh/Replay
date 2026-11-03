@@ -44,8 +44,8 @@ const TOOLS: Array<{ id: Tool; icon: typeof Type }> = [
   { id: "text", icon: Type }, { id: "media", icon: Image }, { id: "shapes", icon: Shapes }, { id: "layers", icon: Layers },
   { id: "style", icon: Palette }, { id: "format", icon: Smartphone }, { id: "data", icon: Database },
 ];
-/** Videos get Music after Media. */
-const VIDEO_TOOLS: Array<{ id: Tool; icon: typeof Type }> = [TOOLS[0]!, TOOLS[1]!, { id: "music", icon: Music }, ...TOOLS.slice(2)];
+/** Music after Media, on videos and stills alike (music makes a still a short video). */
+const ALL_TOOLS: Array<{ id: Tool; icon: typeof Type }> = [TOOLS[0]!, TOOLS[1]!, { id: "music", icon: Music }, ...TOOLS.slice(2)];
 const TOOL_FOR_KIND: Record<SceneLayer["kind"], Tool> = { text: "text", image: "media", video: "media", shape: "shapes" };
 
 /** Replay's own palette, used only if the academy's brand fails to load. */
@@ -112,7 +112,6 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   useEffect(() => { if (selectedId && !selected) setSelectedId(null); }, [selectedId, selected]);
   useEffect(() => { if (scene.durationMs !== undefined && timeMs > scene.durationMs) setTimeMs(0); }, [scene.durationMs, timeMs]);
   usePlayback(scene.durationMs, playing, setTimeMs);
-  useEffect(() => { if (!isVideo && tool === "music") setTool("media"); }, [isVideo, tool]);
 
   // ── Soundtrack: plays with the editor's clock (and in Preview) ──────────
   const musicTracks = useCreativeMusic(academyId, isVideo);
@@ -172,6 +171,8 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     select: setSelectedId,
     update,
     updateScene: (change, key) => dispatch({ type: "updateScene", change, key, at: Date.now() }),
+    addMusic: (music) => { setTimeMs(0); dispatch({ type: "addMusic", music }); },
+    backToPhoto: () => { setPlaying(false); setTimeMs(0); dispatch({ type: "backToPhoto" }); },
     add: (layer) => { dispatch({ type: "addLayer", layer }); setSelectedId(uniqueLayerId(scene, layer.id)); },
     remove: (id) => { dispatch({ type: "removeLayer", id }); if (selectedId === id) setSelectedId(null); },
     duplicate: (id) => { const newId = uniqueLayerId(scene, `${id}-copy`); dispatch({ type: "duplicateLayer", id, newId }); setSelectedId(newId); },
@@ -220,7 +221,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const tools = isVideo ? VIDEO_TOOLS : TOOLS;
+  const tools = ALL_TOOLS;
   const goPublish = async () => { setPlaying(false); await flush(); nav.openInPublish(project.id); };
 
   const panel = tool === "text" ? <TextPanel ed={ed} />

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CalendarClock, Clock, Facebook, Instagram, Music2, Sparkles } from "lucide-react";
+import { CalendarClock, Clock, Facebook, Film, Instagram, Music2, Sparkles } from "lucide-react";
 import { hasMusic, type CreativeData } from "@workspace/api-zod";
 import { fill, useCreativePublishCopy } from "@/i18n/creative-publish-strings";
 import { Input } from "@/components/ui/input";
@@ -8,15 +8,10 @@ import type { CreativeProject } from "@/lib/creative-hub-api";
 import { PublishError, usePublishToSocial, type Placement, type PublishChannels, type SocialTarget } from "@/lib/creative-hub-publish-api";
 import { ammanLocal, defaultScheduleLocal, formatAmman, formatAmmanLocal } from "./amman";
 import { suggestCaption } from "./caption";
-import { isVideoProject } from "./preview";
+import { isPhotoWithMusic, isVideoProject, placementsFor } from "./placements";
 import { Chip, ConfirmSheet, Notice, PrimaryButton, PublishCard } from "./ui";
 
-/** Same rules as the API (lib/creative/publish.ts allowedPlacements). */
-export function placementsFor(p: Pick<CreativeProject, "kind" | "format">): Placement[] {
-  const video = p.kind === "video";
-  if (p.format === "story") return video ? ["story", "reel"] : ["story"];
-  return video ? ["reel"] : ["feed"];
-}
+export { placementsFor };
 
 export function SocialCard({ academyId, project, channels, ready, thumb }: {
   academyId: number; project: CreativeProject; channels: PublishChannels | undefined; ready: boolean; thumb: React.ReactNode;
@@ -125,6 +120,11 @@ export function SocialCard({ academyId, project, channels, ready, thumb }: {
           <Input type="datetime-local" value={when} min={minLocal} onChange={(e) => setWhen(e.target.value)} className="w-auto" dir="ltr" data-testid="publish-when-input" />
           <span className="mt-1 block text-xs text-muted-text">{copy.social.ammanTime}{when ? ` · ${formatAmmanLocal(when, copy.locale)}` : ""}</span>
         </label>
+      )}
+      {isPhotoWithMusic(project) && (
+        <p className="flex items-start gap-1.5 text-xs text-muted-text" data-testid="publish-photo-video-note">
+          <Film className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />{copy.social.photoVideoNote}
+        </p>
       )}
       {!later && isVideoProject(project) && <p className="text-xs text-muted-text">{copy.social.videoQueued}</p>}
       {isVideoProject(project) && hasMusic(project.scene.music) && (

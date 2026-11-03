@@ -296,6 +296,12 @@ export const sceneSchema = z.object({
   layers: z.array(sceneLayerSchema).max(MAX_SCENE_LAYERS),
   /** Optional soundtrack: a track of Replay's library or the academy's own (see sceneMusicSchema). */
   music: sceneMusicSchema.optional(),
+  /**
+   * Video scenes: the background and photos (slowZoomsLayer) scale slowly from
+   * 1 to SLOW_ZOOM_TO over the scene, so a photo turned into a video for its
+   * music doesn't look frozen. Omitted = still pictures.
+   */
+  slowZoom: z.boolean().optional(),
   /** Which template and style this came from (for re-styling). */
   template: z.object({ key: z.string().max(80), style: z.enum(CREATIVE_STYLES) }).optional(),
   locale: z.enum(["en", "ar"]).default("ar"),
@@ -457,6 +463,55 @@ export function sceneForData(scene: Scene, data: CreativeData | null | undefined
 }
 
 export const isVideoScene = (scene: Scene) => scene.durationMs !== undefined;
+
+// ── Photos with music ────────────────────────────────────────────────────────
+
+/**
+ * Instagram and Facebook take music only inside a video: their publishing API
+ * can't put a soundtrack on a photo post or a photo story. A still that gets
+ * music becomes a short video of the design held on screen (a "photo video"):
+ * it has a duration, no footage, and publishes as a Reel / video story.
+ */
+export const PHOTO_VIDEO_DEFAULT_MS: Record<CreativeFormat, number> = { story: 10_000, post: 15_000, square: 15_000, wide: 15_000 };
+export const PHOTO_VIDEO_MIN_MS = 5_000;
+export const PHOTO_VIDEO_MAX_MS = 30_000;
+
+export const clampPhotoVideoMs = (ms: number) => Math.round(Math.max(PHOTO_VIDEO_MIN_MS, Math.min(PHOTO_VIDEO_MAX_MS, ms)));
+
+/** A video scene with no footage layer: a design that could go back to being a photo. */
+export const isPhotoVideo = (scene: Pick<Scene, "durationMs" | "layers">) =>
+  scene.durationMs !== undefined && !scene.layers.some((l) => l.kind === "video");
+
+/** How far the slow zoom goes: 6 % bigger at the end of the scene. */
+export const SLOW_ZOOM_TO = 1.06;
+
+/**
+ * Does a layer take part in the slow zoom? The background and full-bleed
+ * photos do: an image layer covering the whole canvas, drawn "cover", not
+ * rotated, without an entrance, not the crest and not a cut-out. Cards, crests
+ * and cut-out players stay still, so nothing in the layout moves.
+ * `src` is the layer's resolved source (resolveSource), or null.
+ */
+export function slowZoomsLayer(layer: SceneLayer, src: MediaSource | null, format: CreativeFormat): boolean {
+  if (layer.kind !== "image" || layer.hidden || !src) return false;
+  if ((layer.fit ?? "cover") !== "cover" || layer.cutout || layer.rotation || (layer.enter && layer.enter !== "none")) return false;
+  if (src.type === "crest" || src.type === "binding" || ("cutout" in src && src.cutout)) return false;
+  const { w: W, h: H } = CREATIVE_FORMATS[format] ?? CREATIVE_FORMATS.post;
+  return layer.x <= 1 && layer.y <= 1 && layer.x + layer.w >= W - 1 && layer.y + layer.h >= H - 1;
+}
+
+/** The slow zoom's scale at scene time t (ms): 1 at the start, SLOW_ZOOM_TO at the end; 1 when the scene has none. */
+export function slowZoomAt(scene: Pick<Scene, "durationMs" | "slowZoom">, t: number): number {
+  const D = scene.durationMs ?? 0;
+  if (!scene.slowZoom || D <= 0) return 1;
+  return 1 + (SLOW_ZOOM_TO - 1) * Math.max(0, Math.min(1, t / D));
+}
+
+/** The point a layer zooms about (canvas px): its box's centre, kept on the canvas. */
+export function slowZoomOrigin(layer: Pick<SceneLayer, "x" | "y" | "w" | "h">, format: CreativeFormat): { x: number; y: number } {
+  const { w: W, h: H } = CREATIVE_FORMATS[format] ?? CREATIVE_FORMATS.post;
+  return { x: Math.max(0, Math.min(W, layer.x + layer.w / 2)), y: Math.max(0, Math.min(H, layer.y + layer.h / 2)) };
+}
 
 /** Project lifecycle shared by the API and the console. */
 export const CREATIVE_STATUSES = ["draft", "ready", "scheduled", "published", "skipped"] as const;

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, Loader2, Music2, Pause, Play, Sparkles, Trash2, Upload, X } from "lucide-react";
-import { MUSIC_MOODS, clampMusicStart, hasMusic, type MusicMood, type SceneMusic } from "@workspace/api-zod";
+import { Check, Film, Image as ImageIcon, Loader2, Music2, Pause, Play, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
+import {
+  MUSIC_MOODS, PHOTO_VIDEO_MAX_MS, PHOTO_VIDEO_MIN_MS, clampMusicStart, clampPhotoVideoMs, hasMusic, isPhotoVideo,
+  type MusicMood, type SceneMusic,
+} from "@workspace/api-zod";
 import { useCreativeMusicCopy } from "@/i18n/creative-music-strings";
 import {
   musicFileUrl, useCreativeMusic, useDeleteCreativeMusic, useTemplateMusicRecommendations, type MusicTrack,
@@ -19,7 +22,15 @@ type Shelf = "replay" | "academy";
 const FRESH: Omit<SceneMusic, "trackId"> = { volume: 0.6, startMs: 0, fadeInMs: 300, fadeOutMs: 1200, duck: false };
 
 /**
- * Editor → Music (video scenes): the soundtrack. "Recommended for <template>"
+ * Editor → Music: the soundtrack, on videos and stills alike.
+ *
+ * Instagram and Facebook take music only inside a video, so on a still the
+ * panel says so and "Add music" (or Use on any track) turns the design into a
+ * short video of itself with the music on (EditorApi.addMusic: one undo step).
+ * Such a photo video gets its length (5–30 s), the slow zoom toggle and "Back
+ * to a photo"; removing its music asks whether to go back to a photo.
+ *
+ * "Recommended for <template>"
  * on top lists the template's recommended tracks (an admin's choice, else
  * Replay's). Browse Replay's library and
  * the academy's own uploads by mood, listen, pick one, then choose where it
@@ -28,15 +39,18 @@ const FRESH: Omit<SceneMusic, "trackId"> = { volume: 0.6, startMs: 0, fadeInMs: 
  */
 export function MusicPanel({ ed }: { ed: EditorApi }) {
   const copy = useCreativeMusicCopy();
-  const tracks = useCreativeMusic(ed.academyId, ed.isVideo);
+  const tracks = useCreativeMusic(ed.academyId, true);
   const remove = useDeleteCreativeMusic(ed.academyId);
   const templateKey = ed.template?.key ?? null;
-  const recommendations = useTemplateMusicRecommendations(ed.academyId, ed.isVideo && !!templateKey);
+  const recommendations = useTemplateMusicRecommendations(ed.academyId, !!templateKey);
   const rec = templateKey ? recommendations.data?.[templateKey] ?? null : null;
   const [shelf, setShelf] = useState<Shelf>("replay");
   const [mood, setMood] = useState<MusicMood | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const audition = useAudition();
+  const still = !ed.isVideo;
+  const photoVideo = isPhotoVideo(ed.scene);
   const music = ed.scene.music;
   const sceneMs = ed.scene.durationMs ?? 0;
   const current = sceneTrack(music, tracks.data);
@@ -50,8 +64,6 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
     return (rec?.trackIds ?? []).map((id) => byId.get(id)).filter((t): t is MusicTrack => !!t && t.scope === "replay");
   }, [tracks.data, rec]);
 
-  if (!ed.isVideo) return <p className={panelEmpty}>{copy.onlyVideo}</p>;
-
   const setMusic = (change: Partial<SceneMusic>, key?: string) => {
     if (!hasMusic(music)) return;
     ed.updateScene({ music: { ...music, ...change } }, key ? `music:${key}` : undefined);
@@ -60,12 +72,21 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
     audition.stop();
     const base = hasMusic(music) ? { ...music } : { ...FRESH };
     delete base.trackKey;
-    ed.updateScene({ music: { ...base, trackId: t.trackId, startMs: 0 } });
+    const next = { ...base, trackId: t.trackId, startMs: 0 };
+    if (still) ed.addMusic(next);
+    else ed.updateScene({ music: next });
   };
   const applyRecommended = (t: MusicTrack) => {
     if (!rec) return;
     audition.stop();
-    ed.updateScene({ music: recommendedMusicChange(music, rec, t.trackId) });
+    const next = recommendedMusicChange(still ? undefined : music, rec, t.trackId);
+    if (still) ed.addMusic(next);
+    else ed.updateScene({ music: next });
+  };
+  const removeMusic = () => {
+    audition.stop();
+    if (photoVideo) setRemoving(true);
+    else ed.updateScene({ music: undefined });
   };
   const row = (t: MusicTrack, onUse: () => void, testPrefix = "") => (
     <TrackRow key={t.trackId} track={t} inUse={current?.trackId === t.trackId} testPrefix={testPrefix}
@@ -82,20 +103,65 @@ export function MusicPanel({ ed }: { ed: EditorApi }) {
 
   return (
     <div className="space-y-5" data-testid="editor-music-panel">
+      {still ? (
+        <Section title={copy.photoTitle}>
+          <div className="space-y-3 rounded-xl border border-violet/40 bg-violet/5 p-3" data-testid="music-still">
+            <p className="flex items-start gap-1.5 text-xs text-muted-text"><Film className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet" aria-hidden />{copy.photoNote}</p>
+            {recommended[0] ? (
+              <Button type="button" className="min-h-11 w-full rounded-xl" onClick={() => applyRecommended(recommended[0]!)} data-testid="music-add">
+                <Plus className="h-4 w-4" />{copy.addMusic}
+              </Button>
+            ) : null}
+            <p className="text-xs text-muted-text">{recommended[0] ? copy.addHint(recommended[0].title) : copy.pickHint}</p>
+          </div>
+        </Section>
+      ) : (
       <Section title={copy.current}>
-        {!hasMusic(music) ? <p className={panelEmpty}>{copy.noMusic}</p>
+        {removing && photoVideo ? (
+          <div className="space-y-2 rounded-xl border border-line p-3" data-testid="music-remove-choice">
+            <p className="text-sm font-semibold text-text">{copy.removeChoice}</p>
+            <p className="text-xs text-muted-text">{copy.backToPhotoHint}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" className="min-h-10 rounded-xl" onClick={() => { setRemoving(false); ed.backToPhoto(); }} data-testid="music-back-to-photo">
+                <ImageIcon className="h-4 w-4" />{copy.backToPhoto}
+              </Button>
+              <Button type="button" size="sm" variant="outline" className="min-h-10 rounded-xl" onClick={() => { setRemoving(false); ed.updateScene({ music: undefined }); }} data-testid="music-keep-silent">
+                {copy.keepSilent}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="min-h-10 rounded-xl" onClick={() => setRemoving(false)}>{copy.cancel}</Button>
+            </div>
+          </div>
+        ) : !hasMusic(music) ? <p className={panelEmpty}>{copy.noMusic}</p>
           : !current ? (
             tracks.isLoading ? <div className="h-24 animate-pulse rounded-xl bg-raised" /> : (
               <div className="flex items-center justify-between gap-2 rounded-xl border border-line p-3">
                 <p className="text-sm text-muted-text">{copy.missingTrack}</p>
-                <IconButton label={copy.remove} onClick={() => ed.updateScene({ music: undefined })}><X className="h-4 w-4" /></IconButton>
+                <IconButton label={copy.remove} onClick={removeMusic}><X className="h-4 w-4" /></IconButton>
               </div>
             )
           ) : (
             <CurrentTrack track={current} music={music} sceneMs={sceneMs} timeMs={ed.timeMs} playing={ed.playing}
-              onChange={setMusic} onRemove={() => ed.updateScene({ music: undefined })} />
+              onChange={setMusic} onRemove={removeMusic} />
           )}
       </Section>
+      )}
+
+      {photoVideo ? (
+        <Section title={copy.photoVideo}>
+          <div className="space-y-3" data-testid="music-photo-video">
+            <p className="flex items-start gap-1.5 text-xs text-muted-text"><Film className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet" aria-hidden />{copy.photoNote}</p>
+            <NumberSlider label={copy.length} value={Math.round(sceneMs / 1000)} min={PHOTO_VIDEO_MIN_MS / 1000} max={PHOTO_VIDEO_MAX_MS / 1000} unit={copy.seconds}
+              onChange={(v) => ed.updateScene({ durationMs: clampPhotoVideoMs(v * 1000) }, "duration")} testId="music-length" />
+            <div>
+              <Toggle id="music-slow-zoom" label={copy.slowZoom} checked={!!ed.scene.slowZoom} onChange={(v) => ed.updateScene({ slowZoom: v ? true : undefined })} testId="music-slow-zoom" />
+              <p className="text-xs text-muted-text">{copy.slowZoomHint}</p>
+            </div>
+            <Button type="button" variant="outline" className="min-h-10 w-full rounded-xl" onClick={() => { audition.stop(); setRemoving(false); ed.backToPhoto(); }} data-testid="music-photo-back">
+              <ImageIcon className="h-4 w-4" />{copy.backToPhoto}
+            </Button>
+          </div>
+        </Section>
+      ) : null}
 
       {recommended.length > 0 && ed.template ? (
         <Section title={copy.recommendedFor(ed.template.title[copy.locale])}>

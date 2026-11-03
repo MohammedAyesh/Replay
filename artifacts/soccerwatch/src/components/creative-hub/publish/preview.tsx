@@ -7,13 +7,14 @@ import { apiUrl } from "@/lib/academy-studio-api";
 import { creativeKeys, useRenderCreativeProject, type CreativeProject } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
 import { SceneCanvas } from "../scene-canvas";
+import { isVideoProject } from "./placements";
 import { Notice, PrimaryButton, useWidth } from "./ui";
 
 const FALLBACK_BRAND: CreativeBrand = { primary: "#7B5CFF", accent: "#D4FF4F", ink: "#0B0F1A", paper: "#FFFFFF", muted: "#8A93A6", nameEn: "", nameAr: null };
 
 export const isRendered = (p: CreativeProject) => p.renderStatus === "done" && Boolean(p.outputUrl);
 export const isRendering = (p: CreativeProject) => p.renderStatus === "queued" || p.renderStatus === "rendering";
-export const isVideoProject = (p: Pick<CreativeProject, "kind" | "outputMime">) => (p.outputMime ? p.outputMime.startsWith("video/") : p.kind === "video");
+export { isVideoProject } from "./placements";
 
 /** The rendered file when there is one, else the live scene. */
 export function PublishPreview({ academyId, project, brand }: { academyId: number; project: CreativeProject; brand: CreativeBrand | undefined }) {

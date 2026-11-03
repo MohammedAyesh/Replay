@@ -9,7 +9,6 @@ import { useConsoleWording } from "@/lib/console-kind";
  */
 const en = {
   tool: "Music",
-  onlyVideo: "Music goes on videos. Pick a video template to add a soundtrack.",
   library: "Replay library",
   ours: "Our music",
   allMoods: "All",
@@ -46,6 +45,21 @@ const en = {
   recommendedFor: (template: string) => `Recommended for ${template}`,
   recommendedHint: "Picked to suit this template. Tap Use to put one on.",
 
+  // A still with music (Instagram only takes music inside a video)
+  photoTitle: "Add music",
+  photoNote: "Instagram only takes music inside a video, so with music this design posts as a short video.",
+  addMusic: "Add music",
+  addHint: (title: string) => `Starts with “${title}”, picked for this template. Or pick any track below.`,
+  pickHint: "Pick any track below to add it.",
+  photoVideo: "Short video",
+  length: "Length",
+  slowZoom: "Slow zoom",
+  slowZoomHint: "The background and photo move in slowly, so the video doesn't look frozen.",
+  backToPhoto: "Back to a photo",
+  backToPhotoHint: "Back to a photo takes the music off and it posts as a photo again.",
+  removeChoice: "Remove the music?",
+  keepSilent: "Keep it a video, no music",
+
   // Upload
   uploadTitle: "Upload music",
   uploadHint: "MP3, M4A, AAC or WAV, up to 20 MB and 10 minutes.",
@@ -71,7 +85,6 @@ const en = {
 
 const ar: typeof en = {
   tool: "موسيقى",
-  onlyVideo: "الموسيقى بتنحط عالفيديو. اختار قالب فيديو عشان تضيف موسيقى.",
   library: "مكتبة ريبلاي",
   ours: "موسيقانا",
   allMoods: "الكل",
@@ -107,6 +120,20 @@ const ar: typeof en = {
   bpm: (n: number) => `${n} BPM`,
   recommendedFor: (template: string) => `مقترحة لـ«${template}»`,
   recommendedHint: "اخترناها عشان تزبط مع هالقالب. اكبس «استعملها» وبتنحط عالفيديو.",
+
+  photoTitle: "ضيف موسيقى",
+  photoNote: "إنستغرام ما بقبل موسيقى إلا جوّا فيديو، فإذا حطيت موسيقى هالتصميم بنزل كفيديو قصير.",
+  addMusic: "ضيف موسيقى",
+  addHint: (title: string) => `بتبلّش بـ«${title}»، اخترناها لهالقالب. أو اختار أي موسيقى من تحت.`,
+  pickHint: "اختار أي موسيقى من تحت عشان تضيفها.",
+  photoVideo: "فيديو قصير",
+  length: "المدة",
+  slowZoom: "زووم بطيء",
+  slowZoomHint: "الخلفية والصورة بيقرّبوا شوي شوي، عشان الفيديو ما يبيّن واقف.",
+  backToPhoto: "رجّعه صورة",
+  backToPhotoHint: "لما ترجّعه صورة بتنشال الموسيقى وبنزل صورة متل قبل.",
+  removeChoice: "بدك تشيل الموسيقى؟",
+  keepSilent: "خلّيه فيديو بدون موسيقى",
 
   uploadTitle: "ارفع موسيقى",
   uploadHint: "MP3 أو M4A أو AAC أو WAV، لحد 20 ميغا و10 دقايق.",

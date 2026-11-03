@@ -13,6 +13,8 @@ import {
   insertBinding,
   moveLayer,
   parseFieldValue,
+  photoFrom,
+  photoVideoFrom,
   sceneBindings,
   setPath,
   videoPlayMs,
@@ -331,5 +333,92 @@ describe("a still that becomes a video gets its template's recommended music onc
     const none = run(createEditorState(base()), { type: "setAutoMusic", music: null }, { type: "updateScene", change: { durationMs: 15_000 } });
     expect(none.scene.music).toBeUndefined();
     expect(none.autoMusicUsed).toBe(false);
+  });
+});
+
+describe("music on a still makes it a short video", () => {
+  const rec = { trackId: 41, volume: 0.6, startMs: 0, fadeInMs: 300, fadeOutMs: 1500, duck: false };
+  const picked = { trackId: 9, volume: 0.5, startMs: 0, fadeInMs: 300, fadeOutMs: 1200, duck: false };
+
+  it("Add music: the format's length, the template's recommended track, every layer on screen throughout, slow zoom on, one undo step", () => {
+    let s = run(createEditorState(base()), { type: "setAutoMusic", music: rec }, { type: "addMusic" });
+    expect(s.scene.durationMs).toBe(15_000);
+    expect(s.scene.music).toEqual(rec);
+    expect(s.scene.slowZoom).toBe(true);
+    for (const l of s.scene.layers) expect(l.startMs === undefined && l.endMs === undefined, l.id).toBe(true);
+    expect(s.past).toHaveLength(1);
+    expect(s.autoMusicUsed).toBe(true);
+    // A story starts at 10 s.
+    const story = run(createEditorState(fakeBuild("birthday", "broadcast", "story", "en")), { type: "setAutoMusic", music: rec }, { type: "addMusic" });
+    expect(story.scene.durationMs).toBe(10_000);
+    // Undo: the still exactly as it was; redo: the video again.
+    s = run(s, { type: "undo" });
+    expect(s.scene).toEqual(base());
+    s = run(s, { type: "redo" });
+    expect(s.scene.music).toEqual(rec);
+  });
+
+  it("uses the track the manager picked over the recommendation, and does nothing without any music", () => {
+    const s = run(createEditorState(base()), { type: "setAutoMusic", music: rec }, { type: "addMusic", music: picked, durationMs: 20_000 });
+    expect(s.scene.music).toEqual(picked);
+    expect(s.scene.durationMs).toBe(20_000);
+    const none = run(createEditorState(base()), { type: "addMusic" });
+    expect(none.scene.durationMs).toBeUndefined();
+    expect(none.revision).toBe(0);
+  });
+
+  it("keeps the length within 5–30 s and explicit timing only where it still makes sense", () => {
+    expect(photoVideoFrom(base(), picked, 90_000).durationMs).toBe(30_000);
+    expect(photoVideoFrom(base(), picked, 1_000).durationMs).toBe(5_000);
+    const timed: Scene = { ...base(), layers: base().layers.map((l) =>
+      l.id === "title" ? { ...l, startMs: 2_000, endMs: 60_000 } : l.id === "score" ? { ...l, startMs: 40_000 } : l.id === "band" ? { ...l, startMs: 0, endMs: 15_000 } : l) as SceneLayer[] };
+    const v = photoVideoFrom(timed, picked);
+    expect(layer(v, "title")).toMatchObject({ startMs: 2_000 });
+    expect(layer(v, "title").endMs).toBeUndefined();
+    // Starting after the end would never show: it spans the video instead.
+    expect(layer(v, "score").startMs).toBeUndefined();
+    expect(layer(v, "band").startMs).toBeUndefined();
+    expect(layer(v, "band").endMs).toBeUndefined();
+  });
+
+  it("back to a photo: music, length and zoom go in one undo step; a real video can't", () => {
+    let s = run(createEditorState(base()), { type: "addMusic", music: picked });
+    s = run(s, { type: "backToPhoto" });
+    expect(s.scene.durationMs).toBeUndefined();
+    expect(s.scene.music).toBeUndefined();
+    expect(s.scene.slowZoom).toBeUndefined();
+    expect(s.scene).toEqual(photoFrom(photoVideoFrom(base(), picked)));
+    s = run(s, { type: "undo" });
+    expect(s.scene.music).toEqual(picked);
+    // A design with footage is a real video: there is no photo to go back to.
+    const footage: Scene = { ...base(), durationMs: 8_000, layers: [...base().layers,
+      { id: "vid", kind: "video", src: { type: "clip", clipId: 1 }, x: 0, y: 0, w: 1080, h: 1350, fit: "cover", trimInMs: 0, speed: 1, muted: false }] };
+    const v = run(createEditorState(footage), { type: "backToPhoto" });
+    expect(v.scene).toBe(footage);
+  });
+
+  it("a photo video keeps its length, music and slow zoom through a style or format change", () => {
+    const v = photoVideoFrom(base(), picked, 12_000);
+    const styled = changeStyle(v, "street", fakeBuild);
+    expect(styled).toMatchObject({ durationMs: 12_000, music: picked, slowZoom: true });
+    expect(changeFormat(v, "story")).toMatchObject({ durationMs: 12_000, music: picked, slowZoom: true });
+  });
+
+  it("adding music again after removing it puts music on (it was asked for)", () => {
+    const s = run(createEditorState(base()), { type: "setAutoMusic", music: rec }, { type: "addMusic" }, { type: "backToPhoto" }, { type: "addMusic" });
+    expect(s.scene.music).toEqual(rec);
+    expect(s.scene.durationMs).toBe(15_000);
+  });
+
+  it("works on every still template in the catalogue: line-up, birthday and the rest", async () => {
+    const { CREATIVE_TEMPLATES, buildTemplateScene, isPhotoVideo, sceneSchema } = await import("@workspace/api-zod");
+    for (const t of CREATIVE_TEMPLATES.filter((x) => x.kind === "image")) {
+      for (const f of t.formats) {
+        const v = photoVideoFrom(buildTemplateScene(t.key, "broadcast", f, "en"), picked);
+        expect(sceneSchema.safeParse(v).success, `${t.key}/${f}`).toBe(true);
+        expect(isPhotoVideo(v), `${t.key}/${f}`).toBe(true);
+        expect(v.layers.every((l) => l.startMs === undefined && l.endMs === undefined)).toBe(true);
+      }
+    }
   });
 });
