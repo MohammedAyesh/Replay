@@ -161,7 +161,11 @@ router.get(`${base}/uploads`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);
   if (!access) return;
   try {
-    res.json(await libraryUploads(access.academyId, parseLibraryFilters(req.query as Record<string, unknown>)));
+    const phase = typeof req.query.phase === "string" && ["before", "during", "after", "unlinked"].includes(req.query.phase) ? req.query.phase : null;
+    const sessionId = Number(req.query.sessionId);
+    res.json(await libraryUploads(access.academyId, parseLibraryFilters(req.query as Record<string, unknown>), {
+      phase, sessionId: Number.isSafeInteger(sessionId) && sessionId > 0 ? sessionId : null,
+    }));
   } catch (error) {
     failed(res, error, "Creative library: uploads failed");
   }

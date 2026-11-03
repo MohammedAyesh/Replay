@@ -111,6 +111,8 @@ export type LibraryUpload = {
   source: UploadSource;
   thumbnailUrl: string | null;
   videoUrl: string | null;
+  /** A phone file, sorted by when it was filmed against a session (routes/academyPhoneMedia.ts). */
+  phone?: { id: number; phase: "before" | "during" | "after" | "unlinked"; sessionId: number | null; offsetSec: number | null; capturedAt: string | null; needsReview: boolean } | null;
 };
 
 /** A photo in a player's gallery (academy console → Players). `url` is an API path. */
@@ -157,6 +159,8 @@ export type LibraryFilter = {
   kind?: "image" | "video" | null;
   origin?: ClipOrigin | null;
   sort?: ClipSort | null;
+  /** Phone files sorted by match time. */
+  phase?: "before" | "during" | "after" | "unlinked" | null;
 };
 
 function qs(f: LibraryFilter, offset: number, limit: number): string {
@@ -168,6 +172,7 @@ function qs(f: LibraryFilter, offset: number, limit: number): string {
   if (f.to) p.set("to", f.to);
   if (f.kind) p.set("kind", f.kind);
   if (f.origin) p.set("origin", f.origin);
+  if (f.phase) p.set("phase", f.phase);
   if (f.sort && f.sort !== "newest") p.set("sort", f.sort);
   p.set("offset", String(offset));
   p.set("limit", String(limit));
@@ -205,7 +210,7 @@ export function useLibraryClips(academyId: number, f: LibraryFilter) {
 }
 
 export function useLibraryUploads(academyId: number, f: LibraryFilter) {
-  const q = usePaged<Page & { uploads: LibraryUpload[] }>(academyId, "uploads", "/library/uploads", { kind: f.kind, from: f.from, to: f.to }, 30);
+  const q = usePaged<Page & { uploads: LibraryUpload[] }>(academyId, "uploads", "/library/uploads", { kind: f.kind, from: f.from, to: f.to, phase: f.phase }, 30);
   return { ...q, items: q.data?.pages.flatMap((p) => p.uploads) ?? [] };
 }
 

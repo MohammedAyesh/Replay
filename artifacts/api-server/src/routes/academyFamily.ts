@@ -120,7 +120,7 @@ const familyPlayerSelection = () => db
     ),
   );
 
-async function findFamilyPlayersForUser(userId: number) {
+export async function findFamilyPlayersForUser(userId: number) {
   const guardianLinks = await db
     .select({ playerId: academyPlayerGuardiansTable.playerId })
     .from(academyPlayerGuardiansTable)

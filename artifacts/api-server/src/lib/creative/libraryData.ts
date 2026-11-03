@@ -20,6 +20,7 @@
 import { and, asc, desc, eq, getTableColumns, gte, inArray, isNotNull, lt, or, sql, type SQL } from "drizzle-orm";
 import {
   academyAdMediaTable,
+  academyPhoneMediaTable,
   academyMatchLineupsTable,
   academyMatchPagesTable,
   academyMembersTable,
@@ -481,22 +482,40 @@ export function libraryUpload(m: UploadRow) {
   };
 }
 
-export async function libraryUploads(academyId: number, f: LibraryFilters) {
+export async function libraryUploads(academyId: number, f: LibraryFilters, phone: { phase?: string | null; sessionId?: number | null } = {}) {
   // Everything but the image bytes (photos are megabytes each).
   const { imageData: _bytes, ...columns } = getTableColumns(academyAdMediaTable);
   const where: SQL[] = [eq(academyAdMediaTable.academyId, academyId), sql`${academyAdMediaTable.status} <> 'failed'`];
+  // Phone files: sorted by match time (before / during / after / not linked).
+  if (phone.phase) where.push(eq(academyPhoneMediaTable.phase, phone.phase));
+  if (phone.sessionId) where.push(eq(academyPhoneMediaTable.sessionId, phone.sessionId));
   if (f.kind) where.push(eq(academyAdMediaTable.kind, f.kind));
   if (f.from) where.push(gte(academyAdMediaTable.createdAt, f.from));
   if (f.until) where.push(lt(academyAdMediaTable.createdAt, f.until));
   const [rows, [{ count }]] = await Promise.all([
-    db.select({ ...columns, hasImage: sql<boolean>`${academyAdMediaTable.imageData} is not null` })
-      .from(academyAdMediaTable).where(and(...where))
+    db.select({
+      ...columns, hasImage: sql<boolean>`${academyAdMediaTable.imageData} is not null`,
+      phoneId: academyPhoneMediaTable.id, phase: academyPhoneMediaTable.phase, phoneSessionId: academyPhoneMediaTable.sessionId,
+      offsetSec: academyPhoneMediaTable.offsetSec, capturedStart: academyPhoneMediaTable.capturedStart, needsReview: academyPhoneMediaTable.needsReview,
+    })
+      .from(academyAdMediaTable).leftJoin(academyPhoneMediaTable, eq(academyPhoneMediaTable.mediaId, academyAdMediaTable.id)).where(and(...where))
       .orderBy(desc(academyAdMediaTable.createdAt), desc(academyAdMediaTable.id))
       .limit(f.limit).offset(f.offset),
-    db.select({ count: sql<number>`count(*)::int` }).from(academyAdMediaTable).where(and(...where)),
+    db.select({ count: sql<number>`count(*)::int` }).from(academyAdMediaTable)
+      .leftJoin(academyPhoneMediaTable, eq(academyPhoneMediaTable.mediaId, academyAdMediaTable.id)).where(and(...where)),
   ]);
   const next = f.offset + rows.length;
-  return { uploads: rows.map(libraryUpload), total: count, nextOffset: next < count ? next : null };
+  return {
+    uploads: rows.map((r) => ({
+      ...libraryUpload(r),
+      phone: r.phoneId === null ? null : {
+        id: r.phoneId, phase: r.phase, sessionId: r.phoneSessionId, offsetSec: r.offsetSec,
+        capturedAt: r.capturedStart?.toISOString() ?? null, needsReview: r.needsReview,
+      },
+    })),
+    total: count,
+    nextOffset: next < count ? next : null,
+  };
 }
 
 // ── Players ─────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, isNotNull, lt, sql } from "drizzle-orm";
-import { academyCreativeProjectsTable, academyMatchLineupsTable, academyPlayersTable, academySessionsTable, db, type Academy } from "@workspace/db";
+import { academyAdMediaTable, academyCreativeProjectsTable, academyMatchLineupsTable, academyPhoneMediaTable, academyPlayersTable, academySessionsTable, db, type Academy } from "@workspace/db";
 import {
+  type CreativeFormat,
   PUBLIC_STYLES,
   CREATIVE_TEMPLATES,
   buildTemplateScene,
@@ -94,7 +95,8 @@ const DAY = 86_400_000;
 // ── Origin keys ─────────────────────────────────────────────────────────────
 
 export type DraftKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "countdown" | "callup" | "matchstats" | "weekly"
-  | "improved" | "firstgoal" | "meet" | "streak" | "weekmoment";
+  | "improved" | "firstgoal" | "meet" | "streak" | "weekmoment"
+  | "phonebefore" | "phoneafter" | "goalduo";
 export type FeedGroup = "after" | "upcoming" | "week";
 
 export const originKey = {
@@ -112,23 +114,26 @@ export const originKey = {
   meet: (isoWeek: string) => `meet:${isoWeek}`,
   streak: (isoWeek: string) => `streak:${isoWeek}`,
   weekmoment: (isoWeek: string) => `weekmoment:${isoWeek}`,
+  phonebefore: (sessionId: number) => `phonebefore:session:${sessionId}`,
+  phoneafter: (sessionId: number) => `phoneafter:session:${sessionId}`,
+  goalduo: (momentId: string) => `goalduo:moment:${momentId}`,
 };
 
 /** Kinds made once per ISO week. */
 const WEEK_KINDS = new Set<DraftKind>(["weekly", "meet", "streak", "weekmoment"]);
 
 export type ParsedOriginKey =
-  | { kind: Exclude<DraftKind, "goal" | "weekly" | "firstgoal" | "meet" | "streak" | "weekmoment">; sessionId: number }
-  | { kind: "goal"; momentId: string }
+  | { kind: Exclude<DraftKind, "goal" | "goalduo" | "weekly" | "firstgoal" | "meet" | "streak" | "weekmoment">; sessionId: number }
+  | { kind: "goal" | "goalduo"; momentId: string }
   | { kind: "firstgoal"; playerId: number }
   | { kind: "weekly" | "meet" | "streak" | "weekmoment"; week: string };
 
 export function parseOriginKey(key: string | null | undefined): ParsedOriginKey | null {
   if (!key) return null;
-  let m = /^(fulltime|cleansheet|potm|matchday|countdown|callup|matchstats|improved):session:(\d+)$/.exec(key);
+  let m = /^(fulltime|cleansheet|potm|matchday|countdown|callup|matchstats|improved|phonebefore|phoneafter):session:(\d+)$/.exec(key);
   if (m) return { kind: m[1] as "fulltime", sessionId: Number(m[2]) };
-  m = /^goal:moment:([\w-]+)$/.exec(key);
-  if (m) return { kind: "goal", momentId: m[1] };
+  m = /^(goal|goalduo):moment:([\w-]+)$/.exec(key);
+  if (m) return { kind: m[1] as "goal", momentId: m[2] };
   m = /^(weekly|meet|streak|weekmoment):(\d{4}-W\d{2})$/.exec(key);
   if (m) return { kind: m[1] as "weekly", week: m[2] };
   m = /^firstgoal:player:(\d+)$/.exec(key);
@@ -137,7 +142,7 @@ export function parseOriginKey(key: string | null | undefined): ParsedOriginKey 
 }
 
 /** Drafts about a coming fixture: in the feed until kick-off. */
-export const isFixtureKind = (kind: DraftKind) => kind === "matchday" || kind === "countdown" || kind === "callup";
+export const isFixtureKind = (kind: DraftKind) => kind === "matchday" || kind === "countdown" || kind === "callup" || kind === "phonebefore";
 
 export const groupOf = (kind: DraftKind): FeedGroup =>
   isFixtureKind(kind) ? "upcoming" : WEEK_KINDS.has(kind) ? "week" : "after";
@@ -158,6 +163,9 @@ export const TEMPLATE_FOR: Record<DraftKind, string> = {
   meet: "meetplayer",
   streak: "streak",
   weekmoment: "weekmoment",
+  phonebefore: "matchday",
+  phoneafter: "fulltime",
+  goalduo: "goalduo",
 };
 
 // ── Amman calendar ──────────────────────────────────────────────────────────
@@ -211,7 +219,14 @@ export type DraftPlan = {
   /** The footage the draft is built around; a still uses its frame, a video its window. */
   moment: SessionMoment | null;
   title: string;
+  /** A format other than the template's first (a phone photo before the match makes a story). */
+  format?: CreativeFormat;
+  /** Changes to named layers of the built scene (the phone angle's trim in a two-angle reel). */
+  layerPatch?: Record<string, Partial<{ trimInMs: number; trimOutMs: number }>>;
 };
+
+/** A phone file sorted against a session (lib/phoneMedia). */
+export type PhoneFact = { mediaId: number; kind: "image" | "video"; phase: "before" | "during" | "after"; offsetSec: number | null; durationSec: number | null; recordingId: number | null; playerIds: number[] };
 
 /** The week's draft: a clip from its latest filmed training. */
 export type WeekFacts = {
@@ -234,6 +249,9 @@ const AR = {
   meet: "تعرّفوا على اللاعب",
   streak: "ما بغيب",
   weekmoment: "لقطة الأسبوع",
+  phonebefore: "قبل الماتش",
+  phoneafter: "بعد الماتش",
+  goalduo: "الجول من زاويتين",
   vs: "ضد",
 };
 const EN = {
@@ -251,6 +269,9 @@ const EN = {
   meet: "Meet the player",
   streak: "Attendance streak",
   weekmoment: "Moment of the week",
+  phonebefore: "Before the match",
+  phoneafter: "After the match",
+  goalduo: "Goal from two angles",
   vs: "vs",
 };
 
@@ -332,6 +353,8 @@ export function planAutoDrafts(input: {
   /** This week's finished filmed sessions, for the moment of the week. */
   weekSessions?: SessionFacts[];
   academyData?: CreativeData["academy"];
+  /** Phone files sorted against each session (by session id): before / during / after. */
+  phone?: ReadonlyMap<number, PhoneFact[]>;
 }): DraftPlan[] {
   const locale = input.locale ?? FOR_YOU.locale;
   const out: DraftPlan[] = [];
@@ -426,6 +449,53 @@ export function planAutoDrafts(input: {
     }
   }
 
+  // Phone files sorted by match time. A file showing a child without consent stays out of public drafts.
+  const phoneOk = (f: PhoneFact) => !featured || f.playerIds.every((id) => featured.consent.has(id));
+  for (const facts of input.sessions) {
+    const files = (input.phone?.get(facts.session.id) ?? []).filter(phoneOk);
+    if (!files.length || facts.session.type !== "match") continue;
+    const s = facts.session;
+    const shown = buildSessionData(featured ? consentedFacts(facts, featured) : facts, locale);
+    if (featured) delete shown.player;
+    const photo = (phase: PhoneFact["phase"]) => [...files].reverse().find((f) => f.phase === phase && f.kind === "image");
+    // Before: a story for match day from the touchline (the squad warming up, the kit).
+    const before = photo("before");
+    if (before && !isFinished(s, input.now)) {
+      const { stats: _st, more: _mo, ...fixture } = shown;
+      add({ kind: "phonebefore", originKey: originKey.phonebefore(s.id), templateKey: TEMPLATE_FOR.phonebefore, sessionId: s.id,
+        data: { ...fixture, media: { type: "upload", mediaId: before.mediaId } }, moment: null, title: draftTitle("phonebefore", facts, locale), format: "story" });
+    }
+    // After: the full-time post on a photo taken after the whistle.
+    const after = photo("after");
+    if (after && isFinished(s, input.now) && s.ownScore !== null && s.opponentScore !== null) {
+      add({ kind: "phoneafter", originKey: originKey.phoneafter(s.id), templateKey: TEMPLATE_FOR.phoneafter, sessionId: s.id,
+        data: { ...shown, media: { type: "upload", mediaId: after.mediaId } }, moment: null, title: draftTitle("phoneafter", facts, locale) });
+    }
+    // During: each confirmed goal a phone also filmed, as two angles in step.
+    if (goalsAreOurs(facts)) {
+      for (const g of facts.goals.slice(0, FOR_YOU.goalsPerMatch)) {
+        const v = files.find((f) => f.phase === "during" && f.kind === "video" && f.offsetSec !== null && f.durationSec
+          && f.recordingId === g.recordingId && g.atMs >= f.offsetSec * 1000 && g.atMs <= (f.offsetSec + f.durationSec) * 1000);
+        if (!v || v.offsetSec === null || !v.durationSec) continue;
+        const phoneFrom = v.offsetSec * 1000;
+        const from = Math.max(g.fromMs, phoneFrom);
+        const to = Math.min(g.toMs, phoneFrom + v.durationSec * 1000);
+        if (to - from < 4000) continue;
+        add({
+          kind: "goalduo", originKey: originKey.goalduo(g.id), templateKey: TEMPLATE_FOR.goalduo, sessionId: s.id, moment: null,
+          data: {
+            ...shown,
+            media: { type: "recording", recordingId: g.recordingId, fromMs: from, toMs: to },
+            more: [{ type: "upload", mediaId: v.mediaId }],
+            custom: { headline: locale === "ar" ? "الجول من الكاميرا ومن التلفون" : "From the camera and from the stands" },
+          },
+          layerPatch: { phone: { trimInMs: Math.round(from - phoneFrom), trimOutMs: Math.round(to - phoneFrom) } },
+          title: draftTitle("goalduo", facts, locale),
+        });
+      }
+    }
+  }
+
   if (featured) {
     for (const facts of input.sessions) {
       if (facts.session.type !== "match" || !isFinished(facts.session, input.now) || facts.session.startsAt.getTime() < now - FOR_YOU.pastDays * DAY) continue;
@@ -486,7 +556,8 @@ export function materializeDraft(
   if (!meta) return null;
   let scene: Scene;
   try {
-    const parsed = sceneSchema.safeParse(catalogue.build(meta.key, style, meta.formats[0] ?? "post", locale));
+    const format = plan.format && meta.formats.includes(plan.format) ? plan.format : meta.formats[0] ?? "post";
+    const parsed = sceneSchema.safeParse(catalogue.build(meta.key, style, format, locale));
     if (!parsed.success) {
       logger.warn({ template: meta.key, style, issues: parsed.error.issues.slice(0, 3) }, "Creative template built an invalid scene");
       return null;
@@ -495,6 +566,9 @@ export function materializeDraft(
   } catch (error) {
     logger.warn({ template: meta.key, style, error: (error as Error).message }, "Creative template failed to build");
     return null;
+  }
+  if (plan.layerPatch) {
+    scene = { ...scene, layers: scene.layers.map((l) => (plan.layerPatch![l.id] && l.kind === "video" ? { ...l, ...plan.layerPatch![l.id] } : l)) } as Scene;
   }
   const isVideo = scene.durationMs !== undefined;
   const data: CreativeData = { ...plan.data };
@@ -580,8 +654,10 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
   });
   const weekSessions = [...sessions, ...(training ? [training] : [])]
     .filter((f) => f.recording && isFinished(f.session, now) && isoWeekKey(f.session.startsAt) === isoWeek);
+  const phone = await loadPhoneFacts(academyId, sessions.map((f) => f.session.id)).catch(() => new Map<number, PhoneFact[]>());
   const plans = planAutoDrafts({
     now,
+    phone,
     sessions,
     week: { isoWeek, training },
     existing: new Set(existingRows.map((r) => r.key).filter((k): k is string => Boolean(k))),
@@ -605,6 +681,27 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     })
     .returning({ id: academyCreativeProjectsTable.id });
   return inserted.length;
+}
+
+/** Phone files sorted against these sessions (not the unlinked ones), oldest first. */
+export async function loadPhoneFacts(academyId: number, sessionIds: number[]): Promise<Map<number, PhoneFact[]>> {
+  const out = new Map<number, PhoneFact[]>();
+  if (!sessionIds.length) return out;
+  const rows = await db.select({
+    sessionId: academyPhoneMediaTable.sessionId, mediaId: academyPhoneMediaTable.mediaId, kind: academyPhoneMediaTable.kind,
+    phase: academyPhoneMediaTable.phase, offsetSec: academyPhoneMediaTable.offsetSec, recordingId: academyPhoneMediaTable.recordingId,
+    playerIds: academyPhoneMediaTable.playerIds, durationSec: academyAdMediaTable.durationSec,
+  }).from(academyPhoneMediaTable)
+    .innerJoin(academyAdMediaTable, eq(academyAdMediaTable.id, academyPhoneMediaTable.mediaId))
+    .where(and(eq(academyPhoneMediaTable.academyId, academyId), inArray(academyPhoneMediaTable.sessionId, sessionIds), eq(academyAdMediaTable.status, "ready")))
+    .orderBy(academyPhoneMediaTable.createdAt);
+  for (const r of rows) {
+    if (r.sessionId === null || r.phase === "unlinked") continue;
+    const list = out.get(r.sessionId) ?? [];
+    list.push({ mediaId: r.mediaId, kind: r.kind === "video" ? "video" : "image", phase: r.phase as PhoneFact["phase"], offsetSec: r.offsetSec, durationSec: r.durationSec, recordingId: r.recordingId, playerIds: (r.playerIds as number[]) ?? [] });
+    out.set(r.sessionId, list);
+  }
+  return out;
 }
 
 /** Each fixture's squad as the owner picked it (in_squad line-up rows), by session id. */

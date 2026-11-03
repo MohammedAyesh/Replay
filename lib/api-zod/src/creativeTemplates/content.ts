@@ -50,7 +50,7 @@ export type Content = {
   playerPhoto?: boolean;
   /** Whether the main picture slot is used. */
   media: boolean;
-  video?: { variant: "goal" | "talk" | "training"; durationMs: number; captions?: string[] };
+  video?: { variant: "goal" | "talk" | "training" | "duo"; durationMs: number; captions?: string[] };
   academy: string;
 };
 
@@ -726,6 +726,27 @@ const DEFS: Def[] = [
       video: { variant: "training", durationMs: 15000 },
     }),
     sample: (ar) => ({ academy: academy(ar), match: match(ar), media: photo("goal-clip"), custom: { headline: ar ? "أحلى لقطة من هالأسبوع" : "The best of this week" } }),
+  },
+  {
+    // The panoramic camera on top, a parent's or coach's phone clip of the same moment below,
+    // kept in step by the phone clip's offset into the recording (phone media sorted by match time).
+    key: "goalduo", category: "players", title: { en: "Goal from two angles", ar: "الجول من زاويتين" }, formats: ["story"],
+    content: (ar) => ({
+      arch: "video",
+      kicker: ar ? "من زاويتين" : "Two angles",
+      headline: "{{custom.headline}}",
+      number: "{{player.number}}",
+      name: "{{player.name}}",
+      score: { ownName: "{{match.ownName}}", oppName: "{{match.opponent}}", own: "{{match.ownScore}}", opp: "{{match.opponentScore}}" },
+      meta: [squadDate],
+      pills: [],
+      media: true,
+      video: { variant: "duo", durationMs: 15000 },
+    }),
+    sample: (ar) => ({
+      academy: academy(ar), match: match(ar), player: player(ar, 9), media: photo("goal-clip"), more: [photo("training-clip")],
+      custom: { headline: ar ? "الجول من الكاميرا ومن التلفون" : "From the camera and from the stands" },
+    }),
   },
 ];
 

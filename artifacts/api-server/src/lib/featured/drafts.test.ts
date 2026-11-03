@@ -137,3 +137,40 @@ describe("attendance streak", () => {
     expect(attendanceStreak([])).toBe(0);
   });
 });
+
+describe("phone files in drafts", () => {
+  const goals = confirmedGoalMoments(910, [{ atTenths: 3000, userId: 1, verdict: "goal" }], 0); // a goal at 300 s
+  const played = match(10, "2026-10-31T15:00:00Z", { players, goals });
+  const upcoming = match(11, "2026-11-02T15:00:00Z", {}, { ownScore: null, opponentScore: null });
+  const phone = new Map([
+    [10, [
+      { mediaId: 501, kind: "video" as const, phase: "during" as const, offsetSec: 290, durationSec: 30, recordingId: 910, playerIds: [] },
+      { mediaId: 502, kind: "image" as const, phase: "after" as const, offsetSec: null, durationSec: null, recordingId: null, playerIds: [1] },
+      // Shows a child without consent: never used publicly.
+      { mediaId: 503, kind: "image" as const, phase: "after" as const, offsetSec: null, durationSec: null, recordingId: null, playerIds: [4] },
+    ]],
+    [11, [{ mediaId: 601, kind: "image" as const, phase: "before" as const, offsetSec: null, durationSec: null, recordingId: null, playerIds: [] }]],
+  ]);
+  const plans = planAutoDrafts({ now: NOW, sessions: [played, upcoming], week: null, existing: new Set(), locale: "en", featured: featured(), phone });
+  const of = (k: string) => plans.filter((p) => p.kind === k);
+
+  it("a goal a phone also filmed becomes a two-angle reel, the phone trimmed to the same moment", () => {
+    const duo = of("goalduo");
+    expect(duo).toHaveLength(1);
+    // The goal's window (294–304 s) inside the phone clip (290–320 s).
+    expect(duo[0].data.media).toEqual({ type: "recording", recordingId: 910, fromMs: 294_000, toMs: 304_000 });
+    expect(duo[0].data.more).toEqual([{ type: "upload", mediaId: 501 }]);
+    expect(duo[0].layerPatch).toEqual({ phone: { trimInMs: 4_000, trimOutMs: 14_000 } });
+    const row = materializeDraft(duo[0], 1, "jufa");
+    const phoneLayer = (row!.scene as { layers: Array<{ id: string; trimInMs?: number; trimOutMs?: number }> }).layers.find((l) => l.id === "phone");
+    expect(phoneLayer).toMatchObject({ trimInMs: 4_000, trimOutMs: 14_000 });
+  });
+
+  it("an after photo makes the full-time post; a before photo a match-day story; a child without consent stays out", () => {
+    expect(of("phoneafter")[0].data.media).toEqual({ type: "upload", mediaId: 502 });
+    const before = of("phonebefore")[0];
+    expect(before.data.media).toEqual({ type: "upload", mediaId: 601 });
+    expect(materializeDraft(before, 1, "jufa")!.format).toBe("story");
+    expect(JSON.stringify(plans)).not.toContain('"mediaId":503');
+  });
+});

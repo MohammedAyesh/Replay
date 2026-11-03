@@ -23,6 +23,7 @@ import {
 import { resizeImage } from "@/lib/facebook-sdk";
 import { cn } from "@/lib/utils";
 import { formatLength, stillUrls, Thumb } from "./media";
+import { usePhoneCopy } from "@/i18n/phone-strings";
 
 export type LibraryView = "matches" | "clips" | "uploads";
 export type LibraryAccept = "image" | "video" | "any";
@@ -526,12 +527,19 @@ function UploadsView({ academyId, accept, filter, onSelect }: {
   onSelect: (item: LibraryItem) => void;
 }) {
   const copy = useCreativeLibraryCopy();
-  const q = useLibraryUploads(academyId, { kind: filter.kind, from: filter.from || null, to: filter.to || null });
+  const phoneCopy = usePhoneCopy();
+  const [phase, setPhase] = useState<"before" | "during" | "after" | null>(null);
+  const q = useLibraryUploads(academyId, { kind: filter.kind, from: filter.from || null, to: filter.to || null, phase });
   return (
     <div className="flex flex-col gap-3" data-testid="library-uploads">
       <div className="flex items-center justify-between gap-2">
         <p className="text-xs text-muted-text">{copy.uploadHint}</p>
         <UploadButton academyId={academyId} accept={accept} onUploaded={(u) => onSelect({ kind: "upload", upload: u })} />
+      </div>
+      {/* Phone files sorted by match time: before (match-day stories), during (two-angle goals), after (full time). */}
+      <div className="flex gap-1.5 overflow-x-auto" data-testid="library-phase-filter">
+        <Chip active={phase === null} onClick={() => setPhase(null)}>{copy.filters.all}</Chip>
+        {(["before", "during", "after"] as const).map((p) => <Chip key={p} active={phase === p} onClick={() => setPhase(p)}>{phoneCopy.phases[p]}</Chip>)}
       </div>
       {q.isLoading ? <Skeletons />
         : q.isError ? <Notice onRetry={() => void q.refetch()} retry={copy.retry}>{copy.failed}</Notice>
@@ -546,6 +554,7 @@ function UploadsView({ academyId, accept, filter, onSelect }: {
                       className="aspect-square w-full ring-turf transition group-hover:ring-2">
                       {u.kind === "image" && <span className="absolute bottom-1.5 start-1.5 rounded-md bg-black/70 p-0.5 text-white"><Images className="h-3 w-3" aria-hidden /></span>}
                       {u.status === "processing" && <span className="absolute end-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">{copy.processing}</span>}
+                      {u.phone && u.phone.phase !== "unlinked" && <span className="absolute start-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white" data-testid={`upload-phase-${u.mediaId}`}>{phoneCopy.phases[u.phone.phase]}</span>}
                     </Thumb>
                   </button>
                 </li>

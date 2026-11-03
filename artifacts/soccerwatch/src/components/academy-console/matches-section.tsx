@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { PrivateClipsCard } from "@/components/academy-console/private-clips-card";
+import { PhoneMediaCard } from "@/components/academy-console/phone-media-card";
+import { PhoneReviewCard } from "@/components/academy-console/phone-review-card";
 import { ArrowLeft, ArrowRight, BarChart3, Check, ExternalLink, Loader2, RefreshCw, Sparkles, UserRoundX, Video } from "lucide-react";
 import { useMatchesCopy, type MatchesStrings } from "@/i18n/matches-strings";
 import {
@@ -80,7 +82,7 @@ export function AcademyMatchesSection({ academyId, isOwner }: { academyId: numbe
               </button>
             ))}
           </div>
-          {tab === "matches" ? <MatchList academyId={academyId} copy={copy} onOpen={setOpenId} /> : <PlayerCompare academyId={academyId} copy={copy} />}
+          {tab === "matches" ? <><PhoneReviewCard academyId={academyId} /><MatchList academyId={academyId} copy={copy} onOpen={setOpenId} /></> : <PlayerCompare academyId={academyId} copy={copy} />}
         </>
       ) : (
         <MatchDetailView academyId={academyId} sessionId={openId} isOwner={isOwner} copy={copy} onBack={() => setOpenId(null)} focus={linked?.id === openId ? linked.step : null} />
@@ -163,6 +165,7 @@ function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack, focus }:
       <WhoCard academyId={academyId} data={data} copy={copy} />
       <StatsCard academyId={academyId} data={data} copy={copy} />
       <ShareCard academyId={academyId} data={data} isOwner={isOwner} copy={copy} />
+      <PhoneMediaCard academyId={academyId} sessionId={sessionId} lineup={data.lineup} />
       {data.session.type === "match" && <PrivateClipsCard academyId={academyId} sessionId={sessionId} isOwner={isOwner} analysed={data.analysis.analysed} />}
     </div>
   );

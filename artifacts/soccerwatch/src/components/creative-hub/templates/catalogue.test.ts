@@ -16,7 +16,7 @@ const KEYS = [
   "fulltime", "matchday", "potm", "goal", "lineup", "potmonth", "standings", "nextround", "champions", "freetrial", "cleansheet", "birthday",
   "pricing", "newgroup", "talk", "training", "welcome", "getwell", "staff", "alumni", "tournament", "poll", "map", "manifesto",
   "kickoff", "goalflash", "halftime", "livescore", "countdown", "callup", "matchstats",
-  "meetplayer", "improved", "streak", "firstgoal", "weekmoment",
+  "meetplayer", "improved", "streak", "firstgoal", "weekmoment", "goalduo",
 ];
 // Templates are drawn for these; 16:9 ("wide") is for clip videos only.
 const FORMATS = TEMPLATE_FORMATS;
@@ -39,12 +39,12 @@ for (const key of KEYS) for (const style of CREATIVE_STYLES) for (const format o
   all.push({ key, style, format, locale, scene: buildTemplateScene(key, style, format, locale) });
 
 describe("catalogue", () => {
-  it("lists the 36 templates once each", () => {
+  it("lists the 37 templates once each", () => {
     expect(CREATIVE_TEMPLATES.map((t) => t.key).sort()).toEqual([...KEYS].sort());
   });
 
   it("marks goal, talk, training and the moment of the week as video and puts the poll in a story first", () => {
-    expect(CREATIVE_TEMPLATES.filter((t) => t.kind === "video").map((t) => t.key).sort()).toEqual(["goal", "talk", "training", "weekmoment"]);
+    expect(CREATIVE_TEMPLATES.filter((t) => t.kind === "video").map((t) => t.key).sort()).toEqual(["goal", "goalduo", "talk", "training", "weekmoment"]);
     expect(CREATIVE_TEMPLATES.find((t) => t.key === "poll")?.formats[0]).toBe("story");
   });
 
@@ -117,8 +117,15 @@ describe.each(all.map((s) => [`${s.key} / ${s.style} / ${s.format} / ${s.locale}
   if (CREATIVE_TEMPLATES.find((t) => t.key === key)?.kind === "video") {
     it("plays the footage full-bleed and times every overlay inside the clip", () => {
       expect(scene.durationMs).toBeGreaterThanOrEqual(5000);
-      const v = scene.layers.find((l) => l.kind === "video");
-      expect(v).toMatchObject({ x: 0, y: 0, w: W, h: H });
+      const videos = scene.layers.filter((l) => l.kind === "video");
+      if (key === "goalduo") {
+        // Two angles: the camera on top, the phone (more.0) below, together the whole canvas.
+        expect(videos).toHaveLength(2);
+        expect(videos[0]).toMatchObject({ x: 0, y: 0, w: W, src: { type: "binding", path: "media" } });
+        expect(videos[1]).toMatchObject({ x: 0, y: videos[0].h, w: W, h: H - videos[0].h, src: { type: "binding", path: "more.0" } });
+      } else {
+        expect(videos[0]).toMatchObject({ x: 0, y: 0, w: W, h: H });
+      }
       for (const l of scene.layers) {
         if (l.endMs !== undefined) expect(l.endMs).toBeLessThanOrEqual(scene.durationMs!);
         if (l.startMs !== undefined && l.endMs !== undefined) expect(l.startMs).toBeLessThan(l.endMs);

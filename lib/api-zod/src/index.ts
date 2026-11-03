@@ -37,3 +37,4 @@ export * from "./creativePacks";
 export * from "./creativeFonts";
 export * from "./playerPhotos";
 export * from "./creativeMusic";
+export * from "./phoneCapture";

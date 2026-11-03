@@ -37,6 +37,9 @@ export function whyLine(reason: ForYouDraft["reason"], copy: CreativeForYouStrin
     case "goal": return copy.why.goal(day, vs);
     case "improved": return copy.why.improved(day, vs);
     case "firstgoal": return copy.why.firstgoal(day, vs);
+    case "phonebefore": return copy.why.phonebefore(day, vs);
+    case "phoneafter": return copy.why.phoneafter(day, vs);
+    case "goalduo": return copy.why.goalduo(day, vs);
     default:
       if (!scored) return copy.why.played(day, vs);
       return reason.ownScore! > reason.opponentScore! ? copy.why.win(day, score, vs)

@@ -8,7 +8,7 @@ import { creativeKeys, creativePath, type CreativeProject } from "@/lib/creative
  */
 
 export type ForYouKind = "fulltime" | "cleansheet" | "potm" | "goal" | "matchday" | "countdown" | "callup" | "matchstats" | "weekly"
-  | "improved" | "firstgoal" | "meet" | "streak" | "weekmoment";
+  | "improved" | "firstgoal" | "meet" | "streak" | "weekmoment" | "phonebefore" | "phoneafter" | "goalduo";
 export type ForYouGroup = "after" | "upcoming" | "week";
 
 export type ForYouDraft = CreativeProject & {

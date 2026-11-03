@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -56,6 +56,16 @@ describe("ensureAdditiveColumns", () => {
     expect(migration).toContain(`ALTER TABLE "academy_players" ADD COLUMN IF NOT EXISTS "public_posts_consent" boolean DEFAULT false NOT NULL;`);
     // A family link token is 32 hex characters, nothing else.
     await expect(pool.query(`INSERT INTO academy_player_clips (academy_id, session_id, player_id, token) VALUES (1, 1, 1, 'short')`)).rejects.toThrow();
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates academy_phone_media (0067), with no column for coordinates, as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "academy_phone_media"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(1);
+    const { rows } = await pool.query<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_name = 'academy_phone_media'`);
+    expect(rows.map((r) => r.column_name).filter((c) => /lat|lon|gps|location/.test(c))).toEqual([]);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0067_academy_phone_media.sql", import.meta.url), "utf8");
+    for (const statement of PHONE_MEDIA_STATEMENTS) expect(migration).toContain(`${statement};`);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 

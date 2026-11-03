@@ -270,9 +270,9 @@ describe("Creative music: template music in /admin", () => {
     expect(await db.$count(creativeTemplateMusicTable)).toBe(0);
   });
 
-  it("lists all 36 templates with what they recommend and Replay's pick", async () => {
+  it("lists all 37 templates with what they recommend and Replay's pick", async () => {
     const res = await request(app).get(admin()).set(auth(adminId)).expect(200);
-    expect(res.body.templates).toHaveLength(36);
+    expect(res.body.templates).toHaveLength(37);
     const goal = res.body.templates.find((t: { key: string }) => t.key === "goal");
     const ids = await Promise.all(["cc0/energetic-electro-tune", "cc0/fight-for-a-better-future", "replay/matchday-anthem"].map(idOf));
     expect(goal).toMatchObject({ title: { en: "Goal clip" }, category: "players", kind: "video", saved: null, updatedAt: null,
@@ -316,7 +316,7 @@ describe("Creative music: template music in /admin", () => {
     expect((await goalProject()).body.project.scene.music).toEqual({ trackId: anthem, volume: 0.45, startMs: 3000, fadeInMs: 500, fadeOutMs: 2000, duck: true });
     const recs = await request(app).get(url(academyA, "/recommendations")).set(auth(ownerA)).expect(200);
     expect(recs.body.templates.goal).toEqual({ trackIds: [anthem, chill], volume: 0.45, duck: true, fadeInMs: 500, fadeOutMs: 2000, startMs: 3000 });
-    expect(Object.keys(recs.body.templates)).toHaveLength(36);
+    expect(Object.keys(recs.body.templates)).toHaveLength(37);
 
     // A hidden track is skipped everywhere it's recommended.
     await db.update(creativeMusicTracksTable).set({ status: "hidden" }).where(eq(creativeMusicTracksTable.id, anthem));
@@ -362,7 +362,7 @@ describe("Creative music: field owners get the same music as academies", () => {
     const lib = await request(app).get(url(venue.id)).set(auth(u.id)).expect(200);
     expect(lib.body.tracks.some((t: { scope: string }) => t.scope === "replay")).toBe(true);
     const recs = await request(app).get(url(venue.id, "/recommendations")).set(auth(u.id)).expect(200);
-    expect(Object.keys(recs.body.templates)).toHaveLength(36);
+    expect(Object.keys(recs.body.templates)).toHaveLength(37);
 
     const up = await uploadAs(u.id, venue.id, { title: "Our pitch anthem", mood: "hype", rights: "true" });
     expect(up.status).toBe(201);

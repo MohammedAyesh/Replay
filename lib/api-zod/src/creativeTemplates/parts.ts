@@ -64,10 +64,18 @@ export type VideoSkin = {
 export function composeVideo(c: Ctx, k: Content, skin: VideoSkin): number {
   const d = k.video?.durationMs ?? 15000;
   const endAt = d - END_CARD_MS;
-  video(c, "video", { x: 0, y: 0, w: c.W, h: c.H }, { name: "Footage" });
+  if (k.video?.variant === "duo") {
+    // Two angles of the same moment: the panoramic camera on top, the phone below.
+    const half = Math.round(c.H / 2);
+    video(c, "video", { x: 0, y: 0, w: c.W, h: half }, { name: "Camera" });
+    video(c, "phone", { x: 0, y: half, w: c.W, h: c.H - half }, { name: "Phone", path: "more.0", muted: true });
+  } else {
+    video(c, "video", { x: 0, y: 0, w: c.W, h: c.H }, { name: "Footage" });
+  }
   skin.shade(c);
   skin.frame(c, k, { startMs: 0, endMs: endAt });
   switch (k.video?.variant) {
+    case "duo":
     case "goal":
       skin.tag(c, k, { startMs: 2000, endMs: endAt, enter: "pop" });
       skin.goal(c, k, { startMs: 2000, endMs: endAt, enter: "slide-left" });

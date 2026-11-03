@@ -22,6 +22,7 @@ import { nextFamilyClaimKey } from "@/lib/academy-family-claim";
 import { getRecordingViewInput } from "@/lib/recording-view-tracking";
 import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
 import { fetchFamilyScreens } from "@/lib/academy-team-api";
+import { FamilySendVideo } from "@/components/academy-family/send-video";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -439,6 +440,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
               </div>
             </section>
             <div className="fp-grid">
+              {source === "me" && <FamilySendVideo playerId={family.player.id} />}
               {shows("schedule") && <section className="fp-card" data-testid="family-schedule">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{labels.schedule}</h2><p className="fp-card-sub">{labels.scheduleHint}</p></div><span className="fp-count">{upcomingSessions.length}</span></div>
                 {upcomingSessions.length ? <div className="fp-sessions">{upcomingSessions.map((session, index) => {
