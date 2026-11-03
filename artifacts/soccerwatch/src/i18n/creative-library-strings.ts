@@ -42,6 +42,11 @@ const en = {
   noMomentsAnalysis: "This match isn't analysed yet, so only saved moments show. Run the analysis from Matches to get goals and chances.",
   analysisFailed: "Couldn't read this match's analysis right now. Saved moments still show.",
   noClips: "No clips yet. When your coaches and players save clips from your footage, they show up here.",
+  origin: { all: "All", player: "By players", auto: "By Replay" },
+  madeByReplay: "Replay",
+  noOriginClips: { player: "No clips cut by players yet.", auto: "No clips made by Replay yet. Replay makes them when players claim an analysed game." },
+  venueIntro: "Everything your camera filmed: every match, its goals, chances and dribbles, every clip players cut and every clip Replay made, plus your uploads.",
+  venueNoClips: "No clips yet. Clips players cut from your games, and the ones Replay makes for them, show up here.",
   noUploads: "Nothing uploaded yet. Upload team photos or short videos from your phone.",
   loadMore: "Show more",
   loading: "Loading…",
@@ -129,6 +134,11 @@ const ar: typeof en = {
   noMomentsAnalysis: "المباراة لسا ما انحلّلت، فبس اللقطات المحفوظة طالعة. شغّل التحليل من المباريات عشان تطلع الأهداف والفرص.",
   analysisFailed: "ما قدرنا نقرا تحليل المباراة هلّق. اللقطات المحفوظة لسا طالعة.",
   noClips: "لسا ما في كليبات. لما المدربين واللاعبين يحفظوا كليبات من تصويركم بتطلع هون.",
+  origin: { all: "الكل", player: "من اللاعبين", auto: "من ريبلاي" },
+  madeByReplay: "ريبلاي",
+  noOriginClips: { player: "لسا ما في كليبات قصّها لاعبين.", auto: "لسا ما في كليبات من ريبلاي. ريبلاي بتعملها لما اللاعبين يطالبوا بمباراة محلّلة." },
+  venueIntro: "كل إشي صوّرته كاميرتك: كل مباراة بأهدافها وفرصها ومراوغاتها، كل كليب قصّه لاعب وكل كليب عملته ريبلاي، وكمان رفعاتك.",
+  venueNoClips: "لسا ما في كليبات. الكليبات اللي بيقصّها اللاعبين من مبارياتك، واللي بتعملها ريبلاي إلهم، بتطلع هون.",
   noUploads: "لسا ما رفعت إشي. ارفع صور الفريق أو فيديوهات قصيرة من تلفونك.",
   loadMore: "اعرض أكثر",
   loading: "عم نحمّل…",
@@ -183,5 +193,6 @@ export type CreativeLibraryStrings = typeof en;
 
 export function useCreativeLibraryCopy(): CreativeLibraryStrings & { locale: "ar" | "en" } {
   const { locale } = useLocale();
-  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" });
+  return useConsoleWording({ ...(locale === "ar" ? ar : en), locale: locale === "ar" ? "ar" : "en" },
+    (c) => ({ ...c, intro: c.venueIntro, noClips: c.venueNoClips }));
 }

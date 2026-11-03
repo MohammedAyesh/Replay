@@ -36,6 +36,8 @@ export type LibraryMatch = {
   analysed: boolean;
   still: FrameSource | null;
   thumbnailUrl: string | null;
+  /** False for a field's recordings: there is no session to build a whole-match post from. */
+  wholeMatch?: boolean;
 };
 
 export type LibraryMomentType = "goal" | "chance" | "highlight" | "saved";
@@ -83,7 +85,13 @@ export type LibraryClip = {
   still: FrameSource | null;
   thumbnailUrl: string | null;
   videoUrl: string | null;
+  /** A field's clips: cut by a player, or made by Replay from the match analysis. */
+  origin?: "player" | "auto";
+  /** A field's player-made clips: the maker's first name. */
+  madeBy?: string | null;
 };
+
+export type ClipOrigin = "player" | "auto";
 
 export type LibraryUpload = {
   mediaId: number;
@@ -141,6 +149,7 @@ export type LibraryFilter = {
   from?: string | null;
   to?: string | null;
   kind?: "image" | "video" | null;
+  origin?: ClipOrigin | null;
 };
 
 function qs(f: LibraryFilter, offset: number, limit: number): string {
@@ -151,6 +160,7 @@ function qs(f: LibraryFilter, offset: number, limit: number): string {
   if (f.from) p.set("from", f.from);
   if (f.to) p.set("to", f.to);
   if (f.kind) p.set("kind", f.kind);
+  if (f.origin) p.set("origin", f.origin);
   p.set("offset", String(offset));
   p.set("limit", String(limit));
   return p.toString();
@@ -181,8 +191,8 @@ export function useLibraryMoments(academyId: number, sessionId: number | null, f
 }
 
 export function useLibraryClips(academyId: number, f: LibraryFilter) {
-  const q = usePaged<Page & { clips: LibraryClip[] }>(academyId, "clips", "/library/clips", { squadId: f.squadId, from: f.from, to: f.to }, 24);
-  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [] };
+  const q = usePaged<Page & { clips: LibraryClip[]; counts?: { all: number; player: number; auto: number } }>(academyId, "clips", "/library/clips", { squadId: f.squadId, from: f.from, to: f.to, origin: f.origin }, 24);
+  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [], counts: q.data?.pages[0]?.counts ?? null };
 }
 
 export function useLibraryUploads(academyId: number, f: LibraryFilter) {

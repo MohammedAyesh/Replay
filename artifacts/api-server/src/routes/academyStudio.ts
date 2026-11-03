@@ -1,4 +1,5 @@
 import fs from "fs";
+import { firstNameOf, venueClip, venueClipRows, venueFieldIds } from "../lib/creative/venueLibrary";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
@@ -420,8 +421,9 @@ async function academyClip(academyId: number, rawId: unknown) {
     ))
     .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.academyId, academyId)))
     .limit(1);
-  if (!row || row.clip.hiddenReason === "deleted") return null;
-  return row.clip;
+  if (row && row.clip.hiddenReason !== "deleted") return row.clip;
+  // A field: any clip cut from its own camera's footage.
+  return venueClip(academyId, clipId);
 }
 
 const clipStatus = academyClipStatus;
@@ -430,6 +432,30 @@ const clipStatus = academyClipStatus;
 router.get(`${base}/clips`, async (req, res): Promise<void> => {
   const access = await owner(req, res);
   if (!access) return;
+  const fieldIds = await venueFieldIds(access.academyId);
+  if (fieldIds) {
+    // A field: every clip cut from its footage, by players or by Replay.
+    const origin = req.query.origin === "auto" || req.query.origin === "player" ? req.query.origin : null;
+    const { rows } = await venueClipRows(fieldIds, { origin, limit: 300 });
+    res.json({
+      clips: rows.map(({ clip, creatorName, origin: o }) => {
+        const isLive = clip.videoId.startsWith("live:");
+        const thumbTime = clip.thumbnailTime != null ? Number(clip.thumbnailTime) : Number(clip.startTime);
+        return {
+          id: clip.id,
+          title: clip.title,
+          aspectRatio: clip.aspectRatio === "9:16" ? "9:16" : "16:9",
+          status: clipStatus(clip),
+          createdAt: clip.createdAt.toISOString(),
+          durationSeconds: Math.max(0, Math.round(Number(clip.endTime) - Number(clip.startTime))),
+          thumbnailUrl: !isLive && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
+          creator: { id: clip.userId, name: o === "auto" ? "Replay" : firstNameOf(creatorName) ?? "Player", role: o === "auto" ? "replay" : "player", isYou: clip.userId === access.user.id },
+          origin: o,
+        };
+      }).filter((c) => c.status !== "expired"),
+    });
+    return;
+  }
   const rows = await db
     .select({ clip: userClipsTable, creatorName: usersTable.name, role: academyMembersTable.role })
     .from(userClipsTable)

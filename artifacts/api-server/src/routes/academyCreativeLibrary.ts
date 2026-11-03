@@ -9,6 +9,7 @@ import { libraryClips, libraryMatches, libraryPlayerMedia, libraryPlayers, libra
 import { logger } from "../lib/logger";
 import { MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, probeVideo, storeVideo, videoStill } from "../lib/meta/media";
 import { namesAllowed } from "./academyStudio";
+import { venueFieldIds, venueLibraryClips, venueLibraryMatches, venueRecordingMoments } from "../lib/creative/venueLibrary";
 
 /**
  * Creative hub → Library (owner only). What a post, story or video can be made
@@ -49,6 +50,8 @@ router.get(`${base}/matches`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);
   if (!access) return;
   try {
+    const fieldIds = await venueFieldIds(access.academyId);
+    if (fieldIds) { res.json(await venueLibraryMatches(fieldIds, parseLibraryFilters(req.query as Record<string, unknown>))); return; }
     res.json(await libraryMatches(access.academyId, parseLibraryFilters(req.query as Record<string, unknown>)));
   } catch (error) {
     failed(res, error, "Creative library: matches failed");
@@ -61,6 +64,14 @@ router.get(`${base}/matches/:sessionId/moments`, async (req, res): Promise<void>
   const sessionId = projectIdParam(req.params.sessionId);
   if (!sessionId) { res.status(400).json({ error: "Invalid session id" }); return; }
   try {
+    const fieldIds = await venueFieldIds(access.academyId);
+    if (fieldIds) {
+      // A field's "match" is one of its recordings.
+      const out = await venueRecordingMoments(fieldIds, sessionId, parseLibraryFilters(req.query as Record<string, unknown>, { limit: 40, maxLimit: 120 }));
+      if (!out) { res.status(404).json({ error: "Not found" }); return; }
+      res.json(out);
+      return;
+    }
     const showNames = await namesAllowed(access.academyId);
     const out = await librarySessionMoments(access.academyId, sessionId, parseLibraryFilters(req.query as Record<string, unknown>, { limit: 40, maxLimit: 120 }), showNames);
     if (!out) { res.status(404).json({ error: "Not found" }); return; }
@@ -74,6 +85,12 @@ router.get(`${base}/clips`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);
   if (!access) return;
   try {
+    const fieldIds = await venueFieldIds(access.academyId);
+    if (fieldIds) {
+      const origin = req.query.origin === "auto" || req.query.origin === "player" ? req.query.origin : null;
+      res.json(await venueLibraryClips(access.academyId, fieldIds, parseLibraryFilters(req.query as Record<string, unknown>), origin));
+      return;
+    }
     const showNames = await namesAllowed(access.academyId);
     res.json(await libraryClips(access.academyId, parseLibraryFilters(req.query as Record<string, unknown>), showNames));
   } catch (error) {

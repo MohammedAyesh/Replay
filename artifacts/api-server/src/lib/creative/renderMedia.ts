@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { venueClip, venueRecording } from "./venueLibrary";
 import fs from "node:fs";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -212,8 +213,10 @@ export async function academyClip(academyId: number, clipId: number) {
     .innerJoin(academyMembersTable, and(eq(academyMembersTable.academyId, academyId), eq(academyMembersTable.userId, userClipsTable.userId)))
     .where(and(eq(userClipsTable.id, clipId), eq(userClipsTable.academyId, academyId)))
     .limit(1);
-  if (!row || row.clip.hiddenReason) return null;
-  return row.clip;
+  if (row && !row.clip.hiddenReason) return row.clip;
+  // A field: any clip cut from its own camera's footage.
+  const venue = await venueClip(academyId, clipId);
+  return venue && !venue.hiddenReason ? venue : null;
 }
 
 export async function academyRecording(academyId: number, recordingId: number) {
@@ -221,7 +224,9 @@ export async function academyRecording(academyId: number, recordingId: number) {
     .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
     .where(and(eq(academyRecordingsTable.academyId, academyId), eq(academyRecordingsTable.recordingId, recordingId)))
     .limit(1);
-  return row && row.videoUrl ? row : null;
+  if (row && row.videoUrl) return row;
+  // A field: any recording at its fields.
+  return venueRecording(academyId, recordingId);
 }
 
 export async function academyUpload(academyId: number, mediaId: number): Promise<AcademyAdMedia | null> {

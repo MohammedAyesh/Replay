@@ -11,6 +11,7 @@ import {
   useLibraryPlayers,
   useLibraryUploads,
   useUploadLibraryMedia,
+  type ClipOrigin,
   type LibraryClip,
   type LibraryMatch,
   type LibraryMoment,
@@ -421,14 +422,28 @@ function ClipsView({ academyId, accept, filter, onSelect }: {
   onSelect: (item: LibraryItem) => void;
 }) {
   const copy = useCreativeLibraryCopy();
-  const q = useLibraryClips(academyId, { squadId: filter.squadId, from: filter.from || null, to: filter.to || null });
+  const [origin, setOrigin] = useState<ClipOrigin | null>(null);
+  const q = useLibraryClips(academyId, { squadId: filter.squadId, from: filter.from || null, to: filter.to || null, origin });
   // A picture slot can only take a clip we can take a frame of.
   const items = accept === "image" ? q.items.filter((c) => c.still) : q.items;
+  // A field's clips come from players and from Replay: say which, and filter by it.
+  const counts = q.counts;
+  const originChips = counts && (counts.all > 0 || origin) ? (
+    <div className="mb-3 flex flex-wrap gap-1.5" role="group" data-testid="library-clip-origin">
+      {([null, "player", "auto"] as const).map((o) => (
+        <Chip key={o ?? "all"} active={origin === o} onClick={() => setOrigin(o)} testId={`library-origin-${o ?? "all"}`}>
+          {o === "auto" && <Sparkles className="h-3.5 w-3.5" aria-hidden />}
+          {copy.origin[o ?? "all"]} · {o ? counts[o] : counts.all}
+        </Chip>
+      ))}
+    </div>
+  ) : null;
   if (q.isLoading) return <Skeletons />;
   if (q.isError) return <Notice onRetry={() => void q.refetch()} retry={copy.retry}>{copy.failed}</Notice>;
-  if (!items.length) return <Notice>{copy.noClips}</Notice>;
+  if (!items.length) return <>{originChips}<Notice>{origin ? copy.noOriginClips[origin] : copy.noClips}</Notice></>;
   return (
     <div data-testid="library-clips">
+      {originChips}
       <Grid>
         {items.map((c) => {
           const badge = clipBadge(c, copy);
@@ -440,6 +455,12 @@ function ClipsView({ academyId, accept, filter, onSelect }: {
                 <Thumb urls={stillUrls(academyId, c.source, c.thumbnailUrl)} video length={formatLength(c.durationMs)}
                   className={cn("w-full ring-turf transition group-hover:ring-2", c.aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-video")}>
                   {badge && <span className="absolute end-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">{badge}</span>}
+                  {c.origin && (
+                    <span className={cn("absolute start-1.5 top-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-bold", c.origin === "auto" ? "bg-floodlight text-void" : "bg-black/70 text-white")}>
+                      {c.origin === "auto" && <Sparkles className="h-3 w-3" aria-hidden />}
+                      {c.origin === "auto" ? copy.madeByReplay : c.madeBy ?? copy.origin.player}
+                    </span>
+                  )}
                 </Thumb>
                 <span className="mt-1 block truncate text-xs font-semibold text-text">{clipLabel(c, copy)}</span>
               </button>

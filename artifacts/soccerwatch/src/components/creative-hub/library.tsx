@@ -70,7 +70,7 @@ export function CreativeLibrary({ academyId, nav }: SectionProps & { seed?: Temp
   const start = (seed: TemplateSeed) => { setOpen(null); nav.openTemplates(seed); };
   const seeds = open ? seedsFor(open) : null;
 
-  const matchActions = (m: LibraryMatch) => (
+  const matchActions = (m: LibraryMatch) => m.wholeMatch === false ? null : (
     <div className="flex w-full flex-col gap-1 sm:w-auto">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-text">{copy.wholeMatch}</p>
       <ActionButtons post={sessionSeed(m)} video={sessionSeed(m)} onSeed={start} compact />
