@@ -1,3 +1,4 @@
+import { fetchEarly } from "@/lib/early-fetch";
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -78,7 +79,7 @@ export function useMatchStatsData(room: MatchRoom, viewerId: number | null, game
   return useQuery<Stats>({
     queryKey: ["match-stats", room.code, viewerId, room.stats.unlocked, gameId],
     queryFn: async () => {
-      const response = await fetch(`${basePath}/api/m/${room.code}/stats${gameId == null ? "" : `?gameId=${encodeURIComponent(gameId)}`}`, { credentials: "include" });
+      const response = await fetchEarly(`${basePath}/api/m/${room.code}/stats${gameId == null ? "" : `?gameId=${encodeURIComponent(gameId)}`}`, { credentials: "include" });
       if (!response.ok) throw new Error(String(response.status));
       return response.json() as Promise<Stats>;
     },

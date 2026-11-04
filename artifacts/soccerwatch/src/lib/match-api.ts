@@ -1,3 +1,4 @@
+import { fetchEarly } from "@/lib/early-fetch";
 import type { StatTile } from "@/lib/stat-tile";
 import type { MatchFlowData } from "@/lib/match-flow";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -22,7 +23,9 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && typeof init.body === "string" && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const response = await fetch(`${apiBase}${path}`, { credentials: "include", ...init, headers });
+  // A plain read may already be on its way from index.html (lib/early-fetch.ts).
+  const send = init.headers === undefined ? fetchEarly : fetch;
+  const response = await send(`${apiBase}${path}`, { credentials: "include", ...init, headers });
   if (response.status === 204) return undefined as T;
   let data: unknown = null;
   try {

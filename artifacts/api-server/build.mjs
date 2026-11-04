@@ -3,16 +3,44 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
 
 const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 
+/**
+ * A hash of every source file the match-play derivation runs (lib/matchPlayLoad.ts
+ * and all it imports from src/, packages left out). Saved compact plays carry it
+ * in their name, so any change to that code makes them be derived afresh.
+ */
+async function playDeriveSource() {
+  const result = await esbuild({
+    entryPoints: [path.resolve(artifactDir, "src/lib/matchPlayLoad.ts")],
+    absWorkingDir: artifactDir,
+    platform: "node",
+    format: "esm",
+    bundle: true,
+    packages: "external",
+    write: false,
+    metafile: true,
+    logLevel: "silent",
+  });
+  const files = Object.keys(result.metafile.inputs).sort();
+  const hash = createHash("sha256");
+  for (const file of files) {
+    hash.update(file).update("\0").update(await readFile(path.resolve(artifactDir, file))).update("\0");
+  }
+  return { source: hash.digest("hex").slice(0, 16), files: files.length };
+}
+
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
   await rm(distDir, { recursive: true, force: true });
+  const derive = await playDeriveSource();
+  console.log(`match play derivation: ${derive.files} source files, PLAY_DERIVE_SOURCE ${derive.source}`);
 
   await esbuild({
     entryPoints: [path.resolve(artifactDir, "src/index.ts")],
@@ -108,6 +136,7 @@ async function buildAll() {
       "electron",
     ],
     sourcemap: "linked",
+    define: { "process.env.PLAY_DERIVE_SOURCE": JSON.stringify(derive.source) },
     plugins: [
       // pino relies on workers to handle logging, instead of externalizing it we use a plugin to handle it
       esbuildPluginPino({ transports: ["pino-pretty"] })

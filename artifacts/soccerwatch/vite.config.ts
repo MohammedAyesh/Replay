@@ -64,6 +64,21 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Libraries in their own files: their names do not change when only the
+        // app changes, so after a publish browsers re-download the app code alone.
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?hls\.js[\\/]/.test(id)) return "vendor-hls";
+          if (/[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?@clerk[\\/]/.test(id)) return "vendor-clerk";
+          if (/[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(?:react|react-dom|scheduler|wouter|@tanstack)[\\/]/.test(id)) return "vendor-react";
+          // one file of icons, not one file per icon (~50 per page)
+          if (/[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?lucide-react[\\/]/.test(id)) return "vendor-icons";
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port,

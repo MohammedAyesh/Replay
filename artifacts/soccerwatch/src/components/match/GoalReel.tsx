@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, CircleAlert, Loader2, Play, Trophy, Undo2, X } from "lucide-react";
-import { ReelVideo, type ReelVideoState } from "@/components/match/ReelVideo";
+import type { ReelVideoState } from "@/components/match/ReelVideo";
 import { createVoteSaver, prefetchFirstClip, reelClipUrl, useGoalReel, useReelClips, type ReelCard, type ReelClipState } from "@/lib/goal-reel";
 import { matchKey, type MatchRoom, type TeamSide } from "@/lib/match-api";
 import { useGoalReelCopy, type GoalReelStrings } from "@/i18n/goal-reel-strings";
 import { cn } from "@/lib/utils";
+
+// The video player (hls.js, ~0.5 MB) loads when the reel opens, not with the match page.
+const ReelVideo = lazy(() => import("@/components/match/ReelVideo").then((m) => ({ default: m.ReelVideo })));
 
 /**
  * "Was it a goal?" as a reel (2026-10-31): every chance in the match nobody
@@ -378,8 +381,10 @@ function CardView({ card, depth, copy, names, colors, clip, srcAspect, active, v
     >
       <div className="relative min-h-0 flex-1">
         {clip && (
-          <ReelVideo card={card} src={clip.status === "ready" ? clip.url : null} offset={clip.status === "ready" ? clip.offset : 0}
-            srcAspect={srcAspect} active={active} onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView} />
+          <Suspense fallback={null}>
+            <ReelVideo card={card} src={clip.status === "ready" ? clip.url : null} offset={clip.status === "ready" ? clip.offset : 0}
+              srcAspect={srcAspect} active={active} onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView} />
+          </Suspense>
         )}
         <div className="pointer-events-none absolute left-3 right-40 top-3 flex flex-wrap gap-1.5" dir="ltr">
           <span className="rounded-md bg-black/60 px-2 py-0.5 font-display text-xs font-bold text-white">{card.minute}′</span>

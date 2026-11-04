@@ -1268,6 +1268,16 @@ export type PitchDirection = {
   sideOf: (kit: Lab | null | undefined) => 0 | 1 | null;
   /** which side attacks the goal at goalX at time t; null when the minimap cannot say */
   attacking: (goalX: number, t: number) => 0 | 1 | null;
+  /** everything the two functions are built from, as plain data (saved with the play, matchPlayLoad); set on every computed one */
+  data?: DirectionData;
+};
+
+/** A PitchDirection as plain data: the sides' shirts, the bib when one side wears bibs, and per window the side defending x = 0. */
+export type DirectionData = {
+  kits: [Lab, Lab];
+  bib: BibKit | null;
+  /** [window index (t / DIRECTION.windowSeconds), side defending x = 0] */
+  defendsZero: Array<[number, 0 | 1]>;
 };
 
 const directionCache = new WeakMap<object, PitchDirection | null>();
@@ -1287,19 +1297,16 @@ function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirecti
   if (!pitch || !sidecars || !segments || !kits) return null;
   const bib = play.bib ?? bibKit(sidecars);
   let sideKits: [Lab, Lab] | null = null;
-  let sideOf: PitchDirection["sideOf"];
   if (bib) {
     const shown = bibObservedKits(sidecars, bib);
     if (!shown) return null;
     sideKits = shown;
-    sideOf = (kit) => (kit ? (isBibKit(kit, bib) ? 0 : 1) : null);
   } else {
     const observed = observedTeamKits(sidecars);
     if (!observed) return null;
     sideKits = observed.kits;
-    const [k0, k1] = observed.kits;
-    sideOf = (kit) => (kit ? (kitDistance(kit, k0) <= kitDistance(kit, k1) ? 0 : 1) : null);
   }
+  const sideOf = sideOfShirt(sideKits, bib);
   const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
   const step = Math.max(1, Math.round(fps * DIRECTION.stepSeconds));
   const acc = new Map<number, { n: [number, number]; sx: [number, number] }>();
@@ -1332,6 +1339,19 @@ function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirecti
     defendsZero.set(k, m0 < m1 ? 0 : 1);
   }
   if (!defendsZero.size) return null;
+  return directionFromData({ kits: sideKits, bib: bib ?? null, defendsZero: [...defendsZero] });
+}
+
+/** Which side a shirt is on: by the bib when one side wears bibs, else the nearer of the two sides' shirts. */
+function sideOfShirt(kits: [Lab, Lab], bib: BibKit | null | undefined): PitchDirection["sideOf"] {
+  if (bib) return (kit) => (kit ? (isBibKit(kit, bib) ? 0 : 1) : null);
+  const [k0, k1] = kits;
+  return (kit) => (kit ? (kitDistance(kit, k0) <= kitDistance(kit, k1) ? 0 : 1) : null);
+}
+
+/** The PitchDirection its plain data describes; computeDirection builds every one through here. */
+export function directionFromData(data: DirectionData): PitchDirection {
+  const defendsZero = new Map(data.defendsZero);
   const attacking = (goalX: number, t: number): 0 | 1 | null => {
     const k = Math.floor(t / DIRECTION.windowSeconds);
     for (let d = 0; d <= DIRECTION.maxBorrow; d++) {
@@ -1346,7 +1366,7 @@ function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirecti
     }
     return null;
   };
-  return { kits: sideKits, sideOf, attacking };
+  return { kits: data.kits, sideOf: sideOfShirt(data.kits, data.bib), attacking, data };
 }
 
 /** The shot context of a loaded recording: pitch-mapped ball samples and in-play spans. */

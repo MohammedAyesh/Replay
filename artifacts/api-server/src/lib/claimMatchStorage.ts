@@ -28,6 +28,11 @@ function parseObjectPath(path: string): { bucketName: string; objectName: string
   return { bucketName: parts[1], objectName: parts.slice(2).join("/") };
 }
 
+/** The object path writeClaimSegment(relativePath, …) saves to, for reading it back. */
+export function claimObjectPath(relativePath: string): string {
+  return privateObjectPath(relativePath);
+}
+
 function privateObjectPath(relativePath: string): string {
   const privateDir = process.env.PRIVATE_OBJECT_DIR;
   if (!privateDir) throw new Error("PRIVATE_OBJECT_DIR is not configured");

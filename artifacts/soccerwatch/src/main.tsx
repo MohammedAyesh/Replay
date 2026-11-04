@@ -4,7 +4,14 @@ import { primeVideoCacheWorker } from "./lib/video-cache";
 import { watchForNewBuilds } from "./lib/fresh-build";
 import { isTransientClerkSessionTouchError } from "./lib/clerk-network";
 import { isVenueHost } from "./lib/venue-host";
+import { reloadForMissingChunk } from "./lib/lazy-page";
 import "./index.css";
+
+// A chunk that is gone after a publish (Vite's preload of a page's shared files):
+// reload once into the new build instead of failing (lib/lazy-page.ts).
+window.addEventListener("vite:preloadError", (event) => {
+  if (reloadForMissingChunk()) event.preventDefault();
+});
 
 // Register early so the worker controls Claim Match before HLS initializes.
 // It does not cache anything until the player sends its first Play event.

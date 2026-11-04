@@ -23,11 +23,13 @@ import {
   standings as sharedStandings,
   type RankingMetric,
   type Standing as SharedStanding,
-} from "@workspace/api-zod";
+} from "@workspace/api-zod/statsRanking";
 
 // The ranking rules (eligibility, margins, ranks, personal bests) live in one
 // module shared with the server's Home tiles, so Home and the report can never
 // disagree. Re-exported here so the report's imports stay where they were.
+// Imported by path: the package root brings every zod schema and creative
+// template (~420 KB) into the match page with it.
 export {
   MIN_RANKED_MINUTES,
   PB_MIN_EARLIER_MATCHES,
@@ -36,7 +38,7 @@ export {
   isPersonalBest,
   isRanked,
   metricValue,
-} from "@workspace/api-zod";
+} from "@workspace/api-zod/statsRanking";
 
 export type ReportMetric = RankingMetric;
 

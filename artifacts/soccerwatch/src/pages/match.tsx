@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { InstagramMatchCard } from "@/components/match/InstagramMatchCard";
 import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { usePageBack } from "@/lib/use-page-back";
@@ -28,7 +28,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { ClipPlayer, type ClipDraft } from "@/components/clip-player/ClipPlayer";
+import type { ClipDraft } from "@/components/clip-player/ClipPlayer";
 import { StreamingPanel } from "@/components/StreamingPanel";
 import { SafetyMenu } from "@/components/safety/SafetyMenu";
 import { LIVE_CLIP_PARTIAL_NOTICE } from "@/lib/liveClipNotice";
@@ -106,6 +106,9 @@ import {
 } from "@/lib/match-api";
 import { cn } from "@/lib/utils";
 import { bookingPaymentActions } from "@/lib/booking-payment-actions";
+
+// The live VAR player (hls.js, ~0.5 MB) loads only when a match is live, not with every match page.
+const ClipPlayer = lazy(() => import("@/components/clip-player/ClipPlayer").then((m) => ({ default: m.ClipPlayer })));
 
 const PENDING_KEY = "replay_pending_join";
 type Tab = "overview" | "teams" | "var" | "clips" | "vote" | "stats";
@@ -1738,19 +1741,21 @@ function VarTab({ room, copy, preview = false }: { room: MatchRoom; copy: MatchS
       {status?.live && liveDvr && playerSrc ? (
         <>
           <div className="-mx-4">
-            <ClipPlayer
-              src={playerSrc}
-              title={room.title || room.field.name}
-              source={{ kind: "bunny", videoId: `live:${room.code}` }}
-              liveCameraId={room.field.name}
-              isLive
-              liveDvr={liveDvr}
-              layout="inline"
-              canSave={Boolean(user) && !isGuest}
-              onRequireAuth={requireAuth}
-              onSave={(draft) => saveLiveClip(draft, false)}
-              seekToUtcMs={seekUtcMs}
-            />
+            <Suspense fallback={<div className="aspect-video w-full bg-black" />}>
+              <ClipPlayer
+                src={playerSrc}
+                title={room.title || room.field.name}
+                source={{ kind: "bunny", videoId: `live:${room.code}` }}
+                liveCameraId={room.field.name}
+                isLive
+                liveDvr={liveDvr}
+                layout="inline"
+                canSave={Boolean(user) && !isGuest}
+                onRequireAuth={requireAuth}
+                onSave={(draft) => saveLiveClip(draft, false)}
+                seekToUtcMs={seekUtcMs}
+              />
+            </Suspense>
           </div>
           <p className="text-center text-[11px] text-muted-text">{copy.varBehind}</p>
         </>

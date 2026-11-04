@@ -401,7 +401,51 @@ self.addEventListener("message", (event) => {
   })());
 });
 
+// The app's own build files (2026-11-04). The static host serves /assets/*
+// without Cache-Control, so every page view revalidated them, and every publish
+// downloaded them all again. Their names carry a hash of their content, so a
+// stored copy can never be stale: answer from the cache, else fetch and keep it.
+// Never stored: a non-200 answer, or HTML (the host answers a missing file with
+// index.html, and that must reach the page so it can reload into the new build).
+const ASSET_CACHE = "replay-assets-v1";
+const MAX_ASSET_ENTRIES = 400;
+const BUILD_ASSET = /\/assets\/[^/]+-[A-Za-z0-9_-]{8}\.(?:js|css|woff2?|png|jpe?g|webp|svg|gif|mp4)$/;
+
+function isBuildAsset(request) {
+  if (request.method !== "GET") return false;
+  const url = new URL(request.url);
+  return url.origin === self.location.origin && url.search === "" && BUILD_ASSET.test(url.pathname);
+}
+
+async function trimAssetCache(cache) {
+  const keys = await cache.keys();
+  // keys come back oldest first
+  for (const request of keys.slice(0, Math.max(0, keys.length - MAX_ASSET_ENTRIES))) await cache.delete(request);
+}
+
+async function respondWithAsset(event) {
+  let cache = null;
+  try {
+    cache = await caches.open(ASSET_CACHE);
+    const hit = await cache.match(event.request);
+    if (hit) return hit;
+  } catch {
+    // No cache storage: plain network.
+  }
+  const response = await fetch(event.request);
+  const type = response.headers.get("content-type") || "";
+  if (cache && response.status === 200 && response.type === "basic" && !type.includes("text/html")) {
+    const copy = response.clone();
+    event.waitUntil(cache.put(event.request, copy).then(() => trimAssetCache(cache)).catch(() => undefined));
+  }
+  return response;
+}
+
 self.addEventListener("fetch", (event) => {
+  if (isBuildAsset(event.request)) {
+    event.respondWith(respondWithAsset(event));
+    return;
+  }
   const resource = cacheableResource(event.request);
   if (!resource) return;
 

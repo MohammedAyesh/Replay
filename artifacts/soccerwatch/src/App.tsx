@@ -11,59 +11,62 @@ import { AuthIdentityPanel } from "@/components/auth-identity-panel";
 import { clerkAppearance } from "@/lib/clerkAppearance";
 import { LocaleProvider, useLocale, useTranslation } from "@/i18n";
 import { FullscreenVideoProvider } from "@/lib/fullscreen-video";
-
-import Landing from "@/pages/login";
-import Home from "@/pages/home";
-// import Watch from "@/pages/watch";
-import Fields from "@/pages/fields";
-import FieldDetail from "@/pages/field-detail";
-import Player from "@/pages/player";
-import Profile from "@/pages/profile";
-import MyClips from "@/pages/my-clips";
-import Account from "@/pages/account";
-import Admin from "@/pages/admin";
-import AdminDebug from "@/pages/admin-debug";
-import AdminSetup from "@/pages/admin-setup";
-import Onboarding from "@/pages/onboarding";
-import NotFound from "@/pages/not-found";
-import Academies from "@/pages/academies";
-import View from "@/pages/view";
-import Live from "@/pages/live";
-import ClaimDemo from "@/pages/claim-demo";
-import ClaimChain from "@/pages/claim-chain";
-import ClaimGame from "@/pages/claim-game";
-import CheckDeckPage from "@/pages/check-deck";
-import IdentityBoard from "@/pages/identity-board";
-import Owner from "@/pages/owner";
-import OwnerVar from "@/pages/owner-var";
-import OwnerShare from "@/pages/owner-share";
-import KidClipPage from "@/pages/kid-clip";
-import ValueReportPage from "@/pages/value-report";
-import MatchPage from "@/pages/match";
-import Matches from "@/pages/matches";
-import FriendsPage from "@/pages/friends";
-import FriendLinkPage from "@/pages/friend-link";
-import BookPage from "@/pages/book";
-import { LegalPage } from "@/pages/legal";
-import DeleteAccountPage from "@/pages/delete-account";
-import BlockedPlayers from "@/pages/blocked-players";
+import { lazyPage } from "@/lib/lazy-page";
 import { useAuth } from "@/lib/auth";
 import { consoleHomeTarget, consumeExplicitAuthRedirect, getIncompleteProfileOnboardingRedirect, getPostAuthLanding, getRedirectPathFromSearch, getSafeRedirectPath, rememberExplicitAuthRedirect, withRedirectPath } from "@/lib/auth-redirect";
 import { isPublicStandalonePath } from "@/lib/public-paths";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ArrowLeft, Globe } from "lucide-react";
-import LegacyDemoPage from "@/pages/demo-route";
-import DemoPage from "@/pages/demo/DemoPage";
-import SimpleDemo from "@/pages/demo/SimpleDemo";
-import AcademyConsole from "@/pages/academy-console";
-import FieldConsole from "@/pages/field-console";
-import VenueSitePage from "@/pages/venue-site";
-import VenueAwardsPage from "@/pages/venue-awards";
-import AcademyJoinPage from "@/pages/academy-join";
-import AcademyFamilyPage from "@/pages/academy-family";
-import AcademyMatchPage from "@/pages/academy-match";
-import AcademyInvitePage from "@/pages/academy-invite";
-import WeeklyHighlightPage from "@/pages/weekly-highlight";
+
+// Every page loads its own code when first opened (lib/lazy-page.ts).
+
+const Landing = lazyPage(() => import("@/pages/login"));
+const Home = lazyPage(() => import("@/pages/home"));
+// import Watch from "@/pages/watch";
+const Fields = lazyPage(() => import("@/pages/fields"));
+const FieldDetail = lazyPage(() => import("@/pages/field-detail"));
+const Player = lazyPage(() => import("@/pages/player"));
+const Profile = lazyPage(() => import("@/pages/profile"));
+const MyClips = lazyPage(() => import("@/pages/my-clips"));
+const Account = lazyPage(() => import("@/pages/account"));
+const Admin = lazyPage(() => import("@/pages/admin"));
+const AdminDebug = lazyPage(() => import("@/pages/admin-debug"));
+const AdminSetup = lazyPage(() => import("@/pages/admin-setup"));
+const Onboarding = lazyPage(() => import("@/pages/onboarding"));
+const NotFound = lazyPage(() => import("@/pages/not-found"));
+const Academies = lazyPage(() => import("@/pages/academies"));
+const View = lazyPage(() => import("@/pages/view"));
+const Live = lazyPage(() => import("@/pages/live"));
+const ClaimDemo = lazyPage(() => import("@/pages/claim-demo"));
+const ClaimChain = lazyPage(() => import("@/pages/claim-chain"));
+const ClaimGame = lazyPage(() => import("@/pages/claim-game"));
+const CheckDeckPage = lazyPage(() => import("@/pages/check-deck"));
+const IdentityBoard = lazyPage(() => import("@/pages/identity-board"));
+const Owner = lazyPage(() => import("@/pages/owner"));
+const OwnerVar = lazyPage(() => import("@/pages/owner-var"));
+const OwnerShare = lazyPage(() => import("@/pages/owner-share"));
+const KidClipPage = lazyPage(() => import("@/pages/kid-clip"));
+const ValueReportPage = lazyPage(() => import("@/pages/value-report"));
+const MatchPage = lazyPage(() => import("@/pages/match"));
+const Matches = lazyPage(() => import("@/pages/matches"));
+const FriendsPage = lazyPage(() => import("@/pages/friends"));
+const FriendLinkPage = lazyPage(() => import("@/pages/friend-link"));
+const BookPage = lazyPage(() => import("@/pages/book"));
+const LegalPage = lazyPage(() => import("@/pages/legal").then((m) => ({ default: m.LegalPage })));
+const DeleteAccountPage = lazyPage(() => import("@/pages/delete-account"));
+const BlockedPlayers = lazyPage(() => import("@/pages/blocked-players"));
+const LegacyDemoPage = lazyPage(() => import("@/pages/demo-route"));
+const DemoPage = lazyPage(() => import("@/pages/demo/DemoPage"));
+const SimpleDemo = lazyPage(() => import("@/pages/demo/SimpleDemo"));
+const AcademyConsole = lazyPage(() => import("@/pages/academy-console"));
+const FieldConsole = lazyPage(() => import("@/pages/field-console"));
+const VenueSitePage = lazyPage(() => import("@/pages/venue-site"));
+const VenueAwardsPage = lazyPage(() => import("@/pages/venue-awards"));
+const AcademyJoinPage = lazyPage(() => import("@/pages/academy-join"));
+const AcademyFamilyPage = lazyPage(() => import("@/pages/academy-family"));
+const AcademyMatchPage = lazyPage(() => import("@/pages/academy-match"));
+const AcademyInvitePage = lazyPage(() => import("@/pages/academy-invite"));
+const WeeklyHighlightPage = lazyPage(() => import("@/pages/weekly-highlight"));
 
 const InstagramDevPreview = import.meta.env.DEV
   ? lazy(() => import("@/pages/instagram-dev-preview"))
@@ -455,6 +458,15 @@ function SignupConsentOption({
   );
 }
 
+/** While a page's code downloads: the app's own background, so nothing flashes. */
+function PageLoading() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center" aria-busy="true">
+      <span className="h-6 w-6 animate-spin rounded-full border-2 border-line border-t-turf" aria-hidden="true" />
+    </div>
+  );
+}
+
 function ClerkQueryClientCacheInvalidator() {
   const { addListener } = useClerk();
   const qc = useQueryClient();
@@ -587,6 +599,7 @@ function AppRouter() {
   const routes = (
     <>
       <AuthRedirectGuard />
+      <Suspense fallback={<PageLoading />}>
       <Switch>
         <Route path="/join/:code" component={AcademyJoinPage} />
         <Route path="/p/:token"><AcademyFamilyPage source="token" /></Route>
@@ -661,6 +674,7 @@ function AppRouter() {
         <Route path="/admin/recordings/:id/identities" component={IdentityBoard} />
         <Route component={NotFound} />
       </Switch>
+      </Suspense>
     </>
   );
 
@@ -710,7 +724,9 @@ function AppContent() {
   return (
     <LocaleProvider publicPage={publicDemo}>
       <FullscreenVideoProvider>
-        {publicDemo ? (location === "/demo" ? <SimpleDemo /> : <DemoPage />) : <ClerkProviderWithRoutes />}
+        {publicDemo
+          ? <Suspense fallback={<PageLoading />}>{location === "/demo" ? <SimpleDemo /> : <DemoPage />}</Suspense>
+          : <ClerkProviderWithRoutes />}
       </FullscreenVideoProvider>
     </LocaleProvider>
   );

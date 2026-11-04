@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrackingManifest } from "@workspace/db";
-import { detectedGoals, pitchDirection, type BallPoint, type BallSidecar, type Lab, type PitchDirection, type Touch } from "./matchPlay";
+import { detectedGoals, directionFromData, pitchDirection, type BallPoint, type BallSidecar, type Lab, type PitchDirection, type Touch } from "./matchPlay";
 
 // Which end each side attacks, from the minimap, and own goals: a goal whose
 // last touch was by the side defending that end is nobody's goal. Modelled on
@@ -105,6 +105,25 @@ const stub = (darkAttacks: 0 | 40 | null): PitchDirection => ({
   kits: [WHITE, DARK],
   sideOf: (kit) => (kit ? (kit[0] > 100 ? 0 : 1) : null),
   attacking: (goalX) => (darkAttacks === null ? null : goalX === darkAttacks ? 1 : 0),
+});
+
+describe("attacking direction as plain data (saved with the play, matchPlayLoad)", () => {
+  it("rebuilds the same verdicts from its data after a JSON round trip", () => {
+    const p = play([
+      player("w1", 0, 1200, (t) => (t < 600 ? 8 : 32)),
+      player("w2", 0, 1200, (t) => (t < 600 ? 10 : 30)),
+      player("d1", 0, 1200, (t) => (t < 600 ? 32 : 8)),
+      player("d2", 0, 1200, (t) => (t < 600 ? 30 : 10)),
+    ], { w1: WHITE, w2: WHITE, d1: DARK, d2: DARK });
+    const d = pitchDirection(p)!;
+    expect(d.data).toBeDefined();
+    const back = directionFromData(JSON.parse(JSON.stringify(d.data)));
+    expect(back.kits).toEqual(d.kits);
+    for (const kit of [WHITE, DARK, [120, 128, 128] as Lab, null]) expect(back.sideOf(kit)).toBe(d.sideOf(kit));
+    for (let t = 0; t <= 1300; t += 37) {
+      for (const goalX of [0, 40]) expect(back.attacking(goalX, t)).toBe(d.attacking(goalX, t));
+    }
+  });
 });
 
 describe("own goals", () => {
