@@ -4,7 +4,7 @@ import {
   Shapes, Smartphone, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import {
-  CREATIVE_TEMPLATES, FIELD_TEMPLATES, recommendationSceneMusic, resolveSource,
+  CLUB_TEMPLATES, CREATIVE_TEMPLATES, FIELD_TEMPLATES, recommendationSceneMusic, resolveSource,
   type CreativeBrand, type CreativeData, type MediaSource, type SceneLayer,
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
@@ -138,7 +138,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   );
 
   // ── What panels read and change ─────────────────────────────────────────
-  const template = useMemo(() => [...CREATIVE_TEMPLATES, ...FIELD_TEMPLATES].find((t) => t.key === (scene.template?.key ?? project.templateKey)) ?? null, [scene.template?.key, project.templateKey]);
+  const template = useMemo(() => [...CREATIVE_TEMPLATES, ...FIELD_TEMPLATES, ...CLUB_TEMPLATES].find((t) => t.key === (scene.template?.key ?? project.templateKey)) ?? null, [scene.template?.key, project.templateKey]);
   const fields = useMemo(() => {
     const base = template?.fields.length ? template.fields : GENERAL_FIELDS;
     return [...new Set([...base, ...sceneBindings(scene).filter((p) => !p.startsWith("academy."))])];

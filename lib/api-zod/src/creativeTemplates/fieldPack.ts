@@ -333,33 +333,20 @@ function matchWeek(c: Ctx) {
   onClip(c, "clip", { startMs: intro + 300, endMs: endAt }, { tag: C("kicker"), headline: C("headline"), meta: C("meta") });
   const t = { startMs: 0, endMs: intro };
   backdrop(c, "open-bg", t);
-  // The score reads left to right ("7–6"), so team A sits on the left in Arabic too.
+  // Pickup games: no score and no sides (nobody keeps the score, and the analysis can't always
+  // tell the teams apart). The confirmed goal count is the big number.
   const top = Math.round(c.T + Math.max(0, (c.B - c.T - c.pick(840, 760, 1000)) / 2));
   pill(c, "open-kicker", C("kicker"), top, { startMs: 200, endMs: intro, enter: "slide-up" });
   const sy = top + c.pick(170, 150, 260);
-  // Teams and score only when the score is known (the analysis can't always tell the sides apart).
-  c.only(when("score"), () => {
-    text(c, "open-team-a", C("teamA"), { x: c.M, y: sy, w: c.CW * 0.3, h: 80 }, { startMs: 400, endMs: intro, enter: "fade", size: c.pick(44, 40, 52), weight: 900, color: PAPER, align: "center", fit: true, mirror: false });
-    text(c, "open-team-b", C("teamB"), { x: c.M + c.CW * 0.7, y: sy, w: c.CW * 0.3, h: 80 }, { startMs: 400, endMs: intro, enter: "fade", size: c.pick(44, 40, 52), weight: 900, color: PAPER, align: "center", fit: true, mirror: false });
-    text(c, "open-score", C("score"), { x: c.M, y: sy + 110, w: c.CW, h: c.pick(240, 210, 290) }, { startMs: 500, endMs: intro, enter: "pop", size: c.pick(250, 220, 300), weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true });
-    countUp(c, "open-goals", "goals", { x: c.M, y: sy + c.pick(380, 340, 440), w: c.CW, h: c.pick(110, 96, 126) }, {
-      from: 900, to: 1900, endMs: intro, size: c.pick(96, 84, 110), weight: 900, color: PAPER, align: "center", num: true,
-    });
-  });
-  // No score: the goal count is the big number.
-  c.only([{ path: "custom.score", not: true }], () => countUp(c, "open-goals-big", "goals", { x: c.M, y: sy + 60, w: c.CW, h: c.pick(300, 260, 340) }, {
+  countUp(c, "open-goals-big", "goals", { x: c.M, y: sy + 60, w: c.CW, h: c.pick(300, 260, 340) }, {
     from: 500, to: 1700, endMs: intro, size: c.pick(250, 220, 300), weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true,
+  });
+  c.only(when("goalsLabel"), () => text(c, "open-goals-label-big", C("goalsLabel"), { x: c.M, y: sy + 60 + c.pick(300, 260, 340) + 10, w: c.CW, h: 64 }, {
+    startMs: 1000, endMs: intro, enter: "fade", size: c.pick(40, 36, 46), weight: 800, color: PAPER, align: "center",
   }));
-  const label = (id: string, y: number) => text(c, id, C("goalsLabel"), { x: c.M, y, w: c.CW, h: 64 }, { startMs: 1000, endMs: intro, enter: "fade", size: c.pick(40, 36, 46), weight: 800, color: PAPER, align: "center" });
-  c.only(when("goalsLabel"), () => {
-    c.only(when("score"), () => label("open-goals-label", sy + c.pick(500, 450, 580)));
-    c.only([{ path: "custom.score", not: true }], () => label("open-goals-label-big", sy + 60 + c.pick(300, 260, 340) + 10));
-  });
-  const meta = (id: string, y: number) => text(c, id, C("meta"), { x: c.M + 40, y, w: c.CW - 80, h: 70 }, { startMs: 1300, endMs: intro, enter: "fade", size: c.pick(32, 30, 36), weight: 600, color: PAPER, align: "center", bg: { color: "#FFFFFF1F", padding: 18, radius: 999 } });
-  c.only(when("meta"), () => {
-    c.only(when("score"), () => meta("open-meta", sy + c.pick(600, 540, 700)));
-    c.only([{ path: "custom.score", not: true }], () => meta("open-meta-big", sy + 60 + c.pick(300, 260, 340) + 100));
-  });
+  c.only(when("meta"), () => text(c, "open-meta-big", C("meta"), { x: c.M + 40, y: sy + 60 + c.pick(300, 260, 340) + 100, w: c.CW - 80, h: 70 }, {
+    startMs: 1300, endMs: intro, enter: "fade", size: c.pick(32, 30, 36), weight: 600, color: PAPER, align: "center", bg: { color: "#FFFFFF1F", padding: 18, radius: 999 },
+  }));
   wipe(c, "wipe", intro);
   endCard(c, "end", endAt, D);
   return D;
@@ -620,7 +607,7 @@ const FIELD_DEFS: FieldDef[] = [
     build: playerCard,
     sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), custom: {
       ...endBits(ar), kicker: ar ? "نجم الماتش" : "Player of the match", title: ar ? "محمد أ." : "Mohammed A.", initials: ar ? "م.أ" : "MA",
-      ...countData("stat", 8.7, 1), statLabel: ar ? "تقييم ريبلاي" : "Replay rating", meta: ar ? "الأصفر 7–5 الأسود · ملعب 2" : "Yellow 7–5 Black · Pitch 2",
+      ...countData("stat", 8.7, 1), statLabel: ar ? "تقييم ريبلاي" : "Replay rating", meta: ar ? "الخميس 9:00 م · ملعب 2" : "Thu 9:00 PM · Pitch 2",
       s1v: "3", s1l: ar ? "أهداف" : "Goals", s2v: "6", s2l: ar ? "تسديدات" : "Shots", s3v: "4.2", s3l: ar ? "كم ركض" : "km run", s4v: "24.1", s4l: ar ? "كم/س" : "km/h",
     } }),
   },
@@ -637,7 +624,7 @@ const FIELD_DEFS: FieldDef[] = [
     key: "field-match-week", title: { en: "Match of the week", ar: "ماتش الأسبوع" }, formats: STORY,
     build: matchWeek,
     sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), custom: {
-      ...endBits(ar), kicker: ar ? "ماتش الأسبوع" : "Match of the week", score: "7–6", teamA: ar ? "الأصفر" : "Yellow", teamB: ar ? "الأسود" : "Black",
+      ...endBits(ar), kicker: ar ? "ماتش الأسبوع" : "Match of the week",
       ...countData("goals", 13), goalsLabel: ar ? "جول بساعة وحدة" : "goals in one hour", headline: ar ? "13 جول بماتش واحد" : "13 goals, one game", meta: ar ? "الخميس 10:00 م · ملعب 2" : "Thu 10:00 PM · Pitch 2",
     } }),
   },
@@ -749,3 +736,13 @@ export function fieldSampleData(key: string, locale: Locale): CreativeData {
   const def = FIELD_DEFS.find((d) => d.key === key);
   return def ? def.sample(locale === "ar") : {};
 }
+
+/**
+ * The pack's pieces and layouts, for the academies' pack (clubPack.ts): the same look, other
+ * words. Not part of the catalogue contract.
+ */
+export const FIELD_KIT = {
+  PAPER, INK, MAIN, ON_MAIN, C, when,
+  backdrop, pill, badge, header, bookingBand, countUp, wipe, footage, footShade, onClip, endCard, openingCard, clipSequence, statsRow,
+  layouts: { bookingClip, award, playerCard, top5, versus, nomineeSlide, nomineesCover, thanks, openSlots, leaderboard },
+};

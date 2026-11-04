@@ -23,6 +23,8 @@ const en = {
   intro: "Pick a look, then tap a design to open it in the editor with your academy's colours, crest and footage.",
   all: "All",
   fieldPack: "Field pack",
+  clubPack: "Academy pack",
+  clubPackHint: "Goals, full time, matchday, player of the match by shirt number, top 5, votes and the week in numbers, in your academy's colours, crest, name and phone.",
   fieldPackHint: "Booking clips, awards, top 5, votes and the week in numbers, in your field's colours, crest, name and phone.",
   categories: {
     matchday: "Matchday",
@@ -44,6 +46,7 @@ const en = {
     stadium: "Stadium",
     ...packStyleLabels.en,
     field: "Field",
+    club: "Academy pack",
   } satisfies Record<CreativeStyle, string>,
   styleHints: {
     broadcast: "TV match graphics",
@@ -55,6 +58,7 @@ const en = {
     stadium: "Floodlit night",
     ...packHints("Your academy's own look, from its brand deck"),
     field: "Your field's own look, from its branding",
+    club: "Your academy's own look, from its branding",
   } satisfies Record<CreativeStyle, string>,
   formatLabel: "Size",
   formats: { post: "Post", square: "Square", story: "Story", wide: "Wide" } satisfies Record<CreativeFormat, string>,
@@ -86,6 +90,8 @@ const ar: typeof en = {
   intro: "اختار الستايل، وبعدين اضغط على التصميم عشان يفتح بالتعديل بألوان أكاديميتك وشعارها وتصويركم.",
   all: "الكل",
   fieldPack: "قوالب الملعب",
+  clubPack: "قوالب الأكاديمية",
+  clubPackHint: "الأجوال، نهاية الماتش، يوم الماتش، نجم الماتش برقم قميصه، أحلى 5، التصويت والأسبوع بالأرقام، بألوان أكاديميتكم وشعارها واسمها ورقمها.",
   fieldPackHint: "لقطات الحجوزات، الجوائز، أحلى 5، التصويت والأسبوع بالأرقام، بألوان ملعبكم وشعاره واسمه ورقمه.",
   categories: {
     matchday: "يوم الماتش",
@@ -107,6 +113,7 @@ const ar: typeof en = {
     stadium: "ستاد",
     ...packStyleLabels.ar,
     field: "الملعب",
+    club: "قوالب الأكاديمية",
   },
   styleHints: {
     broadcast: "زي جرافيكس المباريات عالتلفزيون",
@@ -118,6 +125,7 @@ const ar: typeof en = {
     stadium: "ليلة تحت الأضواء",
     ...packHints("الستايل الخاص بأكاديميتكم، من هويّتها"),
     field: "ستايل ملعبكم، من هويّته",
+    club: "ستايل أكاديميتكم، من هويّتها",
   },
   formatLabel: "المقاس",
   formats: { post: "بوست", square: "مربّع", story: "ستوري", wide: "عريض" },

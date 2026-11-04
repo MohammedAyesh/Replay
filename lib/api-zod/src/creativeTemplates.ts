@@ -8,6 +8,8 @@ export {
   fieldTemplateTitle, formatNumber, isFieldTemplate, type FieldTemplateKey,
 } from "./creativeTemplates/fieldPack";
 import { FIELD_TEMPLATE_DEFS, buildFieldScene, fieldSampleData, isFieldTemplate } from "./creativeTemplates/fieldPack";
+import { CLUB_TEMPLATE_DEFS, buildClubScene, clubSampleData, isClubTemplate } from "./creativeTemplates/clubPack";
+export { CLUB_STYLE, CLUB_TEMPLATE_KEYS, buildClubScene, clubSampleData, isClubTemplate, type ClubTemplateKey } from "./creativeTemplates/clubPack";
 import { STYLE_KITS } from "./creativeTemplates/styles";
 
 /**
@@ -84,6 +86,24 @@ export const FIELD_TEMPLATES: TemplateMeta[] = FIELD_TEMPLATE_DEFS.map((def) => 
   };
 });
 
+/** The academies' pack as catalogue entries ("Academy pack" in every academy's Creative hub; one look, CLUB_STYLE). */
+export const CLUB_TEMPLATES: TemplateMeta[] = CLUB_TEMPLATE_DEFS.map((def) => {
+  const scene = buildClubScene(def.key, def.formats[0], "en");
+  return {
+    key: def.key,
+    category: "community",
+    title: def.title,
+    kind: scene.durationMs !== undefined ? "video" : "image",
+    formats: def.formats,
+    fields: sceneFields(scene),
+  };
+});
+
+/** A template with one look of its own (field or academy pack), whatever style is picked: that look; else null. */
+export function packLookOf(key: string): CreativeStyle | null {
+  return isFieldTemplate(key) ? "field" : isClubTemplate(key) ? "club" : null;
+}
+
 export function buildTemplateScene(key: string, style: CreativeStyle, format: CreativeFormat, locale: "en" | "ar"): Scene {
   return buildScene(key, style, format, locale);
 }
@@ -91,6 +111,7 @@ export function buildTemplateScene(key: string, style: CreativeStyle, format: Cr
 /** Believable sample data so a gallery looks real before any data exists. Media are artwork keys "sample/<name>". */
 export function templateSampleData(key: string, locale: "en" | "ar"): CreativeData {
   if (isFieldTemplate(key)) return fieldSampleData(key, locale);
+  if (isClubTemplate(key)) return clubSampleData(key, locale);
   return sampleFor(key, locale);
 }
 

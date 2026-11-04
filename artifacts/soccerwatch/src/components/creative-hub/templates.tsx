@@ -2,10 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { X } from "lucide-react";
 import {
   CREATIVE_TEMPLATES,
-  FIELD_STYLE,
+  CLUB_TEMPLATES,
   FIELD_TEMPLATES,
   TEMPLATE_CATEGORIES,
-  isFieldTemplate,
+  packLookOf,
   buildTemplateScene,
   type CreativeBrand,
   type CreativeFormat,
@@ -37,14 +37,15 @@ import type { SectionProps, TemplateSeed } from "./types";
  * (the seed's, else the latest match's). Tapping one creates a project and
  * opens it in the Editor.
  *
- * A field console (kind 'venue') also gets the field pack, as its own first
- * chip and the default: one look (FIELD_STYLE) driven by the field's
+ * A field console (kind 'venue') also gets the field pack, an academy the
+ * academy pack, as its own first chip and the default (unless a match was
+ * picked: its facts fill the other templates): one look driven by the
  * branding, so the style picker hides there, and story or post only.
  */
 
 const FORMATS: CreativeFormat[] = ["post", "square", "story"];
 const FIELD_FORMATS: CreativeFormat[] = ["story", "post"];
-type Group = TemplateCategory | "all" | "field";
+type Group = TemplateCategory | "all" | "pack";
 const POST_LOCALES: Array<"ar" | "en"> = ["ar", "en"];
 const FALLBACK_BRAND: CreativeBrand = { primary: "#7B5CFF", accent: "#D4FF4F", ink: "#0B0F1A", paper: "#FFFFFF", muted: "#8A93A6", nameEn: "", nameAr: null };
 type MediaLayer = Extract<SceneLayer, { kind: "image" | "video" }>;
@@ -91,8 +92,9 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
 
   const kind = seedKind(active);
   const venue = useConsoleKind() === "venue";
-  const [category, setCategory] = useState<Group>(venue ? "field" : "all");
-  const fieldOnly = category === "field";
+  const PACK = venue ? FIELD_TEMPLATES : CLUB_TEMPLATES;
+  const [category, setCategory] = useState<Group>(seed?.type === "session" ? "all" : "pack");
+  const fieldOnly = category === "pack";
   const [picked, setStyle] = useState<CreativeStyle | null>(null);
   const [format, setFormat] = useState<CreativeFormat>(kind === "video" ? "story" : "post");
   const [postLocale, setPostLocale] = useState<"ar" | "en">(copy.locale);
@@ -106,7 +108,7 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
   // House styles plus the academy's own pack, first; the pack is the default look.
   const styles = useMemo(() => offeredStyles(info?.pack), [info?.pack]);
   const style: CreativeStyle = picked && styles.includes(picked) ? picked : styles[0];
-  const styleOf = useCallback((key: string): CreativeStyle => (isFieldTemplate(key) ? FIELD_STYLE : style), [style]);
+  const styleOf = useCallback((key: string): CreativeStyle => packLookOf(key) ?? style, [style]);
   const academy = useMemo(() => ({
     nameEn: info?.brand.nameEn ?? "",
     nameAr: info?.brand.nameAr ?? null,
@@ -116,16 +118,16 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
   }), [info]);
 
   const templates = useMemo(() => {
-    const list = category === "field" ? FIELD_TEMPLATES
-      : category === "all" ? (venue ? [...FIELD_TEMPLATES, ...CREATIVE_TEMPLATES] : CREATIVE_TEMPLATES)
+    const list = category === "pack" ? PACK
+      : category === "all" ? [...PACK, ...CREATIVE_TEMPLATES]
       : CREATIVE_TEMPLATES.filter((t) => t.category === category);
     // Footage first for a clip; stills first for a frame. Starred templates before both.
     const byKind = kind ? [...list].sort((a, b) => Number(b.kind === kind) - Number(a.kind === kind)) : list;
     return starredFirst(byKind, (t) => t.key, fav.data.template);
-  }, [category, kind, fav.data.template, venue]);
+  }, [category, kind, fav.data.template, PACK]);
 
-  const scenes = useMemo(() => new Map([...CREATIVE_TEMPLATES, ...(venue ? FIELD_TEMPLATES : [])]
-    .map((t) => [t.key, buildTemplateScene(t.key, styleOf(t.key), format, postLocale)])), [styleOf, format, postLocale, venue]);
+  const scenes = useMemo(() => new Map([...CREATIVE_TEMPLATES, ...PACK]
+    .map((t) => [t.key, buildTemplateScene(t.key, styleOf(t.key), format, postLocale)])), [styleOf, format, postLocale, PACK]);
   const dataFor = useCallback((key: string) => startingData({ key, locale: postLocale, academy, seed: active, session: sessionQ.data ?? null, stills }),
     [postLocale, academy, active, sessionQ.data, stills]);
 
@@ -192,16 +194,15 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
 
       <div className="space-y-3">
         <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
-          {venue ? (
-            <Chip active={fieldOnly} onClick={() => { setCategory("field"); if (!FIELD_FORMATS.includes(format)) setFormat("story"); }} testId="creative-templates-cat-field">{copy.fieldPack}</Chip>
-          ) : null}
+          <Chip active={fieldOnly} onClick={() => { setCategory("pack"); if (!FIELD_FORMATS.includes(format)) setFormat("story"); }}
+            testId={venue ? "creative-templates-cat-field" : "creative-templates-cat-club"}>{venue ? copy.fieldPack : copy.clubPack}</Chip>
           <Chip active={category === "all"} onClick={() => setCategory("all")} testId="creative-templates-cat-all">{copy.all}</Chip>
           {TEMPLATE_CATEGORIES.map((c) => (
             <Chip key={c} active={category === c} onClick={() => setCategory(c)} testId={`creative-templates-cat-${c}`}>{copy.categories[c]}</Chip>
           ))}
         </div>
 
-        {fieldOnly ? <p className="text-xs text-muted-text" data-testid="creative-templates-field-hint">{copy.fieldPackHint}</p> : (
+        {fieldOnly ? <p className="text-xs text-muted-text" data-testid="creative-templates-field-hint">{venue ? copy.fieldPackHint : copy.clubPackHint}</p> : (
         <div>
           <p className="mb-1.5 text-xs font-semibold text-muted-text">{copy.styleLabel}</p>
           <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="radiogroup" aria-label={copy.styleLabel}>

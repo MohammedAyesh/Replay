@@ -31,4 +31,5 @@ export const STYLE_KITS: Record<CreativeStyle, StyleKit> = {
   // Fields' own templates are fieldPack.ts; a catalogue template asked for in the field style
   // (an owner's own post in the Creative hub) takes the broadcast layouts.
   field: broadcast,
+  club: broadcast,
 };

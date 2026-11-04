@@ -7,6 +7,11 @@ describe("styleAllowedFor", () => {
     expect(styleAllowedFor({ creativePack: null, kind: "academy" }, "field")).toBe(false);
     expect(styleAllowedFor({ creativePack: null }, "field")).toBe(false);
   });
+  it("lets every academy save academy pack designs, and no field", () => {
+    expect(styleAllowedFor({ creativePack: null, kind: "academy" }, "club")).toBe(true);
+    expect(styleAllowedFor({ creativePack: "iris" }, "club")).toBe(true);
+    expect(styleAllowedFor({ creativePack: null, kind: "venue" }, "club")).toBe(false);
+  });
   it("still allows house styles to everyone and a pack only to its academy", () => {
     expect(styleAllowedFor({ creativePack: null, kind: "venue" }, "broadcast")).toBe(true);
     expect(styleAllowedFor({ creativePack: null }, null)).toBe(true);

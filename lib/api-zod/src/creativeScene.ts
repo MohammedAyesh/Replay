@@ -43,7 +43,12 @@ export type PackStyle = (typeof PACK_STYLES)[number];
  * by its branding. The field console's Instagram autopilot uses it; academies never see it.
  */
 export const VENUE_STYLES = ["field"] as const;
-export const CREATIVE_STYLES = [...PUBLIC_STYLES, ...PACK_STYLES, ...VENUE_STYLES] as const;
+/**
+ * Academies' pack (creativeTemplates/clubPack.ts): the field pack's look with an academy's
+ * words, for every academy (never a field).
+ */
+export const ACADEMY_PACK_STYLES = ["club"] as const;
+export const CREATIVE_STYLES = [...PUBLIC_STYLES, ...PACK_STYLES, ...VENUE_STYLES, ...ACADEMY_PACK_STYLES] as const;
 export type CreativeStyle = (typeof CREATIVE_STYLES)[number];
 
 /** A colour is a hex string or a brand token resolved at render time. */

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Ban, Check } from "lucide-react";
 import {
-  CREATIVE_FORMATS, FIELD_STYLE, parsePlateKey, resolveColor, resolveTint,
+  CLUB_STYLE, CREATIVE_FORMATS, FIELD_STYLE, parsePlateKey, resolveColor, resolveTint,
   type CreativeStyle, type LayerTint, type Scene,
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
@@ -33,6 +33,7 @@ export function StylePanel({ ed }: { ed: EditorApi }) {
   }, [ed.scene, current, styles]);
   if (!previews) return <p className={panelEmpty}>{copy.noTemplate}</p>;
   if (current === FIELD_STYLE) return <p className={panelEmpty} data-testid="editor-style-field">{copy.fieldLook}</p>;
+  if (current === CLUB_STYLE) return <p className={panelEmpty} data-testid="editor-style-club">{copy.clubLook}</p>;
   return (
     <div className="space-y-5">
       <div className="space-y-3" data-testid="editor-style-panel">

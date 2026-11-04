@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isClubTemplate,
   isFieldTemplate,
   CREATIVE_TEMPLATES,
   TEMPLATE_RECOMMENDED_MUSIC,
@@ -82,7 +83,9 @@ describe("template recommendations", () => {
   it("has 1–3 tracks for every template in the catalogue, and the fields' video templates, and nothing else", () => {
     const fieldKeys = Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => k.startsWith("field-"));
     for (const k of fieldKeys) expect(isFieldTemplate(k), k).toBe(true);
-    expect(Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => !k.startsWith("field-")).sort()).toEqual(CREATIVE_TEMPLATES.map((t) => t.key).sort());
+    const clubKeys = Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => k.startsWith("club-"));
+    for (const k of clubKeys) expect(isClubTemplate(k), k).toBe(true);
+    expect(Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => !k.startsWith("field-") && !k.startsWith("club-")).sort()).toEqual(CREATIVE_TEMPLATES.map((t) => t.key).sort());
     expect(CREATIVE_TEMPLATES).toHaveLength(37);
     for (const [key, r] of Object.entries(TEMPLATE_RECOMMENDED_MUSIC)) {
       expect(r.tracks.length, key).toBeGreaterThanOrEqual(1);

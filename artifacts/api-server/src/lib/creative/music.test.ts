@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { academiesTable, creativeMusicTracksTable, creativeTemplateMusicTable, db, fieldsTable } from "@workspace/db";
-import { CREATIVE_TEMPLATES, FIELD_TEMPLATE_KEYS, MUSIC_LICENSES, MUSIC_MOODS, TEMPLATE_RECOMMENDED_MUSIC, buildTemplateScene, type Scene } from "@workspace/api-zod";
+import { CREATIVE_TEMPLATES, CLUB_TEMPLATE_KEYS, FIELD_TEMPLATE_KEYS, MUSIC_LICENSES, MUSIC_MOODS, TEMPLATE_RECOMMENDED_MUSIC, buildTemplateScene, type Scene } from "@workspace/api-zod";
 import {
   addTrack,
   analyzeMusic,
@@ -191,7 +191,10 @@ describe("template soundtracks", () => {
     // The fields' Instagram pack has its own video templates, outside the academies' catalogue.
     const fieldVideos = FIELD_TEMPLATE_KEYS.filter((k) => buildTemplateScene(k, "field", "story", "en").durationMs !== undefined);
     for (const key of fieldVideos) expect(TEMPLATE_RECOMMENDED_MUSIC[key], `no recommendation for ${key}`).toBeTruthy();
-    const templates = [...catalogue, ...fieldVideos];
+    // So does the academies' pack.
+    const clubVideos = CLUB_TEMPLATE_KEYS.filter((k) => buildTemplateScene(k, "club", "story", "en").durationMs !== undefined);
+    for (const key of clubVideos) expect(TEMPLATE_RECOMMENDED_MUSIC[key], `no recommendation for ${key}`).toBeTruthy();
+    const templates = [...catalogue, ...fieldVideos, ...clubVideos];
     expect(Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => !templates.includes(k))).toEqual([]);
     for (const [key, r] of Object.entries(TEMPLATE_RECOMMENDED_MUSIC)) {
       for (const track of r.tracks) expect(moods.has(track), `${key} names ${track}, which library.json doesn't have`).toBe(true);

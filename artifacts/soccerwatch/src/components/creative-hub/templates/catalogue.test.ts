@@ -169,3 +169,25 @@ describe("the field pack in the Creative hub", () => {
     expect(FIELD_TEMPLATES.find((t) => t.key === "field-open-slots")?.kind).toBe("image");
   });
 });
+
+describe("the academy pack", () => {
+  it("lists every academy template once, valid in every format it is drawn for, Arabic and English, never naming a child", async () => {
+    const { CLUB_TEMPLATES, CLUB_TEMPLATE_KEYS, CLUB_STYLE, packLookOf } = await import("@workspace/api-zod");
+    expect(CLUB_TEMPLATES.map((t) => t.key)).toEqual(CLUB_TEMPLATE_KEYS);
+    expect(CREATIVE_TEMPLATES.some((t) => t.key.startsWith("club-"))).toBe(false);
+    for (const t of CLUB_TEMPLATES) {
+      expect(packLookOf(t.key)).toBe(CLUB_STYLE);
+      for (const f of t.formats) for (const locale of LOCALES) {
+        const scene = buildTemplateScene(t.key, CLUB_STYLE, f, locale);
+        expect(scene.format).toBe(f);
+        expect(scene.template?.style).toBe(CLUB_STYLE);
+        expect(sceneSchema.safeParse(scene).success, `${t.key} ${f} ${locale}`).toBe(true);
+        const sample = templateSampleData(t.key, locale);
+        // Players are shirt numbers in the samples.
+        expect(JSON.stringify(sample)).not.toMatch(/Omar|Ahmad|Mohammed|محمد|أحمد/);
+      }
+    }
+    expect(CLUB_TEMPLATES.find((t) => t.key === "club-fulltime")?.kind).toBe("video");
+    expect(CLUB_TEMPLATES.find((t) => t.key === "club-matchday")?.kind).toBe("image");
+  });
+});

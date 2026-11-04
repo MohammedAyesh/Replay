@@ -40,11 +40,17 @@ describe("Creative hub Templates on a field console", () => {
     // A clip seed puts video designs first.
     expect(keys[0]).not.toBe("field-open-slots");
   });
-  it("an academy never sees the field pack", () => {
+  it("an academy opens on the academy pack and never sees the field pack", () => {
     state.kind = "academy";
     const html = renderToStaticMarkup(<CreativeTemplates academyId={1} nav={nav} />);
     expect(html).not.toContain("creative-templates-cat-field");
-    expect(cards(html).some((k) => k.startsWith("field-"))).toBe(false);
-    expect(html).toContain('data-testid="creative-templates-style-broadcast"');
+    expect(html).toContain('data-testid="creative-templates-cat-club"');
+    const keys = cards(html);
+    expect(keys.length).toBeGreaterThan(10);
+    expect(keys.every((k) => k.startsWith("club-"))).toBe(true);
+    // A match picked from For you opens on every template instead (its facts fill them).
+    const fromMatch = cards(renderToStaticMarkup(<CreativeTemplates academyId={1} nav={nav} seed={{ type: "session", sessionId: 3 }} />));
+    expect(fromMatch.some((k) => k.startsWith("field-"))).toBe(false);
+    expect(fromMatch.some((k) => !k.startsWith("club-"))).toBe(true);
   });
 });

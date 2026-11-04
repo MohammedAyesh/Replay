@@ -120,8 +120,9 @@ const en = {
 
   // Style
   styleHint: "Same post, another look. Your text and pictures stay.",
-  styles: { broadcast: "Broadcast", street: "Street", editorial: "Editorial", luxury: "Luxury", playful: "Playful", cinematic: "Cinematic", stadium: "Stadium", ...packStyleLabels.en, field: "Field" } as Record<CreativeStyle, string>,
+  styles: { broadcast: "Broadcast", street: "Street", editorial: "Editorial", luxury: "Luxury", playful: "Playful", cinematic: "Cinematic", stadium: "Stadium", ...packStyleLabels.en, field: "Field", club: "Academy pack" } as Record<CreativeStyle, string>,
   noTemplate: "This design wasn't made from a template, so it has no other styles.",
+  clubLook: "An academy pack design: it takes its look from your academy's branding (colours, crest, name), so it has no other styles. Change those under Branding.",
   fieldLook: "A field pack design: it takes its look from your field's branding (colours, crest, name), so it has no other styles. Change those under Branding.",
   background: "Background",
   backgroundHint: "Artwork behind your design, coloured with your academy's colours.",
@@ -292,8 +293,9 @@ const ar: typeof en = {
   noLayers: "لسّا ما في طبقات.",
 
   styleHint: "نفس البوست بشكل تاني. نصوصك وصورك بضلّوا.",
-  styles: { broadcast: "بث", street: "ستريت", editorial: "مجلة", luxury: "فخم", playful: "ملوّن", cinematic: "سينمائي", stadium: "ملعب", ...packStyleLabels.ar, field: "الملعب" },
+  styles: { broadcast: "بث", street: "ستريت", editorial: "مجلة", luxury: "فخم", playful: "ملوّن", cinematic: "سينمائي", stadium: "ملعب", ...packStyleLabels.ar, field: "الملعب", club: "قوالب الأكاديمية" },
   noTemplate: "هالتصميم مش معمول من قالب، فما إله ستايلات تانية.",
+  clubLook: "هاد تصميم من قوالب الأكاديمية: شكله من هويّة أكاديميتكم (الألوان، الشعار، الاسم)، فما إله ستايلات تانية. بتغيّرها من الهويّة.",
   fieldLook: "هاد تصميم من قوالب الملعب: شكله من هويّة ملعبكم (الألوان، الشعار، الاسم)، فما إله ستايلات تانية. بتغيّرها من الهويّة.",
   background: "الخلفية",
   backgroundHint: "رسمة ورا التصميم، بتتلوّن بألوان أكاديميتك.",

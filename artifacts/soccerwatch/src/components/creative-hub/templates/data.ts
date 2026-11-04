@@ -1,4 +1,4 @@
-import { isFieldTemplate, templateSampleData, type CreativeData, type MediaSource } from "@workspace/api-zod";
+import { isClubTemplate, isFieldTemplate, templateSampleData, type CreativeData, type MediaSource } from "@workspace/api-zod";
 import type { TemplateSeed } from "../types";
 
 /**
@@ -80,6 +80,8 @@ export function startingData(input: StartingInput): CreativeData {
   if (sample.more) data.more = sample.more.map((m, i) => (real ? session!.more?.[i] : undefined) ?? own(i) ?? m);
   if (data.match) data.match = clean(data.match);
   if (isFieldTemplate(key)) data.custom = fieldCustom(data.custom ?? {}, locale, name, academy);
+  // The academy pack: its own name and phone (blank when it has none); players are shirt numbers in the samples.
+  if (isClubTemplate(key)) data.custom = { ...(data.custom ?? {}), field: name || "", ...("endBig" in (data.custom ?? {}) ? { endBig: academy.phone ?? "" } : {}) };
   return clean(data);
 }
 

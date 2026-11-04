@@ -7,6 +7,7 @@ import { playerFigure } from "./players";
 import { STYLE_KITS } from "./styles";
 import type { StyleKit } from "./styles/types";
 import { buildFieldScene, isFieldTemplate } from "./fieldPack";
+import { buildClubScene, isClubTemplate } from "./clubPack";
 
 /**
  * The style's background plate: greyscale artwork "bg/<style>/1" over the
@@ -16,7 +17,7 @@ import { buildFieldScene, isFieldTemplate } from "./fieldPack";
  */
 export function plateLayer(style: CreativeStyle, format: CreativeFormat, kit: Pick<StyleKit, "plate">, templateKey?: string): SceneLayer {
   const { w, h } = CREATIVE_FORMATS[format];
-  const key = isPackStyle(style) ? packPlate(style, templateKey) : plateKey(style === "field" ? "broadcast" : style, 1);
+  const key = isPackStyle(style) ? packPlate(style, templateKey) : plateKey(style === "field" || style === "club" ? "broadcast" : style, 1);
   return {
     id: PLATE_LAYER_ID,
     name: "bleed",
@@ -74,6 +75,7 @@ function addPlayerFigure(c: Ctx, kit: StyleKit): void {
 export function buildScene(key: string, style: CreativeStyle, format: CreativeFormat, locale: Locale): Scene {
   // Fields' templates have one look of their own, whatever style is asked for.
   if (isFieldTemplate(key)) return buildFieldScene(key, format, locale);
+  if (isClubTemplate(key)) return buildClubScene(key, format, locale);
   const content: Content = contentFor(key, locale) ?? contentFor("fulltime", locale)!;
   const kit = STYLE_KITS[style] ?? STYLE_KITS.broadcast;
   const c = new Ctx(format, locale);

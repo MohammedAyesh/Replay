@@ -164,6 +164,17 @@ export const TEMPLATE_RECOMMENDED_MUSIC: Record<string, BuiltInTemplateMusic> = 
   "field-nominee-slide": pick("hype", ["cc0/energetic-electro-tune", "cc0/warped"], { volume: 0.6 }),
   "field-thanks": pick("cinematic", ["cc0/flags", "cc0/adventure-intro", "replay/proud-moments"]),
   "field-milestone": pick("epic", ["cc0/epic-endgame", "cc0/great-mission", "replay/final-whistle"]),
+  // Academies' pack (clubPack.ts).
+  "club-goal": pick("hype", ["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"], { volume: 0.6 }),
+  "club-fulltime": pick("epic", ["cc0/epic-endgame", "cc0/great-mission", "replay/final-whistle"], { volume: 0.7 }),
+  "club-potm": pick("epic", ["cc0/great-mission", "cc0/epic-endgame", "replay/rising-star"], { volume: 0.7 }),
+  "club-award": pick("epic", ["cc0/great-mission", "cc0/epic-endgame", "replay/rising-star"], { volume: 0.7 }),
+  "club-top5": pick("hype", ["cc0/now-thats-automation", "cc0/serum-patches", "replay/stadium-stomp"], { volume: 0.7 }),
+  "club-week": pick("cinematic", ["cc0/flags", "cc0/adventure-intro", "replay/proud-moments"]),
+  "club-milestone": pick("epic", ["cc0/epic-endgame", "cc0/great-mission", "replay/final-whistle"]),
+  "club-versus": pick("fun", ["cc0/cafe-part-time", "cc0/beach-sports"], { volume: 0.6 }),
+  "club-versus-story": pick("fun", ["cc0/cafe-part-time", "cc0/beach-sports"], { volume: 0.6 }),
+  "club-nominee-slide": pick("hype", ["cc0/energetic-electro-tune", "cc0/warped"], { volume: 0.6 }),
 };
 
 /** The settings of a template's built-in pick (the defaults for a template without one). */
