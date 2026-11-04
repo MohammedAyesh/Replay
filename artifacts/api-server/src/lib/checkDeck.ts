@@ -18,6 +18,7 @@
  * Everything here is pure; the route reads and writes.
  */
 import type { TrackingManifest } from "@workspace/db";
+import { trustedBall } from "./ballTrust";
 import { interpolatePitchPosition } from "./pitchModel";
 import { kitDistance, type ClaimedPart, type Lab } from "./matchPlay";
 import type { PersonalMoment } from "./personalMoments";
@@ -276,9 +277,13 @@ export function ballFocus(
   fromSeconds: number,
   toSeconds: number,
   videoStartSeconds: number,
+  /** the moment the card is about (tracking seconds); the middle of the card when not given */
+  anchorSeconds: number = (fromSeconds + toSeconds) / 2,
 ): FocusPoint[] {
   const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
-  const near = ball.filter((b) => b[0] >= (fromSeconds - 1) * fps && b[0] <= (toSeconds + 1) * fps).slice().sort((a, b) => a[0] - b[0]);
+  // Only the ball at the moment: the path can jump to a still object across
+  // the pitch when it loses the ball (lib/ballTrust.ts).
+  const near = trustedBall(ball, manifest, (fromSeconds - 1) * fps, (toSeconds + 1) * fps, anchorSeconds * fps);
   const out: FocusPoint[] = [];
   let last: FocusPoint | null = null;
   const size = 0.02;

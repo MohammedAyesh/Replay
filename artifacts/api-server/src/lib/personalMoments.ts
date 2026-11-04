@@ -31,6 +31,7 @@ import {
 } from "./matchPlay";
 import { confirmedGoals, type GoalVote } from "./goalReview";
 import type { RecordingPlay } from "./matchPlayLoad";
+import { trustedBall } from "./ballTrust";
 import { clipPartsToMatchWindow } from "./matchWindow";
 
 /** [tracking seconds, centre x, centre y] -- the claimant in the frame, as fractions of it. */
@@ -293,10 +294,12 @@ export function ballFollow(
 ): FollowPoint[] | undefined {
   const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
   if (!(manifest.width > 0 && manifest.height > 0)) return undefined;
-  const near: Array<[number, number, number]> = [];
+  const all: Array<[number, number, number]> = [];
   const lo = (centreSeconds - PERSONAL.halfWindow - 1) * fps;
   const hi = (centreSeconds + PERSONAL.halfWindow + 1) * fps;
-  for (const sc of sidecars ?? []) for (const b of sc?.ball ?? []) if (b[0] >= lo && b[0] <= hi) near.push(b);
+  for (const sc of sidecars ?? []) for (const b of sc?.ball ?? []) if (b[0] >= lo && b[0] <= hi) all.push(b);
+  // Only the ball at the moment, not a still object the path jumped to (lib/ballTrust.ts).
+  const near = trustedBall(all, manifest, lo, hi, centreSeconds * fps) as Array<[number, number, number]>;
   if (!near.length) return undefined;
   const out: Array<FollowPoint | null> = [];
   let last: [number, number] | null = null;

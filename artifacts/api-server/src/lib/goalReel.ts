@@ -112,7 +112,7 @@ export function reelCards(
       side: g.side,
       ownGoal: g.ownGoal,
       scorer: g.scorer?.name ?? null,
-      focus: ballFocus(play.ball, play.manifest, from, to, vs),
+      focus: ballFocus(play.ball, play.manifest, from, to, vs, g.t),
     });
   }
   return cards;
