@@ -574,21 +574,33 @@ export function twins(ctx: Ctx, k: number, atTime = chunkMeta(ctx, k).start): Ar
   const out: Array<{ g: Group; d: number; sep: { sec: number; med: number } | null }> = [];
   for (const g of d.groups) {
     if (g.cid === y.cid || has(y.added, g.cid)) continue;
+    // A pick from the squad list or a tap is kept as your own pieces, not as a
+    // picked group, so the group made of those same tracks is not skipped above
+    // and was offered as "Also you?" with the very piece already shown as yours
+    // (rec 410, 50:07–59:55, 4 Nov). Only what is not yours yet can be suggested.
+    const fresh = notYetYours(ctx, k, g);
+    if (!fresh.length) continue;
     const gp = groupProfileOf(d, g.members);
     if (!gp) continue;
     const dd = dist(gp, q);
     if (dd > (weak ? 1.5 : 2.5)) continue;
-    const s = ctx.game.pitch ? coSep(ctx, k, mineIds, g.members) : null;
+    const s = ctx.game.pitch ? coSep(ctx, k, mineIds, fresh) : null;
     // On screen together for 20 s or more and not on top of each other: someone
     // else. The prototype allowed 4 m here; a double track of one person sits
     // within a stride, and 2.5 m is the same bound questions() uses for
     // "tracked twice". At 4 m a teammate shadowing you got added as you.
     if (s && s.sec >= 20 && s.med > TWIN_SEP) continue;
-    if (!s && overlapSecondsOf(d, mineIds, g.members) >= 20) continue; // no pitch model: any long overlap
+    if (!s && overlapSecondsOf(d, mineIds, fresh) >= 20) continue; // no pitch model: any long overlap
     if (weak && !(s && s.sec >= 3 && s.med <= 3)) continue;
     out.push({ g, d: dd, sep: s });
   }
   return out.sort((a, b) => a.d - b.d);
+}
+
+/** The members of group g that are not already among your pieces in chunk k (picked, added, extra or tapped). */
+export function notYetYours(ctx: Ctx, k: number, g: Group): string[] {
+  const yours = new Set(mine(ctx, k).map((p) => (p.manual ? p.src : p.id)).filter((id): id is string => Boolean(id)));
+  return g.members.filter((m) => !yours.has(m));
 }
 
 function overlapSecondsOf(d: Chunk, a: string[], b: string[]): number {
@@ -868,6 +880,19 @@ export function clearRosterPick(ctx: Ctx): boolean {
   ctx.S.qi = 0;
   ctx.S.autoAdded = 0;
   return true;
+}
+
+/**
+ * The visit starts where you were found most clearly, runs to the end of the
+ * match, then wraps to the blocks before it (claimVisitOrder). On the first
+ * block after that wrap this is the block the visit began with, so the screen
+ * can say it went back on purpose (4 Nov: "why did it go back in time?",
+ * 50:00 then 10:00). Null on every other block.
+ */
+export function wrappedFrom(ctx: Ctx): number | null {
+  const { order, oi } = ctx.S;
+  if (oi <= 0 || oi >= order.length) return null;
+  return order[oi] < order[oi - 1] ? order[0] : null;
 }
 
 /** Advance to the next chunk in the rotated playable order; 'done' at its end. */

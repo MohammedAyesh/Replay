@@ -67,7 +67,7 @@ import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
   addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, clearPick, clearRosterPick, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
-  newState, nextHole, nextIllustratedJoin, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, Y, youIds,
+  newState, nextHole, nextIllustratedJoin, notYetYours, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, wrappedFrom, Y, youIds,
   hkey, recordSwitch, restoreClaimVisitOrder, resumableSavedClaim, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
 import { benchSpansOut, chainParts, dropOverlappingShortRosterParts, firstRosterChunk, materializeRosterParts, seedRosterParts } from "@/lib/game-claim/parts";
@@ -1369,6 +1369,12 @@ export function GameClaim({
     return `\u2066${mmss(c.start + game.matchOffset)}–${mmss(c.start + c.dur + game.matchOffset)}\u2069`;
   };
   const disp = (t: number) => mmss(t + game.matchOffset);
+  const wrappedK = S.step === "next" || S.step === "review" ? wrappedFrom(ctx) : null;
+  const wrapStart = wrappedK === null ? null : (
+    <p className="rounded-xl border border-line bg-surface px-3 py-2 text-sm text-text" data-testid="claim-wrapped">
+      {copy.next.backToStart(`\u2066${mmss(chunkMeta(ctx, wrappedK).start + game.matchOffset)}\u2069`)}
+    </p>
+  );
   const claimLabelForGroup = (group: Group): string | undefined => {
     const status = claimStatusForGroup(group.members, identities, identityId, claimName);
     if (!status.taken) return undefined;
@@ -1714,7 +1720,7 @@ export function GameClaim({
       </div>
     );
   } else if (S.step === "review" && currentChunk && S.k !== null) {
-    body = <ReviewScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp}
+    body = <ReviewScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp} wrapStart={wrapStart}
       act={act} go={go} show={show} media={media} previewGroup={previewGroup}
       writeGroupDecision={writeGroupDecision} writeRejectedGroup={writeRejectedGroup}
       writeRejectedTrack={writeRejectedTrack} hasSquadList={rosterPlayers.length > 0} />;
@@ -1787,6 +1793,7 @@ export function GameClaim({
     body = (
       <div className="flex flex-col gap-4">
         <Eyebrow>{copy.next.eyebrow(span(d.k))}</Eyebrow>
+        {wrapStart}
         <Title>{copy.next.title}</Title>
         <Lede>{copy.next.lead}</Lede>
         {!switchPrompt ? (
@@ -2184,10 +2191,12 @@ function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
 /* ----------------------------------------------------------------- review */
 
 function ReviewScreen({
-  ctx, d, copy, mediaSlot, span, disp, act, go, show, media, previewGroup,
+  ctx, d, copy, mediaSlot, span, disp, wrapStart, act, go, show, media, previewGroup,
   writeGroupDecision, writeRejectedGroup, writeRejectedTrack, hasSquadList,
 }: {
   ctx: Ctx; d: LoadedChunk; copy: GameStrings; mediaSlot: React.ReactNode; span: string; disp: (t: number) => string;
+  /** "Back to the start of the match" on the first block after the visit wrapped */
+  wrapStart: React.ReactNode;
   act: (fn: () => void, counts?: boolean) => void; go: (s: Step) => void; show: (v: MediaView) => void;
   media: React.RefObject<MediaHandle | null>; previewGroup: (d: LoadedChunk, g: Group) => void;
   writeGroupDecision: (d: LoadedChunk, g: Group, rejected?: Group) => void;
@@ -2203,7 +2212,8 @@ function ReviewScreen({
   const bs = benchSpans(ctx, k);
    const tw = twins(ctx, k, profileTimeForChunk(ctx, k));
   const twc = new Set(tw.map((x) => x.g.cid));
-  const nb = (g ? g.nb : []).filter(([, c]) => !y.added.includes(c) && d.byCid[c] && c !== y.cid && !twc.has(c));
+  const nb = (g ? g.nb : []).filter(([, c]) => !y.added.includes(c) && d.byCid[c] && c !== y.cid && !twc.has(c)
+    && notYetYours(ctx, k, d.byCid[c]).length > 0);
   const G = ctx.game;
   const watchPiece = (id: string) => {
     const p = ms.find((x) => x.id === id);
@@ -2216,6 +2226,7 @@ function ReviewScreen({
   return (
     <div className="flex flex-col gap-4">
       <Eyebrow>{span} · {copy.review.eyebrow}</Eyebrow>
+      {wrapStart}
       <Title>{copy.review.title}</Title>
       <Lede>{copy.review.lead}{S.autoAdded && y.added.length ? copy.review.autoAdded(y.added.length) : ""}</Lede>
       {mediaSlot}

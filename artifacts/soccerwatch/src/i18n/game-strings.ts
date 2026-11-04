@@ -201,6 +201,7 @@ const en = {
   },
   next: {
     eyebrow: (span: string) => `Next: ${span}`,
+    backToStart: (start: string) => `Back to the start of the match. We began at ${start}, where we found you most clearly; now the part before it.`,
     title: "Is this you?",
     lead: "Ranked by how much each person looks like the pictures you've confirmed so far.",
     useVideoTime: "Use the time in the video",
@@ -520,6 +521,7 @@ const ar: GameStrings = {
   },
   next: {
     eyebrow: (span: string) => `الجاي: ${span}`,
+    backToStart: (start: string) => `رجعنا لبداية الماتش. بلّشنا من ${start} لأنه هناك لقيناك بأوضح شكل، وهلّق الجزء اللي قبله.`,
     title: "هاد إنت؟",
     lead: "مرتّبين حسب قديش كل واحد بشبه الصور اللي أكّدتها لهلأ.",
     useVideoTime: "استعمل الوقت اللي بالفيديو",
