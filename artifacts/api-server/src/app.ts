@@ -43,6 +43,20 @@ app.use(
   }),
 );
 
+// Server-Timing on every answer: the browser's network panel shows how long the server itself
+// took (app;dur=ms), apart from the network and any wait for a cold instance.
+app.use((_req, res, next) => {
+  const start = process.hrtime.bigint();
+  const writeHead = res.writeHead;
+  res.writeHead = function (this: typeof res, ...args: Parameters<typeof writeHead>) {
+    if (!res.headersSent && !res.getHeader("Server-Timing")) {
+      res.setHeader("Server-Timing", `app;dur=${(Number(process.hrtime.bigint() - start) / 1e6).toFixed(1)}`);
+    }
+    return writeHead.apply(this, args);
+  } as typeof writeHead;
+  next();
+});
+
 app.use(observeClerkAuthMeRequest);
 app.use(CLERK_PROXY_PATH, logClerkProxyRequest);
 app.use(CLERK_PROXY_PATH, clerkProxyMiddleware());

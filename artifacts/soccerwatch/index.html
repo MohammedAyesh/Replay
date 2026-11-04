@@ -79,6 +79,23 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@700;800&family=Inter:wght@400;500;600&family=Rajdhani:wght@600;700&family=Tajawal:wght@400;500;700&display=swap" media="print" onload="this.media='all'">
     <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@700;800&family=Inter:wght@400;500;600&family=Rajdhani:wght@600;700&family=Tajawal:wght@400;500;700&display=swap"></noscript>
     <script>
+      // Signed in and opening the front page: go to the app's home now, before any code loads, so
+      // the public page never flashes up first. Clerk's __client_uat cookie (or a suffixed copy) is
+      // the time the session started, "0" when signed out; the app still checks the session itself.
+      (function () {
+        try {
+          var base = "%BASE_URL%".replace(/\/$/, "");
+          var path = location.pathname.indexOf(base) === 0 ? location.pathname.slice(base.length) : location.pathname;
+          if (path !== "/" && path !== "") return;
+          var signedIn = document.cookie.split(/;\s*/).some(function (c) {
+            var eq = c.indexOf("=");
+            return eq > 0 && /^__client_uat(_|$)/.test(c.slice(0, eq)) && Number(c.slice(eq + 1)) > 0;
+          });
+          if (signedIn) history.replaceState(history.state, "", base + "/home" + location.search + location.hash);
+        } catch (e) {}
+      })();
+    </script>
+    <script>
       // A match page's first API answers start now, while the app's code downloads.
       // The app takes each one the first time it asks for that URL (src/lib/early-fetch.ts).
       (function () {

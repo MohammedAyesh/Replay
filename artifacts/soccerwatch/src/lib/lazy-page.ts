@@ -49,3 +49,14 @@ export function lazyPage<T extends ComponentType<any>>(load: () => Promise<{ def
     throw error;
   }));
 }
+
+/**
+ * A named export loaded when first rendered, with the same missing-chunk reload: console
+ * sections, so opening Bookings does not first download the Creative hub, the video player and
+ * every other section (2026-11-04: ~3 MB before the first console screen).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function lazyNamed<M, K extends keyof M>(load: () => Promise<M>, name: K): M[K] extends ComponentType<any> ? ReturnType<typeof lazy<M[K]>> : never {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return lazyPage(() => load().then((m) => ({ default: m[name] as ComponentType<any> }))) as never;
+}

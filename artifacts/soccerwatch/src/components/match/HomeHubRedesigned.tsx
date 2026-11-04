@@ -61,19 +61,34 @@ function clock(ms: number, locale: "en" | "ar") {
   return new Intl.DateTimeFormat(locale === "ar" ? "ar-JO" : "en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Amman" }).format(new Date(ms));
 }
 
+/** While the app learns who this is: the home's shape, so nothing jumps when it fills in. */
+function HomeSkeleton() {
+  return (
+    <div className="mx-auto flex min-w-0 max-w-lg flex-col gap-3 px-4 pt-2" aria-busy="true" data-testid="home-skeleton">
+      <div className="flex h-12 items-center gap-2"><div className="h-11 w-11 animate-pulse rounded-full bg-surface" /><div className="h-4 w-32 animate-pulse rounded bg-surface" /></div>
+      <div className="h-28 animate-pulse rounded-2xl bg-surface" />
+      <div className="h-40 animate-pulse rounded-2xl bg-surface" />
+      <div className="h-40 animate-pulse rounded-2xl bg-surface" />
+    </div>
+  );
+}
+
 export function HomeHubRedesigned() {
-  const { user, isGuest } = useAuth();
+  const { user, isGuest, isLoading: authLoading, isSignedIn: clerkSignedIn } = useAuth();
   const signedIn = Boolean(user) && !isGuest;
+  // Home's own data starts as soon as Clerk says who this is, alongside /api/me, not after it.
+  const fetchOn = signedIn || (clerkSignedIn && !isGuest);
   const { locale, setLocale } = useLocale();
   const ar = locale === "ar";
   const s = words[locale];
   const copy = useMatchCopy();
   const { toast } = useToast();
-  const matches = useMyMatches(signedIn);
+  const matches = useMyMatches(fetchOn);
   const profile = useReplayProfile(signedIn ? user?.id : null);
   const booking = useBookingFields();
-  const weekly = useGetHomeWeeklyHighlight({ query: { enabled: signedIn, queryKey: getGetHomeWeeklyHighlightQueryKey(), retry: false } });
-  const clips = useListUserClips({ query: { enabled: signedIn, queryKey: getListUserClipsQueryKey(), staleTime: 60_000 } });
+  const weekly = useGetHomeWeeklyHighlight({ query: { enabled: fetchOn, queryKey: getGetHomeWeeklyHighlightQueryKey(), retry: false } });
+  // The clip list only gives the weekly card its poster (and the dev mock its clip): fetched only then.
+  const clips = useListUserClips({ query: { enabled: fetchOn && (import.meta.env.DEV || Boolean(weekly.data?.clips.length)), queryKey: getListUserClipsQueryKey(), staleTime: 60_000 } });
   const search = useSearch();
   const [, setLocation] = useLocation();
   const [recordOpen, setRecordOpen] = useState(false);
@@ -88,6 +103,7 @@ export function HomeHubRedesigned() {
     }
   }, [search, setLocation]);
 
+  if (!signedIn && (authLoading || clerkSignedIn)) return <HomeSkeleton />;
   if (!signedIn) {
     return booking.data?.enabled && booking.data.fields.length > 0 ? (
       <div className="px-4 pb-28 pt-3"><Link href="/book" className="flex min-h-12 items-center justify-center rounded-full bg-floodlight font-display font-bold text-void">{copy.bookFootage(formatJod(booking.data.pricePerHourFils))}</Link></div>
@@ -137,6 +153,7 @@ export function HomeHubRedesigned() {
         <button type="button" onClick={() => setRecordOpen(true)} data-testid="button-home-record" disabled={!canBook} className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-floodlight px-3 font-display text-sm font-extrabold text-void disabled:opacity-50"><Camera className="h-4 w-4" />{s.record}</button>
       </header>
 
+      {matches.isLoading && <div className="h-28 animate-pulse rounded-2xl bg-surface" aria-hidden="true" data-testid="home-matches-loading" />}
       {hero && <MatchStrip item={hero} live={data?.live[0]?.code === hero.code} s={s} locale={locale} now={Date.now()} />}
       {highlight && <WeeklyCard highlight={highlight} poster={poster || null} s={s} locale={locale} />}
 
@@ -160,6 +177,7 @@ export function HomeHubRedesigned() {
           <h2 className="flex items-center gap-2 font-display font-bold">{s.numbers}<BetaPill /></h2>
           <Link href={`/players/${user.id}`} aria-label={s.numbers} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-line bg-surface text-muted-text" data-testid="link-home-numbers"><ArrowUpRight className="h-4 w-4" /></Link>
         </div>
+        {matches.isLoading && <div className="flex flex-col gap-3" aria-hidden="true">{[0, 1].map((i) => <div key={i} className="h-40 animate-pulse rounded-2xl bg-surface" />)}</div>}
         {statTiles.length > 0 && <>
           <p className="mb-3 px-1 text-[11px] leading-4 text-muted-text">{copy.statsBeta.note}</p>
           <div className="flex flex-col gap-3" data-testid="home-stat-tiles">

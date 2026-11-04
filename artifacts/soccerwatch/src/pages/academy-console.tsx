@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useLocation } from "wouter";
 import {
   ArrowLeft,
@@ -84,38 +84,41 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { lazyNamed } from "@/lib/lazy-page";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
-import { AcademyWhatsappSection } from "@/components/academy-console/whatsapp-section";
 import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
 import { usePeopleCopy } from "@/i18n/people-strings";
-import { AcademyChatsSection } from "@/components/academy-console/chats-section";
-import { AcademyPeopleSection } from "@/components/academy-console/people-section";
-import { AcademyMatchesSection } from "@/components/academy-console/matches-section";
 import { useMatchesCopy } from "@/i18n/matches-strings";
 import { useAdsCopy } from "@/i18n/ads-strings";
-import { AcademyAdsSection } from "@/components/academy-console/ads-section";
-import { AcademyProfileSection } from "@/components/academy-console/profile-section";
-import { AcademyTeamSection } from "@/components/academy-console/team-section";
-import { AcademySocialSection } from "@/components/academy-console/social-section";
 import { useSocialCopy } from "@/i18n/social-strings";
 import { useTeamCopy } from "@/i18n/team-strings";
 import { useMyAcademyAccess } from "@/lib/academy-team-api";
 import { useProfileCopy } from "@/i18n/profile-strings";
-import { AcademyBrandingSection } from "@/components/academy-console/branding-section";
 import { useStudioCopy } from "@/i18n/studio-strings";
-import { AcademyCreativeHub } from "@/components/creative-hub/hub";
 import { useCreativeCopy } from "@/i18n/creative-strings";
-import { AcademyPlayersSection } from "@/components/academy-console/players-section";
-import { AcademySessionsSection } from "@/components/academy-console/sessions-section";
-import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
 import { useAcademyLiveStatus, formatAmmanClock } from "@/components/academy-console/use-academy-live-status";
-import { AcademyAttendanceSection } from "@/components/academy-console/attendance-section";
-import { AcademyRecordingsSection } from "@/components/academy-console/recordings-section";
-import { AcademyAnnouncementsSection } from "@/components/academy-console/announcements-section";
-import { AcademyFeesPaymentsSection } from "@/components/academy-console/fees-payments-section";
-import { AcademyRegistrationsSection } from "@/components/academy-console/registrations-section";
-import { AcademyValueReportSection } from "@/components/academy-console/value-report";
 import { useValueReportCopy } from "@/i18n/value-report-strings";
+
+// Sections load when opened (lib/lazy-page.ts).
+const AcademyWhatsappSection = lazyNamed(() => import("@/components/academy-console/whatsapp-section"), "AcademyWhatsappSection");
+const AcademyChatsSection = lazyNamed(() => import("@/components/academy-console/chats-section"), "AcademyChatsSection");
+const AcademyPeopleSection = lazyNamed(() => import("@/components/academy-console/people-section"), "AcademyPeopleSection");
+const AcademyMatchesSection = lazyNamed(() => import("@/components/academy-console/matches-section"), "AcademyMatchesSection");
+const AcademyAdsSection = lazyNamed(() => import("@/components/academy-console/ads-section"), "AcademyAdsSection");
+const AcademyProfileSection = lazyNamed(() => import("@/components/academy-console/profile-section"), "AcademyProfileSection");
+const AcademyTeamSection = lazyNamed(() => import("@/components/academy-console/team-section"), "AcademyTeamSection");
+const AcademySocialSection = lazyNamed(() => import("@/components/academy-console/social-section"), "AcademySocialSection");
+const AcademyBrandingSection = lazyNamed(() => import("@/components/academy-console/branding-section"), "AcademyBrandingSection");
+const AcademyCreativeHub = lazyNamed(() => import("@/components/creative-hub/hub"), "AcademyCreativeHub");
+const AcademyPlayersSection = lazyNamed(() => import("@/components/academy-console/players-section"), "AcademyPlayersSection");
+const AcademySessionsSection = lazyNamed(() => import("@/components/academy-console/sessions-section"), "AcademySessionsSection");
+const AcademyLiveOverlay = lazyNamed(() => import("@/components/academy-console/AcademyLiveOverlay"), "AcademyLiveOverlay");
+const AcademyAttendanceSection = lazyNamed(() => import("@/components/academy-console/attendance-section"), "AcademyAttendanceSection");
+const AcademyRecordingsSection = lazyNamed(() => import("@/components/academy-console/recordings-section"), "AcademyRecordingsSection");
+const AcademyAnnouncementsSection = lazyNamed(() => import("@/components/academy-console/announcements-section"), "AcademyAnnouncementsSection");
+const AcademyFeesPaymentsSection = lazyNamed(() => import("@/components/academy-console/fees-payments-section"), "AcademyFeesPaymentsSection");
+const AcademyRegistrationsSection = lazyNamed(() => import("@/components/academy-console/registrations-section"), "AcademyRegistrationsSection");
+const AcademyValueReportSection = lazyNamed(() => import("@/components/academy-console/value-report"), "AcademyValueReportSection");
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
@@ -411,11 +414,11 @@ function DashboardLiveNow({ academyId }: { academyId: number }) {
           ))}</div>
         </section>
       )}
-      {selected && <AcademyLiveOverlay
+      {selected && <Suspense fallback={null}><AcademyLiveOverlay
         statusUrl={`/api/academy/console/academies/${academyId}/sessions/${selected.id}/live/status`}
         title={`${selected.type === "match" ? copy.match : copy.training} · ${selected.location}`}
         onClose={() => setSelected(null)}
-      />}
+      /></Suspense>}
     </>
   );
 }
@@ -891,6 +894,7 @@ export default function AcademyConsole() {
           <Link href="/account" className="rounded-xl border border-line bg-surface px-3 py-2 text-xs font-semibold text-muted-text transition-colors hover:text-text" data-testid="link-academy-account">{t.academyConsole.account}</Link>
         </header>
         <div className="mx-auto max-w-6xl px-5 py-8 pb-14 md:px-8">
+          <Suspense fallback={<AcademyConsoleSkeleton />}>
           {section === "dashboard" ? (
             dashboardQuery.isLoading ? <AcademyConsoleSkeleton /> :
               dashboardQuery.isError || !dashboardQuery.data ? <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted-text" data-testid="academy-dashboard-error">{t.academyConsole.dashboardError}</div> :
@@ -937,6 +941,7 @@ export default function AcademyConsole() {
           ) : section === "team" ? (
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyTeamSection academyId={activeAcademyId} />
           ) : <AcademyConsoleSkeleton />}
+          </Suspense>
         </div>
       </main>
     </div>

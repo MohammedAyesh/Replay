@@ -410,25 +410,41 @@ function cacheStatsValues(stats: MatchPlayerStats, team: MatchTeamStats | null):
 }
 
 /** Queue at most `maxFills` stale recent matches without holding up /me/matches. */
+/**
+ * Queue a stats-cache fill for up to `maxFills` of these matches whose cache is out of date,
+ * newest first. Home asks this on every open, so the checks run four at a time rather than one
+ * after another (each reads the match's recordings, roster and claims).
+ */
 export async function queueUncachedRecentMatchStats(
   contexts: RoomContext[],
   maxFills = 3,
   perField?: FieldRecordingCache,
 ): Promise<number> {
-  let queued = 0;
-  for (const ctx of contexts) {
-    if (queued >= Math.max(0, maxFills)) break;
-    try {
-      const links = await recordingsForRoom(ctx, perField);
-      if (!links.length) continue;
-      const roster = await rosterFor(ctx.room.id);
-      const expected = cacheFingerprints(ctx.room.id, roster, links, await matchStatsCacheExtraInputs(ctx.room.id, roster, links));
-      if (await matchStatsCacheIsCurrent(ctx.room.id, expected)) continue;
-      queueMatchStatsCacheForMatch(ctx.room.id);
-      queued++;
-    } catch (error) {
-      logger.warn({ matchId: ctx.room.id, err: error }, "Could not inspect recent match stats cache");
+  if (maxFills <= 0 || !contexts.length) return 0;
+  const stale: boolean[] = new Array(contexts.length).fill(false);
+  let next = 0;
+  const worker = async () => {
+    while (next < contexts.length) {
+      const i = next++;
+      const ctx = contexts[i];
+      try {
+        const links = await recordingsForRoom(ctx, perField);
+        if (!links.length) continue;
+        const roster = await rosterFor(ctx.room.id);
+        const expected = cacheFingerprints(ctx.room.id, roster, links, await matchStatsCacheExtraInputs(ctx.room.id, roster, links));
+        stale[i] = !(await matchStatsCacheIsCurrent(ctx.room.id, expected));
+      } catch (error) {
+        logger.warn({ matchId: ctx.room.id, err: error }, "Could not inspect recent match stats cache");
+      }
     }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, contexts.length) }, worker));
+  let queued = 0;
+  for (const [i, ctx] of contexts.entries()) {
+    if (queued >= maxFills) break;
+    if (!stale[i]) continue;
+    queueMatchStatsCacheForMatch(ctx.room.id);
+    queued++;
   }
   return queued;
 }

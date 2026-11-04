@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
   Bot,
@@ -32,27 +32,31 @@ import { cn } from "@/lib/utils";
 import { ConsoleKindProvider } from "@/lib/console-kind";
 import { useMyAcademyAccess } from "@/lib/academy-team-api";
 import { useSetUpVenue, useVenueMemberships, type Customer } from "@/lib/venue-api";
-import { AcademyChatsSection } from "@/components/academy-console/chats-section";
-import { AcademyPeopleSection } from "@/components/academy-console/people-section";
-import { AcademyWhatsappSection } from "@/components/academy-console/whatsapp-section";
-import { AcademyAdsSection } from "@/components/academy-console/ads-section";
-import { AcademySocialSection } from "@/components/academy-console/social-section";
-import { AcademyProfileSection } from "@/components/academy-console/profile-section";
-import { AcademyBrandingSection } from "@/components/academy-console/branding-section";
-import { AcademyTeamSection } from "@/components/academy-console/team-section";
-import { AcademyCreativeHub } from "@/components/creative-hub/hub";
-import { DashboardSection, type FieldSection } from "@/components/field-console/dashboard-section";
-import { BookingsSection } from "@/components/field-console/bookings-section";
-import { CustomersSection } from "@/components/field-console/customers-section";
-import { PitchesSection } from "@/components/field-console/pitches-section";
-import { PaymentsSection } from "@/components/field-console/payments-section";
-import { AgentSection } from "@/components/field-console/agent-section";
-import { WebsiteSection } from "@/components/field-console/website-section";
-import { InstagramSection } from "@/components/field-console/instagram-section";
+import type { FieldSection } from "@/components/field-console/dashboard-section";
 import { useInstagramCopy } from "@/i18n/instagram-strings";
 import { Skeleton } from "@/components/field-console/shared";
-import Owner from "@/pages/owner";
-import OwnerVar from "@/pages/owner-var";
+import { lazyNamed, lazyPage } from "@/lib/lazy-page";
+
+// Sections load when opened (lib/lazy-page.ts).
+const AcademyChatsSection = lazyNamed(() => import("@/components/academy-console/chats-section"), "AcademyChatsSection");
+const AcademyPeopleSection = lazyNamed(() => import("@/components/academy-console/people-section"), "AcademyPeopleSection");
+const AcademyWhatsappSection = lazyNamed(() => import("@/components/academy-console/whatsapp-section"), "AcademyWhatsappSection");
+const AcademyAdsSection = lazyNamed(() => import("@/components/academy-console/ads-section"), "AcademyAdsSection");
+const AcademySocialSection = lazyNamed(() => import("@/components/academy-console/social-section"), "AcademySocialSection");
+const AcademyProfileSection = lazyNamed(() => import("@/components/academy-console/profile-section"), "AcademyProfileSection");
+const AcademyBrandingSection = lazyNamed(() => import("@/components/academy-console/branding-section"), "AcademyBrandingSection");
+const AcademyTeamSection = lazyNamed(() => import("@/components/academy-console/team-section"), "AcademyTeamSection");
+const AcademyCreativeHub = lazyNamed(() => import("@/components/creative-hub/hub"), "AcademyCreativeHub");
+const BookingsSection = lazyNamed(() => import("@/components/field-console/bookings-section"), "BookingsSection");
+const CustomersSection = lazyNamed(() => import("@/components/field-console/customers-section"), "CustomersSection");
+const PitchesSection = lazyNamed(() => import("@/components/field-console/pitches-section"), "PitchesSection");
+const PaymentsSection = lazyNamed(() => import("@/components/field-console/payments-section"), "PaymentsSection");
+const AgentSection = lazyNamed(() => import("@/components/field-console/agent-section"), "AgentSection");
+const WebsiteSection = lazyNamed(() => import("@/components/field-console/website-section"), "WebsiteSection");
+const InstagramSection = lazyNamed(() => import("@/components/field-console/instagram-section"), "InstagramSection");
+const DashboardSection = lazyNamed(() => import("@/components/field-console/dashboard-section"), "DashboardSection");
+const Owner = lazyPage(() => import("@/pages/owner"));
+const OwnerVar = lazyPage(() => import("@/pages/owner-var"));
 
 const SECTIONS: FieldSection[] = ["footage", "dashboard", "bookings", "customers", "chats", "people", "agent", "whatsapp", "pitches", "payments", "website", "ads", "social", "instagram", "creative", "studio", "branding", "profile", "team"];
 /** Which Team permission each screen falls under (lib/academyPermissions.ts on the server). */
@@ -236,6 +240,7 @@ export default function FieldConsole() {
             <Link href="/account" className="rounded-xl border border-line bg-surface px-3 py-2 text-xs font-semibold text-muted-text hover:text-text">{copy.console.account}</Link>
           </header>
           <div className="mx-auto max-w-6xl px-5 py-8 pb-14 md:px-8" key={id}>
+            <Suspense fallback={<Skeleton rows={3} />}>
             {section === "dashboard" ? <DashboardSection venueId={id} onNavigate={navigate} />
               : section === "bookings" ? <BookingsSection venueId={id} onOpenChat={openChat} initial={bookingDraft} />
               : section === "customers" ? <CustomersSection venueId={id} onOpenChat={openChat} onBook={(c: Customer) => { setBookingDraft({ name: c.name ?? undefined, phone: c.phone, pitchId: undefined }); navigate("bookings"); }} />
@@ -257,6 +262,7 @@ export default function FieldConsole() {
               : section === "team" ? <AcademyTeamSection academyId={id} />
               : section === "footage" ? (varId ? <OwnerVar requestId={varId} onBack={() => setLocation("/field/footage")} /> : <Owner embedded onOpenVar={(requestId) => setLocation(`/field/footage/var/${requestId}`)} />)
               : null}
+            </Suspense>
           </div>
         </main>
       </div>

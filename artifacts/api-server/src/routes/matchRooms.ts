@@ -1258,6 +1258,22 @@ router.post("/m/:code/goals/votes", async (req, res): Promise<void> => {
   res.json({ saved, skipped });
 });
 
+const HOME_STATS_CHECK_NOW = 6;
+const OLDER_STATS_SWEEP_MS = 10 * 60_000;
+const olderStatsSweptAt = new Map<number, number>();
+
+/** Home's stats-cache check: the newest matches awaited, the rest swept in the background now and then. */
+async function queueRecentStatsForHome(userId: number, contexts: RoomContext[], perField: FieldRecordingCache): Promise<number> {
+  const older = contexts.slice(HOME_STATS_CHECK_NOW);
+  const last = olderStatsSweptAt.get(userId) ?? 0;
+  if (older.length && Date.now() - last > OLDER_STATS_SWEEP_MS) {
+    olderStatsSweptAt.set(userId, Date.now());
+    if (olderStatsSweptAt.size > 10_000) olderStatsSweptAt.delete(olderStatsSweptAt.keys().next().value!);
+    void queueUncachedRecentMatchStats(older, 3).catch((error) => logger.warn({ userId, err: error }, "Could not sweep older match stats caches"));
+  }
+  return queueUncachedRecentMatchStats(contexts.slice(0, HOME_STATS_CHECK_NOW), 3, perField);
+}
+
 router.get("/me/matches", async (req, res): Promise<void> => {
   const user = await getLocalUserRecord(req);
   if (!user) {
@@ -1446,7 +1462,9 @@ router.get("/me/matches", async (req, res): Promise<void> => {
       logger.warn({ userId: user.id, err: error }, "Could not load player match form");
       return null;
     }),
-    queueUncachedRecentMatchStats(recentContexts, 3, fieldRecordings).catch((error) => {
+    // The newest matches are checked now (their numbers may still be filling); older ones in the
+    // background, at most every 10 minutes per player, so Home doesn't wait on 30 matches' claims.
+    queueRecentStatsForHome(user.id, recentContexts, fieldRecordings).catch((error) => {
       logger.warn({ userId: user.id, err: error }, "Could not queue recent match stats cache fills");
       return 0;
     }),

@@ -174,7 +174,43 @@ export function getClerkProfileSyncPlan({
   };
 }
 
-async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<LocalUserProvisionResult> {
+/**
+ * Which local user a Clerk id is, remembered for a while. Without this every API request asked
+ * Clerk's servers for the user's profile before doing anything (a network round trip per call,
+ * and a console screen makes 5–15 calls), only to keep the name and email in step with Clerk.
+ * Now that check runs at most once per PROVISION_TTL_MS per user and process, and calls that
+ * arrive together share one check. Login itself is unchanged: Clerk's middleware still verifies
+ * the session token on every request; this only skips the profile copy.
+ */
+export const PROVISION_TTL_MS = 10 * 60_000;
+const PROVISION_CACHE_MAX = 5000;
+const provisionCache = new Map<string, { at: number; result: LocalUserProvisionResult }>();
+const provisionInFlight = new Map<string, Promise<LocalUserProvisionResult>>();
+
+/** Forget a remembered Clerk → local user (its row went away, or for tests). */
+export function forgetClerkProvision(clerkId?: string): void {
+  if (clerkId === undefined) provisionCache.clear();
+  else provisionCache.delete(clerkId);
+}
+
+async function getOrCreateLocalUserByClerkId(clerkId: string): Promise<LocalUserProvisionResult & { cached?: boolean }> {
+  const hit = provisionCache.get(clerkId);
+  if (hit && Date.now() - hit.at < PROVISION_TTL_MS) return { ...hit.result, localRowStatus: "found", cached: true };
+  const running = provisionInFlight.get(clerkId);
+  if (running) return running;
+  const work = provisionLocalUserByClerkId(clerkId).then((result) => {
+    if (result.id !== null) {
+      provisionCache.delete(clerkId);
+      provisionCache.set(clerkId, { at: Date.now(), result });
+      if (provisionCache.size > PROVISION_CACHE_MAX) provisionCache.delete(provisionCache.keys().next().value!);
+    }
+    return result;
+  }).finally(() => provisionInFlight.delete(clerkId));
+  provisionInFlight.set(clerkId, work);
+  return work;
+}
+
+async function provisionLocalUserByClerkId(clerkId: string): Promise<LocalUserProvisionResult> {
   // Fetch Clerk user first — we need it whether the user is new or existing.
   let clerkUser: Awaited<ReturnType<typeof clerkClient.users.getUser>> | null = null;
   try {
@@ -463,7 +499,14 @@ export async function resolveLocalUser(req: Request): Promise<UserResolution> {
   diagnostics.clerkUserIdPresent = Boolean(auth?.userId);
 
   if (auth?.userId) {
-    const provision = await getOrCreateLocalUserByClerkId(auth.userId);
+    let provision = await getOrCreateLocalUserByClerkId(auth.userId);
+    let [user] = provision.id ? await db.select().from(usersTable).where(eq(usersTable.id, provision.id)) : [];
+    if (!user && provision.cached) {
+      // A remembered id whose row is gone (the account was deleted): ask Clerk again.
+      forgetClerkProvision(auth.userId);
+      provision = await getOrCreateLocalUserByClerkId(auth.userId);
+      [user] = provision.id ? await db.select().from(usersTable).where(eq(usersTable.id, provision.id)) : [];
+    }
     diagnostics.localRowStatus = provision.localRowStatus;
     diagnostics.resolvedLocalUserId = provision.id;
     diagnostics.splitAccount = provision.splitAccount;
@@ -477,7 +520,6 @@ export async function resolveLocalUser(req: Request): Promise<UserResolution> {
       });
     }
 
-    const [user] = await db.select().from(usersTable).where(eq(usersTable.id, provision.id));
     if (!user) {
       diagnostics.localRowStatus = "not_found";
       return saveResolution(req, {
