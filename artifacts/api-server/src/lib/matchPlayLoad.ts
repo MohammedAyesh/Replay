@@ -75,7 +75,10 @@ export type RecordingPlay = {
 /** Bumped whenever what is derived here changes, so cached results are rebuilt. */
 const DERIVE_VERSION = 7; // 7: bibs judged by their place on the colour plane (bibCore)
 
-const MAX_CACHED = 6;
+// Each entry holds the whole match's tracking: rec 410's 61 MB of segments parse
+// to ~150 MB. Six of them, the bundle cache and two ffmpeg renders could reach the
+// 4 GiB Autoscale limit, and the instance was killed three times (1–4 Nov 2026).
+const MAX_CACHED = Math.min(16, Math.max(1, Number.parseInt(process.env.MATCH_PLAY_CACHE_MAX ?? "", 10) || 3));
 export const playCache = new Map<number, { key: string; data: RecordingPlay; at: number }>();
 const playLoads = new Map<string, Promise<RecordingPlay | null>>();
 

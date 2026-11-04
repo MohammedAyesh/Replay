@@ -149,6 +149,10 @@ async function encodeCardUnqueued(job: EndScreenJob, dims: Dims): Promise<{ buff
       return { buffer, ext: v.ext };
     } catch (err) {
       lastErr = err;
+      // In production the VP9 card has been failing silently and every vps1
+      // card went out as .mov (1–4 Nov 2026); the development FFmpeg encodes it
+      // fine, so say why when it happens.
+      logger.warn({ err, ext: v.ext, dims }, "End-screen card encode failed; trying the next format");
     } finally {
       fs.unlink(out, () => {});
     }

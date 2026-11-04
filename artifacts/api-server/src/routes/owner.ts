@@ -805,12 +805,19 @@ export async function runOwnerStatusSync(): Promise<void> {
   }
 }
 
+/**
+ * A failed sync (most often a dropped database connection) is logged and the
+ * next tick tries again. Uncaught, it was an unhandled rejection that ended the
+ * process: 78 of the last 100 crash stacks on 2026-11-04.
+ */
+function runOwnerStatusSyncSafely(): void {
+  runOwnerStatusSync().catch((error) => logger.warn({ error }, "Owner status sync failed; retrying next minute"));
+}
+
 export function startOwnerStatusSync(): void {
   if (syncInterval) return;
-  void runOwnerStatusSync();
-  syncInterval = setInterval(() => {
-    void runOwnerStatusSync();
-  }, 60_000);
+  runOwnerStatusSyncSafely();
+  syncInterval = setInterval(runOwnerStatusSyncSafely, 60_000);
 }
 
 async function refreshUnfinishedRequest(row: FootageRequest, camera: string): Promise<void> {

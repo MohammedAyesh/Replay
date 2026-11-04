@@ -204,7 +204,10 @@ export function dedupePerPlayer(recipients: Recipient[]): Recipient[] {
   });
 }
 
-export function joinNames(names: string[], locale: "ar" | "en"): string {
+export function joinNames(input: string[], locale: "ar" | "en"): string {
+  // Alphabetical, so a family's message reads the same every time: the names
+  // arrive in whatever order the database returned the players (2026-11-04).
+  const names = [...input].sort((a, b) => a.localeCompare(b));
   if (names.length <= 1) return names[0] ?? "";
   const last = names[names.length - 1];
   const rest = names.slice(0, -1);
