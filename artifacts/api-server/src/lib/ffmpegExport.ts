@@ -750,6 +750,18 @@ export function buildCropCommands(
 }
 
 /**
+ * Local clip renders run at a lower CPU priority. On the 2-vCPU deployment two
+ * renders used both cores, so the API and the end-screen card encode (which
+ * vps1 waits for) starved: a 4 s card encode hit its 120 s limit and the clip
+ * shipped without an end screen. Renders still finish; they just yield.
+ */
+const RENDER_NICENESS = 10;
+function deprioritize(pid: number | undefined): void {
+  if (!pid) return;
+  try { os.setPriority(pid, RENDER_NICENESS); } catch { /* not permitted here; run at normal priority */ }
+}
+
+/**
  * Run an ffmpeg/ffprobe-family binary, resolving on exit code 0 and rejecting
  * otherwise.
  *
@@ -762,6 +774,7 @@ export function buildCropCommands(
 function run(bin: string, args: string[], timeoutMs = SUBPROCESS_TIMEOUT_MS): Promise<string> {
   return new Promise((resolve, reject) => {
     const proc = spawn(bin, args);
+    deprioritize(proc.pid);
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -1193,6 +1206,7 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
 
   return new Promise((resolve, reject) => {
     const proc = spawn("ffmpeg", args);
+    deprioritize(proc.pid);
 
     // Keep only the tail of stderr. FFmpeg emits a progress line per second and
     // the full log was retained for the life of the process; on a stalled input

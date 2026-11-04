@@ -20,6 +20,7 @@ import {
   backupSpecFor,
   prepareBackupBranding,
   reconcileBackup,
+  replacementRevision,
   shouldWaitForPrimaryBranding,
   setBackupBrandingProvider,
 } from "./exportFailover";
@@ -176,6 +177,54 @@ describe("branded backup handoff", () => {
     expect(shouldWaitForPrimaryBranding(false, true, 10 * 60_000)).toBe(false);
     expect(shouldWaitForPrimaryBranding(false, false, null)).toBe(false);
     expect(shouldWaitForPrimaryBranding(false, true, null)).toBe(false);
+  });
+});
+
+describe("replacement renders keep one vps1 job across callers", () => {
+  afterEach(() => setBackupBrandingProvider(null));
+
+  it("derives a stable revision from the export being replaced", () => {
+    const old = "https://storage.test/galaxyfield/clips/c1245-fc60aaaaaaaaaaaa.mp4";
+    const a = replacementRevision({ id: 1245, exportedUrl: old });
+    expect(a).toMatch(/^[0-9a-f]{32}$/);
+    expect(replacementRevision({ id: 1245, exportedUrl: old })).toBe(a);
+    expect(replacementRevision({ id: 1245, exportedUrl: `${old}?v=2` })).not.toBe(a);
+    expect(replacementRevision({ id: 1246, exportedUrl: old })).not.toBe(a);
+    expect(replacementRevision({ id: 1245, exportedUrl: null })).toBeUndefined();
+  });
+
+  it("asks vps1 for the re-render, not the old finished job, when the caller passes no revision", async () => {
+    // The failover sweep and the status poll call reconcileBackup without a
+    // revision. They used to omit it, vps1 answered with the old ready job and
+    // the clip was published on its old file.
+    const env = { ...process.env };
+    const originalFetch = globalThis.fetch;
+    const bodies: Array<Record<string, unknown>> = [];
+    process.env.CONTABO_CONTROL_URL = "http://control.test";
+    process.env.CONTABO_CONTROL_KEY = "test-key";
+    globalThis.fetch = vi.fn(async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return Response.json({
+        job: "c1245-0123456789abcdef", clipId: 1245, status: "encoding", stage: "encoding", progress: 40,
+        error: null, errorKind: null, running: true, output: null,
+      });
+    }) as typeof fetch;
+    setBackupBrandingProvider(async () => ({ overlayUrl: null, endScreen: null, complete: true }) as never);
+    const clip = {
+      id: 1245, videoId: "video", startTime: "10", endTime: "26", cropPath: [], aspectRatio: "9:16",
+      title: "Goal", exportStatus: "pending",
+      exportedUrl: "https://storage.test/galaxyfield/clips/c1245-fc60aaaaaaaaaaaa.mp4",
+    };
+    try {
+      await reconcileBackup(clip as never, { cacheMs: 0 });
+      expect(bodies[0]?.exportRevision).toBe(replacementRevision(clip));
+      // An explicit revision still wins.
+      await reconcileBackup({ ...clip, id: 1244 } as never, { cacheMs: 0, exportRevision: "ab".repeat(16) });
+      expect(bodies[1]?.exportRevision).toBe("ab".repeat(16));
+    } finally {
+      globalThis.fetch = originalFetch;
+      process.env = env;
+    }
   });
 });
 

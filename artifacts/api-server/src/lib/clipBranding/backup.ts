@@ -144,7 +144,7 @@ async function encodeCardUnqueued(job: EndScreenJob, dims: Dims): Promise<{ buff
         "-y", "-v", "error",
         "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${dims.w}x${dims.h}`, "-framerate", String(FPS), "-i", "pipe:0",
         ...v.args, out,
-      ], job, dims, 120_000);
+      ], job, dims, 300_000);
       const buffer = await fs.promises.readFile(out);
       return { buffer, ext: v.ext };
     } catch (err) {

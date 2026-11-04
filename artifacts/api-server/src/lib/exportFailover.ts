@@ -24,6 +24,7 @@
  * decision function `decideBackupAction` is exported for tests and the rest is
  * thin I/O around it.
  */
+import { createHash } from "crypto";
 import { and, asc, eq, inArray, like } from "drizzle-orm";
 import { db, userClipsTable } from "@workspace/db";
 import { logger } from "./logger";
@@ -165,6 +166,22 @@ export function backupSpecFor(
 }
 
 /**
+ * The revision that names a replacement render of a clip, derived from the
+ * export it replaces. vps1 identifies a job by the clip's times and crop only,
+ * so a re-render with the same times (a new end screen, an admin re-clip) is
+ * told apart only by this revision. It used to be a random id held in one
+ * request's memory: the failover sweep and the status poll then asked vps1
+ * without it, got the old finished job back, and published the old file —
+ * the real re-render finished later and was dropped ("first wins"). Deriving
+ * it from the published URL makes every caller, in every process and after a
+ * restart, ask for the same job. 2026-11-04.
+ */
+export function replacementRevision(clip: { id: number; exportedUrl: string | null }): string | undefined {
+  if (!clip.exportedUrl) return undefined;
+  return createHash("sha256").update(`${clip.id}\n${clip.exportedUrl}`).digest("hex").slice(0, 32);
+}
+
+/**
  * Hand a clip to Method B (or look at the job it already has) and move the
  * row forward if Method B has settled.
  *
@@ -202,8 +219,9 @@ async function reconcileUncached(
     exportRevision?: string;
   },
 ): Promise<BackupOutcome> {
-  const branding = await prepareBackupBranding(clip, opts.overlayUrl ?? null, opts.exportRevision);
-  const spec = backupSpecFor(clip, branding.overlayUrl, opts.exportRevision, branding.endScreen);
+  const exportRevision = opts.exportRevision ?? replacementRevision(clip);
+  const branding = await prepareBackupBranding(clip, opts.overlayUrl ?? null, exportRevision);
+  const spec = backupSpecFor(clip, branding.overlayUrl, exportRevision, branding.endScreen);
   let status: BackupExportStatus;
   try {
     status = await submitBackupExport(spec);

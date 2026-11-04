@@ -1,5 +1,4 @@
 import { Router, type IRouter } from "express";
-import { randomUUID } from "crypto";
 import { followCrop, type FollowPoint } from "../lib/personalMoments";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
@@ -93,6 +92,7 @@ import {
   notePrimaryStarted,
   primaryRunningForMs,
   reconcileBackup,
+  replacementRevision,
   startExportFailoverSweep,
   setBackupBrandingProvider,
   startBackupStorageUrlUpgradeSweep,
@@ -597,7 +597,7 @@ function startBackgroundExport(
   // is still published.
   const exportOptions = options.exportRevision || !clip.exportedUrl
     ? options
-    : { ...options, exportRevision: randomUUID().replace(/-/g, "") };
+    : { ...options, exportRevision: replacementRevision(clip) };
   void (async () => {
     const admission = await renderQueue.tryRunImmediately(String(clipId), () =>
       runBackgroundExport(clip, exportOptions),
@@ -750,7 +750,7 @@ function localFallbackOptions(
   // If this was a re-render of an existing export, keep its object untouched
   // until the fallback render uploads successfully.
   return clip.exportedUrl
-    ? { exportRevision: randomUUID().replace(/-/g, "") }
+    ? { exportRevision: replacementRevision(clip) }
     : {};
 }
 
@@ -1049,7 +1049,7 @@ async function queueClipRerender(
   }
 
   startBackgroundExport(clip, {
-    exportRevision: randomUUID().replace(/-/g, ""),
+    exportRevision: replacementRevision(clip),
     trackAdminFailure,
   });
   return { accepted: true, queuePosition: queueStateFor(clip.id).position };
@@ -1084,7 +1084,7 @@ async function claimEndScreenRerender(clipId: number): Promise<boolean> {
     .returning();
   if (!claimed) return false;
   inFlight.add(clipId);
-  startBackgroundExport(claimed, { exportRevision: randomUUID().replace(/-/g, "") });
+  startBackgroundExport(claimed, { exportRevision: replacementRevision(claimed) });
   logger.info({ clipId }, "Re-rendering a clip for its new end screen");
   return true;
 }
@@ -2122,7 +2122,7 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
       .update(userClipsTable)
       .set({ exportStatus: "pending" })
       .where(eq(userClipsTable.id, clipId));
-    const exportRevision = clip.exportedUrl ? randomUUID().replace(/-/g, "") : undefined;
+    const exportRevision = replacementRevision(clip);
     const outcome = await reconcileBackup({ ...clip, exportStatus: "pending" }, {
       overlayUrl: await overlayUrlForClip(clip),
       cacheMs: 0,
