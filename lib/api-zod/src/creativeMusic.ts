@@ -152,6 +152,18 @@ export const TEMPLATE_RECOMMENDED_MUSIC: Record<string, BuiltInTemplateMusic> = 
   firstgoal: pick("hype", ["cc0/energetic-electro-tune", "cc0/fight-for-a-better-future", "replay/matchday-anthem"]),
   goalduo: pick("hype", ["cc0/energetic-electro-tune", "cc0/fight-for-a-better-future", "replay/matchday-anthem"], { volume: 0.7 }),
   weekmoment: pick("hype", ["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"], { volume: 0.7 }),
+  // Football fields' Instagram pack (fieldPack.ts): the pitch's own sound stays under the music.
+  "field-booking-clip": pick("hype", ["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"], { volume: 0.6 }),
+  "field-award": pick("epic", ["cc0/great-mission", "cc0/epic-endgame", "replay/rising-star"], { volume: 0.7 }),
+  "field-potm": pick("epic", ["cc0/great-mission", "cc0/epic-endgame", "replay/rising-star"], { volume: 0.7 }),
+  "field-potw": pick("epic", ["cc0/great-mission", "cc0/epic-endgame", "replay/rising-star"], { volume: 0.7 }),
+  "field-match-week": pick("hype", ["cc0/fight-for-a-better-future", "cc0/energetic-electro-tune", "replay/stadium-stomp"], { volume: 0.7 }),
+  "field-top5": pick("hype", ["cc0/now-thats-automation", "cc0/serum-patches", "replay/stadium-stomp"], { volume: 0.7 }),
+  "field-versus": pick("fun", ["cc0/cafe-part-time", "cc0/beach-sports"], { volume: 0.6 }),
+  "field-versus-story": pick("fun", ["cc0/cafe-part-time", "cc0/beach-sports"], { volume: 0.6 }),
+  "field-nominee-slide": pick("hype", ["cc0/energetic-electro-tune", "cc0/warped"], { volume: 0.6 }),
+  "field-thanks": pick("cinematic", ["cc0/flags", "cc0/adventure-intro", "replay/proud-moments"]),
+  "field-milestone": pick("epic", ["cc0/epic-endgame", "cc0/great-mission", "replay/final-whistle"]),
 };
 
 /** The settings of a template's built-in pick (the defaults for a template without one). */

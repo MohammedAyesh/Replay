@@ -124,13 +124,14 @@ describe("tinted image layers in the renderer", () => {
 });
 
 describe("background plates in the catalogue", () => {
+  // The fields' style borrows the broadcast plates for academy templates (its own pack draws no plate).
   it("every style's templates start with the same tinted plate layer", () => {
     for (const style of CREATIVE_STYLES) {
       for (const format of ["post", "square", "story"] as const) {
         const scene = buildTemplateScene("fulltime", style, format, "en");
         const plate = scene.layers.find((l) => l.id === PLATE_LAYER_ID);
         expect(plate, style).toMatchObject({
-          kind: "image", name: "bleed", src: { type: "artwork", key: isPackStyle(style) ? packPlate(style, "fulltime") : `bg/${style}/1` }, fit: "cover",
+          kind: "image", name: "bleed", src: { type: "artwork", key: isPackStyle(style) ? packPlate(style, "fulltime") : `bg/${style === "field" ? "broadcast" : style}/1` }, fit: "cover",
           x: 0, y: 0, w: 1080, tint: { color: "@primary", mode: "color" },
         });
         expect(templatePlateLayer(style, format, "fulltime")).toEqual(plate);

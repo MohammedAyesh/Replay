@@ -23,6 +23,7 @@ import {
   baselineIn,
   displayText,
   entranceAt,
+  blurAt,
   fitRect,
   fontFace,
   gradientPoints,
@@ -290,7 +291,7 @@ export function drawScene(
     let dx = 0;
     let dy = 0;
     if (opts.entrances && t !== null) {
-      const e = entranceAt(layer, t);
+      const e = entranceAt(layer, t, { w: W, h: H });
       alpha *= e.alpha;
       dx = e.dx;
       dy = e.dy;
@@ -315,8 +316,11 @@ export function drawScene(
         case "image":
         case "video": {
           const img = pictures.get(layer.id) ?? null;
+          const blur = layer.kind === "video" && opts.entrances && t !== null ? blurAt(layer, t) : 0;
+          if (blur > 0) c.filter = `blur(${blur.toFixed(1)}px)`;
           if (img) drawPicture(c, layer, img);
           else if (resolveSource(layer.src, data)?.type === "crest") drawInitialsCrest(c, layer, brand);
+          if (blur > 0) c.filter = "none";
           break;
         }
       }

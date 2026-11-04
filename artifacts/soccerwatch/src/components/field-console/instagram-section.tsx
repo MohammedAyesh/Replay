@@ -8,6 +8,8 @@ import { useInstagramCopy } from "@/i18n/instagram-strings";
 import { cn } from "@/lib/utils";
 import { ammanToday, clock, dayName } from "@/lib/venue-api";
 import {
+  IG_OPTIONAL_KINDS,
+  IG_WEEKLY_KINDS,
   useInstagram,
   useInstagramItem,
   useInstagramReport,
@@ -15,6 +17,7 @@ import {
   type IgAward,
   type IgItem,
   type IgSlots,
+  type IgWeeklyKind,
   type InstagramData,
 } from "@/lib/instagram-api";
 import { Card, ErrorText, Pill, SectionHeader, Skeleton, ToggleRow } from "./shared";
@@ -189,6 +192,26 @@ function SettingsCard({ venueId, data }: { venueId: number; data: InstagramData 
           <label className="flex flex-wrap items-center gap-2">{copy.settings.minVotes}
             <Input type="number" min={1} max={1000} value={slots.minVotes} onChange={(e) => set("minVotes", Math.max(1, Number(e.target.value) || 1))} className="min-h-10 w-20" />
           </label>
+          <p className="pt-1 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.settings.posts}</p>
+          <p className="text-xs text-muted-text">{copy.settings.postsHint}</p>
+          <div className="space-y-2" data-testid="ig-optional-posts">
+            {IG_OPTIONAL_KINDS.map((k) => {
+              const on = !slots.off.includes(k);
+              const weekly = (IG_WEEKLY_KINDS as readonly string[]).includes(k) ? slots.weekly[k as IgWeeklyKind] : null;
+              return (
+                <div key={k} className="flex flex-wrap items-center gap-2">
+                  <Switch checked={on} onCheckedChange={(v) => set("off", v ? slots.off.filter((x) => x !== k) : [...slots.off, k])} aria-label={copy.settings.kinds[k]} data-testid={`ig-kind-${k}`} />
+                  <span className={cn("min-w-0 flex-1", !on && "text-muted-text")}>{copy.settings.kinds[k]}</span>
+                  {on && weekly && <>
+                    {daySelect(weekly.day, (v) => set("weekly", { ...slots.weekly, [k]: { ...weekly, day: v } }), copy.settings.kinds[k])}
+                    {timeInput(weekly.time, (v) => set("weekly", { ...slots.weekly, [k]: { ...weekly, time: v } }), copy.settings.kinds[k])}
+                  </>}
+                  {on && k === "open_slots" && timeInput(slots.openSlotsTime, (v) => set("openSlotsTime", v), copy.settings.kinds[k])}
+                  {on && k === "leaderboard" && timeInput(slots.boardTime, (v) => set("boardTime", v), copy.settings.kinds[k])}
+                </div>
+              );
+            })}
+          </div>
           <div className="flex items-center gap-3">
             <Button type="button" size="sm" disabled={save.isPending} onClick={() => save.mutate({ slots }, { onSuccess: () => setSavedAt(Date.now()) })}>{copy.settings.save}</Button>
             {savedAt > 0 && !save.isPending && <span className="text-xs font-semibold text-turf" role="status">{copy.settings.saved}</span>}
@@ -253,7 +276,8 @@ function Calendar({ venueId, data }: { venueId: number; data: InstagramData }) {
       if (!i.slotLocal) continue;
       const day = i.slotLocal.slice(0, 10);
       const exact = byDay.get(day)?.get(`${i.slotLocal.slice(11, 16)}:${i.placement}`);
-      (exact ?? rowOf(i.slotLocal, i.placement)).items.push(i);
+      // A carousel goes in the feed like a Reel.
+      (exact ?? rowOf(i.slotLocal, i.placement === "carousel" ? "reel" : i.placement)).items.push(i);
     }
     return [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b)).filter(([d]) => d >= today || [...(byDay.get(d)?.values() ?? [])].some((r) => r.items.length))
       .map(([day, rows]) => ({ day, rows: [...rows.values()].sort((a, b) => a.time.localeCompare(b.time) || (a.kind === "reel" ? -1 : 1)) }));
@@ -334,7 +358,9 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
   const movable = item.status === "planned" || item.status === "approved";
   const auto = data.settings.publishMode === "auto";
   const title = item.kind === "booking_clip" ? (item.reference ? copy.calendar.booking(item.reference) : copy.calendar.sources[item.source])
-    : `${item.kind === "award_nominees" ? copy.calendar.nominees : copy.calendar.winner}${item.category ? ` · ${copy.awards.categories[item.category] ?? item.category}` : ""}`;
+    : item.kind === "award_nominees" || item.kind === "award_winner"
+      ? `${item.kind === "award_nominees" ? copy.calendar.nominees : copy.calendar.winner}${item.category ? ` · ${copy.awards.categories[item.category] ?? item.category}` : ""}`
+      : copy.calendar.kinds[item.kind] ?? item.kind;
   const statusText = item.status === "planned" && auto ? copy.calendar.plannedAuto : copy.calendar.status[item.status];
   const tone = item.status === "published" ? "paid" : item.status === "approved" ? "confirmed" : item.status === "planned" ? "held" : item.status === "removal_flagged" || item.status === "failed" ? "no_show" : "cancelled";
   const pickForSwap = () => {
@@ -346,7 +372,7 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
       className={cn("flex gap-3 rounded-xl border bg-raised p-2.5", swapFrom === item.id ? "border-amber-300" : "border-line", movable && "cursor-grab")} data-testid={`ig-item-${item.id}`}>
       <div className="relative h-24 w-[3.4rem] shrink-0 overflow-hidden rounded-lg bg-void">
         {item.thumbnailUrl && <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />}
-        <span className={cn("absolute bottom-1 start-1 rounded px-1 text-[9px] font-bold uppercase", item.placement === "reel" ? "bg-[#7B5CFF] text-white" : "bg-turf text-void")}>{item.placement === "reel" ? copy.calendar.reel : copy.calendar.story}</span>
+        <span className={cn("absolute bottom-1 start-1 rounded px-1 text-[9px] font-bold uppercase", item.placement === "reel" ? "bg-[#7B5CFF] text-white" : item.placement === "carousel" ? "bg-amber-300 text-void" : "bg-turf text-void")}>{item.placement === "reel" ? copy.calendar.reel : item.placement === "carousel" ? copy.calendar.carousel : copy.calendar.story}</span>
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -360,6 +386,7 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
           {item.consentMode ? ` · ${copy.calendar.consentOn(copy.consent.modes[item.consentMode] ?? item.consentMode)}` : ""}
         </p>
         {item.error && item.status !== "published" && <p className="mt-1 text-xs text-amber-200">{item.error}</p>}
+        {item.votes && <p className="mt-1 text-xs font-semibold text-turf" data-testid={`ig-ab-votes-${item.id}`}>{copy.calendar.abVotes(item.votes.a, item.votes.b)}</p>}
         {item.insights && (item.insights.views != null || item.insights.reach != null) && (
           <p className="mt-1 text-xs text-muted-text">{copy.report.plays}: {item.insights.views ?? "—"} · {copy.report.reach}: {item.insights.reach ?? "—"}</p>
         )}
@@ -406,8 +433,8 @@ function Preview({ item, onClose }: { item: IgItem; onClose: () => void }) {
       <DialogContent dir={copy.locale === "ar" ? "rtl" : "ltr"} className="border-line bg-surface text-text sm:max-w-sm">
         <DialogHeader className="text-start"><DialogTitle>{copy.calendar.preview}</DialogTitle><DialogDescription className="text-start text-muted-text">{item.reference ? copy.calendar.booking(item.reference) : ""}</DialogDescription></DialogHeader>
         {url ? (item.render?.kind === "video"
-          ? <video src={url} controls autoPlay playsInline className="mx-auto aspect-[9/16] max-h-[70dvh] rounded-xl bg-black" />
-          : <img src={url} alt="" className="mx-auto aspect-[9/16] max-h-[70dvh] rounded-xl object-contain" />) : <p className="text-sm text-muted-text">{copy.calendar.rendering}</p>}
+          ? <video src={url} controls autoPlay playsInline className={cn("mx-auto max-h-[70dvh] rounded-xl bg-black", item.placement === "carousel" ? "aspect-[4/5]" : "aspect-[9/16]")} />
+          : <img src={url} alt="" className={cn("mx-auto max-h-[70dvh] rounded-xl object-contain", item.placement === "carousel" ? "aspect-[4/5]" : "aspect-[9/16]")} />) : <p className="text-sm text-muted-text">{copy.calendar.rendering}</p>}
       </DialogContent>
     </Dialog>
   );
@@ -489,7 +516,7 @@ function Report({ venueId }: { venueId: number }) {
   const report = useInstagramReport(venueId, month);
   const r = report.data;
   const num = (v: number | null | undefined) => (v == null ? "—" : new Intl.NumberFormat(copy.locale === "ar" ? "ar-JO" : "en-GB").format(v));
-  const rows = r ? ([["story", copy.report.stories], ["reel", copy.report.reels], ["nominees", copy.report.nominees], ["award", copy.report.awards]] as const) : [];
+  const rows = r ? ([["story", copy.report.stories], ["reel", copy.report.reels], ["nominees", copy.report.nominees], ["award", copy.report.awards], ["field", copy.report.field]] as const).filter(([k]) => r.posts.byType[k]) : [];
   return (
     <Card data-testid="instagram-report">
       <div className="flex flex-wrap items-center justify-between gap-2">

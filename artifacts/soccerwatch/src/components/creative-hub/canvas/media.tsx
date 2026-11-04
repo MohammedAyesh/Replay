@@ -47,7 +47,7 @@ const clampRate = (r: number) => Math.max(0.0625, Math.min(16, r));
  * window, holding the last frame past the trim. Playing, it runs at the part's
  * speed and is pulled back when it drifts; paused, it seeks.
  */
-export function VideoView({ layer, url, timeMs, playing }: { layer: VideoLayer; url: string | null; timeMs: number; playing: boolean }) {
+export function VideoView({ layer, url, timeMs, playing, blurPx = 0 }: { layer: VideoLayer; url: string | null; timeMs: number; playing: boolean; blurPx?: number }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [sourceMs, setSourceMs] = useState<number | null>(null);
@@ -99,7 +99,7 @@ export function VideoView({ layer, url, timeMs, playing }: { layer: VideoLayer; 
 
   if (!url || failed === url) return <MediaPlaceholder layer={layer} />;
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    <div className="absolute inset-0 overflow-hidden" style={blurPx > 0 ? { filter: `blur(${blurPx}px)` } : undefined}>
       <video ref={ref} src={url} muted={layer.muted || !playing} playsInline preload="auto" disablePictureInPicture
         onError={() => setFailed(url)}
         onLoadedMetadata={(e) => {

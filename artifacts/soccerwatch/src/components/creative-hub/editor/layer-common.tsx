@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Chip, NumberSlider, Section } from "./controls";
 import type { EditorApi } from "./editor-api";
 
-const ENTRANCES = ["none", "fade", "slide-up", "slide-left", "pop"] as const;
+const ENTRANCES = ["none", "fade", "slide-up", "slide-left", "pop", "push-up", "push-down", "wipe"] as const;
 
 /** Opacity, rotation, entrance and the arrange buttons, under every kind's own controls. */
 export function LayerCommon({ ed, layer }: { ed: EditorApi; layer: SceneLayer }) {

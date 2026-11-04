@@ -668,6 +668,9 @@ const WIDENED_CHECKS: Array<{ table: string; name: string; mustContain: string; 
   { table: "academy_members", name: "academy_members_role_check", mustContain: "'manager'", definition: `CHECK ("role" in ('owner', 'manager', 'coach'))` },
   // 0065_creative_wide_format.sql: 16:9 clip videos.
   { table: "academy_creative_projects", name: "academy_creative_projects_format_check", mustContain: "'wide'", definition: `CHECK ("format" in ('post', 'square', 'story', 'wide'))` },
+  // 0071_field_instagram_templates.sql: more autopilot kinds, nominees as a carousel.
+  { table: "venue_ig_items", name: "venue_ig_items_kind_check", mustContain: "'leaderboard'", definition: `CHECK ("kind" in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard'))` },
+  { table: "venue_ig_items", name: "venue_ig_items_placement_check", mustContain: "'carousel'", definition: `CHECK ("placement" in ('story', 'reel', 'carousel'))` },
 ];
 
 /** Returns how many columns and tables it had to add. */

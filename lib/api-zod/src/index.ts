@@ -32,6 +32,7 @@ export const UpdateProfileBody = z.object({
   gender: z.enum(["male", "female", "prefer_not_to_say"]),
 }));
 export * from "./creativeScene";
+export * from "./creativeMotion";
 export * from "./creativeTemplates";
 export * from "./creativePacks";
 export * from "./creativeFonts";

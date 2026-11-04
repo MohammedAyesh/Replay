@@ -41,6 +41,7 @@ const en = {
     cinematic: "Cinematic",
     stadium: "Stadium",
     ...packStyleLabels.en,
+    field: "Field",
   } satisfies Record<CreativeStyle, string>,
   styleHints: {
     broadcast: "TV match graphics",
@@ -51,6 +52,7 @@ const en = {
     cinematic: "Dark and dramatic",
     stadium: "Floodlit night",
     ...packHints("Your academy's own look, from its brand deck"),
+    field: "Your field's own look, from its branding",
   } satisfies Record<CreativeStyle, string>,
   formatLabel: "Size",
   formats: { post: "Post", square: "Square", story: "Story", wide: "Wide" } satisfies Record<CreativeFormat, string>,
@@ -100,6 +102,7 @@ const ar: typeof en = {
     cinematic: "سينمائي",
     stadium: "ستاد",
     ...packStyleLabels.ar,
+    field: "الملعب",
   },
   styleHints: {
     broadcast: "زي جرافيكس المباريات عالتلفزيون",
@@ -110,6 +113,7 @@ const ar: typeof en = {
     cinematic: "غامق ودرامي",
     stadium: "ليلة تحت الأضواء",
     ...packHints("الستايل الخاص بأكاديميتكم، من هويّتها"),
+    field: "ستايل ملعبكم، من هويّته",
   },
   formatLabel: "المقاس",
   formats: { post: "بوست", square: "مربّع", story: "ستوري", wide: "عريض" },

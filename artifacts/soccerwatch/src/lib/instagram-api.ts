@@ -11,12 +11,18 @@ export type IgSlots = {
   storyEveryHours: number; storiesPerSlot: number; reelTimes: string[]; quietFrom: string; quietTo: string;
   nomineesDay: number; nomineesTime: string; votingEndDay: number; votingEndTime: string;
   winnerDay: number; winnerTime: string; winnerGapMinutes: number; minVotes: number;
+  weekly: Record<IgWeeklyKind, { day: number; time: string }>;
+  openSlotsTime: string; boardTime: string; off: IgOptionalKind[];
 };
+export const IG_WEEKLY_KINDS = ["thanks", "top5", "player_week", "match_week", "versus"] as const;
+export type IgWeeklyKind = (typeof IG_WEEKLY_KINDS)[number];
+export const IG_OPTIONAL_KINDS = [...IG_WEEKLY_KINDS, "open_slots", "leaderboard", "milestone"] as const;
+export type IgOptionalKind = (typeof IG_OPTIONAL_KINDS)[number];
 export type ConsentEvent = { id: number; oldMode: ConsentMode | null; newMode: ConsentMode; wording: string | null; by: string | null; at: string };
 export type IgItem = {
   id: number;
-  kind: "booking_clip" | "award_nominees" | "award_winner";
-  placement: "story" | "reel";
+  kind: "booking_clip" | "award_nominees" | "award_winner" | IgOptionalKind;
+  placement: "story" | "reel" | "carousel";
   source: string;
   status: "planned" | "approved" | "rendering" | "ready" | "publishing" | "published" | "skipped" | "failed" | "removed" | "removal_flagged";
   pinned: boolean;
@@ -37,6 +43,8 @@ export type IgItem = {
   consentRef: unknown;
   insights: Record<string, number | null> | null;
   thumbnailUrl: string | null;
+  /** "Which is nicer?": A and B votes from its comments. */
+  votes: { a: number; b: number } | null;
 };
 export type IgNominee = { key: string; label: string; labelAr: string; source: string; value: number | null; bookingId: number; votes: number | null; thumbnailUrl: string | null };
 export type IgAward = {
@@ -60,7 +68,7 @@ export type InstagramData = {
 };
 export type IgReport = {
   month: string;
-  posts: { total: number; byType: Record<"story" | "reel" | "nominees" | "award", { posts: number; reach: number | null; views: number | null }> };
+  posts: { total: number; byType: Record<"story" | "reel" | "nominees" | "award" | "field", { posts: number; reach: number | null; views: number | null }> };
   insightsAvailable: boolean;
   bookings: { website: number; whatsapp: number; console: number };
   removals: { total: number; deleted: number; flagged: number; withdrawn: number };

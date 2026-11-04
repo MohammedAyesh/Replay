@@ -19,7 +19,8 @@ import { EXPORT_ENCODE_ARGS } from "../ffmpegExport";
 import { applyEndScreen, type EndScreenJob } from "../clipBranding/endScreenVideo";
 import { logger } from "../logger";
 import { renderScenePng, sceneSize, type ConcreteSource, type SceneRenderOptions } from "./render";
-import { ENTER_MS, SLIDE_PX, videoParts } from "./renderLayout";
+import { ENTER_MS, PUSH_MS, SLIDE_PX, videoParts } from "./renderLayout";
+import { isFadeEntrance, wipeSpan } from "@workspace/api-zod";
 
 /**
  * Creative hub engine: a video scene → MP4 (1080 wide, H.264 + AAC, 30 fps),
@@ -141,6 +142,8 @@ export function atempoChain(speed: number): string[] {
 export type Track =
   | {
     type: "png"; path: string; fromMs: number; toMs: number; enter?: SceneLayer["enter"]; startMs?: number;
+    /** The layer's own end (a wipe crosses the canvas over its lifetime). */
+    endMs?: number;
     /** Slow zoom about this point (canvas px), over the whole scene. */
     zoom?: { x: number; y: number };
   }
@@ -227,11 +230,25 @@ export function audioMixFilters(footage: string[], music: string | null, duck: b
 }
 const hexColor = (c: string) => `0x${c.replace(/^#/, "").slice(0, 6)}`;
 
-/** Overlay x/y expressions for an entrance starting at `startMs` (slides move in over ENTER_MS). */
-function entranceXY(enter: SceneLayer["enter"], startMs: number, x: string, y: string): { x: string; y: string } {
+/**
+ * Overlay x/y expressions for an entrance starting at `startMs`, the same curves as
+ * creativeMotion.ts entranceAt: slides move SLIDE_PX in over ENTER_MS; pushes come in from a
+ * whole canvas below / above over PUSH_MS (ease-out cubic); a wipe crosses the canvas from the
+ * right to the left over its own lifetime (smoothstep).
+ */
+export function entranceXY(enter: SceneLayer["enter"], startMs: number, x: string, y: string, canvas: { w: number; h: number } = { w: 1080, h: 1920 }, endMs?: number): { x: string; y: string } {
   const ramp = `${SLIDE_PX}*max(0,1-(t-${sec(startMs)})/${sec(ENTER_MS)})`;
   if (enter === "slide-left") return { x: `${x}+${ramp}`, y };
   if (enter === "slide-up") return { x, y: `${y}+${ramp}` };
+  if (enter === "push-up" || enter === "push-down") {
+    const left = `pow(1-clip((t-${sec(startMs)})/${sec(PUSH_MS)},0,1),3)`;
+    return { x, y: `${y}${enter === "push-up" ? "+" : "-"}${canvas.h}*${left}` };
+  }
+  if (enter === "wipe") {
+    const { from, ms } = wipeSpan({ startMs, endMs });
+    const p = `clip((t-${sec(from)})/${sec(ms)},0,1)`;
+    return { x: `${x}+${canvas.w}*(1-2*(${p})*(${p})*(3-2*(${p})))`, y };
+  }
   return { x, y };
 }
 
@@ -257,7 +274,15 @@ export function photoVideoMaxrateKbps(durationMs: number): number {
 }
 
 const fadeIn = (enter: SceneLayer["enter"], startMs: number) =>
-  enter && enter !== "none" ? `,fade=t=in:st=${sec(startMs)}:d=${sec(ENTER_MS)}:alpha=1` : "";
+  isFadeEntrance(enter) ? `,fade=t=in:st=${sec(startMs)}:d=${sec(ENTER_MS)}:alpha=1` : "";
+
+/** boxblur for a footage layer's end-card blur, switched on at its scene time (the chain's clock is the layer's own, from 0). */
+export function blurFilter(layer: Pick<VideoLayer, "blur" | "startMs">): string {
+  if (!layer.blur) return "";
+  const r = Math.max(1, Math.round(layer.blur.px * 1.5));
+  const at = Math.max(0, layer.blur.fromMs - (layer.startMs ?? 0));
+  return `,boxblur=luma_radius=${r}:luma_power=2:chroma_radius=${Math.max(1, Math.round(r / 2))}:chroma_power=2:enable='gte(t,${sec(at)})'`;
+}
 
 /** Keys thinned to at most `max`, keeping both ends (an ffmpeg expression nests one level per key). */
 export function thinKeys(keys: ReadonlyArray<readonly [number, number, number]>, max = 48): Array<[number, number, number]> {
@@ -325,7 +350,7 @@ export function buildFfmpegArgs(opts: {
     if (track.type === "png") {
       inputs.push("-loop", "1", "-framerate", String(FPS), "-t", sec(D), "-i", track.path);
       const start = track.startMs ?? track.fromMs;
-      const xy = entranceXY(track.enter, start, "0", "0");
+      const xy = entranceXY(track.enter, start, "0", "0", { w: W, h: H }, track.endMs);
       const zoom = track.zoom ? `,${slowZoomFilter(track.zoom, D, { w: W, h: H })}` : "";
       filters.push(`[${k}:v]format=rgba${zoom}${fadeIn(track.enter, start)}[p${n}]`);
       filters.push(`[${prev}][p${n}]overlay=x='${xy.x}':y='${xy.y}':enable='gte(t,${sec(track.fromMs)})*lt(t,${sec(track.toMs)})'[${next}]`);
@@ -360,10 +385,10 @@ export function buildFfmpegArgs(opts: {
     const opacity = layer.opacity !== undefined && layer.opacity < 1 ? `,colorchannelmixer=aa=${layer.opacity.toFixed(3)}` : "";
     const rad = layer.rotation ? (layer.rotation * Math.PI) / 180 : 0;
     const rotate = rad ? `,rotate=a=${rad.toFixed(6)}:ow='rotw(${rad.toFixed(6)})':oh='roth(${rad.toFixed(6)})':c=none` : "";
-    filters.push(`[${joined}]fps=${FPS},setsar=1,${fit}${opacity}${rotate},setpts=PTS+${sec(S)}/TB${fadeIn(layer.enter, S)}[v${n}]`);
+    filters.push(`[${joined}]fps=${FPS},setsar=1,${fit}${blurFilter(layer)}${opacity}${rotate},setpts=PTS+${sec(S)}/TB${fadeIn(layer.enter, S)}[v${n}]`);
     const cx = layer.x + layer.w / 2;
     const cy = layer.y + layer.h / 2;
-    const xy = entranceXY(layer.enter, S, `${cx.toFixed(2)}-w/2`, `${cy.toFixed(2)}-h/2`);
+    const xy = entranceXY(layer.enter, S, `${cx.toFixed(2)}-w/2`, `${cy.toFixed(2)}-h/2`, { w: W, h: H }, layer.endMs);
     filters.push(`[${prev}][v${n}]overlay=x='${xy.x}':y='${xy.y}':eof_action=repeat:enable='gte(t,${sec(S)})*lt(t,${sec(E)})'[${next}]`);
     prev = next;
 
@@ -487,7 +512,7 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
       tracks.push({ type: "video", layer: item.layer, file: footage.get(item.layer.id)! });
     } else if (item.type === "animated") {
       const l = item.layer;
-      tracks.push({ type: "png", path: await still(new Set([l.id])), fromMs: l.startMs ?? 0, toMs: Math.min(l.endMs ?? D, D), enter: l.enter, startMs: l.startMs ?? 0 });
+      tracks.push({ type: "png", path: await still(new Set([l.id])), fromMs: l.startMs ?? 0, toMs: Math.min(l.endMs ?? D, D), enter: l.enter, startMs: l.startMs ?? 0, ...(l.endMs !== undefined ? { endMs: l.endMs } : {}) });
     } else if (item.type === "zoom") {
       const first = item.layers[0]!;
       tracks.push({ type: "png", path: await still(new Set(item.layers.map((l) => l.id))), fromMs: first.startMs ?? 0, toMs: Math.min(first.endMs ?? D, D), zoom: item.origin });

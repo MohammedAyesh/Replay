@@ -21,7 +21,7 @@ import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { mayConfirmGoalsInRoom } from "../lib/goalRights";
 import { logger } from "../lib/logger";
-import { recordingsForRoom } from "../lib/matchFeed";
+import { recordingsForRoom, type LinkedRecording } from "../lib/matchFeed";
 import { loadRoomByCode } from "../lib/matchRooms";
 import { getSocialAccount } from "../lib/social/account";
 import { ammanLocal, fromAmmanLocal, normaliseHours, wallMinutes } from "../lib/venues/core";
@@ -36,7 +36,8 @@ import {
   removeBookingFromInstagram,
   type IgItemView,
 } from "../lib/venues/igAutopilot";
-import { DEFAULT_IG_SLOTS, isQuiet, normaliseIgSlots, nowWall, pacing, slotsFor } from "../lib/venues/igCalendar";
+import { DEFAULT_IG_SLOTS, OPTIONAL_KINDS, WEEKLY_KINDS, isQuiet, normaliseIgSlots, nowWall, pacing, slotsFor } from "../lib/venues/igCalendar";
+import { awardCommentVotes, versusVotes } from "../lib/venues/igVotes";
 import { IG_CONSENT_MODES, consentMode } from "../lib/venues/igConsent";
 import { checkInstagram } from "../lib/venues/igGraph";
 import { loadVenue, venueBySlug, type Venue } from "../lib/venues/store";
@@ -151,15 +152,25 @@ router.get(base, async (req, res): Promise<void> => {
     const aById = new Map(awardsForItems.map((x) => [x.id, x]));
     const pById = new Map(projects.map((p) => [p.id, p]));
     const videoUrls = await videoUrlsFor(items.map((i) => i.recordingId ?? 0));
-    const views: Array<IgItemView & { thumbnailUrl: string | null }> = items.map((i) => {
+    const views: Array<IgItemView & { thumbnailUrl: string | null; votes: { a: number; b: number } | null }> = await Promise.all(items.map(async (i) => {
       const v = itemView(i, { booking: i.bookingId ? bById.get(i.bookingId) : null, award: i.awardId ? aById.get(i.awardId) : null, project: i.projectId ? pById.get(i.projectId) : null });
-      return { ...v, thumbnailUrl: v.thumbnailFrom ? thumb(v.thumbnailFrom.recordingId, videoUrls, v.thumbnailFrom.atMs) : null };
-    });
+      const atMs = v.thumbnailFrom?.atMs ?? 15_000;
+      const thumbRec = v.thumbnailFrom?.recordingId ?? i.recordingId;
+      return {
+        ...v,
+        thumbnailUrl: thumbRec ? thumb(thumbRec, videoUrls, atMs) : null,
+        votes: i.kind === "versus" ? await versusVotes(i).catch(() => null) : null,
+      };
+    }));
     const today = ammanLocal(now).slice(0, 10);
     const slots = slotsFor(s.slots, normaliseHours(a.venue.settings.openingHours), today, days).filter((x) => x.at >= nowWall(now));
     const awards = await db.select().from(venueIgAwardsTable).where(and(eq(venueIgAwardsTable.academyId, a.venue.id), gte(venueIgAwardsTable.createdAt, new Date(now.getTime() - 21 * 86_400_000))))
       .orderBy(desc(venueIgAwardsTable.weekStart), venueIgAwardsTable.id);
-    const votes = await awardVotes(awards.map((x) => x.id));
+    // The app's votes and the Instagram comments' (one per account) on each nominees carousel.
+    const votes = [
+      ...(await awardVotes(awards.map((x) => x.id))),
+      ...(await Promise.all(awards.filter((x) => x.status === "voting" || x.status === "owner_pick").map(async (x) => (await awardCommentVotes(x).catch(() => [])).map((v) => ({ awardId: x.id, nomineeKey: v.nomineeKey }))))).flat(),
+    ];
     const awardUrls = await videoUrlsFor(awards.flatMap((x) => readNominees(x.nominees).map((n) => n.recordingId)));
     const nominations = await db.select({ n: venueIgNominationsTable, booking: venueBookingsTable.reference, startLocal: venueBookingsTable.startLocal }).from(venueIgNominationsTable)
       .leftJoin(venueBookingsTable, eq(venueBookingsTable.id, venueIgNominationsTable.bookingId))
@@ -223,6 +234,10 @@ const settingsSchema = z.object({
     winnerTime: z.string().regex(timeRe).optional(),
     winnerGapMinutes: z.number().int().min(15).max(240).optional(),
     minVotes: z.number().int().min(1).max(1000).optional(),
+    weekly: z.record(z.enum(WEEKLY_KINDS), z.object({ day: z.number().int().min(0).max(6), time: z.string().regex(timeRe) })).optional(),
+    openSlotsTime: z.string().regex(timeRe).optional(),
+    boardTime: z.string().regex(timeRe).optional(),
+    off: z.array(z.enum(OPTIONAL_KINDS)).optional(),
   }).optional(),
 });
 
@@ -237,7 +252,9 @@ router.put(`${base}/settings`, async (req, res): Promise<void> => {
     res.status(409).json({ error: "Instagram consent is off for this field. Ask Replay to set it up first.", code: "consent_off" });
     return;
   }
-  const slots = body.data.slots ? normaliseIgSlots({ ...s.slots, ...body.data.slots }) : undefined;
+  const slots = body.data.slots
+    ? normaliseIgSlots({ ...s.slots, ...body.data.slots, weekly: { ...s.slots.weekly, ...(body.data.slots.weekly ?? {}) } })
+    : undefined;
   await db.update(venueSettingsTable).set({
     ...(body.data.autopilot !== undefined ? { igAutopilot: body.data.autopilot } : {}),
     ...(body.data.publishMode ? { igPublishMode: body.data.publishMode } : {}),
@@ -566,7 +583,7 @@ router.post("/m/:code/instagram/nominate-save", async (req, res): Promise<void> 
   if (!m.booking || !m.venue) { res.status(404).json({ error: "This match isn't a field booking" }); return; }
   const body = z.object({ recordingId: z.number().int().positive(), atSeconds: z.number().min(0), note: z.string().trim().max(200).optional() }).safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ error: "Pick a moment" }); return; }
-  const links = await recordingsForRoom(m.ctx).catch(() => []);
+  const links = await recordingsForRoom(m.ctx).catch((): LinkedRecording[] => []);
   const link = links.find((l) => l.recordingId === body.data.recordingId);
   if (!link || body.data.atSeconds < link.fromSeconds || body.data.atSeconds > link.toSeconds) { res.status(404).json({ error: "That moment isn't in this match" }); return; }
   const [row] = await db.insert(venueIgNominationsTable).values({

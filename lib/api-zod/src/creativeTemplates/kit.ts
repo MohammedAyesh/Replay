@@ -1,4 +1,4 @@
-import { CREATIVE_FORMATS, type CreativeFormat, type MediaSource, type SceneLayer } from "../creativeScene";
+import { CREATIVE_FORMATS, type CreativeFormat, type Entrance, type MediaSource, type SceneLayer } from "../creativeScene";
 
 /**
  * Layout kit for the template catalogue. Every layout is written once in
@@ -16,7 +16,7 @@ export type Locale = "en" | "ar";
 export type LayerCondition = { path: string; not?: boolean };
 export type Box = { x: number; y: number; w: number; h: number };
 export type LatinFont = "display" | "condensed" | "body" | "serif" | "script";
-export type Timing = { startMs?: number; endMs?: number; enter?: "none" | "fade" | "slide-up" | "slide-left" | "pop" };
+export type Timing = { startMs?: number; endMs?: number; enter?: Entrance };
 
 type Common = Timing & {
   name?: string;

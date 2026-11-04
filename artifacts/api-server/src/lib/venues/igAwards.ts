@@ -67,9 +67,10 @@ export function readNominees(value: unknown): Nominee[] {
 }
 
 /** Bookings of a games week this field may post (consent, not under-18, not an academy's), with their footage. */
-export async function weekBookings(venue: Venue, weekStart: string): Promise<VenueBooking[]> {
+export async function weekBookings(venue: Venue, weekStart: string, until?: Date): Promise<VenueBooking[]> {
   const from = fromAmmanLocal(`${weekStart} 00:00`);
-  const to = fromAmmanLocal(`${addDays(weekStart, 7)} 00:00`);
+  const weekEnd = fromAmmanLocal(`${addDays(weekStart, 7)} 00:00`);
+  const to = until && weekEnd && until < weekEnd ? until : weekEnd;
   if (!from || !to) return [];
   const rows = await db.select().from(venueBookingsTable).where(and(
     eq(venueBookingsTable.academyId, venue.id),
@@ -104,7 +105,7 @@ async function labelsFor(b: VenueBooking) {
   };
 }
 
-async function videoOffset(recordingId: number): Promise<{ offset: number; duration: number | null; tilted: boolean }> {
+export async function videoOffset(recordingId: number): Promise<{ offset: number; duration: number | null; tilted: boolean }> {
   const [b] = await db.select({ manifest: recordingTrackingBundlesTable.manifest }).from(recordingTrackingBundlesTable).where(eq(recordingTrackingBundlesTable.recordingId, recordingId));
   const [r] = await db.select({ duration: recordingsTable.duration, tilted: recordingsTable.cameraTilted }).from(recordingsTable).where(eq(recordingsTable.id, recordingId));
   const parts = String(r?.duration ?? "").split(":").map(Number);
@@ -112,11 +113,77 @@ async function videoOffset(recordingId: number): Promise<{ offset: number; durat
   return { offset: b?.manifest?.videoStartSeconds ?? 0, duration, tilted: Boolean(r?.tilted) };
 }
 
-type Raw = { booking: VenueBooking; link: LinkedRecording; t: number; start: number; rank: number; source: Nominee["source"]; value?: number | null; nominationId?: number; keyExtra?: string };
+/** A moment found in a booking's footage, before it is made a nominee. */
+export type RawMoment = { booking: VenueBooking; link: LinkedRecording; t: number; start: number; rank: number; source: Nominee["source"]; value?: number | null; nominationId?: number; keyExtra?: string };
+type Raw = RawMoment;
 
 /** Every candidate of every award in this week's postable bookings. */
 export async function weekCandidates(venue: Venue, weekStart: string): Promise<Record<AwardCategory, Nominee[]>> {
-  const bookings = await weekBookings(venue, weekStart);
+  const { raw } = await weekMoments(venue, weekStart);
+  const out = {} as Record<AwardCategory, Nominee[]>;
+  for (const category of AWARD_ORDER) {
+    const picked = pickSpread(raw[category], AWARDS.nomineesPerAward);
+    const list: Nominee[] = [];
+    for (const c of picked) list.push(await toNominee(c));
+    out[category] = list;
+  }
+  return out;
+}
+
+/** The best first, at most `perBooking` from one booking. */
+export function pickSpread(moments: RawMoment[], count: number, perBooking: number = AWARDS.perBooking): RawMoment[] {
+  const sorted = [...moments].sort((a, b) => b.rank - a.rank || a.booking.startsAt.getTime() - b.booking.startsAt.getTime() || a.t - b.t);
+  const picked: RawMoment[] = [];
+  const used = new Map<number, number>();
+  for (const c of sorted) {
+    if (picked.length >= count) break;
+    if ((used.get(c.booking.id) ?? 0) >= perBooking) continue;
+    if (picked.some((p) => p.link.recordingId === c.link.recordingId && Math.abs(p.t - c.t) < 6)) continue;
+    used.set(c.booking.id, (used.get(c.booking.id) ?? 0) + 1);
+    picked.push(c);
+  }
+  return picked;
+}
+
+/** A moment as a nominee: its video window and labels. */
+export async function toNominee(c: RawMoment): Promise<Nominee> {
+  const video = await videoOffset(c.link.recordingId);
+  const before = c.source === "dribble" || c.source === "fastest" ? 3 : 9;
+  const w = windowAround(c.start + video.offset, video.duration, before);
+  const labels = await labelsFor(c.booking);
+  return {
+    key: `${c.link.recordingId}:${c.keyExtra ?? tenths(c.t)}`,
+    recordingId: c.link.recordingId,
+    bookingId: c.booking.id,
+    atSeconds: c.t,
+    ...w,
+    atMs: Math.round((c.t + video.offset) * 1000),
+    source: c.source,
+    ...labels,
+    ...(c.value != null ? { value: c.value } : {}),
+    ...(c.nominationId ? { nominationId: c.nominationId } : {}),
+  };
+}
+
+/** A booking's match room and the stretches of each recording that are this booking. */
+export async function bookingLinks(booking: VenueBooking): Promise<{ ctx: NonNullable<Awaited<ReturnType<typeof loadRoomByRequestId>>>; links: LinkedRecording[] } | null> {
+  const fr = await bookingFootage(booking);
+  const ctx = fr ? await loadRoomByRequestId(fr.id).catch(() => null) : null;
+  if (!ctx) return null;
+  try {
+    return { ctx, links: await recordingsForRoom(ctx) };
+  } catch (error) {
+    logger.warn({ bookingId: booking.id, error: (error as Error).message }, "Awards: reading a booking's recordings failed");
+    return null;
+  }
+}
+
+/**
+ * Every moment in a games week's postable bookings (up to `until`, for this week so far): confirmed
+ * goals, shots that weren't goals, dribbles won, approved saves, claimed players' top speeds.
+ */
+export async function weekMoments(venue: Venue, weekStart: string, until?: Date): Promise<{ bookings: VenueBooking[]; raw: Record<AwardCategory, RawMoment[]> }> {
+  const bookings = await weekBookings(venue, weekStart, until);
   const raw: Record<AwardCategory, Raw[]> = { goal: [], dribble: [], shot: [], save: [], fastest: [] };
   const bookingIds = bookings.map((b) => b.id);
   const approved = bookingIds.length ? await db.select().from(venueIgNominationsTable).where(and(
@@ -125,16 +192,9 @@ export async function weekCandidates(venue: Venue, weekStart: string): Promise<R
     inArray(venueIgNominationsTable.bookingId, bookingIds),
   )) : [];
   for (const booking of bookings) {
-    const fr = await bookingFootage(booking);
-    const ctx = fr ? await loadRoomByRequestId(fr.id).catch(() => null) : null;
-    if (!ctx) continue;
-    let links: LinkedRecording[] = [];
-    try {
-      links = await recordingsForRoom(ctx);
-    } catch (error) {
-      logger.warn({ bookingId: booking.id, error: (error as Error).message }, "Awards: reading a booking's recordings failed");
-      continue;
-    }
+    const found = await bookingLinks(booking);
+    if (!found) continue;
+    const { ctx, links } = found;
     const votes = await goalVotesFor(links.map((l) => l.recordingId));
     for (const link of links) {
       const inside = (t: number) => t >= link.fromSeconds && t <= link.toSeconds;
@@ -170,39 +230,7 @@ export async function weekCandidates(venue: Venue, weekStart: string): Promise<R
       raw.fastest.push({ booking, link, t, start: t, rank: Math.round(kmh * 10), source: "fastest", value: Math.round(kmh * 10) / 10, keyExtra: `speed:${row.userId}` });
     }
   }
-  const out = {} as Record<AwardCategory, Nominee[]>;
-  for (const category of AWARD_ORDER) {
-    const sorted = [...raw[category]].sort((a, b) => b.rank - a.rank || a.booking.startsAt.getTime() - b.booking.startsAt.getTime() || a.t - b.t);
-    const picked: Raw[] = [];
-    const perBooking = new Map<number, number>();
-    for (const c of sorted) {
-      if (picked.length >= AWARDS.nomineesPerAward) break;
-      if ((perBooking.get(c.booking.id) ?? 0) >= AWARDS.perBooking) continue;
-      perBooking.set(c.booking.id, (perBooking.get(c.booking.id) ?? 0) + 1);
-      picked.push(c);
-    }
-    const list: Nominee[] = [];
-    for (const c of picked) {
-      const video = await videoOffset(c.link.recordingId);
-      const before = c.source === "dribble" || c.source === "fastest" ? 3 : 9;
-      const w = windowAround(c.start + video.offset, video.duration, before);
-      const labels = await labelsFor(c.booking);
-      list.push({
-        key: `${c.link.recordingId}:${c.keyExtra ?? tenths(c.t)}`,
-        recordingId: c.link.recordingId,
-        bookingId: c.booking.id,
-        atSeconds: c.t,
-        ...w,
-        atMs: Math.round((c.t + video.offset) * 1000),
-        source: c.source,
-        ...labels,
-        ...(c.value != null ? { value: c.value } : {}),
-        ...(c.nominationId ? { nominationId: c.nominationId } : {}),
-      });
-    }
-    out[category] = list;
-  }
-  return out;
+  return { bookings, raw };
 }
 
 /** Shots that weren't goals in a recording's booking share: the save candidates the owner can approve. */
@@ -221,10 +249,13 @@ export async function awardVotes(awardIds: number[]) {
   return db.select().from(venueIgAwardVotesTable).where(inArray(venueIgAwardVotesTable.awardId, awardIds));
 }
 
-/** Count the vote; returns the winner key, or null when the owner has to pick. */
-export async function closeVoting(award: VenueIgAward, minVotes: number, now = new Date()): Promise<VenueIgAward> {
+/**
+ * Count the vote: the app's votes and `extra` (the Instagram comments on the nominees carousel,
+ * one per account). Returns the award decided, or waiting for the owner when the vote is thin.
+ */
+export async function closeVoting(award: VenueIgAward, minVotes: number, now = new Date(), extra: Array<{ nomineeKey: string }> = []): Promise<VenueIgAward> {
   const nominees = readNominees(award.nominees);
-  const votes = await awardVotes([award.id]);
+  const votes = [...(await awardVotes([award.id])), ...extra];
   const result = voteWinner(nominees.map((n) => n.key), votes, minVotes);
   const [row] = await db.update(venueIgAwardsTable).set(result.key
     ? { status: "decided", winnerKey: result.key, decidedBy: "votes", decidedAt: now, updatedAt: now }

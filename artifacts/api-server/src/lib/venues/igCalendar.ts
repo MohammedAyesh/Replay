@@ -8,6 +8,10 @@
  *              promoted to it (confirmed goals first, by score);
  *   awards     nominees on `nomineesDay` from `nomineesTime`, voting until `votingEndDay`
  *              `votingEndTime`, winners on `winnerDay` from `winnerTime`, `winnerGapMinutes` apart;
+ *   weekly     the thank-you (last week's numbers), top 5, match and player of the week on their
+ *              weekday and time (`weekly`), and "which is nicer?" from this week's games so far;
+ *   daily      open slots tonight, as a story at `openSlotsTime`, when anything is free;
+ *   monthly    the scorers of last month on the 1st at `boardTime`;
  *   night      nothing ever goes out between `quietFrom` and `quietTo`.
  *
  * The planner keeps what is pinned (moved by the owner) or already on its way out, then hands
@@ -31,7 +35,21 @@ export type IgSlotSettings = {
   winnerGapMinutes: number;
   /** Fewer votes than this in total and the owner picks the winner. */
   minVotes: number;
+  /** Weekday (0 = Sunday) and time of each weekly post. */
+  weekly: Record<WeeklyKind, { day: number; time: string }>;
+  openSlotsTime: string;
+  /** Last month's scorers, on the 1st. */
+  boardTime: string;
+  /** Kinds the owner switched off. */
+  off: OptionalKind[];
 };
+
+/** Weekly posts. `versus` is this week's games so far; the rest are last week's. */
+export const WEEKLY_KINDS = ["thanks", "top5", "match_week", "player_week", "versus"] as const;
+export type WeeklyKind = (typeof WEEKLY_KINDS)[number];
+/** What the owner can switch off (booking clips and awards have their own switches). */
+export const OPTIONAL_KINDS = [...WEEKLY_KINDS, "milestone", "open_slots", "leaderboard"] as const;
+export type OptionalKind = (typeof OPTIONAL_KINDS)[number];
 
 export const DEFAULT_IG_SLOTS: IgSlotSettings = {
   storyEveryHours: 3,
@@ -47,6 +65,16 @@ export const DEFAULT_IG_SLOTS: IgSlotSettings = {
   winnerTime: "19:00",
   winnerGapMinutes: 90,
   minVotes: 5,
+  weekly: {
+    thanks: { day: 0, time: "21:00" },
+    top5: { day: 1, time: "21:00" },
+    player_week: { day: 1, time: "14:00" },
+    match_week: { day: 2, time: "21:00" },
+    versus: { day: 4, time: "21:00" },
+  },
+  openSlotsTime: "17:00",
+  boardTime: "14:00",
+  off: [],
 };
 
 /** Instagram's limit: 100 API-published posts in a rolling 24 hours. The autopilot keeps a reserve for the owner's own posts. */
@@ -68,6 +96,7 @@ const time = (v: unknown, d: string) => (isTime(v) && v !== "24:00" ? v : d);
 export function normaliseIgSlots(raw: unknown): IgSlotSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const d = DEFAULT_IG_SLOTS;
+  const weekly = (r.weekly && typeof r.weekly === "object" ? r.weekly : {}) as Record<string, unknown>;
   const reels = Array.isArray(r.reelTimes) ? [...new Set(r.reelTimes.filter((t): t is string => isTime(t) && t !== "24:00"))].sort().slice(0, 3) : d.reelTimes;
   return {
     storyEveryHours: clampInt(r.storyEveryHours, 1, 12, d.storyEveryHours),
@@ -83,6 +112,13 @@ export function normaliseIgSlots(raw: unknown): IgSlotSettings {
     winnerTime: time(r.winnerTime, d.winnerTime),
     winnerGapMinutes: clampInt(r.winnerGapMinutes, 15, 240, d.winnerGapMinutes),
     minVotes: clampInt(r.minVotes, 1, 1000, d.minVotes),
+    weekly: Object.fromEntries(WEEKLY_KINDS.map((k) => {
+      const w = (weekly && typeof weekly[k] === "object" ? weekly[k] : {}) as Record<string, unknown>;
+      return [k, { day: clampInt(w.day, 0, 6, d.weekly[k].day), time: time(w.time, d.weekly[k].time) }];
+    })) as IgSlotSettings["weekly"],
+    openSlotsTime: time(r.openSlotsTime, d.openSlotsTime),
+    boardTime: time(r.boardTime, d.boardTime),
+    off: Array.isArray(r.off) ? [...new Set(r.off.filter((k): k is OptionalKind => (OPTIONAL_KINDS as readonly unknown[]).includes(k)))] : [],
   };
 }
 
@@ -130,9 +166,9 @@ export function slotsFor(s: IgSlotSettings, hours: OpeningHours, fromDate: strin
 
 export type PlanItem = {
   id: number;
-  kind: "booking_clip" | "award_nominees" | "award_winner";
+  kind: string;
   status: string;
-  placement: "story" | "reel";
+  placement: "story" | "reel" | "carousel";
   /** Wall minute of its slot, or null. */
   slotAt: number | null;
   pinned: boolean;
@@ -251,4 +287,73 @@ export const SOURCE_SCORE: Record<string, number> = { confirmed_goal: 30, saved_
 
 export function nowWall(date = new Date()): number {
   return wallMinutes(ammanLocal(date));
+}
+
+// ── Weekly, daily and monthly posts ─────────────────────────────────────────
+
+/**
+ * When a weekly post of the week holding `minute` goes out, and which games week it covers:
+ * "which is nicer?" covers this week so far (Sunday up to its post); the others last week.
+ */
+export function weeklyTimes(s: IgSlotSettings, kind: WeeklyKind, minute: number): { at: number; gamesWeek: string; gamesUntil: number | null } {
+  const week = weekStartOf(minute);
+  const w = s.weekly[kind];
+  const at = atWeekday(week, w.day, w.time);
+  return kind === "versus" ? { at, gamesWeek: week, gamesUntil: at - 3 * 60 } : { at, gamesWeek: addDays(week, -7), gamesUntil: null };
+}
+
+/** Milestones of games filmed: 50, 100, 250, 500, 1,000, 2,500, 5,000, 10,000 … */
+export function milestoneCrossed(before: number, now: number): number | null {
+  const steps = [50, 100, 250, 500];
+  for (let m = 1000; m <= 1_000_000; m *= 10) steps.push(m, m * 2.5, m * 5);
+  let hit: number | null = null;
+  for (const n of steps) if (before < n && now >= n) hit = n;
+  return hit;
+}
+
+/** The month before the one holding `minute` ("YYYY-MM"), and the 1st of this month at `time`. */
+export function boardTimes(s: IgSlotSettings, minute: number): { at: number; month: string } {
+  const today = wallString(minute).slice(0, 10);
+  const first = `${today.slice(0, 7)}-01`;
+  const prev = addDays(first, -1).slice(0, 7);
+  return { at: wallMinutes(`${first} ${s.boardTime}`), month: prev };
+}
+
+// ── Votes in the comments ───────────────────────────────────────────────────
+
+const ARABIC_DIGITS: Record<string, string> = { "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9" };
+const LETTERS: Record<string, number> = { a: 1, b: 2, c: 3, d: 4, "أ": 1, "ا": 1, "إ": 1, "آ": 1, "ب": 2, "ج": 3, "د": 4 };
+
+/**
+ * The choice a comment makes (1-based), or null. "2", "٢", "#3", "رقم 1", "B", "ب", "اللقطة 4 🔥"
+ * count; a comment naming two different choices, or a number past the last, does not.
+ * Letters only count as a whole word ("ب" yes, "بطل" no) in a comment of one or two words.
+ * Mentions (@someone12) are not numbers.
+ */
+export function commentChoice(body: string, choices: number): number | null {
+  const text = body.replace(/@\S+/g, " ").replace(/[٠-٩]/g, (d) => ARABIC_DIGITS[d] ?? d).toLowerCase();
+  const picks = new Set<number>();
+  for (const m of text.matchAll(/(?<![\d.])(\d{1,2})(?![\d.])/g)) picks.add(Number(m[1]));
+  // A letter only in a short comment ("B", "ب 🔥", "team A"): "what a goal" is not a vote for A.
+  const words = text.split(/[^\p{L}\d]+/u).filter(Boolean);
+  if (words.length <= 2) for (const word of words) if (word in LETTERS) picks.add(LETTERS[word]);
+  if (picks.size !== 1) return null;
+  const [n] = [...picks];
+  return n >= 1 && n <= choices ? n : null;
+}
+
+/**
+ * One vote per Instagram account: its latest comment that makes a choice. `own` (the field's
+ * own account) never votes.
+ */
+export function commentVotes(comments: Array<{ fromId: string | null; body: string; createdAt: Date }>, choices: number, own: Array<string | null> = []): Map<string, number> {
+  const latest = new Map<string, { n: number; at: number }>();
+  for (const c of comments) {
+    if (!c.fromId || own.includes(c.fromId)) continue;
+    const n = commentChoice(c.body, choices);
+    if (n === null) continue;
+    const prev = latest.get(c.fromId);
+    if (!prev || c.createdAt.getTime() >= prev.at) latest.set(c.fromId, { n, at: c.createdAt.getTime() });
+  }
+  return new Map([...latest].map(([k, v]) => [k, v.n]));
 }

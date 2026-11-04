@@ -4,13 +4,18 @@ import {
   DEFAULT_IG_SLOTS,
   announcingWeek,
   awardTimes,
+  boardTimes,
+  commentChoice,
+  commentVotes,
   isQuiet,
+  milestoneCrossed,
   normaliseIgSlots,
   pacing,
   planSlots,
   slotsFor,
   voteWinner,
   weekStartOf,
+  weeklyTimes,
   type PlanItem,
 } from "./igCalendar";
 
@@ -128,5 +133,74 @@ describe("Instagram calendar: pacing and awards", () => {
     expect(voteWinner(["a", "b"], [{ nomineeKey: "a" }], 5)).toMatchObject({ key: null, total: 1 });
     const votes = ["b", "a", "b", "a", "c", "x"].map((k) => ({ nomineeKey: k }));
     expect(voteWinner(["a", "b", "c"], votes, 5)).toMatchObject({ key: "a", total: 5, counts: { a: 2, b: 2, c: 1 } });
+  });
+});
+
+describe("Instagram calendar: weekly, monthly and milestone posts", () => {
+  it("posts last week's thank-you on Sunday 21:00 and this week's which-is-nicer on Thursday", () => {
+    const thu = at("2026-11-05 12:00"); // Thursday; the week started Sunday 1 Nov
+    const thanks = weeklyTimes(s, "thanks", thu);
+    expect(wallString(thanks.at)).toBe("2026-11-01 21:00");
+    expect(thanks.gamesWeek).toBe("2026-10-25");
+    const versus = weeklyTimes(s, "versus", thu);
+    expect(wallString(versus.at)).toBe("2026-11-05 21:00");
+    expect(versus.gamesWeek).toBe("2026-11-01");
+    expect(wallString(versus.gamesUntil!)).toBe("2026-11-05 18:00");
+  });
+
+  it("names last month's board on the 1st", () => {
+    const b = boardTimes(s, at("2026-11-01 09:00"));
+    expect(b.month).toBe("2026-10");
+    expect(wallString(b.at)).toBe("2026-11-01 14:00");
+    expect(boardTimes(s, at("2027-01-01 09:00")).month).toBe("2026-12");
+  });
+
+  it("finds the milestone a count just passed, the biggest when it passed two", () => {
+    expect(milestoneCrossed(98, 103)).toBe(100);
+    expect(milestoneCrossed(100, 140)).toBeNull();
+    expect(milestoneCrossed(40, 260)).toBe(250);
+    expect(milestoneCrossed(990, 1001)).toBe(1000);
+    expect(milestoneCrossed(2400, 2600)).toBe(2500);
+  });
+
+  it("keeps what the owner switched off and the weekly times he set", () => {
+    const n = normaliseIgSlots({ off: ["top5", "bogus", "top5"], weekly: { versus: { day: 3, time: "20:30" }, thanks: { day: 9 } } });
+    expect(n.off).toEqual(["top5"]);
+    expect(n.weekly.versus).toEqual({ day: 3, time: "20:30" });
+    expect(n.weekly.thanks).toEqual({ day: 6, time: "21:00" });
+  });
+});
+
+describe("Instagram calendar: votes in the comments", () => {
+  it("reads numbers, Arabic digits and letters as a choice", () => {
+    expect(commentChoice("2", 4)).toBe(2);
+    expect(commentChoice("٣ 🔥🔥", 4)).toBe(3);
+    expect(commentChoice("رقم 1 أكيد", 4)).toBe(1);
+    expect(commentChoice("#4", 4)).toBe(4);
+    expect(commentChoice("B", 2)).toBe(2);
+    expect(commentChoice("ب 🔥", 2)).toBe(2);
+    expect(commentChoice("أ", 2)).toBe(1);
+  });
+
+  it("does not count a comment that names two, a number past the last, a mention or a stray letter", () => {
+    expect(commentChoice("1 or 2", 4)).toBeNull();
+    expect(commentChoice("5", 4)).toBeNull();
+    expect(commentChoice("@yazan12 شوف", 4)).toBeNull();
+    expect(commentChoice("what a goal", 2)).toBeNull();
+    expect(commentChoice("بطل", 2)).toBeNull();
+    expect(commentChoice("الجول 100%", 4)).toBeNull();
+  });
+
+  it("gives each account one vote, its latest choice, and never the field's own", () => {
+    const t = (m: number) => new Date(Date.UTC(2026, 10, 2, 10, m));
+    const votes = commentVotes([
+      { fromId: "u1", body: "1", createdAt: t(0) },
+      { fromId: "u1", body: "no wait 3", createdAt: t(5) },
+      { fromId: "u2", body: "2", createdAt: t(1) },
+      { fromId: "u2", body: "nice", createdAt: t(9) },
+      { fromId: "field", body: "1", createdAt: t(2) },
+      { fromId: null, body: "1", createdAt: t(3) },
+    ], 4, ["field"]);
+    expect([...votes]).toEqual([["u1", 3], ["u2", 2]]);
   });
 });

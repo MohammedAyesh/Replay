@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { academiesTable, creativeMusicTracksTable, creativeTemplateMusicTable, db, fieldsTable } from "@workspace/db";
-import { CREATIVE_TEMPLATES, MUSIC_LICENSES, MUSIC_MOODS, TEMPLATE_RECOMMENDED_MUSIC, type Scene } from "@workspace/api-zod";
+import { CREATIVE_TEMPLATES, FIELD_TEMPLATE_KEYS, MUSIC_LICENSES, MUSIC_MOODS, TEMPLATE_RECOMMENDED_MUSIC, buildTemplateScene, type Scene } from "@workspace/api-zod";
 import {
   addTrack,
   analyzeMusic,
@@ -185,9 +185,13 @@ describe("template soundtracks", () => {
   it("recommends bundled tracks for every template, each one in library.json with the mood the fallback uses", () => {
     const lib = JSON.parse(fs.readFileSync(libraryFile, "utf8")) as { tracks: Array<{ key: string; mood: string }> };
     const moods = new Map(lib.tracks.map((t) => [t.key, t.mood]));
-    const templates = CREATIVE_TEMPLATES.map((t) => t.key);
-    expect(templates).toHaveLength(37);
-    for (const key of templates) expect(TEMPLATE_RECOMMENDED_MUSIC[key], `no recommendation for ${key}`).toBeTruthy();
+    const catalogue = CREATIVE_TEMPLATES.map((t) => t.key);
+    expect(catalogue).toHaveLength(37);
+    for (const key of catalogue) expect(TEMPLATE_RECOMMENDED_MUSIC[key], `no recommendation for ${key}`).toBeTruthy();
+    // The fields' Instagram pack has its own video templates, outside the academies' catalogue.
+    const fieldVideos = FIELD_TEMPLATE_KEYS.filter((k) => buildTemplateScene(k, "field", "story", "en").durationMs !== undefined);
+    for (const key of fieldVideos) expect(TEMPLATE_RECOMMENDED_MUSIC[key], `no recommendation for ${key}`).toBeTruthy();
+    const templates = [...catalogue, ...fieldVideos];
     expect(Object.keys(TEMPLATE_RECOMMENDED_MUSIC).filter((k) => !templates.includes(k))).toEqual([]);
     for (const [key, r] of Object.entries(TEMPLATE_RECOMMENDED_MUSIC)) {
       for (const track of r.tracks) expect(moods.has(track), `${key} names ${track}, which library.json doesn't have`).toBe(true);

@@ -3,6 +3,11 @@ import { DEFINITIONS, sampleFor } from "./creativeTemplates/content";
 import { buildScene, plateLayer } from "./creativeTemplates/build";
 export { packPlate } from "./creativeTemplates/build";
 export { AUTOPILOT_AWARD_KEYS, AUTOPILOT_TEMPLATE_KEYS, awardTemplateKey, awardTitle } from "./creativeTemplates/content";
+export {
+  FIELD_STYLE, FIELD_TEMPLATE_KEYS, FIELD_TIMING, buildFieldScene, countData, fieldCountSteps, fieldSampleData, fieldTemplateFormats,
+  fieldTemplateTitle, formatNumber, isFieldTemplate, type FieldTemplateKey,
+} from "./creativeTemplates/fieldPack";
+import { fieldSampleData, isFieldTemplate } from "./creativeTemplates/fieldPack";
 import { STYLE_KITS } from "./creativeTemplates/styles";
 
 /**
@@ -68,6 +73,7 @@ export function buildTemplateScene(key: string, style: CreativeStyle, format: Cr
 
 /** Believable sample data so a gallery looks real before any data exists. Media are artwork keys "sample/<name>". */
 export function templateSampleData(key: string, locale: "en" | "ar"): CreativeData {
+  if (isFieldTemplate(key)) return fieldSampleData(key, locale);
   return sampleFor(key, locale);
 }
 

@@ -19,7 +19,7 @@ import {
 } from "@workspace/api-zod";
 import { withMediaVariant } from "@/lib/creative-hub-media";
 import { moveBox, resizeBox, rotationTo, tidy, type Box, type Corner, type Snap } from "./canvas/editing";
-import { entranceAt } from "./canvas/layout";
+import { blurAt, entranceAt } from "./canvas/layout";
 import { ImageView, VideoView } from "./canvas/media";
 import { ShapeView } from "./canvas/shapes";
 import { TextEditor, TextLayerView, useFontsReady } from "./canvas/text";
@@ -201,7 +201,7 @@ export function SceneCanvas({
         }}>
           {visible.map((layer) => {
             const box = boxOf(layer);
-            const enter = video && timeMs !== undefined ? entranceAt(layer, t ?? 0) : { alpha: 1, dx: 0, dy: 0 };
+            const enter = video && timeMs !== undefined ? entranceAt(layer, t ?? 0, { w: W, h: H }) : { alpha: 1, dx: 0, dy: 0 };
             const zoom = video && timeMs !== undefined && gesture?.id !== layer.id && layer.kind === "image" && slowZoomsLayer(layer, resolveSource(layer.src, d), scene.format)
               ? slowZoomAt(scene, t ?? 0) : 1;
             const origin = zoom !== 1 ? slowZoomOrigin(layer, scene.format) : null;
@@ -241,7 +241,7 @@ export function SceneCanvas({
                     </>
                   )
                   : layer.kind === "video" && isFootage(layer) ? (
-                    <VideoView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} timeMs={t ?? 0} playing={playing && video} />
+                    <VideoView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} timeMs={t ?? 0} playing={playing && video} blurPx={video ? blurAt(layer, t ?? 0) : 0} />
                   )
                   : <ImageView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} quiet={isPlate(layer)} />}
               </div>

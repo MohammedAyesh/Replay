@@ -246,20 +246,8 @@ export function fitRect(fit: "cover" | "contain", srcW: number, srcH: number, w:
 
 // ── Entrances ────────────────────────────────────────────────────────────────
 
-export const ENTER_MS = 400;
-export const SLIDE_PX = 80;
-
-/** Opacity and offset of an entering layer at scene time t (video scenes). */
-export function entranceAt(layer: Pick<SceneLayer, "enter" | "startMs">, t: number): { alpha: number; dx: number; dy: number } {
-  const enter = layer.enter ?? "none";
-  if (enter === "none") return { alpha: 1, dx: 0, dy: 0 };
-  const p = Math.max(0, Math.min(1, (t - (layer.startMs ?? 0)) / ENTER_MS));
-  return {
-    alpha: p,
-    dx: enter === "slide-left" ? SLIDE_PX * (1 - p) : 0,
-    dy: enter === "slide-up" ? SLIDE_PX * (1 - p) : 0,
-  };
-}
+// One definition for the browser preview, frame previews and the MP4 (lib/api-zod creativeMotion.ts).
+export { ENTER_MS, SLIDE_PX, PUSH_MS, entranceAt, blurAt } from "@workspace/api-zod";
 
 // ── Video timeline ───────────────────────────────────────────────────────────
 

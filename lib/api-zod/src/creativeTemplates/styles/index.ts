@@ -28,4 +28,7 @@ export const STYLE_KITS: Record<CreativeStyle, StyleKit> = {
   juventus: pack_juventus,
   knights: pack_knights,
   jufa: pack_jufa,
+  // Fields' own templates are fieldPack.ts; a catalogue template asked for in the field style
+  // (an owner's own post in the Creative hub) takes the broadcast layouts.
+  field: broadcast,
 };

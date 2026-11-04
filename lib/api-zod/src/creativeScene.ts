@@ -38,12 +38,24 @@ export const PUBLIC_STYLES = ["broadcast", "street", "editorial", "luxury", "pla
  */
 export const PACK_STYLES = ["iris", "souqar", "barca", "juventus", "knights", "jufa"] as const;
 export type PackStyle = (typeof PACK_STYLES)[number];
-export const CREATIVE_STYLES = [...PUBLIC_STYLES, ...PACK_STYLES] as const;
+/**
+ * Football fields' pack (creativeTemplates/fieldPack.ts): one look for every field, driven only
+ * by its branding. The field console's Instagram autopilot uses it; academies never see it.
+ */
+export const VENUE_STYLES = ["field"] as const;
+export const CREATIVE_STYLES = [...PUBLIC_STYLES, ...PACK_STYLES, ...VENUE_STYLES] as const;
 export type CreativeStyle = (typeof CREATIVE_STYLES)[number];
 
 /** A colour is a hex string or a brand token resolved at render time. */
-export const COLOR_TOKENS = ["@primary", "@accent", "@ink", "@paper", "@muted"] as const;
-const colorSchema = z.string().regex(/^(#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?|@(primary|accent|ink|paper|muted))$/);
+export const COLOR_TOKENS = ["@primary", "@accent", "@ink", "@paper", "@muted", "@on-primary"] as const;
+/**
+ * "@on-primary": ink or paper, whichever reads on the brand's main colour (a yellow field gets
+ * dark type on its pills, a navy field white type), so one layout works for every brand.
+ */
+const colorSchema = z.string().regex(/^(#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?|@(primary|accent|ink|paper|muted|on-primary))$/);
+
+export const ENTRANCES = ["none", "fade", "slide-up", "slide-left", "pop", "push-up", "push-down", "wipe"] as const;
+export type Entrance = (typeof ENTRANCES)[number];
 
 const baseLayer = {
   id: z.string().min(1).max(64),
@@ -59,8 +71,13 @@ const baseLayer = {
   endMs: z.number().min(0).optional(),
   locked: z.boolean().optional(),
   hidden: z.boolean().optional(),
-  /** Entrance animation for video scenes. */
-  enter: z.enum(["none", "fade", "slide-up", "slide-left", "pop"]).optional(),
+  /**
+   * Entrance animation for video scenes (see creativeMotion.ts): fade, slide-up, slide-left and
+   * pop come in over ENTER_MS; push-up / push-down slide in from a whole canvas below / above
+   * over PUSH_MS (a clip covering the one before it); wipe crosses the whole canvas from the
+   * right to the left over the layer's own lifetime (the brand-colour transition between parts).
+   */
+  enter: z.enum(ENTRANCES).optional(),
   /**
    * Shown only when every condition holds for the scene's data (see
    * layerShownFor). A line-up draws its photo tiles when there are player
@@ -199,6 +216,11 @@ export const sceneLayerSchema = z.discriminatedUnion("kind", [
     /** Crop follows a tracked player (match analysis track id). */
     followTrackId: z.number().int().optional(),
     /**
+     * Blur the footage from `fromMs` (scene ms) to the end: the end card sits over the clip it
+     * closes, softened, instead of over a cut to a flat colour.
+     */
+    blur: z.object({ fromMs: z.number().min(0), px: z.number().min(1).max(60) }).optional(),
+    /**
      * A moving camera on panoramic footage: which part of the source fills the
      * box at each moment (see framingWindow). Absent: the whole source, by `fit`.
      */
@@ -329,8 +351,31 @@ export function resolveColor(color: string | undefined, brand: CreativeBrand, fa
     case "@ink": return brand.ink;
     case "@paper": return brand.paper;
     case "@muted": return brand.muted;
+    case "@on-primary": return onColor(brand.primary, brand.ink, brand.paper);
     default: return color;
   }
+}
+
+/** Relative luminance of #RRGGBB (WCAG). */
+export function luminance(hex: string): number {
+  const m = /^#?([0-9a-fA-F]{6})/.exec(hex);
+  if (!m) return 0;
+  const n = parseInt(m[1], 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+
+/** Of two candidate colours, the one with more contrast on `bg`. */
+export function onColor(bg: string, dark: string, light: string): string {
+  const L = luminance(bg);
+  const contrast = (c: string) => {
+    const l = luminance(c);
+    return (Math.max(L, l) + 0.05) / (Math.min(L, l) + 0.05);
+  };
+  return contrast(dark) >= contrast(light) ? dark : light;
 }
 
 /** A tint's colour as #RRGGBB (alpha dropped), mode and amount filled; null when there is nothing to do. */

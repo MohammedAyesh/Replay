@@ -5,11 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { createCanvas } from "@napi-rs/canvas";
 import {
-  buildTemplateScene, sceneForData, slowZoomAt, slowZoomsLayer, templateSampleData, SLOW_ZOOM_TO, type CreativeBrand, type Scene, type SceneLayer,
+  PUSH_MS, blurAt, buildTemplateScene, entranceAt, sceneForData, slowZoomAt, slowZoomsLayer, templateSampleData, SLOW_ZOOM_TO, type CreativeBrand, type Scene, type SceneLayer,
 } from "@workspace/api-zod";
 import { renderSceneCanvas } from "./render";
 import {
-  DUCK, atempoChain, audioMixFilters, buildFfmpegArgs, musicFilters, musicMixFor, overlayIntervals, photoVideoMaxrateKbps, planStack,
+  DUCK, atempoChain, audioMixFilters, blurFilter, buildFfmpegArgs, entranceXY, musicFilters, musicMixFor, overlayIntervals, photoVideoMaxrateKbps, planStack,
   renderSceneMp4, slowZoomFilter, type MusicMix,
 } from "./renderVideo";
 
@@ -417,4 +417,58 @@ describe("slow zoom (a photo turned into a video)", () => {
       expect(synced).toBeLessThan(unzoomed * 0.6);
     }, 180_000);
   }
+});
+
+describe("field pack motion: pushes, wipes and the end card's blur", () => {
+  it("pushes come in from a whole canvas away, the wipe crosses the canvas, blur switches on at its time", () => {
+    const push = { id: "p", kind: "shape", shape: "rect", x: 0, y: 0, w: 1080, h: 1920, startMs: 1000, enter: "push-up" } as SceneLayer;
+    expect(entranceAt(push, 1000, { w: 1080, h: 1920 }).dy).toBe(1920);
+    expect(entranceAt(push, 1000 + PUSH_MS, { w: 1080, h: 1920 }).dy).toBe(0);
+    expect(entranceAt({ ...push, enter: "push-down" } as SceneLayer, 1000, { w: 1080, h: 1920 }).dy).toBe(-1920);
+    const wipe = { ...push, enter: "wipe", startMs: 2000, endMs: 2600 } as SceneLayer;
+    expect(entranceAt(wipe, 2000, { w: 1080, h: 1920 }).dx).toBe(1080);
+    expect(Math.abs(entranceAt(wipe, 2300, { w: 1080, h: 1920 }).dx)).toBeLessThan(1);
+    expect(entranceAt(wipe, 2600, { w: 1080, h: 1920 }).dx).toBe(-1080);
+    const vid = { id: "v", kind: "video", src: { type: "recording", recordingId: 1, fromMs: 0, toMs: 5000 }, x: 0, y: 0, w: 1080, h: 1920, blur: { fromMs: 4000, px: 22 } } as Extract<SceneLayer, { kind: "video" }>;
+    expect(blurAt(vid, 3999)).toBe(0);
+    expect(blurAt(vid, 4000)).toBe(22);
+  });
+
+  it("writes the same motion as ffmpeg expressions, and the blur on the layer's own clock", () => {
+    expect(entranceXY("push-up", 1000, "0", "0").y).toBe("0+1920*pow(1-clip((t-1.000)/0.600,0,1),3)");
+    expect(entranceXY("wipe", 2000, "0", "0", { w: 1080, h: 1920 }, 2600).x).toContain("0+1080*(1-2*");
+    expect(blurFilter({ blur: { fromMs: 12000, px: 22 }, startMs: 2500 })).toBe(",boxblur=luma_radius=33:luma_power=2:chroma_radius=17:chroma_power=2:enable='gte(t,9.500)'");
+    expect(blurFilter({ startMs: 0 })).toBe("");
+  });
+
+  // About 2 minutes on two cores: the field pack's moving layers are each their own overlay.
+  it("renders a field award video: opening card, the wipe, the clip, and the end card over the clip blurred", async () => {
+    const src = path.join(work, "pitch.mp4");
+    // A sharp pattern: 8 px black and white bars (about 28 px once the 9:16 window fills the frame).
+    // Blurred, they average out to grey.
+    execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=white:s=1920x540:r=30:d=16",
+      "-vf", "drawgrid=w=16:h=1080:t=8:c=black", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "12", src]);
+    const built = buildTemplateScene("field-award", "field", "story", "en");
+    const data = { ...templateSampleData("field-award", "en"), media: { type: "recording" as const, recordingId: 1, fromMs: 0, toMs: 15_000 } };
+    const scene = { ...sceneForData(built, data), music: undefined } as Scene;
+    const out = path.join(work, "field-award.mp4");
+    await renderSceneMp4({
+      scene, brand: BRAND, data,
+      videos: async () => ({ path: src, zeroAtSec: 0, durationMs: 15_000, hasAudio: false }),
+      workDir: work, out,
+    });
+    const v = probe(out).streams.find((s) => s.codec_type === "video");
+    expect(v).toMatchObject({ width: 1080, height: 1920 });
+    expect(Number(probe(out).format.duration)).toBeCloseTo(15, 0);
+    // 2.5 s: halfway through its crossing, the wipe in the main colour covers the frame.
+    const wiping = frameAt(out, 2.5, 540, 960);
+    expect(wiping[0]).toBeGreaterThan(200);
+    expect(wiping[2]).toBeLessThan(90);
+    // 7 s: the clip, sharp: somewhere across a bar there is near-black and near-white.
+    const row = (t: number) => Array.from({ length: 12 }, (_, i) => frameAt(out, t, 100 + i * 6, 700)[1]);
+    expect(Math.min(...row(7))).toBeLessThan(60);
+    expect(Math.max(...row(7))).toBeGreaterThan(160);
+    // 14 s: under the end card the same bars are blurred (and dimmed): no near-white left.
+    expect(Math.max(...row(14))).toBeLessThan(120);
+  }, 400_000);
 });

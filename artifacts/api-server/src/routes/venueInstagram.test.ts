@@ -75,6 +75,18 @@ vi.mock("../lib/venues/igGraph", () => ({
   mediaInsights: vi.fn(async () => ({ views: 120, reach: 80, plays: 120 })),
   publishingLimit: vi.fn(async () => graph.check.limit),
 }));
+// Comments on a post, as Instagram's Graph API lists them (votes in the comments).
+const comments = vi.hoisted(() => ({ byMedia: new Map<string, Array<{ id: string; text: string; from: { id: string; username: string } }>>() }));
+vi.mock("../lib/meta/graph", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/meta/graph")>();
+  return {
+    ...actual,
+    graphGet: vi.fn(async (path: string) => {
+      const m = /^(.+)\/comments$/.exec(path);
+      return m ? { data: comments.byMedia.get(m[1]) ?? [] } : {};
+    }),
+  };
+});
 // No ffmpeg, Bunny or ball data here: a render finishes at once, the media library gets a row id.
 vi.mock("../lib/creative/renderJobs", async () => {
   const { academyCreativeProjectsTable: t, db: d } = await import("@workspace/db");
@@ -110,7 +122,9 @@ import * as waha from "../lib/whatsapp/waha";
 import { encryptToken } from "../lib/meta/crypto";
 import { addDays, ammanLocal, fromAmmanLocal } from "../lib/venues/core";
 import { createVenue, loadVenue } from "../lib/venues/store";
-import { resetIgTick, runIgAutopilotTick, syncBookingItems } from "../lib/venues/igAutopilot";
+import { ensureRenderedAll, resetIgTick, runIgAutopilotTick, scheduleFieldPosts, syncBookingItems } from "../lib/venues/igAutopilot";
+import { leaderboardDesign, openSlotsDesign, resetWeekNumbers } from "../lib/venues/igFieldPosts";
+import { resetCommentPulls } from "../lib/venues/igVotes";
 import { weekCandidates } from "../lib/venues/igAwards";
 import { weekStartOf } from "../lib/venues/igCalendar";
 
@@ -320,12 +334,13 @@ describe("2. One clip per booking, on the calendar", () => {
     const preview = await request(app).post(`${ig()}/items/${item.id}/action`).set(auth(ownerId)).send({ action: "preview" }).expect(200);
     expect(preview.body.item.render).toMatchObject({ status: "done", kind: "video" });
     const [project] = await db.select().from(academyCreativeProjectsTable).where(eq(academyCreativeProjectsTable.id, preview.body.item.projectId));
-    expect(project).toMatchObject({ format: "story", templateKey: "ig-booking-clip", origin: "auto" });
-    expect((project.data as { custom: { endLine: string } }).custom.endLine).toContain(game.booking.reference);
+    expect(project).toMatchObject({ format: "story", templateKey: "field-booking-clip", style: "field", origin: "auto" });
+    // The end card: "Booking" over the booking number, in the field's colour.
+    expect((project.data as { custom: { endBig: string } }).custom.endBig).toBe(game.booking.reference);
     expect((project.data as { media: { type: string } }).media).toMatchObject({ type: "recording", recordingId: game.rec.id });
     const layers = (project.scene as { layers: Array<{ id: string; framing?: unknown; text?: string }> }).layers;
     expect(layers.find((l) => l.id === "video")?.framing).toBeTruthy();
-    expect(layers.find((l) => l.id === "end-booking")?.text).toBe("{{custom.endLine}}");
+    expect(layers.find((l) => l.id === "end-big")?.text).toBe("{{custom.endBig}}");
     // Approved and due: it becomes a scheduled Instagram story post.
     await request(app).post(`${ig()}/items/${item.id}/action`).set(auth(ownerId)).send({ action: "approve" }).expect(200);
     await db.update(venueIgItemsTable).set({ slotAt: new Date(Date.now() - 30_000) }).where(eq(venueIgItemsTable.id, item.id));
@@ -488,10 +503,13 @@ describe("3. Weekly awards", () => {
     expect(picked.body.award).toMatchObject({ status: "decided", decidedBy: "owner" });
     const [winner] = await db.select().from(venueIgItemsTable).where(and(eq(venueIgItemsTable.academyId, venueId), eq(venueIgItemsTable.originKey, `winner:${award.id}`)));
     expect(winner).toMatchObject({ kind: "award_winner", placement: "reel", pinned: true, bookingId: saveGame.booking.id });
-    // Its design is the save award's own template, in 9:16.
+    // Its design is the field pack's award video, in 9:16; the owner picked it, so no vote count.
     const preview = await request(app).post(`${ig()}/items/${winner.id}/action`).set(auth(ownerId)).send({ action: "preview" }).expect(200);
     const [project] = await db.select().from(academyCreativeProjectsTable).where(eq(academyCreativeProjectsTable.id, preview.body.item.projectId));
-    expect(project).toMatchObject({ templateKey: "ig-award-save", format: "story" });
+    expect(project).toMatchObject({ templateKey: "field-award", format: "story", style: "field" });
+    const custom = (project.data as { custom: Record<string, string> }).custom;
+    expect(custom.title).toBe("تصدّي الأسبوع");
+    expect(custom.stat).toBeUndefined();
   });
 });
 
@@ -507,6 +525,124 @@ describe("5. Monthly report", () => {
     expect(report.body.bookings.whatsapp).toBeGreaterThanOrEqual(1);
     expect(report.body.removals).toMatchObject({ total: 2, deleted: 1, flagged: 1 });
     await request(app).get(`${ig()}/report?month=${month}`).set(auth(strangerId)).expect(403);
+  });
+});
+
+describe("6. Field template pack: carousels, votes in the comments, weekly posts", () => {
+  const nominee = async (game: Awaited<ReturnType<typeof playedBooking>>, n: number) => ({
+    key: `${game.rec.id}:${n}`, recordingId: game.rec.id, bookingId: game.booking.id, atSeconds: 600 + n, fromMs: 591_000, toMs: 606_000, atMs: 601_000,
+    source: "confirmed_goal" as const, label: `Game ${n}`, labelAr: `ماتش ${n}`,
+  });
+
+  it("posts award nominees as a 4:5 carousel (cover + one slide each), counts one comment vote per account, and the winner video shows no count", async () => {
+    const [g1, g2] = [await playedBooking({ hoursAgo: 30, consent: "yes" }), await playedBooking({ hoursAgo: 31, consent: "yes" })];
+    const nominees = [await nominee(g1, 1), await nominee(g2, 2)];
+    const [award] = await db.insert(venueIgAwardsTable).values({
+      academyId: venueId, weekStart: weekStartOf(Math.round(Date.now() / 60_000) + 180), category: "goal", status: "voting", nominees, votingEndsAt: new Date(Date.now() + 3_600_000),
+    }).returning();
+    const [item] = await db.insert(venueIgItemsTable).values({
+      academyId: venueId, originKey: `nominees:${award.id}`, kind: "award_nominees", placement: "carousel", awardId: award.id, recordingId: g1.rec.id,
+      source: "award", slotAt: new Date(Date.now() - 30_000), pinned: true, status: "approved",
+    }).returning();
+    await tick();
+    const [out] = await db.select().from(venueIgItemsTable).where(eq(venueIgItemsTable.id, item.id));
+    expect(out.status).toBe("publishing");
+    const projects = (await db.select().from(academyCreativeProjectsTable).where(eq(academyCreativeProjectsTable.academyId, venueId)))
+      .filter((p) => p.originKey === `ig:item:${item.id}` || p.originKey?.startsWith(`ig:item:${item.id}:`))
+      .sort((a, b) => (a.originKey ?? "").localeCompare(b.originKey ?? ""));
+    expect(projects.map((p) => [p.templateKey, p.format, p.kind])).toEqual([
+      ["field-nominees-cover", "post", "image"], ["field-nominee-slide", "post", "video"], ["field-nominee-slide", "post", "video"],
+    ]);
+    expect((projects[0].data as { custom: Record<string, string> }).custom).toMatchObject({ title: "جول الأسبوع", n1: "ماتش 1", n2: "ماتش 2" });
+    expect((projects[2].data as { custom: Record<string, string> }).custom).toMatchObject({ n: "2", cta: "علّق 2 إذا عجبتك" });
+    const [post] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, out.postId!));
+    expect(post.format).toBe("carousel");
+    expect(post.media).toHaveLength(3);
+    expect(post.caption).toContain("(1–2)");
+    // Out on Instagram; people vote in the comments (and one in the app).
+    const media = `igm-${tag}-carousel`;
+    await db.update(academySocialPostsTable).set({ status: "published", igMediaId: media, publishedAt: new Date() }).where(eq(academySocialPostsTable.id, post.id));
+    await tick();
+    comments.byMedia.set(media, [
+      { id: `c1-${tag}`, text: "2", from: { id: "fan1", username: "fan1" } },
+      { id: `c2-${tag}`, text: "٢ 🔥", from: { id: "fan2", username: "fan2" } },
+      { id: `c3-${tag}`, text: "1", from: { id: "fan3", username: "fan3" } },
+      { id: `c4-${tag}`, text: "رقم 2", from: { id: "fan3", username: "fan3" } },
+      { id: `c5-${tag}`, text: "1 or 2?", from: { id: "fan4", username: "fan4" } },
+      { id: `c6-${tag}`, text: "2", from: { id: `ig${tag}`, username: "galaxy.jo" } },
+    ]);
+    await request(app).post(`/api/venue-awards/${slug}/${award.id}/vote`).set(auth(voterIds[0])).send({ key: nominees[0].key }).expect(200);
+    await db.update(venueSettingsTable).set({ igSlots: { minVotes: 3 } }).where(eq(venueSettingsTable.academyId, venueId));
+    await db.update(venueIgAwardsTable).set({ votingEndsAt: new Date(Date.now() - 60_000) }).where(eq(venueIgAwardsTable.id, award.id));
+    resetCommentPulls();
+    await tick();
+    const [closed] = await db.select().from(venueIgAwardsTable).where(eq(venueIgAwardsTable.id, award.id));
+    // fan1, fan2, fan3 (latest: 2) → 3 for #2; the app's vote and nothing else for #1; the field's own and a two-choice comment don't count.
+    expect(closed).toMatchObject({ status: "decided", decidedBy: "votes", winnerKey: nominees[1].key });
+    const [winner] = await db.select().from(venueIgItemsTable).where(and(eq(venueIgItemsTable.academyId, venueId), eq(venueIgItemsTable.originKey, `winner:${award.id}`)));
+    const preview = await request(app).post(`${ig()}/items/${winner.id}/action`).set(auth(ownerId)).send({ action: "preview" }).expect(200);
+    const [project] = await db.select().from(academyCreativeProjectsTable).where(eq(academyCreativeProjectsTable.id, preview.body.item.projectId));
+    // No vote count on the design (Mohammed, 2026-11-04).
+    expect((project.data as { custom: Record<string, string> }).custom).toMatchObject({ kicker: "فايز هالأسبوع", title: "جول الأسبوع" });
+    expect((project.data as { custom: Record<string, string> }).custom.stat).toBeUndefined();
+    await db.update(venueSettingsTable).set({ igSlots: {} }).where(eq(venueSettingsTable.academyId, venueId));
+  });
+
+  it("counts which-is-nicer votes, A or B, on the console", async () => {
+    const [g1, g2] = [await playedBooking({ hoursAgo: 32, consent: "yes" }), await playedBooking({ hoursAgo: 33, consent: "yes" })];
+    const media = `igm-${tag}-versus`;
+    const [item] = await db.insert(venueIgItemsTable).values({
+      academyId: venueId, originKey: `versus:test-${tag}`, kind: "versus", placement: "reel", source: "field", status: "published", publishedAt: new Date(),
+      igMediaId: media, slotAt: new Date(Date.now() - 3_600_000),
+      moment: { choices: [{ key: "a", bookingId: g1.booking.id }, { key: "b", bookingId: g2.booking.id }] },
+    }).returning();
+    comments.byMedia.set(media, [
+      { id: `v1-${tag}`, text: "A", from: { id: "fan1", username: "fan1" } },
+      { id: `v2-${tag}`, text: "ب", from: { id: "fan2", username: "fan2" } },
+      { id: `v3-${tag}`, text: "b 🔥", from: { id: "fan3", username: "fan3" } },
+      { id: `v4-${tag}`, text: "what a goal", from: { id: "fan4", username: "fan4" } },
+    ]);
+    resetCommentPulls();
+    await tick();
+    const got = await request(app).get(ig()).set(auth(ownerId)).expect(200);
+    expect(got.body.items.find((i: { id: number }) => i.id === item.id)?.votes).toEqual({ a: 1, b: 2 });
+  });
+
+  it("schedules the weekly thank-you a few hours ahead, counts last week's games, and leaves out what the owner switched off", async () => {
+    const venue = (await loadVenue(venueId))!;
+    // The Sunday after this week's games, 16:00: the thank-you (21:00) is within the render-ahead window.
+    const thisWeek = weekStartOf(Math.round(Date.now() / 60_000) + 180);
+    const sunday = fromAmmanLocal(`${addDays(thisWeek, 7)} 16:00`)!;
+    await db.update(venueSettingsTable).set({ igSlots: { off: ["top5"] } }).where(eq(venueSettingsTable.academyId, venueId));
+    await scheduleFieldPosts((await loadVenue(venueId))!, sunday);
+    const made = (await items()).filter((i) => i.originKey === `thanks:${thisWeek}` || i.originKey === `top5:${thisWeek}`);
+    expect(made.map((i) => [i.kind, i.placement, i.pinned, ammanLocal(i.slotAt!)])).toEqual([["thanks", "reel", true, `${addDays(thisWeek, 7)} 21:00`]]);
+    // The design waits while the week is counted, then shows every filmed game (no analysis here: no goals, no km).
+    resetWeekNumbers();
+    let projects = await ensureRenderedAll(venue, made[0]);
+    for (let i = 0; i < 50 && !projects; i += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      const [fresh] = await db.select().from(venueIgItemsTable).where(eq(venueIgItemsTable.id, made[0].id));
+      expect(fresh.status).toBe("planned");
+      projects = await ensureRenderedAll(venue, fresh);
+    }
+    expect(projects).toHaveLength(1);
+    const custom = (projects![0].data as { custom: Record<string, string> }).custom;
+    expect(projects![0].templateKey).toBe("field-thanks");
+    expect(Number(custom.matches)).toBeGreaterThanOrEqual(3);
+    expect(custom.matches_1).toBeDefined();
+    expect(custom.goals).toBeUndefined();
+    expect(custom.km).toBeUndefined();
+    await db.update(venueSettingsTable).set({ igSlots: {} }).where(eq(venueSettingsTable.academyId, venueId));
+  });
+
+  it("lists tonight's free kick-offs, and makes no scorers board from players who didn't agree to be shown", async () => {
+    const venue = (await loadVenue(venueId))!;
+    const [academy] = await db.select().from((await import("@workspace/db")).academiesTable).where(eq((await import("@workspace/db")).academiesTable.id, venueId));
+    const slots = await openSlotsDesign(venue, academy, tomorrow, new Date(), "en");
+    expect("parts" in slots && slots.parts[0].data.custom).toMatchObject({ t1: expect.any(String), free: "Free" });
+    const board = await leaderboardDesign(venue, academy, ammanLocal(new Date()).slice(0, 7), "en");
+    expect(board).toEqual({ skip: "Fewer than three scorers who agreed to be shown" });
   });
 });
 
@@ -527,3 +663,4 @@ describe("consent switched off", () => {
     void fromAmmanLocal;
   });
 });
+

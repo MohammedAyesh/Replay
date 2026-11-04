@@ -13,16 +13,16 @@ import {
   venueIgRemovalsTable,
   venuePitchesTable,
   venueSettingsTable,
+  type Academy,
   type AcademyCreativeProject,
   type VenueBooking,
   type VenueIgAward,
   type VenueIgItem,
 } from "@workspace/db";
-import { awardTemplateKey, awardTitle, buildTemplateScene, sceneSchema, type CreativeData, type Scene } from "@workspace/api-zod";
+import { FIELD_STYLE, awardTitle, buildTemplateScene, resolveSource, sceneSchema, type Scene } from "@workspace/api-zod";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { framingFor } from "../creative/framing";
 import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "../creative/music";
-import { styleFor } from "../creative/autoDrafts";
 import { ensureCreativeMedia, renderIsDone } from "../creative/publishMedia";
 import { queueVideoRender, renderStillNow } from "../creative/renderJobs";
 import { logger } from "../logger";
@@ -32,17 +32,38 @@ import { publicBaseUrl } from "../whatsapp/waha";
 import { addDays, ammanLocal, fromAmmanLocal, normaliseHours, wallMinutes, wallString } from "./core";
 import { AWARDS, closeVoting, readNominees, weekCandidates, type Nominee } from "./igAwards";
 import {
+  bookingClipDesign,
+  gamesFilmed,
+  leaderboardDesign,
+  matchWeekDesign,
+  milestoneDesign,
+  nomineesDesign,
+  openSlotsDesign,
+  playerWeekDesign,
+  thanksDesign,
+  top5Design,
+  versusDesign,
+  winnerDesign,
+  type FieldDesign,
+  type FieldPart,
+} from "./igFieldPosts";
+import { awardCommentVotes, pullOpenVotes } from "./igVotes";
+import {
   AWARD_ORDER,
+  WEEKLY_KINDS,
   IG_GRACE_MINUTES,
   IG_LEAD_MINUTES,
   IG_MAX_AGE_HOURS,
   announcingWeek,
   awardTimes,
+  boardTimes,
+  milestoneCrossed,
   normaliseIgSlots,
   nowWall,
   pacing,
   planSlots,
   slotsFor,
+  weeklyTimes,
   type AwardCategory,
   type IgSlotSettings,
 } from "./igCalendar";
@@ -204,6 +225,14 @@ export async function planVenue(venue: Venue, now = new Date()): Promise<number>
     eq(venueIgItemsTable.pinned, true),
     lt(venueIgItemsTable.slotAt, new Date(now.getTime() - IG_GRACE_MINUTES * 60_000)),
   ));
+  // Anything else has its own time (an award, a weekly post): a slot that passed without the
+  // owner's OK is gone, not rolled.
+  await db.update(venueIgItemsTable).set({ status: "skipped", error: "Its time passed without an OK", updatedAt: now }).where(and(
+    eq(venueIgItemsTable.academyId, venue.id),
+    ne(venueIgItemsTable.kind, "booking_clip"),
+    inArray(venueIgItemsTable.status, [...WAITING]),
+    lt(venueIgItemsTable.slotAt, new Date(now.getTime() - IG_GRACE_MINUTES * 60_000)),
+  ));
   const items = await db.select().from(venueIgItemsTable).where(and(
     eq(venueIgItemsTable.academyId, venue.id),
     inArray(venueIgItemsTable.status, [...LIVE]),
@@ -220,9 +249,9 @@ export async function planVenue(venue: Venue, now = new Date()): Promise<number>
     slots,
     items: items.map((i) => ({
       id: i.id,
-      kind: i.kind as "booking_clip",
+      kind: i.kind,
       status: i.status,
-      placement: i.placement as "story" | "reel",
+      placement: i.placement as "story" | "reel" | "carousel",
       slotAt: wallOf(i.slotAt),
       pinned: i.pinned || due(i),
       score: i.score,
@@ -260,128 +289,152 @@ async function bookingFacts(b: VenueBooking, locale: Locale) {
   };
 }
 
-const endLine = (reference: string, locale: Locale) => (locale === "ar" ? `حجز ${reference}` : `Booking ${reference}`);
-
-type Design = { templateKey: string; title: string; data: CreativeData; window: { recordingId: number; fromMs: number; toMs: number } | null };
-
-async function designFor(venue: Venue, item: VenueIgItem, locale: Locale): Promise<Design | null> {
-  const ar = locale === "ar";
-  const venueName = ar ? venue.nameAr || venue.name : venue.name;
-  if (item.kind === "booking_clip") {
-    const b = await bookingFor(item.bookingId);
-    const m = item.moment as { recordingId: number; fromMs: number; toMs: number } | null;
-    if (!b || !m) return null;
-    const head = HEADLINES[item.source] ?? HEADLINES.saved_clip;
-    return {
-      templateKey: "ig-booking-clip",
-      title: `${ar ? head.ar : head.en} · ${b.reference}`,
-      window: { recordingId: m.recordingId, fromMs: m.fromMs, toMs: m.toMs },
-      data: {
-        match: await bookingFacts(b, locale),
-        media: { type: "recording", recordingId: m.recordingId, fromMs: m.fromMs, toMs: m.toMs },
-        custom: { kicker: ar ? `من ملاعب ${venueName}` : `On the pitch at ${venueName}`, headline: ar ? head.ar : head.en, endLine: endLine(b.reference, locale) },
-      },
-    };
-  }
-  const [award] = item.awardId ? await db.select().from(venueIgAwardsTable).where(eq(venueIgAwardsTable.id, item.awardId)) : [];
-  if (!award) return null;
-  const nominees = readNominees(award.nominees);
-  if (item.kind === "award_nominees") {
-    const first = nominees[0];
-    if (!first) return null;
-    const s = igSettings(venue).slots;
-    const closes = awardTimes(s, award.weekStart).votingEnds;
-    const closeLocal = wallString(closes);
-    return {
-      templateKey: "ig-award-nominees",
-      title: `${awardTitle(award.category, ar)} · ${award.weekStart}`,
-      window: null,
-      data: {
-        media: { type: "frame", recordingId: first.recordingId, atMs: first.atMs },
-        custom: {
-          award: awardTitle(award.category, ar),
-          nominees: nominees.map((n) => (ar ? n.labelAr : n.label)).join(" | ").slice(0, 160),
-          closes: ar ? `التصويت لـ${dayLabel(closeLocal.slice(0, 10), "ar")} ${timeLabel(closeLocal.slice(11), "ar")}` : `Voting closes ${dayLabel(closeLocal.slice(0, 10), "en")} ${timeLabel(closeLocal.slice(11), "en")}`,
-          count: ar ? `${nominees.length} مرشحين` : `${nominees.length} nominees`,
-        },
-      },
-    };
-  }
-  const winner = nominees.find((n) => n.key === award.winnerKey);
-  if (!winner) return null;
-  const b = await bookingFor(winner.bookingId);
-  if (!b) return null;
-  return {
-    templateKey: awardTemplateKey(award.category),
-    title: `${awardTitle(award.category, ar)} · ${award.weekStart}`,
-    window: { recordingId: winner.recordingId, fromMs: winner.fromMs, toMs: winner.toMs },
-    data: {
-      match: await bookingFacts(b, locale),
-      media: { type: "recording", recordingId: winner.recordingId, fromMs: winner.fromMs, toMs: winner.toMs },
-      custom: { speed: winner.value != null ? `${winner.value.toFixed(1)} ${locale === "ar" ? "كم/س" : "km/h"}` : "", endLine: endLine(b.reference, locale) },
-    },
-  };
+async function awardOf(item: VenueIgItem): Promise<VenueIgAward | null> {
+  if (!item.awardId) return null;
+  const [award] = await db.select().from(venueIgAwardsTable).where(eq(venueIgAwardsTable.id, item.awardId));
+  return award ?? null;
 }
 
-async function sceneFor(templateKey: string, style: Awaited<ReturnType<typeof styleFor>>, locale: Locale, window: Design["window"]): Promise<Scene> {
-  let scene = sceneSchema.parse(buildTemplateScene(templateKey, style, "story", locale));
-  if (window) {
-    // The 9:16 camera follows the ball across the panorama (or holds the middle).
-    const answer = await framingFor(window.recordingId, window.fromMs, window.toMs).catch(() => null);
-    if (answer) scene = { ...scene, layers: scene.layers.map((l) => (l.kind === "video" && l.id === "video" ? { ...l, framing: answer.framing } : l)) } as Scene;
-    try {
-      await ensureReplayMusic();
-      scene = await sceneWithDefaultMusic(scene, templateKey, await replayLibrary(), await templateMusicOverrides().catch(() => new Map()));
-    } catch {
-      // no music: the clip still goes out
+/** What an item shows: the field template pack filled from its games (igFieldPosts.ts). */
+export async function designFor(venue: Venue, academy: Academy, item: VenueIgItem, locale: Locale, now = new Date()): Promise<FieldDesign> {
+  const ar = locale === "ar";
+  const slots = igSettings(venue).slots;
+  const slotAt = item.slotAt ?? now;
+  switch (item.kind) {
+    case "booking_clip": {
+      const b = await bookingFor(item.bookingId);
+      if (!b) return { skip: "The booking is gone" };
+      return bookingClipDesign(venue, academy, b, item, locale, await bookingFacts(b, locale), HEADLINES[item.source] ?? HEADLINES.saved_clip);
     }
+    case "award_nominees": {
+      const award = await awardOf(item);
+      if (!award) return { skip: "The award is gone" };
+      const closeLocal = wallString(awardTimes(slots, award.weekStart).votingEnds);
+      const closes = ar
+        ? `التصويت لـ${dayLabel(closeLocal.slice(0, 10), "ar")} ${timeLabel(closeLocal.slice(11), "ar")}`
+        : `Voting closes ${dayLabel(closeLocal.slice(0, 10), "en")} ${timeLabel(closeLocal.slice(11), "en")}`;
+      return nomineesDesign(venue, academy, award, locale, closes);
+    }
+    case "award_winner": {
+      const award = await awardOf(item);
+      const winner = readNominees(award?.nominees).find((n) => n.key === award?.winnerKey);
+      const b = winner ? await bookingFor(winner.bookingId) : null;
+      if (!award || !winner || !b) return { skip: "Its footage is gone" };
+      return winnerDesign(venue, academy, award, winner, b, locale, await bookingFacts(b, locale));
+    }
+    case "versus": return versusDesign(venue, academy, slots, slotAt, locale);
+    case "top5": return top5Design(venue, academy, slots, slotAt, locale);
+    case "thanks": return thanksDesign(venue, academy, slots, slotAt, locale);
+    case "match_week": return matchWeekDesign(venue, academy, slots, slotAt, locale);
+    case "player_week": return playerWeekDesign(venue, academy, slots, slotAt, locale);
+    case "milestone": return milestoneDesign(venue, academy, Number((item.moment as { count?: number } | null)?.count ?? 0), now, locale);
+    case "open_slots": return openSlotsDesign(venue, academy, item.originKey.slice("slots:".length), now, locale);
+    case "leaderboard": return leaderboardDesign(venue, academy, item.originKey.slice("board:".length), locale);
+    default: return { skip: `Unknown kind ${item.kind}` };
+  }
+}
+
+/**
+ * A part's scene in the field style: every clip on it framed by the ball (the 9:16 or 4:5 window
+ * follows play across the panorama, or holds the middle), and its music.
+ */
+async function sceneFor(part: FieldPart, locale: Locale): Promise<Scene> {
+  let scene = sceneSchema.parse(buildTemplateScene(part.templateKey, FIELD_STYLE, part.format, locale));
+  if (scene.durationMs === undefined) return scene;
+  const framed = new Map<string, Promise<Awaited<ReturnType<typeof framingFor>> | null>>();
+  const layers = await Promise.all(scene.layers.map(async (l) => {
+    if (l.kind !== "video") return l;
+    const src = resolveSource(l.src, part.data);
+    if (src?.type !== "recording") return l;
+    const key = `${src.recordingId}:${src.fromMs}:${src.toMs}`;
+    if (!framed.has(key)) framed.set(key, framingFor(src.recordingId, src.fromMs, src.toMs).catch(() => null));
+    const answer = await framed.get(key)!;
+    return answer ? { ...l, framing: answer.framing } : l;
+  }));
+  scene = { ...scene, layers } as Scene;
+  try {
+    await ensureReplayMusic();
+    scene = await sceneWithDefaultMusic(scene, part.templateKey, await replayLibrary(), await templateMusicOverrides().catch(() => new Map()));
+  } catch {
+    // no music: the clip still goes out
   }
   return scene;
 }
 
-/** The item's design as a Creative hub project (made once), rendered. */
-export async function ensureRendered(venue: Venue, item: VenueIgItem, now = new Date()): Promise<AcademyCreativeProject | null> {
+const projectKey = (itemId: number, part: number) => (part === 0 ? `ig:item:${itemId}` : `ig:item:${itemId}:${part}`);
+
+async function itemProjects(venueId: number, itemId: number): Promise<AcademyCreativeProject[]> {
+  const rows = await db.select().from(academyCreativeProjectsTable).where(and(
+    eq(academyCreativeProjectsTable.academyId, venueId),
+    or(eq(academyCreativeProjectsTable.originKey, projectKey(itemId, 0)), sql`${academyCreativeProjectsTable.originKey} like ${`ig:item:${itemId}:%`}`),
+  ));
+  const part = (p: AcademyCreativeProject) => Number(p.originKey?.split(":")[3] ?? 0);
+  return rows.sort((a, b) => part(a) - part(b));
+}
+
+/**
+ * The item's design as Creative hub projects (made once: a carousel is one per slide), rendered.
+ * Null while there is nothing to render yet (the week's numbers are being counted) or when the
+ * item was skipped.
+ */
+export async function ensureRenderedAll(venue: Venue, item: VenueIgItem, now = new Date()): Promise<AcademyCreativeProject[] | null> {
   const access = await ownerAccess(venue.id);
   if (!access) {
     await db.update(venueIgItemsTable).set({ error: "This field has no owner account to render as", updatedAt: now }).where(eq(venueIgItemsTable.id, item.id));
     return null;
   }
-  let project: AcademyCreativeProject | null = null;
-  if (item.projectId) {
-    const [row] = await db.select().from(academyCreativeProjectsTable).where(eq(academyCreativeProjectsTable.id, item.projectId));
-    project = row ?? null;
-  }
-  if (!project) {
+  let projects = await itemProjects(venue.id, item.id);
+  if (!projects.length) {
     const locale = await localeFor(venue.id);
-    const design = await designFor(venue, item, locale);
-    if (!design) {
-      await db.update(venueIgItemsTable).set({ status: "skipped", error: "Its footage is gone", updatedAt: now }).where(eq(venueIgItemsTable.id, item.id));
+    const design = await designFor(venue, access.academy, item, locale, now);
+    if ("wait" in design) {
+      await db.update(venueIgItemsTable).set({ error: design.wait, updatedAt: now }).where(eq(venueIgItemsTable.id, item.id));
       return null;
     }
-    const style = await styleFor(access.academy);
-    const scene = await sceneFor(design.templateKey, style, locale, design.window);
-    const [row] = await db.insert(academyCreativeProjectsTable).values({
-      academyId: venue.id,
-      kind: scene.durationMs !== undefined ? "video" : "image",
-      format: "story",
-      title: design.title.slice(0, 120),
-      templateKey: design.templateKey,
-      style,
-      status: "draft",
-      origin: "auto",
-      originKey: `ig:item:${item.id}`,
-      scene,
-      data: design.data,
-      createdBy: access.user.id,
-    }).onConflictDoNothing().returning();
-    project = row ?? (await db.select().from(academyCreativeProjectsTable).where(and(eq(academyCreativeProjectsTable.academyId, venue.id), eq(academyCreativeProjectsTable.originKey, `ig:item:${item.id}`))))[0] ?? null;
-    if (!project) return null;
-    await db.update(venueIgItemsTable).set({ projectId: project.id, error: null, updatedAt: now }).where(eq(venueIgItemsTable.id, item.id));
+    if ("skip" in design) {
+      await db.update(venueIgItemsTable).set({ status: "skipped", error: design.skip, updatedAt: now }).where(eq(venueIgItemsTable.id, item.id));
+      return null;
+    }
+    for (const [i, part] of design.parts.entries()) {
+      const scene = await sceneFor(part, locale);
+      await db.insert(academyCreativeProjectsTable).values({
+        academyId: venue.id,
+        kind: scene.durationMs !== undefined ? "video" : "image",
+        format: part.format,
+        title: part.title.slice(0, 120),
+        templateKey: part.templateKey,
+        style: FIELD_STYLE,
+        status: "draft",
+        origin: "auto",
+        originKey: projectKey(item.id, i),
+        scene,
+        data: part.data,
+        createdBy: access.user.id,
+      }).onConflictDoNothing();
+    }
+    projects = await itemProjects(venue.id, item.id);
+    if (!projects.length) return null;
+    // Booking clips and winners keep their footage window; the rest keep what they chose (the
+    // which-is-nicer pair, the bookings shown) so consent and the vote count read the same thing.
+    const keepMoment = item.kind === "booking_clip" || item.kind === "award_winner";
+    await db.update(venueIgItemsTable).set({
+      projectId: projects[0].id,
+      error: null,
+      updatedAt: now,
+      ...(!keepMoment && design.moment ? { moment: design.moment } : {}),
+      ...(!keepMoment && design.parts[0].windows[0] ? { recordingId: design.parts[0].windows[0].recordingId } : {}),
+    }).where(eq(venueIgItemsTable.id, item.id));
   }
-  if (project.renderStatus === "none" || project.renderStatus === "failed") {
-    project = project.kind === "video" ? await queueVideoRender(access, project) : await renderStillNow(access, project);
+  const out: AcademyCreativeProject[] = [];
+  for (const p of projects) {
+    out.push(p.renderStatus === "none" || p.renderStatus === "failed" ? (p.kind === "video" ? await queueVideoRender(access, p) : await renderStillNow(access, p)) : p);
   }
-  return project;
+  return out;
+}
+
+/** The item's first project (a carousel's cover), rendered. */
+export async function ensureRendered(venue: Venue, item: VenueIgItem, now = new Date()): Promise<AcademyCreativeProject | null> {
+  return (await ensureRenderedAll(venue, item, now))?.[0] ?? null;
 }
 
 async function prepareRenders(venue: Venue, now: Date): Promise<number> {
@@ -399,37 +452,68 @@ async function prepareRenders(venue: Venue, now: Date): Promise<number> {
 
 // ─── 4. Publishing ───────────────────────────────────────────────────────────
 
-/** Is every booking this item shows still postable? Award nominees drop the ones that aren't. */
-async function consentForItem(venue: Venue, item: VenueIgItem): Promise<{ ok: true; ref: ConsentRef | ConsentRef[]; mode: string } | { ok: false; reason: string }> {
-  if (item.kind === "booking_clip" || item.kind === "award_winner") {
-    let bookingId = item.bookingId;
-    if (item.kind === "award_winner") {
-      const [award] = item.awardId ? await db.select().from(venueIgAwardsTable).where(eq(venueIgAwardsTable.id, item.awardId)) : [];
-      bookingId = readNominees(award?.nominees).find((n) => n.key === award?.winnerKey)?.bookingId ?? null;
-    }
-    const b = await bookingFor(bookingId);
-    if (!b) return { ok: false, reason: "The booking is gone" };
-    const c = await consentNow(venue, b);
-    return c.ok ? { ok: true, ref: c.ref, mode: c.mode } : { ok: false, reason: CONSENT_REASON_TEXT[c.reason].en };
+/** The bookings an item shows footage from. */
+async function bookingsShown(item: VenueIgItem): Promise<number[]> {
+  if (item.kind === "booking_clip") return item.bookingId ? [item.bookingId] : [];
+  if (item.kind === "award_winner" || item.kind === "award_nominees") {
+    const award = await awardOf(item);
+    const nominees = readNominees(award?.nominees);
+    return item.kind === "award_winner" ? nominees.filter((n) => n.key === award?.winnerKey).map((n) => n.bookingId) : nominees.map((n) => n.bookingId);
   }
-  const [award] = item.awardId ? await db.select().from(venueIgAwardsTable).where(eq(venueIgAwardsTable.id, item.awardId)) : [];
-  const refs: ConsentRef[] = [];
-  let mode = "";
-  for (const n of readNominees(award?.nominees)) {
-    const b = await bookingFor(n.bookingId);
-    const c = b ? await consentNow(venue, b) : null;
-    if (!c?.ok) return { ok: false, reason: "A nominee's booking can't be posted any more" };
-    refs.push(c.ref);
-    mode = c.mode;
-  }
-  return refs.length ? { ok: true, ref: refs, mode } : { ok: false, reason: "No nominees" };
+  const m = (item.moment ?? {}) as { bookingIds?: number[]; choices?: Array<{ bookingId: number }> };
+  return [...new Set([...(m.bookingIds ?? []), ...(m.choices ?? []).map((c) => c.bookingId)])];
 }
 
-function captionFor(venue: Venue, item: VenueIgItem, locale: Locale, title: string): string {
+/**
+ * Is everything this item shows still postable, right now? Every booking it shows footage from
+ * (consent on, nobody under 18, not an academy's), and every player it names still agreeing to be
+ * shown. Totals (games, goals, km) and open slots show nobody.
+ */
+async function consentForItem(venue: Venue, item: VenueIgItem): Promise<{ ok: true; ref: ConsentRef | ConsentRef[]; mode: string } | { ok: false; reason: string }> {
+  const refs: ConsentRef[] = [];
+  for (const id of await bookingsShown(item)) {
+    const b = await bookingFor(id);
+    if (!b) return { ok: false, reason: "The booking is gone" };
+    const c = await consentNow(venue, b);
+    if (!c.ok) return { ok: false, reason: item.kind === "booking_clip" || item.kind === "award_winner" ? CONSENT_REASON_TEXT[c.reason].en : "A booking it shows can't be posted any more" };
+    refs.push(c.ref);
+  }
+  const m = (item.moment ?? {}) as { userId?: number; userIds?: number[] };
+  const userIds = [...(m.userId ? [m.userId] : []), ...(m.userIds ?? [])];
+  if (userIds.length) {
+    const agreed = await db.select({ id: usersTable.id }).from(usersTable).where(and(inArray(usersTable.id, userIds), eq(usersTable.socialMediaConsent, true)));
+    if (agreed.length !== new Set(userIds).size) return { ok: false, reason: "A player it names no longer agrees to be shown" };
+  }
+  if ((item.kind === "award_nominees" || item.kind === "versus") && refs.length < 2) return { ok: false, reason: "Fewer than two clips to vote on" };
+  const mode = refs[0]?.mode ?? igSettings(venue).mode;
+  return { ok: true, ref: refs.length === 1 && (item.kind === "booking_clip" || item.kind === "award_winner") ? refs[0] : refs, mode };
+}
+
+function captionFor(venue: Venue, item: VenueIgItem, locale: Locale, title: string, extra: string | null = null): string {
   if (item.placement === "story") return "";
+  const ar = locale === "ar";
   const site = `${publicBaseUrl().replace(/^https?:\/\//, "")}/v/${venue.settings.slug}`;
   const tag = `#${(venue.name || "Replay").replace(/[^\p{L}\p{N}]+/gu, "")}`;
-  return locale === "ar" ? `${title}\nاحجز ملعبك: ${site}\n${tag} #ريبلاي` : `${title}\nBook your pitch: ${site}\n${tag} #Replay`;
+  const lines = [title];
+  if (extra) lines.push(extra);
+  lines.push(ar ? `احجز ملعبك: ${site}` : `Book your pitch: ${site}`);
+  lines.push(ar ? `${tag} #ريبلاي` : `${tag} #Replay`);
+  return lines.join("\n");
+}
+
+/** The voting line under a carousel or a which-is-nicer Reel. */
+async function voteLine(venue: Venue, item: VenueIgItem, locale: Locale): Promise<string | null> {
+  const ar = locale === "ar";
+  if (item.kind === "versus") return ar ? "أي واحد أحلى؟ علّقوا أ أو ب 👇" : "Which one is nicer? Comment A or B 👇";
+  if (item.kind !== "award_nominees") return null;
+  const award = await awardOf(item);
+  if (!award) return null;
+  const n = readNominees(award.nominees).slice(0, AWARDS.nomineesPerAward).length;
+  const close = wallString(awardTimes(igSettings(venue).slots, award.weekStart).votingEnds);
+  const when = `${dayLabel(close.slice(0, 10), locale)} ${timeLabel(close.slice(11), locale)}`;
+  return ar
+    ? `صوّتوا بالتعليقات: اكتبوا رقم اللقطة اللي عجبتكم (1–${n}). صوت واحد لكل حساب، التصويت لـ${when}.`
+    : `Vote in the comments: write the number of your pick (1–${n}). One vote per account, until ${when}.`;
 }
 
 async function usedToday(venueId: number, now: Date): Promise<number> {
@@ -445,29 +529,38 @@ export async function publishItem(venue: Venue, item: VenueIgItem, now = new Dat
     const [row] = await db.update(venueIgItemsTable).set({ ...patch, updatedAt: now }).where(eq(venueIgItemsTable.id, item.id)).returning();
     return row;
   };
-  const consent = await consentForItem(venue, item);
+  const reread = async () => (await db.select().from(venueIgItemsTable).where(eq(venueIgItemsTable.id, item.id)))[0];
+  // A booking clip or an award shows known bookings: check them before rendering anything. The
+  // rest (a which-is-nicer pair, the week's bookings) are only known once designed.
+  if (item.kind === "booking_clip" || item.kind === "award_winner" || item.kind === "award_nominees") {
+    const early = await consentForItem(venue, item);
+    if (!early.ok) return set({ status: "skipped", error: early.reason });
+  }
+  const projects = await ensureRenderedAll(venue, item, now);
+  if (!projects?.length) return reread();
+  const fresh = await reread();
+  const consent = await consentForItem(venue, fresh);
   if (!consent.ok) return set({ status: "skipped", error: consent.reason });
   const account = await getSocialAccount(venue.id);
   const check = await checkInstagram(account);
   if (!check.ok) return set({ error: check.error });
   const room = pacing(check.limit?.used ?? (await usedToday(venue.id, now)), check.limit?.total);
   if (room.paused) return set({ error: `Waiting: ${room.used} of ${room.total} Instagram posts used in the last 24 hours` });
-  const project = await ensureRendered(venue, item, now);
-  if (!project) return (await db.select().from(venueIgItemsTable).where(eq(venueIgItemsTable.id, item.id)))[0];
-  if (!renderIsDone(project)) {
-    if (project.renderStatus === "failed") return set({ error: project.renderError ?? "The render failed" });
-    return set({ status: item.status, error: null });
-  }
+  const failed = projects.find((p) => p.renderStatus === "failed");
+  if (failed) return set({ error: failed.renderError ?? "The render failed" });
+  if (!projects.every(renderIsDone)) return set({ status: item.status, error: null });
   const owner = await ownerAccess(venue.id);
-  const { media } = await ensureCreativeMedia(project, owner?.user.id ?? 0);
+  const media = [];
+  for (const p of projects) media.push((await ensureCreativeMedia(p, owner?.user.id ?? 0)).media);
   const locale = await localeFor(venue.id);
+  const format = item.placement === "carousel" ? "carousel" : item.placement === "reel" ? "reel" : "story";
   const [post] = await db.insert(academySocialPostsTable).values({
     academyId: venue.id,
     source: "replay",
     targets: ["instagram"],
-    format: item.placement === "reel" ? "reel" : "story",
-    caption: captionFor(venue, item, locale, project.title),
-    media: [{ mediaId: media.id, type: media.kind === "video" ? "video" : "image" }],
+    format,
+    caption: captionFor(venue, fresh, locale, projects[0].title, await voteLine(venue, fresh, locale)),
+    media: media.slice(0, 10).map((m) => ({ mediaId: m.id, type: m.kind === "video" ? "video" : "image" })),
     status: "scheduled",
     scheduledFor: now,
     createdBy: owner?.user.id ?? null,
@@ -533,7 +626,10 @@ export async function runAwards(venue: Venue, now = new Date()): Promise<void> {
   for (const award of awards) {
     const t = awardTimes(s.slots, award.weekStart);
     let current: VenueIgAward = award;
-    if (current.status === "voting" && current.votingEndsAt && current.votingEndsAt <= now) current = await closeVoting(current, s.slots.minVotes, now);
+    if (current.status === "voting" && current.votingEndsAt && current.votingEndsAt <= now) {
+      const comments = await awardCommentVotes(current, { pull: true }).catch(() => []);
+      current = await closeVoting(current, s.slots.minVotes, now, comments);
+    }
     if (current.status === "decided") await ensureWinnerItem(venue, current, t.winner + AWARD_ORDER.indexOf(current.category as AwardCategory) * s.slots.winnerGapMinutes, now);
   }
 }
@@ -558,7 +654,8 @@ async function buildAwards(venue: Venue, week: string, now: Date): Promise<void>
       academyId: venue.id,
       originKey: `nominees:${award.id}`,
       kind: "award_nominees",
-      placement: "story",
+      // A carousel in the feed: a cover then one slide per nominee, voted in its comments.
+      placement: "carousel",
       awardId: award.id,
       recordingId: nominees[0].recordingId,
       source: "award",
@@ -604,6 +701,66 @@ export async function pickWinner(venue: Venue, awardId: number, key: string, use
   const s = igSettings(venue);
   await ensureWinnerItem(venue, row, awardTimes(s.slots, award.weekStart).winner + AWARD_ORDER.indexOf(award.category as AwardCategory) * s.slots.winnerGapMinutes, now);
   return row;
+}
+
+// ─── 5b. Weekly, daily, monthly posts and milestones ─────────────────────────
+
+/** Put an item on the calendar at its own time (once: its origin key is unique per field). */
+async function pinItem(venue: Venue, originKey: string, kind: string, placement: "story" | "reel", at: number, now: Date, moment: Record<string, unknown> | null = null): Promise<boolean> {
+  const rows = await db.insert(venueIgItemsTable).values({
+    academyId: venue.id,
+    originKey,
+    kind,
+    placement,
+    source: "field",
+    moment,
+    score: 0,
+    slotAt: dateOfWall(Math.max(at, nowWall(now) + IG_LEAD_MINUTES)),
+    pinned: true,
+    status: "planned",
+  }).onConflictDoNothing().returning({ id: venueIgItemsTable.id });
+  return rows.length > 0;
+}
+
+/**
+ * The posts that come round on their own: last week's thank-you, top 5, match and player of the
+ * week; this week's "which is nicer?"; tonight's open slots; last month's scorers on the 1st; a
+ * milestone the field just passed. Each is made a few hours before its time (render ahead), so
+ * the owner sees it on the calendar; what it shows is worked out when it renders.
+ */
+export async function scheduleFieldPosts(venue: Venue, now = new Date()): Promise<number> {
+  const s = igSettings(venue).slots;
+  const nowM = nowWall(now);
+  const ahead = IG.renderAheadHours * 60;
+  const inWindow = (at: number) => nowM >= at - ahead && nowM < at + IG_GRACE_MINUTES;
+  const off = new Set(s.off);
+  let added = 0;
+  for (const kind of WEEKLY_KINDS) {
+    if (off.has(kind)) continue;
+    const t = weeklyTimes(s, kind, nowM);
+    if (inWindow(t.at) && await pinItem(venue, `${kind}:${t.gamesWeek}`, kind, "reel", t.at, now)) added += 1;
+  }
+  if (!off.has("open_slots")) {
+    const today = ammanLocal(now).slice(0, 10);
+    const at = wallMinutes(`${today} ${s.openSlotsTime}`);
+    // Late: what's free is read as it renders, so it is made just an hour before.
+    if (nowM >= at - 60 && nowM < at + IG_GRACE_MINUTES && await pinItem(venue, `slots:${today}`, "open_slots", "story", at, now)) added += 1;
+  }
+  if (!off.has("leaderboard")) {
+    const b = boardTimes(s, nowM);
+    if (inWindow(b.at) && await pinItem(venue, `board:${b.month}`, "leaderboard", "story", b.at, now)) added += 1;
+  }
+  if (!off.has("milestone")) {
+    const [before, current] = await Promise.all([gamesFilmed(venue, new Date(now.getTime() - 14 * 86_400_000)), gamesFilmed(venue, now)]);
+    const n = milestoneCrossed(before, current);
+    if (n !== null) {
+      // The next Reel time with room for it.
+      const reel = slotsFor(s, normaliseHours(venue.settings.openingHours), ammanLocal(now).slice(0, 10), 2)
+        .find((x) => x.kind === "reel" && x.at >= nowM + IG_LEAD_MINUTES + 60);
+      if (reel && await pinItem(venue, `milestone:${n}`, "milestone", "reel", reel.at, now, { count: n })) added += 1;
+    }
+  }
+  return added;
 }
 
 // ─── 6. Numbers ──────────────────────────────────────────────────────────────
@@ -652,10 +809,12 @@ export async function runIgAutopilotTick(now = new Date(), opts: { force?: boole
       try {
         await syncBookingItems(venue, now);
         await runAwards(venue, now);
+        await scheduleFieldPosts(venue, now);
         await planVenue(venue, now);
         await prepareRenders(venue, now);
         await publishDue(venue, now);
         await followPublishing(venue, now);
+        await pullOpenVotes(venue.id, now).catch(() => 0);
         await refreshInsights(venue, now);
       } catch (error) {
         logger.warn({ venueId: academyId, error: (error as Error).message }, "Instagram autopilot tick failed");
@@ -768,7 +927,9 @@ export function itemView(i: VenueIgItem, extra: { project?: AcademyCreativeProje
     consentMode: i.consentMode,
     consentRef: i.consentRef,
     insights: i.insights,
-    thumbnailFrom: i.moment ? { recordingId: (i.moment as { recordingId: number }).recordingId, atMs: (i.moment as { fromMs: number }).fromMs + 3000 } : null,
+    thumbnailFrom: typeof (i.moment as { recordingId?: unknown } | null)?.recordingId === "number"
+      ? { recordingId: (i.moment as { recordingId: number }).recordingId, atMs: (i.moment as { fromMs: number }).fromMs + 3000 }
+      : null,
   };
 }
 export type IgItemView = ReturnType<typeof itemView>;
@@ -812,9 +973,10 @@ export async function monthlyReport(venue: Venue, month: string) {
     gte(venueIgItemsTable.publishedAt, from),
     lt(venueIgItemsTable.publishedAt, to),
   ));
-  const type = (i: VenueIgItem) => (i.kind === "booking_clip" ? (i.placement === "reel" ? "reel" : "story") : i.kind === "award_nominees" ? "nominees" : "award");
+  const type = (i: VenueIgItem) => (i.kind === "booking_clip" ? (i.placement === "reel" ? "reel" : "story") : i.kind === "award_nominees" ? "nominees" : i.kind === "award_winner" ? "award" : "field");
   const byType: Record<string, { posts: number; reach: number | null; views: number | null }> = {
     story: { posts: 0, reach: null, views: null }, reel: { posts: 0, reach: null, views: null }, nominees: { posts: 0, reach: null, views: null }, award: { posts: 0, reach: null, views: null },
+    field: { posts: 0, reach: null, views: null },
   };
   const add = (a: number | null, b: unknown) => (typeof b === "number" ? (a ?? 0) + b : a);
   for (const i of posted) {
