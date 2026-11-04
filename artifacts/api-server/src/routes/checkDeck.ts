@@ -136,7 +136,7 @@ router.get("/recordings/:id/claim-match/check-deck", async (req, res): Promise<v
         start: from + vs,
         end: to + vs,
         clock: clockOf(g.t),
-        focus: ballFocus(ball, ctx.manifest, from, to, vs),
+        focus: ballFocus(ball, ctx.manifest, from, to, vs, g.t),
         goal: {
           recordingId: ctx.recordingId,
           key: g.key,
