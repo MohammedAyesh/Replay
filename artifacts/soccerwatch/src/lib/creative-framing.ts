@@ -24,6 +24,28 @@ export function fetchFraming(academyId: number, src: FramingSource): Promise<Fra
 }
 
 /**
+ * The camera a freshly picked clip or match moment starts with: following the ball (or the
+ * clip's own camera path). Null when there is nothing better than the middle, for footage that
+ * is not match footage, or when the answer takes longer than `timeoutMs`: the layer then shows
+ * its footage as it is, and the Camera button still opens the framer.
+ */
+export async function followTheBall(academyId: number, src: MediaSource, timeoutMs = 8000): Promise<Framing | null> {
+  const req: FramingSource | null = src.type === "clip" ? { type: "clip", clipId: src.clipId }
+    : src.type === "recording" ? { type: "recording", recordingId: src.recordingId, fromMs: src.fromMs, toMs: src.toMs }
+    : null;
+  if (!req) return null;
+  try {
+    const answer = await Promise.race([
+      fetchFraming(academyId, req),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+    return answer && answer.source !== "centre" && answer.framing.keys.length ? answer.framing : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The video's shape:
  *   wide  16:9, the camera fills it
  *   tall  9:16, a vertical camera fills it (full height, close on the play)

@@ -35,6 +35,14 @@ describe("Studio in the Creative hub", () => {
     expect(html).toContain('data-testid="star-clip-3"');
     expect((html.match(/aria-pressed="true"/g) ?? []).length).toBe(1);
   });
+  it("gives each ready clip a Make a post button in the Creative hub, and none outside it", () => {
+    state.starred = { template: [], clip: [], project: [] };
+    const opened: number[] = [];
+    const html = renderToStaticMarkup(<StudioClipsPanel academyId={1} onMakePost={(id) => opened.push(id)} />);
+    expect(html).toContain('data-testid="studio-clip-make-post-1"');
+    expect(html).toContain("Make a post");
+    expect(renderToStaticMarkup(<StudioClipsPanel academyId={1} />)).not.toContain("studio-clip-make-post");
+  });
   it("opens the tab an old Studio link asks for", () => {
     expect(tabFromUrl("?tab=clips")).toBe("clips");
     expect(tabFromUrl("?tab=quick")).toBe("quick");

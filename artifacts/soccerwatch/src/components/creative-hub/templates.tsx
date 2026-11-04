@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { X } from "lucide-react";
 import {
   CREATIVE_TEMPLATES,
+  FIELD_STYLE,
+  FIELD_TEMPLATES,
   TEMPLATE_CATEGORIES,
+  isFieldTemplate,
   buildTemplateScene,
   type CreativeBrand,
   type CreativeFormat,
@@ -15,9 +18,11 @@ import {
 import { useCreativeTemplatesCopy } from "@/i18n/creative-templates-strings";
 import { useCreateCreativeProject, useCreativeBrand, useCreativeSessionData } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
+import { followTheBall } from "@/lib/creative-framing";
 import { useLibraryMatches } from "@/lib/creative-hub-library-api";
 import { offeredStyles } from "@/lib/creative-styles";
 import { cn } from "@/lib/utils";
+import { useConsoleKind } from "@/lib/console-kind";
 import { projectTitle, seedKind, seedMedia, startingData } from "./templates/data";
 import { useElementWidth } from "./templates/hooks";
 import { StyleSwatch } from "./templates/style-swatch";
@@ -31,9 +36,15 @@ import type { SectionProps, TemplateSeed } from "./types";
  * every design previews live in the academy's colours, crest and footage
  * (the seed's, else the latest match's). Tapping one creates a project and
  * opens it in the Editor.
+ *
+ * A field console (kind 'venue') also gets the field pack, as its own first
+ * chip and the default: one look (FIELD_STYLE) driven by the field's
+ * branding, so the style picker hides there, and story or post only.
  */
 
 const FORMATS: CreativeFormat[] = ["post", "square", "story"];
+const FIELD_FORMATS: CreativeFormat[] = ["story", "post"];
+type Group = TemplateCategory | "all" | "field";
 const POST_LOCALES: Array<"ar" | "en"> = ["ar", "en"];
 const FALLBACK_BRAND: CreativeBrand = { primary: "#7B5CFF", accent: "#D4FF4F", ink: "#0B0F1A", paper: "#FFFFFF", muted: "#8A93A6", nameEn: "", nameAr: null };
 type MediaLayer = Extract<SceneLayer, { kind: "image" | "video" }>;
@@ -79,7 +90,9 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
   const stills = useMemo(() => matches.items.map((m) => m.still).filter((s): s is NonNullable<typeof s> => !!s).slice(0, 3) as MediaSource[], [matches.items]);
 
   const kind = seedKind(active);
-  const [category, setCategory] = useState<TemplateCategory | "all">("all");
+  const venue = useConsoleKind() === "venue";
+  const [category, setCategory] = useState<Group>(venue ? "field" : "all");
+  const fieldOnly = category === "field";
   const [picked, setStyle] = useState<CreativeStyle | null>(null);
   const [format, setFormat] = useState<CreativeFormat>(kind === "video" ? "story" : "post");
   const [postLocale, setPostLocale] = useState<"ar" | "en">(copy.locale);
@@ -93,6 +106,7 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
   // House styles plus the academy's own pack, first; the pack is the default look.
   const styles = useMemo(() => offeredStyles(info?.pack), [info?.pack]);
   const style: CreativeStyle = picked && styles.includes(picked) ? picked : styles[0];
+  const styleOf = useCallback((key: string): CreativeStyle => (isFieldTemplate(key) ? FIELD_STYLE : style), [style]);
   const academy = useMemo(() => ({
     nameEn: info?.brand.nameEn ?? "",
     nameAr: info?.brand.nameAr ?? null,
@@ -102,13 +116,16 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
   }), [info]);
 
   const templates = useMemo(() => {
-    const list = CREATIVE_TEMPLATES.filter((t) => category === "all" || t.category === category);
+    const list = category === "field" ? FIELD_TEMPLATES
+      : category === "all" ? (venue ? [...FIELD_TEMPLATES, ...CREATIVE_TEMPLATES] : CREATIVE_TEMPLATES)
+      : CREATIVE_TEMPLATES.filter((t) => t.category === category);
     // Footage first for a clip; stills first for a frame. Starred templates before both.
     const byKind = kind ? [...list].sort((a, b) => Number(b.kind === kind) - Number(a.kind === kind)) : list;
     return starredFirst(byKind, (t) => t.key, fav.data.template);
-  }, [category, kind, fav.data.template]);
+  }, [category, kind, fav.data.template, venue]);
 
-  const scenes = useMemo(() => new Map(CREATIVE_TEMPLATES.map((t) => [t.key, buildTemplateScene(t.key, style, format, postLocale)])), [style, format, postLocale]);
+  const scenes = useMemo(() => new Map([...CREATIVE_TEMPLATES, ...(venue ? FIELD_TEMPLATES : [])]
+    .map((t) => [t.key, buildTemplateScene(t.key, styleOf(t.key), format, postLocale)])), [styleOf, format, postLocale, venue]);
   const dataFor = useCallback((key: string) => startingData({ key, locale: postLocale, academy, seed: active, session: sessionQ.data ?? null, stills }),
     [postLocale, academy, active, sessionQ.data, stills]);
 
@@ -119,11 +136,15 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
     setFailed(null);
     try {
       const data = dataFor(key);
+      // A clip or moment with no camera chosen yet starts following the ball, not on the middle of the pitch.
+      const footage = active && (active.type === "clip" || active.type === "recording") && active.framing === undefined ? seedMedia(active) : null;
+      const framing = footage ? await followTheBall(academyId, footage) : null;
+      const seed = framing && active ? { ...active, framing } as TemplateSeed : active;
       const project = await create.mutateAsync({
         title: projectTitle(title, data, active),
         templateKey: key,
-        style,
-        scene: withSeedCamera(buildTemplateScene(key, style, format, postLocale), active),
+        style: styleOf(key),
+        scene: withSeedCamera(buildTemplateScene(key, styleOf(key), format, postLocale), seed),
         data,
         sourceSessionId: sessionId,
       });
@@ -171,12 +192,16 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
 
       <div className="space-y-3">
         <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+          {venue ? (
+            <Chip active={fieldOnly} onClick={() => { setCategory("field"); if (!FIELD_FORMATS.includes(format)) setFormat("story"); }} testId="creative-templates-cat-field">{copy.fieldPack}</Chip>
+          ) : null}
           <Chip active={category === "all"} onClick={() => setCategory("all")} testId="creative-templates-cat-all">{copy.all}</Chip>
           {TEMPLATE_CATEGORIES.map((c) => (
             <Chip key={c} active={category === c} onClick={() => setCategory(c)} testId={`creative-templates-cat-${c}`}>{copy.categories[c]}</Chip>
           ))}
         </div>
 
+        {fieldOnly ? <p className="text-xs text-muted-text" data-testid="creative-templates-field-hint">{copy.fieldPackHint}</p> : (
         <div>
           <p className="mb-1.5 text-xs font-semibold text-muted-text">{copy.styleLabel}</p>
           <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="radiogroup" aria-label={copy.styleLabel}>
@@ -191,9 +216,10 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
           </div>
           <p className="mt-1 text-xs text-muted-text">{copy.styleHints[style]}</p>
         </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Segmented label={copy.formatLabel} value={format} options={FORMATS} onChange={(v) => setFormat(v as CreativeFormat)}
+          <Segmented label={copy.formatLabel} value={format} options={fieldOnly ? FIELD_FORMATS : FORMATS} onChange={(v) => setFormat(v as CreativeFormat)}
             render={(f: CreativeFormat) => <>{copy.formats[f]} <span className="font-mono opacity-70">{copy.formatHints[f]}</span></>} />
           <Segmented label={copy.languageLabel} value={postLocale} options={POST_LOCALES} onChange={(v) => setPostLocale(v as "ar" | "en")}
             render={(l: "ar" | "en") => <span lang={l}>{copy.languages[l]}</span>} />

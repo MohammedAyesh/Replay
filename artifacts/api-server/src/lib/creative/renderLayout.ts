@@ -245,7 +245,7 @@ export function fitRect(fit: "cover" | "contain", srcW: number, srcH: number, w:
 // ── Entrances ────────────────────────────────────────────────────────────────
 
 // One definition for the browser preview, frame previews and the MP4 (lib/api-zod creativeMotion.ts).
-export { ENTER_MS, SLIDE_PX, PUSH_MS, entranceAt, blurAt } from "@workspace/api-zod";
+export { ENTER_MS, SLIDE_PX, PUSH_MS, entranceAt, blurAt, fadeAt } from "@workspace/api-zod";
 
 // ── Video timeline ───────────────────────────────────────────────────────────
 

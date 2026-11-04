@@ -5,11 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { createCanvas } from "@napi-rs/canvas";
 import {
-  PUSH_MS, blurAt, buildTemplateScene, entranceAt, sceneForData, slowZoomAt, slowZoomsLayer, templateSampleData, SLOW_ZOOM_TO, type CreativeBrand, type Scene, type SceneLayer,
+  PUSH_MS, blurAt, buildTemplateScene, entranceAt, fadeAt, sceneForData, slowZoomAt, slowZoomsLayer, templateSampleData, SLOW_ZOOM_TO, type CreativeBrand, type Scene, type SceneLayer,
 } from "@workspace/api-zod";
 import { renderSceneCanvas } from "./render";
 import {
-  DUCK, atempoChain, audioMixFilters, blurFilter, buildFfmpegArgs, entranceXY, musicFilters, musicMixFor, overlayIntervals, photoVideoMaxrateKbps, planStack,
+  DUCK, atempoChain, audioMixFilters, blurFilter, buildFfmpegArgs, entranceXY, fadeFilters, fadeSegments, musicFilters, musicMixFor, overlayIntervals, photoVideoMaxrateKbps, planStack,
   renderSceneMp4, slowZoomFilter, type MusicMix,
 } from "./renderVideo";
 
@@ -471,4 +471,43 @@ describe("field pack motion: pushes, wipes and the end card's blur", () => {
     // 14 s: under the end card the same bars are blurred (and dimmed): no near-white left.
     expect(Math.max(...row(14))).toBeLessThan(120);
   }, 400_000);
+});
+
+describe("fades: a background that fades in, out, and steps aside while the clip plays", () => {
+  const plate = rect("plate", { w: 1080, h: 1920, fill: "#FF0000", fadeInMs: 1000, fadeOutMs: 1000, dip: { fromMs: 2000, toMs: 4000, fadeMs: 500 } });
+
+  it("fadeAt ramps in from the start, out to the end, and dips around the clip", () => {
+    expect(fadeAt(plate, 0, 6000)).toBe(0);
+    expect(fadeAt(plate, 500, 6000)).toBeCloseTo(0.5, 6);
+    expect(fadeAt(plate, 1500, 6000)).toBe(1);
+    expect(fadeAt(plate, 2250, 6000)).toBeCloseTo(0.5, 6);
+    expect(fadeAt(plate, 3000, 6000)).toBe(0);
+    expect(fadeAt(plate, 4250, 6000)).toBeCloseTo(0.5, 6);
+    expect(fadeAt(plate, 4600, 6000)).toBe(1);
+    expect(fadeAt(plate, 5500, 6000)).toBeCloseTo(0.5, 6);
+    expect(fadeAt(rect("plain"), 3000, 6000)).toBe(1);
+  });
+
+  it("splits a dip into two overlays with ffmpeg fades, and keeps a fading layer out of the shared PNGs", () => {
+    expect(fadeSegments(plate, 6000)).toEqual([
+      { fromMs: 0, toMs: 4000, fades: [{ dir: "in", atMs: 0, ms: 1000 }, { dir: "out", atMs: 5000, ms: 1000 }, { dir: "out", atMs: 2000, ms: 500 }] },
+      { fromMs: 4000, toMs: 6000, fades: [{ dir: "in", atMs: 0, ms: 1000 }, { dir: "out", atMs: 5000, ms: 1000 }, { dir: "in", atMs: 4000, ms: 500 }] },
+    ]);
+    expect(fadeSegments({ fadeInMs: 300 }, 6000)).toEqual([{ fromMs: 0, toMs: 6000, fades: [{ dir: "in", atMs: 0, ms: 300 }] }]);
+    expect(fadeFilters([{ dir: "out", atMs: 2000, ms: 500 }])).toBe(",fade=t=out:st=2.000:d=0.500:alpha=1");
+    const scene: Scene = { v: 1, format: "story", durationMs: 6000, background: "#000000", locale: "en", layers: [plate, rect("title")] };
+    expect(planStack(scene, () => false).map((s) => s.type)).toEqual(["animated", "stills"]);
+  });
+
+  it("renders it: red while shown, gone while the clip plays, back after", async () => {
+    const scene: Scene = { v: 1, format: "story", durationMs: 6000, background: "#000000", locale: "en", layers: [plate] };
+    const out = path.join(work, "dip.mp4");
+    await renderSceneMp4({ scene, brand: BRAND, data: {}, videos: async () => null, workDir: work, out });
+    const red = (t: number) => frameAt(out, t, 540, 960)[0];
+    expect(red(0.1)).toBeLessThan(60);
+    expect(red(1.6)).toBeGreaterThan(200);
+    expect(red(3.0)).toBeLessThan(30);
+    expect(red(4.8)).toBeGreaterThan(200);
+    expect(red(5.95)).toBeLessThan(60);
+  }, 120_000);
 });

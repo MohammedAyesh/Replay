@@ -64,6 +64,7 @@ export function DataPanel({ ed }: { ed: EditorApi }) {
                 <Button type="button" size="sm" variant="outline" className="min-h-9 rounded-xl" data-testid={`editor-data-pick-${path}`}
                   onClick={() => ed.pick(path === "media" ? "any" : "image", (picked, meta) => {
                     ed.setData(path, picked);
+                    if (path === "media") ed.frameFootage({ slot: "media" }, picked);
                     // Picked from the Player picker: offer his number, position and (names allowed) first name.
                     const who = (meta as { player?: PickedPlayer }).player;
                     if (who && playerFields) setOffer(who);

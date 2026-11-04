@@ -79,6 +79,15 @@ const baseLayer = {
    */
   enter: z.enum(ENTRANCES).optional(),
   /**
+   * Fades on video scenes (see creativeMotion.ts fadeAt): in over fadeInMs from the layer's start,
+   * out over fadeOutMs to its end (the scene's end when it has none). `dip` fades it out over
+   * dip.fadeMs from dip.fromMs and back in over the same from dip.toMs: a background that steps
+   * aside while a clip plays. Footage layers take the in and out fades only.
+   */
+  fadeInMs: z.number().min(0).max(10_000).optional(),
+  fadeOutMs: z.number().min(0).max(10_000).optional(),
+  dip: z.object({ fromMs: z.number().min(0), toMs: z.number().min(0), fadeMs: z.number().min(0).max(5_000) }).optional(),
+  /**
    * Shown only when every condition holds for the scene's data (see
    * layerShownFor). A line-up draws its photo tiles when there are player
    * photos and its numbers-only rows when there are none.

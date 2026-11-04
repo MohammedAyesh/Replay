@@ -604,7 +604,7 @@ const FIELD_DEFS: FieldDef[] = [
     key: "field-booking-clip", title: { en: "Booking clip", ar: "لقطة من الحجز" }, formats: STORY,
     build: bookingClip,
     sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), custom: {
-      ...endBits(ar, "JG-4F7K2Q"), kicker: ar ? "على أرض جلاكسي" : "On the pitch at Galaxy", title: ar ? "جووول!" : "Goal!", headline: ar ? "جووول!" : "Goal!", meta: ar ? "الخميس 9:00 م · ملعب 2" : "Thu 9:00 PM · Pitch 2",
+      ...endBits(ar, "JG-4F7K2Q"), kicker: ar ? "على أرضنا" : "On our pitch", title: ar ? "جووول!" : "Goal!", headline: ar ? "جووول!" : "Goal!", meta: ar ? "الخميس 9:00 م · ملعب 2" : "Thu 9:00 PM · Pitch 2",
     } }),
   },
   {
@@ -684,7 +684,7 @@ const FIELD_DEFS: FieldDef[] = [
     key: "field-thanks", title: { en: "Thank you (the week in numbers)", ar: "شكراً (الأسبوع بالأرقام)" }, formats: STORY,
     build: (c) => thanks(c, false),
     sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), custom: {
-      ...endBits(ar), title: ar ? "شكراً إلكم" : "Thank you", sub: ar ? "على أسبوع حلو بجلاكسي" : "for a great week at Galaxy",
+      ...endBits(ar), title: ar ? "شكراً إلكم" : "Thank you", sub: ar ? "على أسبوع حلو معنا" : "for a great week with us",
       ...countData("matches", 126), matchesLabel: ar ? "ماتش متصوّر" : "games filmed",
       ...countData("goals", 512), goalsLabel: ar ? "جول" : "goals",
       ...countData("km", 1840), kmLabel: ar ? "كم ركضتوا كلكم" : "km you all ran",
@@ -724,6 +724,9 @@ export const fieldTemplateTitle = (key: string, ar: boolean) => {
   return d ? (ar ? d.title.ar : d.title.en) : key;
 };
 export const fieldTemplateFormats = (key: string): CreativeFormat[] => FIELD_DEFS.find((d) => d.key === key)?.formats ?? STORY;
+/** Every field template's title and formats, in the pack's order (the Creative hub's "Field pack"). */
+export const FIELD_TEMPLATE_DEFS: { key: FieldTemplateKey; title: { en: string; ar: string }; formats: CreativeFormat[] }[] =
+  FIELD_DEFS.map(({ key, title, formats }) => ({ key, title, formats }));
 
 /** A field template laid out in a format (the first of its formats when it isn't one of them). */
 export function buildFieldScene(key: FieldTemplateKey, format: CreativeFormat, locale: Locale): Scene {

@@ -23,6 +23,7 @@ import {
   baselineIn,
   displayText,
   entranceAt,
+  fadeAt,
   blurAt,
   fitRect,
   fontFace,
@@ -292,7 +293,7 @@ export function drawScene(
     let dy = 0;
     if (opts.entrances && t !== null) {
       const e = entranceAt(layer, t, { w: W, h: H });
-      alpha *= e.alpha;
+      alpha *= e.alpha * fadeAt(layer, t, scene.durationMs ?? 0);
       dx = e.dx;
       dy = e.dy;
     }

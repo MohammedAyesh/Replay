@@ -72,7 +72,7 @@ export function AcademyCreativeHub({ academyId, initialTab }: { academyId: numbe
         {tab === "forYou" ? <CreativeForYou academyId={academyId} nav={nav} />
           : tab === "squad" ? <CreativeSquad academyId={academyId} />
           : tab === "library" ? <CreativeLibrary academyId={academyId} nav={nav} />
-          : tab === "clips" ? <StudioClipsPanel academyId={academyId} />
+          : tab === "clips" ? <StudioClipsPanel academyId={academyId} onMakePost={(clipId) => nav.openTemplates({ type: "clip", clipId })} />
           : tab === "quick" ? <StudioQuickPosts academyId={academyId} />
           : tab === "templates" ? <CreativeTemplates academyId={academyId} nav={nav} seed={seed} />
           : tab === "editor" ? <CreativeEditor academyId={academyId} nav={nav} projectId={projectId} />

@@ -70,3 +70,35 @@ export function entranceAt(
 export function blurAt(layer: { blur?: { fromMs: number; px: number } }, t: number): number {
   return layer.blur && t >= layer.blur.fromMs ? layer.blur.px : 0;
 }
+
+/** A dip's fade when none is set (ms). */
+export const DIP_FADE_MS = 500;
+
+/**
+ * A layer's fade at scene time t (ms) as an opacity factor 0–1 (multiplies its opacity and any
+ * fade entrance): in over fadeInMs from its start, out over fadeOutMs to its end (the scene's
+ * end, `sceneMs`, when it has none), and its dip (out from dip.fromMs, back in from dip.toMs,
+ * each over dip.fadeMs). renderVideo.ts writes the same ramps as ffmpeg fade filters.
+ */
+export function fadeAt(
+  layer: Pick<SceneLayer, "startMs" | "endMs" | "fadeInMs" | "fadeOutMs" | "dip">,
+  t: number,
+  sceneMs: number,
+): number {
+  const start = layer.startMs ?? 0;
+  const end = Math.min(layer.endMs ?? sceneMs, sceneMs);
+  let a = 1;
+  if (layer.fadeInMs) a *= clamp01((t - start) / layer.fadeInMs);
+  if (layer.fadeOutMs) a *= clamp01((end - t) / layer.fadeOutMs);
+  const dip = layer.dip;
+  if (dip && dip.toMs > dip.fromMs) {
+    const f = dip.fadeMs || DIP_FADE_MS;
+    if (t >= dip.toMs) a *= clamp01((t - dip.toMs) / f);
+    else if (t >= dip.fromMs) a *= 1 - clamp01((t - dip.fromMs) / f);
+  }
+  return a;
+}
+
+/** Does the layer fade at all (in, out or a dip)? */
+export const hasFades = (layer: Pick<SceneLayer, "fadeInMs" | "fadeOutMs" | "dip">) =>
+  !!layer.fadeInMs || !!layer.fadeOutMs || !!(layer.dip && layer.dip.toMs > layer.dip.fromMs);

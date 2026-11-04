@@ -31,6 +31,8 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import libraryRouter from "./academyCreativeLibrary";
+import creativeRouter from "./academyCreative";
+import { FIELD_STYLE, buildTemplateScene } from "@workspace/api-zod";
 import studioRouter from "./academyStudio";
 import { academyClip, academyRecording } from "../lib/creative/renderMedia";
 import { clipOrigin } from "../lib/creative/venueLibrary";
@@ -54,6 +56,7 @@ beforeAll(async () => {
   app = express();
   app.use(express.json());
   app.use("/api", libraryRouter);
+  app.use("/api", creativeRouter);
   app.use("/api", studioRouter);
   const users = await db.insert(usersTable).values([
     { name: `Field Owner ${tag}`, email: `vlib-owner-${tag}@test.local` },
@@ -212,5 +215,14 @@ describe("clipOrigin", () => {
     expect(clipOrigin({ sourceRecordingId: null, footageRequestId: null, matchCode: null, academyId: null })).toBe("auto");
     expect(clipOrigin({ sourceRecordingId: 3, footageRequestId: null, matchCode: null, academyId: null })).toBe("player");
     expect(clipOrigin({ sourceRecordingId: null, footageRequestId: null, matchCode: "ABC123", academyId: null })).toBe("player");
+  });
+});
+
+describe("field pack projects", () => {
+  const body = (title: string) => ({ title, templateKey: "field-booking-clip", style: FIELD_STYLE, scene: buildTemplateScene("field-booking-clip", FIELD_STYLE, "story", "ar"), data: { media: { type: "clip", clipId: 1 } } });
+  it("a field saves a field pack design from a clip", async () => {
+    const res = await request(app).post(`/api/academy/console/academies/${venueId}/creative/projects`).set(auth(ownerId)).send(body("Booking clip"));
+    expect(res.status).toBe(201);
+    expect(res.body.style ?? res.body.project?.style).toBe(FIELD_STYLE);
   });
 });

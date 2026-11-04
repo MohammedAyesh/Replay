@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Ban, Check } from "lucide-react";
 import {
-  CREATIVE_FORMATS, parsePlateKey, resolveColor, resolveTint,
+  CREATIVE_FORMATS, FIELD_STYLE, parsePlateKey, resolveColor, resolveTint,
   type CreativeStyle, type LayerTint, type Scene,
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
@@ -11,7 +11,8 @@ import { creativeMediaUrl, useCreativeBackgrounds } from "@/lib/creative-hub-med
 import { offeredStyles } from "@/lib/creative-styles";
 import { cn } from "@/lib/utils";
 import { SceneCanvas } from "../scene-canvas";
-import { NumberSlider, Section, panelEmpty } from "./controls";
+import { NumberSlider, Section, Toggle, panelEmpty } from "./controls";
+import { FadeSliders } from "./layer-common";
 import type { EditorApi } from "./editor-api";
 
 /**
@@ -31,6 +32,7 @@ export function StylePanel({ ed }: { ed: EditorApi }) {
     return out;
   }, [ed.scene, current, styles]);
   if (!previews) return <p className={panelEmpty}>{copy.noTemplate}</p>;
+  if (current === FIELD_STYLE) return <p className={panelEmpty} data-testid="editor-style-field">{copy.fieldLook}</p>;
   return (
     <div className="space-y-5">
       <div className="space-y-3" data-testid="editor-style-panel">
@@ -150,6 +152,41 @@ function BackgroundRow({ ed, style }: { ed: EditorApi; style: CreativeStyle }) {
             onChange={(v) => ed.setPlate({ tint: nextTint(tint, { amount: v / 100 }) }, "tint-amount")} />
         </div>
       ) : null}
+
+      {shown && ed.isVideo ? <BackgroundFades ed={ed} plate={shown} /> : null}
     </Section>
+  );
+}
+
+/** The clip the background steps aside for: the main footage (the template's {{media}} slot), else the biggest video layer. */
+export function mainClipWindow(scene: Scene): { fromMs: number; toMs: number } | null {
+  const D = scene.durationMs ?? 0;
+  const videos = scene.layers.filter((l) => l.kind === "video" && !l.hidden);
+  if (!videos.length || !D) return null;
+  const main = videos.find((l) => l.kind === "video" && l.src.type === "binding" && l.src.path === "media")
+    ?? [...videos].sort((a, b) => b.w * b.h - a.w * a.h)[0]!;
+  const fromMs = main.startMs ?? 0;
+  const toMs = Math.min(main.endMs ?? D, D);
+  return toMs > fromMs ? { fromMs, toMs } : null;
+}
+
+const DIP_MS = 600;
+
+/** Video designs: the background fades in and out, and can step aside while the clip plays. */
+function BackgroundFades({ ed, plate }: { ed: EditorApi; plate: NonNullable<ReturnType<typeof plateOf>> }) {
+  const copy = useCreativeEditorCopy();
+  const clip = mainClipWindow(ed.scene);
+  return (
+    <div className="space-y-3 border-t border-line pt-3" data-testid="editor-background-fades">
+      <span className="text-sm font-semibold text-text">{copy.backgroundFades}</span>
+      <FadeSliders ed={ed} layer={plate} onChange={(change, key) => ed.setPlate(change, key)} />
+      {clip ? (
+        <div className="space-y-1">
+          <Toggle id="editor-background-dip" label={copy.dipForClip} checked={!!plate.dip} testId="editor-background-dip"
+            onChange={(on) => ed.setPlate({ dip: on ? { ...clip, fadeMs: DIP_MS } : null })} />
+          <p className="text-[11px] text-muted-text">{copy.dipForClipHint}</p>
+        </div>
+      ) : null}
+    </div>
   );
 }

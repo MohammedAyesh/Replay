@@ -20,7 +20,7 @@ import { applyEndScreen, type EndScreenJob } from "../clipBranding/endScreenVide
 import { logger } from "../logger";
 import { renderScenePng, sceneSize, type ConcreteSource, type SceneRenderOptions } from "./render";
 import { ENTER_MS, PUSH_MS, SLIDE_PX, videoParts } from "./renderLayout";
-import { isFadeEntrance, wipeSpan } from "@workspace/api-zod";
+import { DIP_FADE_MS, hasFades, isFadeEntrance, wipeSpan } from "@workspace/api-zod";
 
 /**
  * Creative hub engine: a video scene → MP4 (1080 wide, H.264 + AAC, 30 fps),
@@ -33,6 +33,9 @@ import { isFadeEntrance, wipeSpan } from "@workspace/api-zod";
  * layers becomes one PNG per distinct visibility interval, switched on with
  * enable='gte(t,a)*lt(t,b)'. A layer with an entrance (fade, slide-up,
  * slide-left; pop is drawn as a fade) gets a PNG of its own so it can move.
+ * A layer with fades (fadeInMs / fadeOutMs / dip, creativeMotion.ts fadeAt)
+ * gets one too, with ffmpeg fade filters; a dip splits it into two overlays
+ * of the same PNG, before and after (see fadeSegments).
  * Z-order is exactly the scene's. With the scene's slow zoom on, the
  * background and full-bleed photos (slowZoomsLayer) get a PNG of their own
  * (neighbours with the same origin and window share one) that ffmpeg's
@@ -83,7 +86,8 @@ export function liveLayers(scene: Scene): SceneLayer[] {
  */
 export function planStack(scene: Scene, isFootage: (layer: SceneLayer) => boolean, zooms: (layer: SceneLayer) => boolean = () => false): StackItem[] {
   const out: StackItem[] = [];
-  const windowOf = (l: SceneLayer) => `${l.startMs ?? 0}:${l.endMs ?? ""}`;
+  // Zooming layers share a PNG only when they show, and fade, together.
+  const windowOf = (l: SceneLayer) => `${l.startMs ?? 0}:${l.endMs ?? ""}:${l.fadeInMs ?? 0}:${l.fadeOutMs ?? 0}:${l.dip ? `${l.dip.fromMs}-${l.dip.toMs}-${l.dip.fadeMs}` : ""}`;
   for (const layer of liveLayers(scene)) {
     if (layer.kind === "video" && isFootage(layer)) out.push({ type: "video", layer });
     else if (animated(layer)) out.push({ type: "animated", layer });
@@ -93,6 +97,7 @@ export function planStack(scene: Scene, isFootage: (layer: SceneLayer) => boolea
       if (last?.type === "zoom" && last.origin.x === origin.x && last.origin.y === origin.y && windowOf(last.layers[0]!) === windowOf(layer)) last.layers.push(layer);
       else out.push({ type: "zoom", layers: [layer], origin });
     }
+    else if (hasFades(layer)) out.push({ type: "animated", layer });
     else {
       const last = out[out.length - 1];
       if (last?.type === "stills") last.layers.push(layer);
@@ -100,6 +105,34 @@ export function planStack(scene: Scene, isFootage: (layer: SceneLayer) => boolea
     }
   }
   return out;
+}
+
+export type FadeStep = { dir: "in" | "out"; atMs: number; ms: number };
+
+/**
+ * A fading layer's overlays over [its start, its end ∧ the scene's end): one, or two around a
+ * dip (the first fades out at dip.fromMs and stops at dip.toMs, the second fades back in from
+ * dip.toMs). Each carries the layer's own in and out fades. The same ramps as fadeAt.
+ */
+export function fadeSegments(layer: Pick<SceneLayer, "startMs" | "endMs" | "fadeInMs" | "fadeOutMs" | "dip">, durationMs: number, withDip = true): Array<{ fromMs: number; toMs: number; fades: FadeStep[] }> {
+  const S = layer.startMs ?? 0;
+  const E = Math.min(layer.endMs ?? durationMs, durationMs);
+  if (E <= S) return [];
+  const base: FadeStep[] = [];
+  if (layer.fadeInMs) base.push({ dir: "in", atMs: S, ms: layer.fadeInMs });
+  if (layer.fadeOutMs) base.push({ dir: "out", atMs: Math.max(S, E - layer.fadeOutMs), ms: Math.min(layer.fadeOutMs, E - S) });
+  const dip = withDip ? layer.dip : undefined;
+  if (!dip || dip.toMs <= dip.fromMs || dip.fromMs >= E || dip.toMs <= S) return [{ fromMs: S, toMs: E, fades: base }];
+  const f = dip.fadeMs || DIP_FADE_MS;
+  const out: Array<{ fromMs: number; toMs: number; fades: FadeStep[] }> = [];
+  if (dip.fromMs > S) out.push({ fromMs: S, toMs: Math.min(dip.toMs, E), fades: [...base, { dir: "out", atMs: dip.fromMs, ms: f }] });
+  if (dip.toMs < E) out.push({ fromMs: dip.toMs, toMs: E, fades: [...base, { dir: "in", atMs: dip.toMs, ms: f }] });
+  return out;
+}
+
+/** ffmpeg fade filters (on the scene's clock, on the alpha) for fade steps, each with a leading comma. */
+export function fadeFilters(fades: FadeStep[] | undefined): string {
+  return (fades ?? []).filter((f) => f.ms > 0).map((f) => `,fade=t=${f.dir}:st=${sec(f.atMs)}:d=${sec(f.ms)}:alpha=1`).join("");
 }
 
 export type OverlayInterval = { fromMs: number; toMs: number; ids: string[] };
@@ -146,6 +179,8 @@ export type Track =
     endMs?: number;
     /** Slow zoom about this point (canvas px), over the whole scene. */
     zoom?: { x: number; y: number };
+    /** The layer's fades (fadeSegments). */
+    fades?: FadeStep[];
   }
   | { type: "video"; layer: VideoLayer; file: VideoSourceFile };
 
@@ -352,7 +387,7 @@ export function buildFfmpegArgs(opts: {
       const start = track.startMs ?? track.fromMs;
       const xy = entranceXY(track.enter, start, "0", "0", { w: W, h: H }, track.endMs);
       const zoom = track.zoom ? `,${slowZoomFilter(track.zoom, D, { w: W, h: H })}` : "";
-      filters.push(`[${k}:v]format=rgba${zoom}${fadeIn(track.enter, start)}[p${n}]`);
+      filters.push(`[${k}:v]format=rgba${zoom}${fadeIn(track.enter, start)}${fadeFilters(track.fades)}[p${n}]`);
       filters.push(`[${prev}][p${n}]overlay=x='${xy.x}':y='${xy.y}':enable='gte(t,${sec(track.fromMs)})*lt(t,${sec(track.toMs)})'[${next}]`);
       prev = next;
       return;
@@ -385,7 +420,7 @@ export function buildFfmpegArgs(opts: {
     const opacity = layer.opacity !== undefined && layer.opacity < 1 ? `,colorchannelmixer=aa=${layer.opacity.toFixed(3)}` : "";
     const rad = layer.rotation ? (layer.rotation * Math.PI) / 180 : 0;
     const rotate = rad ? `,rotate=a=${rad.toFixed(6)}:ow='rotw(${rad.toFixed(6)})':oh='roth(${rad.toFixed(6)})':c=none` : "";
-    filters.push(`[${joined}]fps=${FPS},setsar=1,${fit}${blurFilter(layer)}${opacity}${rotate},setpts=PTS+${sec(S)}/TB${fadeIn(layer.enter, S)}[v${n}]`);
+    filters.push(`[${joined}]fps=${FPS},setsar=1,${fit}${blurFilter(layer)}${opacity}${rotate},setpts=PTS+${sec(S)}/TB${fadeIn(layer.enter, S)}${fadeFilters(fadeSegments(layer, D, false)[0]?.fades)}[v${n}]`);
     const cx = layer.x + layer.w / 2;
     const cy = layer.y + layer.h / 2;
     const xy = entranceXY(layer.enter, S, `${cx.toFixed(2)}-w/2`, `${cy.toFixed(2)}-h/2`, { w: W, h: H }, layer.endMs);
@@ -512,10 +547,15 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
       tracks.push({ type: "video", layer: item.layer, file: footage.get(item.layer.id)! });
     } else if (item.type === "animated") {
       const l = item.layer;
-      tracks.push({ type: "png", path: await still(new Set([l.id])), fromMs: l.startMs ?? 0, toMs: Math.min(l.endMs ?? D, D), enter: l.enter, startMs: l.startMs ?? 0, ...(l.endMs !== undefined ? { endMs: l.endMs } : {}) });
+      const file = await still(new Set([l.id]));
+      const own = { enter: l.enter, startMs: l.startMs ?? 0, ...(l.endMs !== undefined ? { endMs: l.endMs } : {}) };
+      if (!hasFades(l)) tracks.push({ type: "png", path: file, fromMs: l.startMs ?? 0, toMs: Math.min(l.endMs ?? D, D), ...own });
+      else for (const seg of fadeSegments(l, D)) tracks.push({ type: "png", path: file, fromMs: seg.fromMs, toMs: seg.toMs, ...own, fades: seg.fades });
     } else if (item.type === "zoom") {
       const first = item.layers[0]!;
-      tracks.push({ type: "png", path: await still(new Set(item.layers.map((l) => l.id))), fromMs: first.startMs ?? 0, toMs: Math.min(first.endMs ?? D, D), zoom: item.origin });
+      const file = await still(new Set(item.layers.map((l) => l.id)));
+      if (!hasFades(first)) tracks.push({ type: "png", path: file, fromMs: first.startMs ?? 0, toMs: Math.min(first.endMs ?? D, D), zoom: item.origin });
+      else for (const seg of fadeSegments(first, D)) tracks.push({ type: "png", path: file, fromMs: seg.fromMs, toMs: seg.toMs, zoom: item.origin, fades: seg.fades });
     } else {
       for (const iv of overlayIntervals(item.layers, D)) {
         tracks.push({ type: "png", path: await still(new Set(iv.ids)), fromMs: iv.fromMs, toMs: iv.toMs });

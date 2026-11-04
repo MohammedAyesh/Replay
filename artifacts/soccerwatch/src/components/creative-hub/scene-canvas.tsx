@@ -20,6 +20,7 @@ import {
 import { withMediaVariant } from "@/lib/creative-hub-media";
 import { moveBox, resizeBox, rotationTo, tidy, type Box, type Corner, type Snap } from "./canvas/editing";
 import { blurAt, entranceAt } from "./canvas/layout";
+import { fadeAt } from "@workspace/api-zod";
 import { ImageView, VideoView } from "./canvas/media";
 import { ShapeView } from "./canvas/shapes";
 import { TextEditor, TextLayerView, useFontsReady } from "./canvas/text";
@@ -205,7 +206,8 @@ export function SceneCanvas({
             const zoom = video && timeMs !== undefined && gesture?.id !== layer.id && layer.kind === "image" && slowZoomsLayer(layer, resolveSource(layer.src, d), scene.format)
               ? slowZoomAt(scene, t ?? 0) : 1;
             const origin = zoom !== 1 ? slowZoomOrigin(layer, scene.format) : null;
-            const alpha = (layer.opacity ?? 1) * enter.alpha;
+            const fade = video && timeMs !== undefined ? fadeAt(layer, t ?? 0, scene.durationMs ?? 0) : 1;
+            const alpha = (layer.opacity ?? 1) * enter.alpha * fade;
             const editing = editingId === layer.id && layer.kind === "text";
             const interactive = editable && !(layer.id === PLATE_LAYER_ID && layer.locked);
             return (

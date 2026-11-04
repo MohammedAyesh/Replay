@@ -150,3 +150,22 @@ describe("children", () => {
       if (l.kind === "text" && l.text.includes("player.name")) expect(l.background, `${s.key}/${s.style}/${l.id}`).toBeUndefined();
   });
 });
+
+describe("the field pack in the Creative hub", () => {
+  it("lists every field template once, with formats it is drawn for, and keeps them out of the academies' catalogue", async () => {
+    const { FIELD_TEMPLATES, FIELD_TEMPLATE_KEYS, FIELD_STYLE } = await import("@workspace/api-zod");
+    expect(FIELD_TEMPLATES.map((t) => t.key)).toEqual(FIELD_TEMPLATE_KEYS);
+    expect(CREATIVE_TEMPLATES.some((t) => t.key.startsWith("field-"))).toBe(false);
+    for (const t of FIELD_TEMPLATES) {
+      expect(t.formats.length).toBeGreaterThan(0);
+      for (const f of t.formats) {
+        const scene = buildTemplateScene(t.key, FIELD_STYLE, f, "ar");
+        expect(scene.format).toBe(f);
+        expect(scene.template?.style).toBe(FIELD_STYLE);
+        expect(sceneSchema.safeParse(scene).success).toBe(true);
+      }
+    }
+    expect(FIELD_TEMPLATES.find((t) => t.key === "field-booking-clip")?.kind).toBe("video");
+    expect(FIELD_TEMPLATES.find((t) => t.key === "field-open-slots")?.kind).toBe("image");
+  });
+});

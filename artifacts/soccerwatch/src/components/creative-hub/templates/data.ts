@@ -1,4 +1,4 @@
-import { templateSampleData, type CreativeData, type MediaSource } from "@workspace/api-zod";
+import { isFieldTemplate, templateSampleData, type CreativeData, type MediaSource } from "@workspace/api-zod";
 import type { TemplateSeed } from "../types";
 
 /**
@@ -79,7 +79,31 @@ export function startingData(input: StartingInput): CreativeData {
   if (real && academy.showPlayerNames && session!.photos?.some(Boolean)) data.photos = session!.photos;
   if (sample.more) data.more = sample.more.map((m, i) => (real ? session!.more?.[i] : undefined) ?? own(i) ?? m);
   if (data.match) data.match = clean(data.match);
+  if (isFieldTemplate(key)) data.custom = fieldCustom(data.custom ?? {}, locale, name, academy);
   return clean(data);
+}
+
+/**
+ * The field pack's samples are written for one field. On another field the end card's name,
+ * booking line and phone become that field's own (the phone blank when it has none), and a
+ * player's name stays a placeholder unless the field shows names.
+ */
+function fieldCustom(custom: Record<string, string>, locale: "en" | "ar", name: string, academy: StartingInput["academy"]): Record<string, string> {
+  const ar = locale === "ar";
+  const out: Record<string, string> = { ...custom };
+  if ("field" in out) out.field = name || "";
+  if ("endBig" in out) {
+    out.endBig = academy.phone ?? "";
+    out.endLine = ar ? "احجز ملعبك، وماتشك بيتصوّر" : "Book a pitch, your game gets filmed";
+  }
+  if (!academy.showPlayerNames) {
+    if ("initials" in out) {
+      out.title = ar ? "اسم اللاعب" : "Player name";
+      out.initials = "";
+    }
+    for (let i = 1; i <= 5; i++) if (`r${i}n` in out) out[`r${i}n`] = ar ? `لاعب ${i}` : `Player ${i}`;
+  }
+  return out;
 }
 
 /** A project title: the template's name and, for a match, the opponent. */

@@ -1,4 +1,4 @@
-import { CREATIVE_PACKS, PUBLIC_STYLES, isPackStyle, type CreativePack, type CreativeStyle, type PackStyle } from "@workspace/api-zod";
+import { CREATIVE_PACKS, PUBLIC_STYLES, VENUE_STYLES, isPackStyle, type CreativePack, type CreativeStyle, type PackStyle } from "@workspace/api-zod";
 
 /**
  * Brand packs on the server. An academy is offered the seven house styles plus
@@ -18,10 +18,14 @@ export function allowedStyles(academy: { creativePack: string | null }): Creativ
   return pack ? [pack.key, ...PUBLIC_STYLES] : [...PUBLIC_STYLES];
 }
 
-/** May the academy save a project with this style (null/undefined = no style)? */
-export function styleAllowedFor(academy: { creativePack: string | null }, style: string | null | undefined): boolean {
+/**
+ * May the academy save a project with this style (null/undefined = no style)?
+ * The field pack's look ("field") is for field businesses (kind 'venue') only.
+ */
+export function styleAllowedFor(academy: { creativePack: string | null; kind?: string | null }, style: string | null | undefined): boolean {
   if (style === null || style === undefined) return true;
   if ((PUBLIC_STYLES as readonly string[]).includes(style)) return true;
+  if ((VENUE_STYLES as readonly string[]).includes(style)) return academy.kind === "venue";
   return isPackStyle(style) && academy.creativePack === style;
 }
 

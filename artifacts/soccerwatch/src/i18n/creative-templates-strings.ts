@@ -22,6 +22,8 @@ const en = {
   heading: "Templates",
   intro: "Pick a look, then tap a design to open it in the editor with your academy's colours, crest and footage.",
   all: "All",
+  fieldPack: "Field pack",
+  fieldPackHint: "Booking clips, awards, top 5, votes and the week in numbers, in your field's colours, crest, name and phone.",
   categories: {
     matchday: "Matchday",
     live: "In-game",
@@ -83,6 +85,8 @@ const ar: typeof en = {
   heading: "القوالب",
   intro: "اختار الستايل، وبعدين اضغط على التصميم عشان يفتح بالتعديل بألوان أكاديميتك وشعارها وتصويركم.",
   all: "الكل",
+  fieldPack: "قوالب الملعب",
+  fieldPackHint: "لقطات الحجوزات، الجوائز، أحلى 5، التصويت والأسبوع بالأرقام، بألوان ملعبكم وشعاره واسمه ورقمه.",
   categories: {
     matchday: "يوم الماتش",
     live: "خلال الماتش",

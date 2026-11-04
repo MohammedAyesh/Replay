@@ -97,13 +97,30 @@ export function centreFraming(zoom = DEFAULT_ZOOM): Framing {
 
 // ── Ball sightings of a recording (cached) ──────────────────────────────────
 
-const ballCache = new Map<number, { samples: BallSamples | null; at: number }>();
+const ballCache = new Map<number, { samples: BallSamples | null; at: number; ttl: number }>();
+const ballLoading = new Map<number, Promise<BallSamples | null>>();
 const BALL_TTL_MS = 10 * 60_000;
+/**
+ * A load that failed (a slow or dropped read of the match data) is retried after this, not
+ * remembered for BALL_TTL_MS: remembering it put every clip of that match on the middle of the
+ * pitch for ten minutes ("the clip resets to the middle", 2026-11-04).
+ */
+const BALL_FAILED_TTL_MS = 20_000;
 
 export async function recordingBall(recordingId: number): Promise<BallSamples | null> {
   const hit = ballCache.get(recordingId);
-  if (hit && Date.now() - hit.at < BALL_TTL_MS) return hit.samples;
+  if (hit && Date.now() - hit.at < hit.ttl) return hit.samples;
+  // One load per recording at a time: a framer and a template opening together share it.
+  const loading = ballLoading.get(recordingId);
+  if (loading) return loading;
+  const load = loadBall(recordingId).finally(() => ballLoading.delete(recordingId));
+  ballLoading.set(recordingId, load);
+  return load;
+}
+
+async function loadBall(recordingId: number): Promise<BallSamples | null> {
   let samples: BallSamples | null = null;
+  let ok = true;
   try {
     // Loaded on demand: the analysis modules are large.
     const [{ latestBundle }, { loadRecordingPlay }, { buildBallPath }] = await Promise.all([
@@ -114,20 +131,23 @@ export async function recordingBall(recordingId: number): Promise<BallSamples | 
     const bundle = await latestBundle(recordingId);
     if (bundle) {
       const play = await loadRecordingPlay(recordingId, { keepSegments: false });
+      // No play data for an analysed match is a failed read, not "no ball".
+      if (!play) ok = false;
       const path = play ? buildBallPath(bundle.manifest, play.sidecars, play.inPlay) : null;
       samples = path?.samples ?? null;
     }
   } catch (error) {
+    ok = false;
     logger.warn({ recordingId, error: (error as Error).message }, "Creative framing: ball path failed");
   }
-  ballCache.set(recordingId, { samples, at: Date.now() });
+  ballCache.set(recordingId, { samples, at: Date.now(), ttl: ok ? BALL_TTL_MS : BALL_FAILED_TTL_MS });
   if (ballCache.size > 8) ballCache.delete(ballCache.keys().next().value!);
   return samples;
 }
 
 /** For tests. */
-export function rememberBall(recordingId: number, samples: BallSamples | null): void {
-  ballCache.set(recordingId, { samples, at: Date.now() });
+export function rememberBall(recordingId: number, samples: BallSamples | null, ttl = BALL_TTL_MS): void {
+  ballCache.set(recordingId, { samples, at: Date.now(), ttl });
 }
 
 export type FramingAnswer = { framing: Framing; source: "ball" | "clip" | "centre"; coverage: number };

@@ -29,6 +29,11 @@ export type EditorApi = {
   template: TemplateMeta | null;
   /** The template's {{binding}} fields, or a general set for designs without a template. */
   fields: string[];
+  /**
+   * Footage was just picked for a video layer (or for the {{media}} slot): drop the old clip's
+   * camera, then follow the ball through the new one once it is known.
+   */
+  frameFootage: (target: { layerId: string } | { slot: "media" }, src: MediaSource) => void;
   /** Open the Library picker. */
   pick: (accept: "image" | "video" | "any", onPick: (source: MediaSource, meta: { durationMs?: number; label?: string }) => void) => void;
   /** For SceneCanvas previews inside panels. */

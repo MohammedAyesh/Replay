@@ -7,6 +7,22 @@ const academy: StartingInput["academy"] = { nameEn: "Jordan Knights", nameAr: "�
 const still = { type: "frame", recordingId: 41, atMs: 90_000 } as const;
 
 describe("startingData", () => {
+  it("puts a field's own name, phone and booking line on a field pack design, and no sample player names", () => {
+    const field = { ...academy, nameEn: "North Pitches", nameAr: "ملاعب الشمال", phone: "078 222 3333" };
+    const clip = startingData({ key: "field-booking-clip", locale: "ar", academy: field, seed: { type: "clip", clipId: 5 } });
+    expect(clip.custom?.field).toBe("ملاعب الشمال");
+    expect(clip.custom?.endBig).toBe("078 222 3333");
+    expect(clip.media).toEqual({ type: "clip", clipId: 5 });
+    expect(JSON.stringify(clip)).not.toMatch(/Galaxy|جلاكسي|9920/);
+    const potm = startingData({ key: "field-potm", locale: "en", academy: field, seed: null });
+    expect(potm.custom?.title).toBe("Player name");
+    expect(potm.custom?.initials ?? "").toBe("");
+    expect(startingData({ key: "field-leaderboard", locale: "en", academy: field, seed: null }).custom?.r1n).toBe("Player 1");
+    const named = startingData({ key: "field-potm", locale: "en", academy: { ...field, showPlayerNames: true }, seed: null });
+    expect(named.custom?.title).toBe("Mohammed A.");
+    expect(startingData({ key: "field-award", locale: "en", academy: { ...field, phone: null }, seed: null }).custom?.endBig ?? "").toBe("");
+  });
+
   it("puts the academy's own name, phone and Instagram in, never the sample's", () => {
     const d = startingData({ key: "freetrial", locale: "ar", academy, seed: null });
     expect(d.academy?.name).toBe("فرسان الأردن");

@@ -7,7 +7,7 @@ export {
   FIELD_STYLE, FIELD_TEMPLATE_KEYS, FIELD_TIMING, buildFieldScene, countData, fieldCountSteps, fieldSampleData, fieldTemplateFormats,
   fieldTemplateTitle, formatNumber, isFieldTemplate, type FieldTemplateKey,
 } from "./creativeTemplates/fieldPack";
-import { fieldSampleData, isFieldTemplate } from "./creativeTemplates/fieldPack";
+import { FIELD_TEMPLATE_DEFS, buildFieldScene, fieldSampleData, isFieldTemplate } from "./creativeTemplates/fieldPack";
 import { STYLE_KITS } from "./creativeTemplates/styles";
 
 /**
@@ -60,6 +60,23 @@ export const CREATIVE_TEMPLATES: TemplateMeta[] = DEFINITIONS.map((def) => {
   return {
     key: def.key,
     category: def.category,
+    title: def.title,
+    kind: scene.durationMs !== undefined ? "video" : "image",
+    formats: def.formats,
+    fields: sceneFields(scene),
+  };
+});
+
+/**
+ * The football fields' pack as catalogue entries (the field console's Creative hub shows these
+ * under "Field pack"; academies never see them). Each has one look, FIELD_STYLE, whatever style
+ * is picked. Category is a placeholder: the pack is its own chip.
+ */
+export const FIELD_TEMPLATES: TemplateMeta[] = FIELD_TEMPLATE_DEFS.map((def) => {
+  const scene = buildFieldScene(def.key, def.formats[0], "en");
+  return {
+    key: def.key,
+    category: "community",
     title: def.title,
     kind: scene.durationMs !== undefined ? "video" : "image",
     formats: def.formats,

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Crosshair, Film, ImagePlus, Replace, Shield } from "lucide-react";
 import { useCreativeFramerCopy } from "@/i18n/creative-framer-strings";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
-import { newMediaLayer, type MediaLayer } from "@/lib/creative-editor-state";
+import { newMediaLayer, uniqueLayerId, type MediaLayer } from "@/lib/creative-editor-state";
 import { Button } from "@/components/ui/button";
 import { Chip, NumberSlider, Section, Toggle, panelEmpty } from "./controls";
 import { LayerCommon } from "./layer-common";
@@ -27,7 +27,11 @@ export function MediaPanel({ ed }: { ed: EditorApi }) {
       </Button>
       {ed.isVideo ? (
         <Button type="button" variant="outline" className="col-span-2 min-h-10 rounded-xl" data-testid="editor-add-video"
-          onClick={() => ed.pick("video", (src, meta) => ed.add(newMediaLayer(ed.scene, "video", src, meta.durationMs)))}>
+          onClick={() => ed.pick("video", (src, meta) => {
+            const layer = newMediaLayer(ed.scene, "video", src, meta.durationMs);
+            ed.add(layer);
+            ed.frameFootage({ layerId: uniqueLayerId(ed.scene, layer.id) }, src);
+          })}>
           <Film className="h-4 w-4" />{copy.addVideo}
         </Button>
       ) : null}
@@ -48,6 +52,7 @@ export function MediaPanel({ ed }: { ed: EditorApi }) {
     if (layer.kind === "video") {
       const span = src.type === "recording" ? src.toMs - src.fromMs : meta.durationMs;
       ed.update(layer.id, { src, trimInMs: 0, trimOutMs: span, slowMo: undefined });
+      ed.frameFootage({ layerId: layer.id }, src);
     } else ed.update(layer.id, { src });
   });
   const sourceLabel = copy.mediaKinds[layer.src.type] ?? layer.src.type;

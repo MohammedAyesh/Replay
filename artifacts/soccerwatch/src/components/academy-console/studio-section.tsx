@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Download, ImagePlus, Loader2, Megaphone, Play, Plus, Trash2, Video, X } from "lucide-react";
+import { Check, Download, ImagePlus, LayoutTemplate, Loader2, Megaphone, Play, Plus, Trash2, Video, X } from "lucide-react";
 import { useStudioCopy } from "@/i18n/studio-strings";
 import { starredFirst, useFavorites } from "@/lib/favorites-api";
 import { StarButton } from "@/components/creative-hub/star-button";
@@ -55,7 +55,11 @@ const numOrNull = (v: string): number | null => (v.trim() === "" || !Number.isFi
 
 // ── Clips ───────────────────────────────────────────────────────────────────
 
-function ClipCard({ academyId, clip, onPlay, starred, onStar }: { academyId: number; clip: StudioClip; onPlay: () => void; starred: boolean; onStar: () => void }) {
+function ClipCard({ academyId, clip, onPlay, starred, onStar, onMakePost }: {
+  academyId: number; clip: StudioClip; onPlay: () => void; starred: boolean; onStar: () => void;
+  /** Creative hub only: open Templates starting from this clip. */
+  onMakePost?: () => void;
+}) {
   const all = useStudioCopy();
   const copy = all.studio;
   const [busy, setBusy] = useState<"download" | "ad" | null>(null);
@@ -96,6 +100,12 @@ function ClipCard({ academyId, clip, onPlay, starred, onStar }: { academyId: num
           {copy.status[clip.status]}
         </span>
         <div className="flex flex-wrap gap-2 pt-1">
+          {onMakePost ? (
+            <Button type="button" size="sm" className="rounded-xl bg-turf font-semibold text-void hover:bg-turf/90" disabled={!ready} onClick={onMakePost}
+              data-testid={`studio-clip-make-post-${clip.id}`}>
+              <LayoutTemplate className="h-4 w-4" /><span className="ms-1.5">{copy.makePost}</span>
+            </Button>
+          ) : null}
           <Button type="button" variant="outline" size="sm" className="rounded-xl" disabled={!!busy || clip.status === "expired" || clip.status === "live"} onClick={() => void run("download")}>
             {busy === "download" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             <span className="ms-1.5">{busy === "download" ? copy.preparing : copy.download}</span>
@@ -111,8 +121,11 @@ function ClipCard({ academyId, clip, onPlay, starred, onStar }: { academyId: num
   );
 }
 
-/** The academy's clips (was Studio → Clips; now Creative hub → Clips). Starred clips first. */
-export function StudioClipsPanel({ academyId }: { academyId: number }) {
+/**
+ * The academy's clips (was Studio → Clips; now Creative hub → Clips). Starred clips first.
+ * In the Creative hub each ready clip has "Make a post": Templates opens starting from it.
+ */
+export function StudioClipsPanel({ academyId, onMakePost }: { academyId: number; onMakePost?: (clipId: number) => void }) {
   const copy = useStudioCopy().studio;
   const query = useStudioClips(academyId);
   const fav = useFavorites(academyId);
@@ -124,7 +137,8 @@ export function StudioClipsPanel({ academyId }: { academyId: number }) {
     <div className="space-y-3">
       {clips.length === 0 ? <p className="rounded-2xl border border-dashed border-line bg-surface p-6 text-center text-sm text-muted-text">{copy.clipsEmpty}</p> : null}
       <div className="grid gap-3 lg:grid-cols-2">
-        {clips.map((clip) => <ClipCard key={clip.id} academyId={academyId} clip={clip} onPlay={() => setPlaying(clip)} starred={fav.isStarred("clip", clip.id)} onStar={() => fav.toggle("clip", clip.id)} />)}
+        {clips.map((clip) => <ClipCard key={clip.id} academyId={academyId} clip={clip} onPlay={() => setPlaying(clip)} starred={fav.isStarred("clip", clip.id)} onStar={() => fav.toggle("clip", clip.id)}
+          onMakePost={onMakePost ? () => onMakePost(clip.id) : undefined} />)}
       </div>
       <Dialog open={!!playing} onOpenChange={(open) => { if (!open) setPlaying(null); }}>
         <DialogContent className="max-w-lg border-line bg-surface p-3">

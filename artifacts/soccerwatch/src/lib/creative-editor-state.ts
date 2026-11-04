@@ -312,7 +312,11 @@ export function newMediaLayer(scene: Scene, kind: "image" | "video", src: MediaS
 
 export type ImageLayer = Extract<SceneLayer, { kind: "image" }>;
 /** A change to the background plate: another picture, its tint (null removes it), shown or not, how strongly. */
-export type PlateChange = { src?: MediaSource; tint?: LayerTint | null; hidden?: boolean; opacity?: number };
+export type PlateChange = {
+  src?: MediaSource; tint?: LayerTint | null; hidden?: boolean; opacity?: number;
+  /** Video designs: fades at the plate's start and end (0 = none), and stepping aside while a clip plays (null = off). */
+  fadeInMs?: number; fadeOutMs?: number; dip?: { fromMs: number; toMs: number; fadeMs: number } | null;
+};
 
 export const plateOf = (scene: Scene): ImageLayer | null => {
   const l = findLayer(scene, PLATE_LAYER_ID);
@@ -330,6 +334,9 @@ export function setPlate(scene: Scene, change: PlateChange, build: typeof buildT
     ...("tint" in change ? { tint: change.tint ?? undefined } : {}),
     ...("hidden" in change ? { hidden: change.hidden ? true : undefined } : {}),
     ...(change.opacity !== undefined ? { opacity: change.opacity >= 1 ? undefined : Math.max(0, change.opacity) } : {}),
+    ...(change.fadeInMs !== undefined ? { fadeInMs: change.fadeInMs > 0 ? change.fadeInMs : undefined } : {}),
+    ...(change.fadeOutMs !== undefined ? { fadeOutMs: change.fadeOutMs > 0 ? change.fadeOutMs : undefined } : {}),
+    ...("dip" in change ? { dip: change.dip ?? undefined } : {}),
   };
   if (plateOf(scene)) return updateLayer(scene, PLATE_LAYER_ID, patch);
   if (findLayer(scene, PLATE_LAYER_ID) || change.hidden) return scene;

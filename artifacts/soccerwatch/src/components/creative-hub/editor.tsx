@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Check, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Music, Palette, Redo2,
   Shapes, Smartphone, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import {
-  CREATIVE_TEMPLATES, recommendationSceneMusic, resolveSource,
+  CREATIVE_TEMPLATES, FIELD_TEMPLATES, recommendationSceneMusic, resolveSource,
   type CreativeBrand, type CreativeData, type MediaSource, type SceneLayer,
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
@@ -15,6 +15,7 @@ import {
   useCreativeBrand, useCreativeProject, useUpdateCreativeProject, type CreativeBrandInfo, type CreativeProject,
 } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
+import { followTheBall } from "@/lib/creative-framing";
 import { musicFileUrl, useCreativeMusic, useTemplateMusicRecommendations } from "@/lib/creative-hub-music-api";
 import { sceneTrack } from "@/lib/creative-music";
 import { apiUrl } from "@/lib/academy-studio-api";
@@ -137,7 +138,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   );
 
   // ── What panels read and change ─────────────────────────────────────────
-  const template = useMemo(() => CREATIVE_TEMPLATES.find((t) => t.key === (scene.template?.key ?? project.templateKey)) ?? null, [scene.template?.key, project.templateKey]);
+  const template = useMemo(() => [...CREATIVE_TEMPLATES, ...FIELD_TEMPLATES].find((t) => t.key === (scene.template?.key ?? project.templateKey)) ?? null, [scene.template?.key, project.templateKey]);
   const fields = useMemo(() => {
     const base = template?.fields.length ? template.fields : GENERAL_FIELDS;
     return [...new Set([...base, ...sceneBindings(scene).filter((p) => !p.startsWith("academy."))])];
@@ -166,6 +167,22 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   const update = useCallback((id: string, change: LayerChange, key?: string) =>
     dispatch({ type: "updateLayer", id, change, key: key ? `${key}:${id}` : undefined, at: Date.now() }), []);
 
+  // A picked clip starts out following the ball, not on the middle of the pitch.
+  const sceneRef = useRef(scene);
+  sceneRef.current = scene;
+  const frameSeq = useRef(0);
+  const frameFootage = useCallback((target: { layerId: string } | { slot: "media" }, src: MediaSource) => {
+    const ids = () => "layerId" in target ? [target.layerId]
+      : sceneRef.current.layers.filter((l) => l.kind === "video" && l.src.type === "binding" && l.src.path === target.slot).map((l) => l.id);
+    if (src.type !== "clip" && src.type !== "recording") return;
+    const seq = ++frameSeq.current;
+    for (const id of ids()) if (findLayer(sceneRef.current, id)?.kind === "video") update(id, { framing: undefined }, "autoframe");
+    void followTheBall(academyId, src).then((framing) => {
+      if (!framing || seq !== frameSeq.current) return;
+      for (const id of ids()) if (findLayer(sceneRef.current, id)?.kind === "video") update(id, { framing }, "autoframe");
+    });
+  }, [academyId, update]);
+
   const ed: EditorApi = {
     academyId, scene, selected, brand, data: viewData, template, fields, mediaUrl, isVideo, timeMs, playing,
     select: setSelectedId,
@@ -182,6 +199,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     setPlate: (change, key) => dispatch({ type: "setPlate", change, key: key ? `plate:${key}` : undefined, at: Date.now() }),
     setData: (path, value) => { setDataState((d) => setPath(d, path, value)); setDataRev((r) => r + 1); },
     pick: (accept, onPick) => setPicker({ accept, onPick }),
+    frameFootage,
     setTimeMs: (t) => setTimeMs(t),
     setPlaying,
   };
