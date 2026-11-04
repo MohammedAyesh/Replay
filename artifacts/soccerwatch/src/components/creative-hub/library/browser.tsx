@@ -1,3 +1,5 @@
+import { StarButton } from "../star-button";
+import { starredFirst, useFavorites } from "@/lib/favorites-api";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, Goal, Images, Loader2, Sparkles, Star, Target, Upload, Wind, X } from "lucide-react";
 import { useCreativeLibraryCopy, type CreativeLibraryStrings } from "@/i18n/creative-library-strings";
@@ -419,10 +421,13 @@ function clipBadge(c: LibraryClip, copy: LibraryCopy): string | null {
 
 function ClipTile({ academyId, c, onSelect }: { academyId: number; c: LibraryClip; onSelect: (item: LibraryItem) => void }) {
   const copy = useCreativeLibraryCopy();
+  const fav = useFavorites(academyId);
+  const starred = fav.isStarred("clip", c.clipId);
   const badge = clipBadge(c, copy);
   const usable = c.status === "ready" || c.status === "processing";
   return (
-    <li>
+    <li className="relative">
+      <StarButton size="sm" on={starred} onToggle={() => fav.toggle("clip", c.clipId)} className="absolute bottom-7 end-1.5 z-10" testId={`star-library-clip-${c.clipId}`} />
       <button type="button" disabled={!usable} onClick={() => onSelect({ kind: "clip", clip: c })} data-testid={`library-clip-${c.clipId}`}
         className="group block w-full text-start disabled:opacity-50">
         <Thumb urls={stillUrls(academyId, c.source, c.thumbnailUrl)} video length={formatLength(c.durationMs)}
@@ -452,7 +457,9 @@ function ClipsView({ academyId, accept, filter, onSelect }: {
   const [sort, setSort] = useState<ClipSort>("newest");
   const q = useLibraryClips(academyId, { squadId: filter.squadId, from: filter.from || null, to: filter.to || null, origin, sort });
   // A picture slot can only take a clip we can take a frame of.
-  const items = accept === "image" ? q.items.filter((c) => c.still) : q.items;
+  const fav = useFavorites(academyId);
+  // Starred clips first (among those loaded).
+  const items = starredFirst(accept === "image" ? q.items.filter((c) => c.still) : q.items, (c) => c.clipId, sort === "newest" ? fav.data.clip : []);
   // A field's clips come from players and from Replay: say which, filter by it, and sort by match or player.
   const counts = q.counts;
   const controls = counts && (counts.all > 0 || origin) ? (

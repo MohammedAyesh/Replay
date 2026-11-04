@@ -1,3 +1,6 @@
+import type { ReactNode } from "react";
+import { StarButton } from "./star-button";
+import { starredFirst, useFavorites } from "@/lib/favorites-api";
 import { ArrowLeft, ArrowRight, Image as ImageIcon, LayoutTemplate, PenTool, Send, Video } from "lucide-react";
 import { useCreativePublishCopy } from "@/i18n/creative-publish-strings";
 import { apiUrl } from "@/lib/academy-studio-api";
@@ -29,6 +32,7 @@ export function CreativePublish({ academyId, nav, projectId }: SectionProps & { 
 function PickDraft({ academyId, nav }: SectionProps) {
   const copy = useCreativePublishCopy();
   const drafts = useCreativeProjects(academyId, { status: ["draft", "ready"] });
+  const fav = useFavorites(academyId);
   return (
     <section className="space-y-4 rounded-2xl border border-line bg-surface p-5" data-testid="publish-pick">
       <div>
@@ -46,7 +50,11 @@ function PickDraft({ academyId, nav }: SectionProps) {
           : (drafts.data ?? []).length === 0 ? <p className="text-sm text-muted-text">{copy.noProject.noDrafts}</p>
             : (
               <ul className="grid gap-2 sm:grid-cols-2">
-                {drafts.data!.slice(0, 12).map((p) => <DraftRow key={p.id} project={p} nav={nav} />)}
+                {starredFirst(drafts.data!, (p) => p.id, fav.data.project).slice(0, 12).map((p) => (
+                  <DraftRow key={p.id} project={p} nav={nav}
+                    star={<StarButton size="sm" on={fav.isStarred("project", p.id)} onToggle={() => fav.toggle("project", p.id)}
+                      className={fav.isStarred("project", p.id) ? "" : "bg-surface text-muted-text hover:bg-surface hover:text-text"} testId={`star-publish-${p.id}`} />} />
+                ))}
               </ul>
             )}
       </div>
@@ -54,7 +62,7 @@ function PickDraft({ academyId, nav }: SectionProps) {
   );
 }
 
-function DraftRow({ project, nav }: { project: CreativeProject; nav: SectionProps["nav"] }) {
+function DraftRow({ project, nav, star }: { project: CreativeProject; nav: SectionProps["nav"]; star?: ReactNode }) {
   const copy = useCreativePublishCopy();
   const thumb = isRendered(project) && !isVideoProject(project) && project.outputUrl ? apiUrl(project.outputUrl) : null;
   return (
@@ -67,6 +75,7 @@ function DraftRow({ project, nav }: { project: CreativeProject; nav: SectionProp
         <span className="block truncate text-sm font-semibold text-text" dir="auto">{project.title || copy.untitled}</span>
         <span className="block text-[11px] text-muted-text">{copy.formats[project.format]} · {copy.kinds[project.kind]} · {copy.status[project.status]}</span>
       </span>
+      {star}
       <button type="button" onClick={() => nav.openInEditor(project.id)} className="min-h-9 rounded-full px-3 text-xs font-semibold text-muted-text hover:text-text">{copy.noProject.edit}</button>
       <button type="button" onClick={() => nav.openInPublish(project.id)} className="min-h-9 rounded-full bg-turf/15 px-3 text-xs font-semibold text-turf">{copy.noProject.publishThis}</button>
     </li>

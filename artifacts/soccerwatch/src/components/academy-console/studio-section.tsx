@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, Download, ImagePlus, Loader2, Megaphone, Play, Plus, Trash2, Video, X } from "lucide-react";
 import { useStudioCopy } from "@/i18n/studio-strings";
+import { starredFirst, useFavorites } from "@/lib/favorites-api";
+import { StarButton } from "@/components/creative-hub/star-button";
 import {
   addClipToAds,
   addImageToAds,
@@ -53,7 +55,7 @@ const numOrNull = (v: string): number | null => (v.trim() === "" || !Number.isFi
 
 // ── Clips ───────────────────────────────────────────────────────────────────
 
-function ClipCard({ academyId, clip, onPlay }: { academyId: number; clip: StudioClip; onPlay: () => void }) {
+function ClipCard({ academyId, clip, onPlay, starred, onStar }: { academyId: number; clip: StudioClip; onPlay: () => void; starred: boolean; onStar: () => void }) {
   const all = useStudioCopy();
   const copy = all.studio;
   const [busy, setBusy] = useState<"download" | "ad" | null>(null);
@@ -82,7 +84,10 @@ function ClipCard({ academyId, clip, onPlay }: { academyId: number; clip: Studio
         {ready ? <span className="absolute inset-0 grid place-items-center bg-black/30"><Play className="h-5 w-5 text-white" /></span> : null}
       </button>
       <div className="min-w-0 flex-1 space-y-1.5">
-        <h3 className="truncate text-sm font-semibold text-text" dir="auto">{clip.title}</h3>
+        <div className="flex items-start gap-2">
+          <h3 className="min-w-0 flex-1 truncate text-sm font-semibold text-text" dir="auto">{clip.title}</h3>
+          <StarButton size="sm" on={starred} onToggle={onStar} className={starred ? "" : "bg-raised text-muted-text hover:bg-raised hover:text-text"} testId={`star-clip-${clip.id}`} />
+        </div>
         <p className="text-xs text-muted-text">
           <bdi>{date}</bdi> · {copy.by(who)} · <span className="font-mono">{clip.aspectRatio}</span> · <bdi>{clip.durationSeconds}s</bdi>
         </p>
@@ -106,18 +111,20 @@ function ClipCard({ academyId, clip, onPlay }: { academyId: number; clip: Studio
   );
 }
 
-function ClipsTab({ academyId }: { academyId: number }) {
+/** The academy's clips (was Studio → Clips; now Creative hub → Clips). Starred clips first. */
+export function StudioClipsPanel({ academyId }: { academyId: number }) {
   const copy = useStudioCopy().studio;
   const query = useStudioClips(academyId);
+  const fav = useFavorites(academyId);
   const [playing, setPlaying] = useState<StudioClip | null>(null);
   if (query.isLoading) return <div className="space-y-3">{[0, 1, 2].map((i) => <div key={i} className="h-28 animate-pulse rounded-2xl bg-raised" />)}</div>;
   if (query.isError) return <p className="text-sm text-red-400" role="alert">{(query.error as Error).message}</p>;
-  const clips = query.data?.clips ?? [];
+  const clips = starredFirst(query.data?.clips ?? [], (c) => c.id, fav.data.clip);
   return (
     <div className="space-y-3">
       {clips.length === 0 ? <p className="rounded-2xl border border-dashed border-line bg-surface p-6 text-center text-sm text-muted-text">{copy.clipsEmpty}</p> : null}
       <div className="grid gap-3 lg:grid-cols-2">
-        {clips.map((clip) => <ClipCard key={clip.id} academyId={academyId} clip={clip} onPlay={() => setPlaying(clip)} />)}
+        {clips.map((clip) => <ClipCard key={clip.id} academyId={academyId} clip={clip} onPlay={() => setPlaying(clip)} starred={fav.isStarred("clip", clip.id)} onStar={() => fav.toggle("clip", clip.id)} />)}
       </div>
       <Dialog open={!!playing} onOpenChange={(open) => { if (!open) setPlaying(null); }}>
         <DialogContent className="max-w-lg border-line bg-surface p-3">
@@ -197,6 +204,7 @@ function PhotoPicker({ label, hint, value, onChange }: { label: string; hint?: s
 }
 
 function PostsTab({ academyId, data }: { academyId: number; data: StudioData }) {
+  const fav = useFavorites(academyId);
   const all = useStudioCopy();
   const copy = all.studio;
   const [template, setTemplate] = useState<Template>("match");
@@ -307,7 +315,13 @@ function PostsTab({ academyId, data }: { academyId: number; data: StudioData }) 
         <section className="space-y-2">
           <h3 className="text-sm font-bold text-text">{copy.pickTemplate}</h3>
           <div className="flex flex-wrap gap-2">
-            {TEMPLATES.map((t) => <Chip key={t} active={template === t} onClick={() => setTemplate(t)} testId={`studio-template-${t}`}>{copy.templates[t]}</Chip>)}
+            {starredFirst(TEMPLATES, (t) => `studio:${t}`, fav.data.template).map((t) => (
+              <span key={t} className="inline-flex items-center gap-1">
+                <Chip active={template === t} onClick={() => setTemplate(t)} testId={`studio-template-${t}`}>{copy.templates[t]}</Chip>
+                <StarButton size="sm" on={fav.isStarred("template", `studio:${t}`)} onToggle={() => fav.toggle("template", `studio:${t}`)}
+                  className={fav.isStarred("template", `studio:${t}`) ? "" : "bg-raised text-muted-text hover:bg-raised hover:text-text"} testId={`star-studio-${t}`} />
+              </span>
+            ))}
           </div>
         </section>
 
@@ -467,7 +481,15 @@ function PostsTab({ academyId, data }: { academyId: number; data: StudioData }) 
   );
 }
 
-/** Academy console → Studio (owner only): the academy's clips, and branded posts and stories. */
+/** Branded posts and stories from five quick forms (was Studio → Posts; now Creative hub → Quick posts). */
+export function StudioQuickPosts({ academyId }: { academyId: number }) {
+  const data = useStudioData(academyId);
+  return data.isLoading ? <div className="h-64 animate-pulse rounded-2xl bg-raised" />
+    : data.isError || !data.data ? <p className="text-sm text-red-400" role="alert">{(data.error as Error | null)?.message}</p>
+      : <PostsTab academyId={academyId} data={data.data} />;
+}
+
+/** The old Studio section (both tabs). The consoles now open these inside the Creative hub. */
 export function AcademyStudioSection({ academyId }: { academyId: number }) {
   const all = useStudioCopy();
   const copy = all.studio;
@@ -487,7 +509,7 @@ export function AcademyStudioSection({ academyId }: { academyId: number }) {
           </button>
         ))}
       </div>
-      {tab === "clips" ? <ClipsTab academyId={academyId} />
+      {tab === "clips" ? <StudioClipsPanel academyId={academyId} />
         : data.isLoading ? <div className="h-64 animate-pulse rounded-2xl bg-raised" />
           : data.isError || !data.data ? <p className="text-sm text-red-400" role="alert">{(data.error as Error | null)?.message}</p>
             : <PostsTab academyId={academyId} data={data.data} />}

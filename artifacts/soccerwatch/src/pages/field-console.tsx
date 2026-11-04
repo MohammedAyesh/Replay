@@ -5,7 +5,6 @@ import {
   Building2,
   CalendarDays,
   ChevronDown,
-  Clapperboard,
   Contact as ContactIcon,
   CreditCard,
   Globe,
@@ -40,7 +39,6 @@ import { AcademyAdsSection } from "@/components/academy-console/ads-section";
 import { AcademySocialSection } from "@/components/academy-console/social-section";
 import { AcademyProfileSection } from "@/components/academy-console/profile-section";
 import { AcademyBrandingSection } from "@/components/academy-console/branding-section";
-import { AcademyStudioSection } from "@/components/academy-console/studio-section";
 import { AcademyTeamSection } from "@/components/academy-console/team-section";
 import { AcademyCreativeHub } from "@/components/creative-hub/hub";
 import { DashboardSection, type FieldSection } from "@/components/field-console/dashboard-section";
@@ -97,7 +95,7 @@ export default function FieldConsole() {
   }, [location]);
 
   const canSee = (s: FieldSection) => {
-    if (s === "team" || s === "creative" || s === "footage" || s === "instagram") return isOwner;
+    if (s === "team" || s === "creative" || s === "studio" || s === "footage" || s === "instagram") return isOwner;
     if (isOwner) return true;
     const perm = PERMISSION[s] ?? s;
     return access.data ? access.data.sections.includes(perm) : !OWNER_ONLY.includes(s);
@@ -160,7 +158,6 @@ export default function FieldConsole() {
       { id: "social", label: copy.nav.social, icon: Instagram },
       { id: "instagram", label: igCopy.nav, icon: Megaphone },
       { id: "creative", label: copy.nav.creative, icon: Sparkles },
-      { id: "studio", label: copy.nav.studio, icon: Clapperboard },
     ] },
     { label: copy.console.settings, items: [
       { id: "pitches", label: copy.nav.pitches, icon: Trophy },
@@ -253,7 +250,8 @@ export default function FieldConsole() {
               : section === "instagram" ? <InstagramSection venueId={id} />
               : section === "social" ? <AcademySocialSection academyId={id} onOpenChat={(threadId) => { setChatThread(threadId); setChatPhone(null); navigate("chats"); }} />
               : section === "creative" ? <AcademyCreativeHub academyId={id} />
-              : section === "studio" ? <AcademyStudioSection academyId={id} />
+              // Studio is now the Creative hub's Clips and Quick posts tabs; old /field/studio links land on Clips.
+              : section === "studio" ? <AcademyCreativeHub academyId={id} initialTab="clips" />
               : section === "branding" ? <AcademyBrandingSection academyId={id} />
               : section === "profile" ? <AcademyProfileSection academyId={id} />
               : section === "team" ? <AcademyTeamSection academyId={id} />

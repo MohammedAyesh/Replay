@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { LayoutTemplate, Library, PenTool, Send, Sparkles, Users } from "lucide-react";
+import { Clapperboard, ImagePlus, LayoutTemplate, Library, PenTool, Send, Sparkles, Users } from "lucide-react";
+import { useFavoriteCopy } from "@/i18n/favorite-strings";
+import { StudioClipsPanel, StudioQuickPosts } from "@/components/academy-console/studio-section";
 import { useCreativeCopy } from "@/i18n/creative-strings";
 import { useFeaturedCopy } from "@/i18n/featured-strings";
 import { CreativeSquad } from "./squad";
@@ -11,22 +13,35 @@ import { CreativeEditor } from "./editor";
 import { CreativePublish } from "./publish";
 import type { HubNav, TemplateSeed } from "./types";
 
-type Tab = "forYou" | "squad" | "library" | "templates" | "editor" | "publish";
+export type HubTab = "forYou" | "squad" | "library" | "clips" | "templates" | "quick" | "editor" | "publish";
+type Tab = HubTab;
 const TABS: Array<{ id: Tab; icon: typeof Sparkles }> = [
   { id: "forYou", icon: Sparkles },
   { id: "squad", icon: Users },
   { id: "library", icon: Library },
+  // Clips and Quick posts were the Studio section's two tabs.
+  { id: "clips", icon: Clapperboard },
   { id: "templates", icon: LayoutTemplate },
+  { id: "quick", icon: ImagePlus },
   { id: "editor", icon: PenTool },
   { id: "publish", icon: Send },
 ];
 
-/** Academy console → Creative hub (owner only). */
-export function AcademyCreativeHub({ academyId }: { academyId: number }) {
+const isTab = (v: string | null): v is Tab => TABS.some((t) => t.id === v);
+
+/** The tab a link asks for (?tab=clips), e.g. from an old /studio link. */
+export function tabFromUrl(search: string): Tab | null {
+  const v = new URLSearchParams(search).get("tab");
+  return isTab(v) ? v : null;
+}
+
+/** Academy console → Creative hub (owner only). Also holds what used to be the Studio section. */
+export function AcademyCreativeHub({ academyId, initialTab }: { academyId: number; initialTab?: Tab | null }) {
   const copy = useCreativeCopy();
   const featured = useFeaturedCopy();
-  const tabLabel = (id: Tab) => (id === "squad" ? featured.squad.tab : copy.tabs[id]);
-  const [tab, setTab] = useState<Tab>("forYou");
+  const fav = useFavoriteCopy();
+  const tabLabel = (id: Tab) => (id === "squad" ? featured.squad.tab : id === "clips" || id === "quick" ? fav.tabs[id] : copy.tabs[id]);
+  const [tab, setTab] = useState<Tab>(initialTab ?? (typeof window === "undefined" ? null : tabFromUrl(window.location.search)) ?? "forYou");
   const [projectId, setProjectId] = useState<number | null>(null);
   const [seed, setSeed] = useState<TemplateSeed | null>(null);
 
@@ -57,6 +72,8 @@ export function AcademyCreativeHub({ academyId }: { academyId: number }) {
         {tab === "forYou" ? <CreativeForYou academyId={academyId} nav={nav} />
           : tab === "squad" ? <CreativeSquad academyId={academyId} />
           : tab === "library" ? <CreativeLibrary academyId={academyId} nav={nav} />
+          : tab === "clips" ? <StudioClipsPanel academyId={academyId} />
+          : tab === "quick" ? <StudioQuickPosts academyId={academyId} />
           : tab === "templates" ? <CreativeTemplates academyId={academyId} nav={nav} seed={seed} />
           : tab === "editor" ? <CreativeEditor academyId={academyId} nav={nav} projectId={projectId} />
           : <CreativePublish academyId={academyId} nav={nav} projectId={projectId} />}

@@ -25,7 +25,6 @@ import {
   Target,
   ShieldCheck,
   Building2,
-  Clapperboard,
   Sparkles,
   Palette,
   Users,
@@ -103,7 +102,6 @@ import { useTeamCopy } from "@/i18n/team-strings";
 import { useMyAcademyAccess } from "@/lib/academy-team-api";
 import { useProfileCopy } from "@/i18n/profile-strings";
 import { AcademyBrandingSection } from "@/components/academy-console/branding-section";
-import { AcademyStudioSection } from "@/components/academy-console/studio-section";
 import { useStudioCopy } from "@/i18n/studio-strings";
 import { AcademyCreativeHub } from "@/components/creative-hub/hub";
 import { useCreativeCopy } from "@/i18n/creative-strings";
@@ -231,7 +229,6 @@ function AcademyConsoleSidebar({
     { id: "whatsapp", label: whatsappCopy.nav, icon: MessageCircle },
     { id: "profile", label: profileCopy.nav, icon: Building2 },
     { id: "branding", label: studioCopy.branding.nav, icon: Palette, ownerOnly: true },
-    { id: "studio", label: studioCopy.studio.nav, icon: Clapperboard, ownerOnly: true },
     { id: "creative", label: creativeCopy.nav, icon: Sparkles, ownerOnly: true },
     { id: "team", label: teamCopy.team.nav, icon: ShieldCheck, ownerOnly: true },
   ];
@@ -931,7 +928,8 @@ export default function AcademyConsole() {
           ) : section === "branding" ? (
             !manages("branding") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyBrandingSection academyId={activeAcademyId} />
           ) : section === "studio" ? (
-            !manages("studio") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyStudioSection academyId={activeAcademyId} />
+            // Studio is now the Creative hub's Clips and Quick posts tabs; old /academy/studio links land on Clips.
+            !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyCreativeHub academyId={activeAcademyId} initialTab="clips" />
           ) : section === "creative" ? (
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyCreativeHub academyId={activeAcademyId} />
           ) : section === "matches" ? (

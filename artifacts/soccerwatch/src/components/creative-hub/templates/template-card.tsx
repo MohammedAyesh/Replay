@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Loader2, Play } from "lucide-react";
 import type { CreativeBrand, CreativeData, Scene, SceneLayer, TemplateMeta } from "@workspace/api-zod";
 import { SceneCanvas } from "../scene-canvas";
@@ -10,7 +11,7 @@ type MediaLayer = Extract<SceneLayer, { kind: "image" | "video" }>;
 export const previewTimeMs = (scene: Scene) => (scene.durationMs ? Math.min(4000, Math.max(0, scene.durationMs - 3000)) : undefined);
 
 export function TemplateCard({
-  meta, title, scene, data, brand, width, mediaUrl, onOpen, busy, disabled, failed, labels,
+  meta, title, scene, data, brand, width, mediaUrl, onOpen, busy, disabled, failed, labels, star,
 }: {
   meta: TemplateMeta;
   title: string;
@@ -24,11 +25,14 @@ export function TemplateCard({
   disabled: boolean;
   failed: string | null;
   labels: { video: string; seconds: (n: number) => string; creating: string; open: string };
+  /** The favourite star, drawn over the card's top corner (outside the open button). */
+  star?: ReactNode;
 }) {
   const [ref, seen] = useSeen<HTMLButtonElement>();
   const ratio = scene.format === "story" ? 1920 / 1080 : scene.format === "square" ? 1 : scene.format === "wide" ? 1080 / 1920 : 1350 / 1080;
   return (
-    <div className="min-w-0" data-testid={`creative-template-${meta.key}`}>
+    <div className="relative min-w-0" data-testid={`creative-template-${meta.key}`}>
+      {star ? <div className="absolute end-2 top-2 z-10">{star}</div> : null}
       <button ref={ref} type="button" onClick={onOpen} disabled={disabled} aria-label={labels.open}
         className={cn("group relative block w-full overflow-hidden rounded-xl border border-line bg-raised text-start transition",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-turf",

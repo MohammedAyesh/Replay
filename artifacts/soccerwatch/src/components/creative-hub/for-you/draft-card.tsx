@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CalendarPlus, Clapperboard, PenTool, Send, X } from "lucide-react";
 import { resolveSource, type CreativeData, type SceneLayer } from "@workspace/api-zod";
@@ -40,7 +41,7 @@ export function previewMediaUrl(academyId: number, brand: CreativeBrandInfo | un
   };
 }
 
-export function DraftCard({ draft, academyId, brand, copy, locale, busy, onEdit, onPublish, onSkip }: {
+export function DraftCard({ draft, academyId, brand, copy, locale, busy, onEdit, onPublish, onSkip, star }: {
   draft: ForYouDraft;
   academyId: number;
   brand: CreativeBrandInfo | undefined;
@@ -50,6 +51,8 @@ export function DraftCard({ draft, academyId, brand, copy, locale, busy, onEdit,
   onEdit: () => void;
   onPublish: () => void;
   onSkip: () => void;
+  /** The favourite star, over the preview's top corner. */
+  star?: ReactNode;
 }) {
   const [box, boxWidth] = useWidth<HTMLDivElement>();
   const data = (draft.data ?? undefined) as CreativeData | undefined;
@@ -61,6 +64,7 @@ export function DraftCard({ draft, academyId, brand, copy, locale, busy, onEdit,
   return (
     <article className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface" data-testid={`creative-draft-${draft.id}`}>
       <div ref={box} className="relative flex justify-center bg-raised">
+        {star ? <div className="absolute end-2 top-2 z-10">{star}</div> : null}
         {brand && width > 0 ? (
           <SceneCanvas
             scene={draft.scene}

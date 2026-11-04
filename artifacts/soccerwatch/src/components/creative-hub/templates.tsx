@@ -22,6 +22,8 @@ import { projectTitle, seedKind, seedMedia, startingData } from "./templates/dat
 import { useElementWidth } from "./templates/hooks";
 import { StyleSwatch } from "./templates/style-swatch";
 import { TemplateCard } from "./templates/template-card";
+import { StarButton } from "./star-button";
+import { starredFirst, useFavorites } from "@/lib/favorites-api";
 import type { SectionProps, TemplateSeed } from "./types";
 
 /**
@@ -67,6 +69,7 @@ function Segmented<T extends string>({ label, value, options, onChange, render }
 export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { seed?: TemplateSeed | null }) {
   const copy = useCreativeTemplatesCopy();
   const brandQ = useCreativeBrand(academyId);
+  const fav = useFavorites(academyId);
   const [active, setActive] = useState<TemplateSeed | null>(seed ?? null);
   useEffect(() => setActive(seed ?? null), [seed]);
 
@@ -100,10 +103,10 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
 
   const templates = useMemo(() => {
     const list = CREATIVE_TEMPLATES.filter((t) => category === "all" || t.category === category);
-    if (!kind) return list;
-    // Footage first for a clip; stills first for a frame.
-    return [...list].sort((a, b) => Number(b.kind === kind) - Number(a.kind === kind));
-  }, [category, kind]);
+    // Footage first for a clip; stills first for a frame. Starred templates before both.
+    const byKind = kind ? [...list].sort((a, b) => Number(b.kind === kind) - Number(a.kind === kind)) : list;
+    return starredFirst(byKind, (t) => t.key, fav.data.template);
+  }, [category, kind, fav.data.template]);
 
   const scenes = useMemo(() => new Map(CREATIVE_TEMPLATES.map((t) => [t.key, buildTemplateScene(t.key, style, format, postLocale)])), [style, format, postLocale]);
   const dataFor = useCallback((key: string) => startingData({ key, locale: postLocale, academy, seed: active, session: sessionQ.data ?? null, stills }),
@@ -208,7 +211,8 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
               <TemplateCard key={t.key} meta={t} title={title} scene={scenes.get(t.key)!} data={dataFor(t.key)} brand={brand} width={cardW}
                 mediaUrl={mediaUrl} onOpen={() => void open(t.key, title)} busy={pending === t.key} disabled={pending !== null}
                 failed={failed === t.key ? copy.createFailed : null}
-                labels={{ video: copy.video, seconds: copy.seconds, creating: copy.creating, open: copy.open(title) }} />
+                labels={{ video: copy.video, seconds: copy.seconds, creating: copy.creating, open: copy.open(title) }}
+                star={<StarButton on={fav.isStarred("template", t.key)} onToggle={() => fav.toggle("template", t.key)} testId={`star-template-${t.key}`} />} />
             );
           })}
       </div>

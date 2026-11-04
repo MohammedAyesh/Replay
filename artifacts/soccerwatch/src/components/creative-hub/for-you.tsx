@@ -7,6 +7,8 @@ import { useCreativeBrand } from "@/lib/creative-hub-api";
 import { useForYou, useSkipForYouDraft, type ForYouDraft, type ForYouGroup } from "@/lib/creative-hub-foryou-api";
 import { DraftCard, DraftSkeleton, FixtureCard } from "./for-you/draft-card";
 import { WeekPlan } from "./for-you/week-plan";
+import { StarButton } from "./star-button";
+import { starredFirst, useFavorites } from "@/lib/favorites-api";
 import type { SectionProps, TemplateSeed } from "./types";
 
 const GROUPS: ForYouGroup[] = ["after", "upcoming", "week"];
@@ -21,13 +23,14 @@ export function CreativeForYou({ academyId, nav }: SectionProps & { seed?: Templ
   const feed = useForYou(academyId);
   const brand = useCreativeBrand(academyId);
   const skip = useSkipForYouDraft(academyId);
+  const fav = useFavorites(academyId);
   const [skipping, setSkipping] = useState<number | null>(null);
 
   const groups = useMemo(() => {
     const out: Record<ForYouGroup, ForYouDraft[]> = { after: [], upcoming: [], week: [] };
-    for (const d of feed.data?.drafts ?? []) out[d.group]?.push(d);
+    for (const d of starredFirst(feed.data?.drafts ?? [], (x) => x.id, fav.data.project)) out[d.group]?.push(d);
     return out;
-  }, [feed.data]);
+  }, [feed.data, fav.data.project]);
   const fixtures = (feed.data?.upcoming ?? []).filter((f) => f.draftId === null);
   const total = feed.data?.drafts.length ?? 0;
 
@@ -102,6 +105,7 @@ export function CreativeForYou({ academyId, nav }: SectionProps & { seed?: Templ
                     onEdit={() => nav.openInEditor(d.id)}
                     onPublish={() => nav.openInPublish(d.id)}
                     onSkip={() => onSkip(d.id)}
+                    star={<StarButton on={fav.isStarred("project", d.id)} onToggle={() => fav.toggle("project", d.id)} testId={`star-draft-${d.id}`} />}
                   />
                 ))}
               </div>

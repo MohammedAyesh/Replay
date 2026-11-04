@@ -166,6 +166,19 @@ export const TRIAL_CLIPS_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "academy_trial_clips_follow_up_idx" ON "academy_trial_clips" ("follow_up_status", "follow_up_at")`
 ];
 
+/** 0072: starred templates, clips and drafts. Exported for the test that compares them with the migration file. */
+export const FAVORITES_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academy_favorites" (
+  "id" serial PRIMARY KEY,
+  "academy_id" integer NOT NULL CONSTRAINT "academy_favorites_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "user_id" integer NOT NULL CONSTRAINT "academy_favorites_user_id_users_id_fk" REFERENCES "users"("id") ON DELETE CASCADE,
+  "kind" text NOT NULL, "item_key" text NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "academy_favorites_item_unique" UNIQUE("academy_id", "user_id", "kind", "item_key"),
+  CONSTRAINT "academy_favorites_kind_check" CHECK ("kind" in ('template', 'clip', 'project')))`,
+  `CREATE INDEX IF NOT EXISTS "academy_favorites_user_idx" ON "academy_favorites" ("academy_id", "user_id")`
+];
+
 /**
  * 0068: the trigger that writes academy_contact_stage_events on every stage or
  * kind change of a People contact. Not a Drizzle object, so the publish review
@@ -654,6 +667,8 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   { table: "academy_value_report_shares", statements: REPORT_SHARES_STATEMENTS },
   // 0069_marketing_practices.sql
   { table: "academy_trial_clips", statements: TRIAL_CLIPS_STATEMENTS },
+  // 0072_academy_favorites.sql
+  { table: "academy_favorites", statements: FAVORITES_STATEMENTS },
   // 0070_venue_instagram_autopilot.sql (the statements are the migration's, one per statement)
   { table: "venue_ig_consent_events", statements: [VENUE_IG_STATEMENTS[0], VENUE_IG_STATEMENTS[1]] },
   { table: "venue_ig_awards", statements: [VENUE_IG_STATEMENTS[2]] },

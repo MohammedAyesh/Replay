@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS, FAVORITES_STATEMENTS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -109,6 +109,14 @@ describe("ensureAdditiveColumns", () => {
     }
     const { rows } = await pool.query<{ conname: string }>(`SELECT conname FROM pg_constraint WHERE conname IN ('academy_contacts_referred_by_contact_id_academy_contacts_id_fk', 'academy_contacts_trial_session_id_academy_sessions_id_fk') ORDER BY conname`);
     expect(rows).toHaveLength(2);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates academy_favorites (0072), as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "academy_favorites"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(1);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0072_academy_favorites.sql", import.meta.url), "utf8");
+    for (const statement of FAVORITES_STATEMENTS) expect(migration).toContain(`${statement};`);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 
