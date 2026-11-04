@@ -97,6 +97,8 @@ describe("recipients", () => {
   it("joins names per language", () => {
     expect(joinNames(["Ali", "Omar", "Zaid"], "en")).toBe("Ali, Omar and Zaid");
     expect(joinNames(["علي", "عمر"], "ar")).toBe("علي وعمر");
+    // the database's order does not matter (academyWhatsapp broadcasts, 2026-11-04)
+    expect(joinNames(["Omar", "Ali"], "ar")).toBe("Ali وOmar");
   });
 });
 
