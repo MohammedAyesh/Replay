@@ -83,6 +83,9 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const pointer = useRef<{ x: number; y: number; down: boolean } | null>(null);
   const recBuf = useRef<Key[]>([]);
   const recLast = useRef(0);
+  // Steering by hand while it plays (without Record): the path is kept while the finger is down.
+  const steerBuf = useRef<Key[]>([]);
+  const steering = useRef(false);
   const framed = mode !== "pitch";
   const outAspect = lockedAspect ?? boxAspectOf(shape, framed);
   const range = zoomRange(outAspect);
@@ -143,7 +146,10 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       }
       setNowAbs((prev) => (Math.abs(prev - abs) > 80 ? abs : prev));
       const srcAspect = v.videoWidth / v.videoHeight;
-      const f = framingNow();
+      // While a finger steers (recording, or dragging as it plays) the window sits under it at
+      // once; the path becomes keys when the finger lifts or recording stops.
+      const held = pointer.current?.down && !v.paused && (s.recording || steering.current) ? pointer.current : null;
+      const f = held ? { zoom: s.zoom, keys: [[Math.round(abs), held.x, held.y]] as Key[] } : framingNow();
       const view = viewRef.current;
       if (view) {
         const ctx = view.getContext("2d");
@@ -185,6 +191,10 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
             ctx.strokeRect(w.x * strip.width + 1.5, w.y * strip.height + 1.5, w.w * strip.width - 3, w.h * strip.height - 3);
           }
         }
+      }
+      if (steering.current && held && performance.now() - recLast.current >= RECORD_EVERY_MS) {
+        recLast.current = performance.now();
+        steerBuf.current.push([Math.round(abs), held.x, held.y]);
       }
       // Re-recording: the camera goes where the pointer is held.
       if (s.recording && !v.paused && performance.now() - recLast.current >= RECORD_EVERY_MS) {
@@ -248,7 +258,14 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     e.currentTarget.setPointerCapture(e.pointerId);
     const p = toPitch(e);
     pointer.current = { ...p, down: true };
-    if (!recording && videoRef.current && videoRef.current.paused) setKeyAt(absAt(videoRef.current), p.x, p.y);
+    const v = videoRef.current;
+    if (recording || !v) return;
+    if (v.paused) { setKeyAt(absAt(v), p.x, p.y); return; }
+    // Playing: steer by hand from here until the finger lifts.
+    steering.current = true;
+    recLast.current = 0;
+    steerBuf.current = [[Math.round(absAt(v)), p.x, p.y]];
+    setMode("manual");
   };
   const onMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!pointer.current?.down) return;
@@ -256,7 +273,18 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     pointer.current = { ...p, down: true };
     if (!recording && videoRef.current && videoRef.current.paused) setKeyAt(absAt(videoRef.current), p.x, p.y);
   };
-  const onUp = () => { if (pointer.current) pointer.current.down = false; };
+  const onUp = () => {
+    if (pointer.current) pointer.current.down = false;
+    if (!steering.current) return;
+    steering.current = false;
+    const buf = steerBuf.current;
+    steerBuf.current = [];
+    if (buf.length === 1) { setKeyAt(buf[0][0], buf[0][1], buf[0][2]); return; }
+    if (buf.length < 2) return;
+    const a = buf[0][0], b = buf[buf.length - 1][0];
+    setKeys((ks) => [...ks.filter((k) => k[0] < a || k[0] > b), ...smooth(buf)].sort((x, y) => x[0] - y[0]));
+    setMode("manual");
+  };
 
   const followBall = () => {
     setMode("ball");
