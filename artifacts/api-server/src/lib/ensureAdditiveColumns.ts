@@ -179,6 +179,24 @@ export const FAVORITES_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "academy_favorites_user_idx" ON "academy_favorites" ("academy_id", "user_id")`
 ];
 
+/** 0076: notification devices and the VAPID keys. Exported for the test that compares them with the migration file. */
+export const PUSH_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "push_subscriptions" (
+  "id" serial PRIMARY KEY,
+  "user_id" integer NOT NULL CONSTRAINT "push_subscriptions_user_id_users_id_fk" REFERENCES "users"("id") ON DELETE CASCADE,
+  "endpoint" text NOT NULL, "p256dh" text NOT NULL, "auth" text NOT NULL, "user_agent" text,
+  "failures" integer DEFAULT 0 NOT NULL, "last_sent_at" timestamp with time zone,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "push_subscriptions_endpoint_unique" UNIQUE("endpoint"))`,
+  `CREATE INDEX IF NOT EXISTS "push_subscriptions_user_idx" ON "push_subscriptions" ("user_id")`,
+];
+export const PUSH_KEYS_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "web_push_keys" (
+  "id" integer PRIMARY KEY DEFAULT 1, "public_key" text NOT NULL, "private_key" text NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "web_push_keys_single_row" CHECK ("id" = 1))`,
+];
+
 /** 0073: My templates. Exported for the test that compares them with the migration file. */
 export const MY_TEMPLATES_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "academy_creative_templates" (
@@ -708,6 +726,8 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   { table: "academy_trial_clips", statements: TRIAL_CLIPS_STATEMENTS },
   // 0072_academy_favorites.sql
   { table: "academy_favorites", statements: FAVORITES_STATEMENTS },
+  { table: "push_subscriptions", statements: PUSH_STATEMENTS },
+  { table: "web_push_keys", statements: PUSH_KEYS_STATEMENTS },
   // 0073_academy_creative_templates.sql
   { table: "academy_creative_templates", statements: MY_TEMPLATES_STATEMENTS },
   // 0074_academy_instagram_autopilot.sql

@@ -1,4 +1,5 @@
 import { and, eq, sql } from "drizzle-orm";
+import { notifyChatMessage } from "../push/webPush";
 import {
   academySocialCommentsTable,
   academySocialMessagesTable,
@@ -145,6 +146,14 @@ async function handleMessaging(account: AcademySocialAccount, channel: Channel, 
     ...(echo ? {} : { archivedAt: null }),
     updatedAt: new Date(),
   }).where(eq(academySocialThreadsTable.id, thread.id));
+  // The people who answer this chat get a notification on their phones (lib/push/webPush.ts).
+  if (!echo) {
+    void notifyChatMessage({
+      academyId: account.academyId, channel, chatKey: String(thread.id),
+      from: thread.name || (thread.username ? `@${thread.username}` : channel === "instagram" ? "Instagram" : "Messenger"),
+      preview: body, muted: thread.muted, assignedUserId: thread.assignedUserId,
+    });
+  }
 }
 
 // ─── Comments ───────────────────────────────────────────────────────────────

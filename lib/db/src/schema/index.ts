@@ -69,3 +69,4 @@ export * from "./academyTrials";
 export * from "./academyFavorites";
 export * from "./academyCreativeTemplates";
 export * from "./academyInstagram";
+export * from "./pushSubscriptions";
