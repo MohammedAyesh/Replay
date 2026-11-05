@@ -32,6 +32,43 @@ describe("startingData", () => {
     expect(blank.academy?.name).toBe("Jordan Knights");
   });
 
+  it("academy pack: a real player card shows his photo and name when allowed, else his number; the line-up carries the photos", () => {
+    const pic = { type: "player-photo", photoId: 3 } as const;
+    const session: CreativeData = {
+      match: { opponent: "Wehdat" }, player: { number: 7, name: "Sami", photo: pic },
+      custom: { n1: "1", p1: "Yazan", pos1: "GK" }, photos: [pic],
+    };
+    const seed = { type: "session", sessionId: 9 } as const;
+    const named = startingData({ key: "club-potm", locale: "en", academy: { ...academy, showPlayerNames: true }, seed, session });
+    expect(named.player?.photo).toEqual(pic);
+    expect(named.custom?.title).toBe("Sami");
+    expect(named.custom?.initials).toBe("7");
+    const hidden = startingData({ key: "club-potm", locale: "en", academy, seed, session });
+    expect(hidden.player?.photo).toBeUndefined();
+    expect(hidden.custom?.title).toBe("#7");
+    expect(startingData({ key: "club-lineup", locale: "en", academy: { ...academy, showPlayerNames: true }, seed, session }).photos).toEqual([pic]);
+    expect(startingData({ key: "club-lineup", locale: "en", academy, seed, session }).photos).toBeUndefined();
+    // The disc holds the photo when there is one; the number shows only without it.
+    const scene = buildTemplateScene("club-potm", "club", "story", "en");
+    expect(scene.layers.find((l) => l.id === "open-photo")).toMatchObject({ kind: "image", src: { type: "binding", path: "player.photo" }, when: [{ path: "player.photo" }] });
+    expect(scene.layers.find((l) => l.id === "open-initials")?.when).toEqual([{ path: "player.photo", not: true }]);
+    const lineup = buildTemplateScene("club-lineup", "club", "story", "ar");
+    expect(lineup.layers.filter((l) => l.kind === "image" && l.src.type === "binding" && l.src.path.startsWith("photos.")).length).toBeGreaterThanOrEqual(7);
+  });
+
+  it("academy pack wears the Souqar look in the academy's colours; the field pack keeps its own", () => {
+    const club = buildTemplateScene("club-matchday", "club", "story", "en");
+    const texts = club.layers.filter((l) => l.kind === "text");
+    expect(texts.every((l) => l.kind === "text" && ["Montserrat", "Inter", "Cairo"].includes(l.family ?? ""))).toBe(true);
+    expect(club.layers.find((l) => l.id === "bg-plate")).toMatchObject({ kind: "image", src: { type: "artwork", key: "bg/stadium/2" }, tint: { color: "@primary" } });
+    expect(club.layers.find((l) => l.id === "band-band")).toMatchObject({ fill: "#F3F6FF" });
+    // No fixed Souqar blue: every colour is the academy's (tokens) or neutral.
+    expect(JSON.stringify(club)).not.toContain("#0B4FD9");
+    const field = buildTemplateScene("field-booking-clip", "field", "story", "en");
+    expect(field.layers.some((l) => l.kind === "text" && l.family)).toBe(false);
+    expect(field.layers.some((l) => l.id.endsWith("-plate"))).toBe(false);
+  });
+
   it("keeps sample free text so a design never opens empty", () => {
     const d = startingData({ key: "pricing", locale: "en", academy, seed: null });
     expect(d.custom?.plan1).toBeTruthy();

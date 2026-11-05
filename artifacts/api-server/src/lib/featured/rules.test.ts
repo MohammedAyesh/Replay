@@ -41,6 +41,7 @@ describe("playersInData", () => {
   it("a call-up counts every row, by photo first and shirt number otherwise, and is not solo", () => {
     const data = { custom: { n1: "7", n2: "9", n3: "4", n4: "" }, photos: [null, null, null, { type: "player", playerId: 5 }] };
     expect(playersInData(data, "callup", roster)).toEqual({ playerIds: [1, 2, 5], solo: false });
+    expect(playersInData(data, "club-lineup", roster)).toEqual({ playerIds: [1, 2, 5], solo: false });
     // The same custom numbers on a template without player rows mean nothing.
     expect(playersInData(data, "fulltime", roster).playerIds).toEqual([]);
   });
