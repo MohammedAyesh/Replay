@@ -694,6 +694,16 @@ describe("7. Suggestions, always", () => {
   });
 });
 
+describe("8. Earlier days' games", () => {
+  it("takes a game from six days ago onto the calendar, and drops one past twelve days", async () => {
+    const recent = await playedBooking({ hoursAgo: 24 * 6, consent: "yes" });
+    const old = await playedBooking({ hoursAgo: 24 * 13, consent: "yes" });
+    await tick();
+    expect(await itemFor(recent.booking.id)).toMatchObject({ kind: "booking_clip", status: "planned" });
+    expect(await itemFor(old.booking.id)).toBeUndefined();
+  });
+});
+
 describe("consent switched off", () => {
   it("takes everything waiting off the calendar and turns the autopilot off", async () => {
     const waiting = await playedBooking({ hoursAgo: 14, consent: "yes" });

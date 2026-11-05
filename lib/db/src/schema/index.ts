@@ -67,3 +67,5 @@ export * from "./academyPhoneMedia";
 export * from "./academyValueReports";
 export * from "./academyTrials";
 export * from "./academyFavorites";
+export * from "./academyCreativeTemplates";
+export * from "./academyInstagram";

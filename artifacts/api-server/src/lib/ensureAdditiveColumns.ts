@@ -179,6 +179,43 @@ export const FAVORITES_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS "academy_favorites_user_idx" ON "academy_favorites" ("academy_id", "user_id")`
 ];
 
+/** 0073: My templates. Exported for the test that compares them with the migration file. */
+export const MY_TEMPLATES_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academy_creative_templates" (
+  "id" serial PRIMARY KEY,
+  "academy_id" integer NOT NULL CONSTRAINT "academy_creative_templates_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "base_key" text NOT NULL, "style" text, "format" text NOT NULL, "kind" text DEFAULT 'image' NOT NULL, "title" text NOT NULL,
+  "scene" jsonb NOT NULL, "sample_data" jsonb, "replaces_base" boolean DEFAULT false NOT NULL,
+  "created_by" integer CONSTRAINT "academy_creative_templates_created_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "academy_creative_templates_kind_check" CHECK ("kind" in ('image', 'video')))`,
+  `CREATE INDEX IF NOT EXISTS "academy_creative_templates_academy_idx" ON "academy_creative_templates" ("academy_id", "updated_at")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "academy_creative_templates_replaces_unique" ON "academy_creative_templates" ("academy_id", "base_key", "format") WHERE "replaces_base"`
+];
+
+/** 0074: academies' Instagram autopilot. Exported for the test that compares them with the migration file. */
+export const ACADEMY_IG_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academy_ig_autopilot" (
+  "academy_id" integer PRIMARY KEY CONSTRAINT "academy_ig_autopilot_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "enabled" boolean DEFAULT false NOT NULL, "publish_mode" text DEFAULT 'approve' NOT NULL, "times" jsonb,
+  "updated_by" integer CONSTRAINT "academy_ig_autopilot_updated_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "academy_ig_autopilot_publish_mode_check" CHECK ("publish_mode" in ('approve', 'auto')))`,
+  `CREATE TABLE IF NOT EXISTS "academy_ig_items" (
+  "id" serial PRIMARY KEY,
+  "academy_id" integer NOT NULL CONSTRAINT "academy_ig_items_academy_id_academies_id_fk" REFERENCES "academies"("id") ON DELETE CASCADE,
+  "project_id" integer NOT NULL CONSTRAINT "academy_ig_items_project_id_academy_creative_projects_id_fk" REFERENCES "academy_creative_projects"("id") ON DELETE CASCADE,
+  "placement" text NOT NULL, "slot_at" timestamp with time zone, "pinned" boolean DEFAULT false NOT NULL,
+  "status" text DEFAULT 'planned' NOT NULL, "error" text, "post_id" integer, "ig_permalink" text, "published_at" timestamp with time zone,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "academy_ig_items_project_unique" UNIQUE("project_id"),
+  CONSTRAINT "academy_ig_items_placement_check" CHECK ("placement" in ('feed', 'reel', 'story')),
+  CONSTRAINT "academy_ig_items_status_check" CHECK ("status" in ('planned', 'approved', 'publishing', 'published', 'skipped', 'failed')))`,
+  `CREATE INDEX IF NOT EXISTS "academy_ig_items_academy_idx" ON "academy_ig_items" ("academy_id", "slot_at")`
+];
+
 /**
  * 0068: the trigger that writes academy_contact_stage_events on every stage or
  * kind change of a People contact. Not a Drizzle object, so the publish review
@@ -669,6 +706,11 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   { table: "academy_trial_clips", statements: TRIAL_CLIPS_STATEMENTS },
   // 0072_academy_favorites.sql
   { table: "academy_favorites", statements: FAVORITES_STATEMENTS },
+  // 0073_academy_creative_templates.sql
+  { table: "academy_creative_templates", statements: MY_TEMPLATES_STATEMENTS },
+  // 0074_academy_instagram_autopilot.sql
+  { table: "academy_ig_autopilot", statements: [ACADEMY_IG_STATEMENTS[0]] },
+  { table: "academy_ig_items", statements: [ACADEMY_IG_STATEMENTS[1], ACADEMY_IG_STATEMENTS[2]] },
   // 0070_venue_instagram_autopilot.sql (the statements are the migration's, one per statement)
   { table: "venue_ig_consent_events", statements: [VENUE_IG_STATEMENTS[0], VENUE_IG_STATEMENTS[1]] },
   { table: "venue_ig_awards", statements: [VENUE_IG_STATEMENTS[2]] },

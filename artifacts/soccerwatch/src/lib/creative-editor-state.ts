@@ -66,7 +66,7 @@ export type EditorAction =
   | { type: "removeLayer"; id: string }
   | { type: "duplicateLayer"; id: string; newId?: string }
   | { type: "moveLayer"; id: string; to: "up" | "down" | "top" | "bottom" | number }
-  | { type: "updateScene"; change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding" | "slowZoom">>; key?: string; at?: number }
+  | { type: "updateScene"; change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding" | "slowZoom" | "template">>; key?: string; at?: number }
   /**
    * Editor → Music on a still: put music on it, which makes it a short video
    * (photoVideoFrom). `music` is the track the manager picked; without one the

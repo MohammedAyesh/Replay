@@ -9,7 +9,7 @@ export type EditorApi = {
   select: (id: string | null) => void;
   /** Change one layer. Changes with the same `key` close together become one undo step. */
   update: (id: string, change: LayerChange, key?: string) => void;
-  updateScene: (change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding" | "slowZoom">>, key?: string) => void;
+  updateScene: (change: Partial<Pick<Scene, "durationMs" | "background" | "music" | "branding" | "slowZoom" | "template">>, key?: string) => void;
   /** Put music on the design; a still becomes a short video (one undo step). Without `music`, the template's recommendation. */
   addMusic: (music?: SceneMusic) => void;
   /** A photo video back to a photo: music, duration and zoom removed (one undo step). */

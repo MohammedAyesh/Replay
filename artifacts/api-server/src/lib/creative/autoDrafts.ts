@@ -14,6 +14,7 @@ import {
 import { logger } from "../logger";
 import { academyPack } from "./packs";
 import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "./music";
+import { replacementScenes, withReplacements } from "./myTemplates";
 import { loadFeaturedFacts } from "../featured/draftFacts";
 import { consentedFacts, matchFeaturedPlans, playerData, rotatedPlayerOfMatch, weekFeaturedPlans, type FeaturedFacts, type FeaturedPlan } from "../featured/drafts";
 
@@ -667,7 +668,10 @@ export async function syncAutoDrafts(academy: Academy, now = new Date()): Promis
     weekSessions,
     academyData: profile.academy,
   });
-  const made = plans.map((p) => materializeDraft(p, academyId, style)).filter((r): r is DraftRow => r !== null);
+  // The academy's own versions of templates (My templates, "use instead") build its drafts.
+  const own = await replacementScenes(academyId).catch(() => new Map<string, Scene>());
+  const catalogue = { templates: CREATIVE_TEMPLATES, build: withReplacements(own, buildTemplateScene) };
+  const made = plans.map((p) => materializeDraft(p, academyId, style, catalogue)).filter((r): r is DraftRow => r !== null);
   if (!made.length) return 0;
   // Video drafts get their template's recommended soundtrack, as a manager's own would.
   const music = made.some((r) => r.kind === "video") ? await replayLibraryForDrafts() : { library: [], overrides: new Map() };

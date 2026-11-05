@@ -20,6 +20,7 @@ import {
   type VenueIgItem,
 } from "@workspace/db";
 import { FIELD_STYLE, awardTitle, buildTemplateScene, resolveSource, sceneSchema, type Scene } from "@workspace/api-zod";
+import { replacementScenes, withReplacements } from "../creative/myTemplates";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { framingFor } from "../creative/framing";
 import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "../creative/music";
@@ -53,7 +54,7 @@ import {
   WEEKLY_KINDS,
   IG_GRACE_MINUTES,
   IG_LEAD_MINUTES,
-  IG_MAX_AGE_HOURS,
+  IG_BACKFILL_DAYS,
   announcingWeek,
   awardTimes,
   boardTimes,
@@ -155,7 +156,8 @@ export async function consentNow(venue: Venue, booking: VenueBooking) {
 
 /** Recent bookings whose footage came back and that have no item yet. */
 export async function syncBookingItems(venue: Venue, now = new Date()): Promise<number> {
-  const since = new Date(now.getTime() - IG_MAX_AGE_HOURS * 3_600_000);
+  // Earlier days' games too: they fill the calendar when there are no fresh ones (planSlots).
+  const since = new Date(now.getTime() - IG_BACKFILL_DAYS * 86_400_000);
   const rows = await db.select({ b: venueBookingsTable }).from(venueBookingsTable)
     .innerJoin(footageRequestsTable, eq(footageRequestsTable.id, venueBookingsTable.footageRequestId))
     .where(and(
@@ -166,7 +168,7 @@ export async function syncBookingItems(venue: Venue, now = new Date()): Promise<
       inArray(footageRequestsTable.status, ["ready", "partial"]),
       isNotNull(footageRequestsTable.videoId),
       sql`not exists (select 1 from ${venueIgItemsTable} i where i.academy_id = ${venue.id} and i.origin_key = 'booking:' || ${venueBookingsTable.id})`,
-    )).limit(30);
+    )).orderBy(desc(venueBookingsTable.startsAt)).limit(30);
   let made = 0;
   for (const { b } of rows) {
     const consent = await consentNow(venue, b);
@@ -210,12 +212,15 @@ export async function syncBookingItems(venue: Venue, now = new Date()): Promise<
 export async function planVenue(venue: Venue, now = new Date()): Promise<number> {
   const s = igSettings(venue);
   const nowM = nowWall(now);
-  // Too old to post: a clip that never went out within IG_MAX_AGE_HOURS of its game.
+  // Too old to post: a clip that never went out within IG_BACKFILL_DAYS (its footage is about to go).
   await db.update(venueIgItemsTable).set({ status: "skipped", error: "Too old to post", updatedAt: now }).where(and(
     eq(venueIgItemsTable.academyId, venue.id),
     eq(venueIgItemsTable.kind, "booking_clip"),
     inArray(venueIgItemsTable.status, [...WAITING]),
-    lt(venueIgItemsTable.createdAt, new Date(now.getTime() - IG_MAX_AGE_HOURS * 3_600_000)),
+    or(
+      lt(venueIgItemsTable.createdAt, new Date(now.getTime() - IG_BACKFILL_DAYS * 86_400_000)),
+      sql`exists (select 1 from ${venueBookingsTable} b where b.id = ${venueIgItemsTable.bookingId} and b.starts_at < ${new Date(now.getTime() - IG_BACKFILL_DAYS * 86_400_000)})`,
+    ),
   ));
   // A pinned slot that passed without the owner's OK unpins: the clip rolls on.
   await db.update(venueIgItemsTable).set({ pinned: false, updatedAt: now }).where(and(
@@ -239,6 +244,10 @@ export async function planVenue(venue: Venue, now = new Date()): Promise<number>
   ));
   const today = ammanLocal(now).slice(0, 10);
   const slots = slotsFor(s.slots, normaliseHours(venue.settings.openingHours), today, IG.calendarDays);
+  const bookingIds = [...new Set(items.map((i) => i.bookingId).filter((x): x is number => x !== null))];
+  const gameAt = new Map((bookingIds.length
+    ? await db.select({ id: venueBookingsTable.id, at: venueBookingsTable.startsAt }).from(venueBookingsTable).where(inArray(venueBookingsTable.id, bookingIds))
+    : []).map((r) => [r.id, wallOf(r.at) ?? nowM]));
   // A slot that has just come round for a post that may go out (approved, or the field posts
   // automatically) is held: publishing takes it this minute, the planner must not roll it on.
   const graceFrom = now.getTime() - IG_GRACE_MINUTES * 60_000;
@@ -256,6 +265,7 @@ export async function planVenue(venue: Venue, now = new Date()): Promise<number>
       pinned: i.pinned || due(i),
       score: i.score,
       readyAt: wallOf(i.createdAt) ?? nowM,
+      ...(i.bookingId && gameAt.has(i.bookingId) ? { gameAt: gameAt.get(i.bookingId)! } : {}),
     })),
   });
   let changed = 0;
@@ -338,8 +348,9 @@ export async function designFor(venue: Venue, academy: Academy, item: VenueIgIte
  * A part's scene in the field style: every clip on it framed by the ball (the 9:16 or 4:5 window
  * follows play across the panorama, or holds the middle), and its music.
  */
-async function sceneFor(part: FieldPart, locale: Locale): Promise<Scene> {
-  let scene = sceneSchema.parse(buildTemplateScene(part.templateKey, FIELD_STYLE, part.format, locale));
+async function sceneFor(part: FieldPart, locale: Locale, own: Map<string, Scene> = new Map()): Promise<Scene> {
+  // The field's own version of the template (My templates, "use instead"), else the catalogue's.
+  let scene = sceneSchema.parse(withReplacements(own, buildTemplateScene)(part.templateKey, FIELD_STYLE, part.format, locale));
   if (scene.durationMs === undefined) return scene;
   const framed = new Map<string, Promise<Awaited<ReturnType<typeof framingFor>> | null>>();
   const layers = await Promise.all(scene.layers.map(async (l) => {
@@ -395,8 +406,9 @@ export async function ensureRenderedAll(venue: Venue, item: VenueIgItem, now = n
       await db.update(venueIgItemsTable).set({ status: "skipped", error: design.skip, updatedAt: now }).where(eq(venueIgItemsTable.id, item.id));
       return null;
     }
+    const own = await replacementScenes(venue.id).catch(() => new Map<string, Scene>());
     for (const [i, part] of design.parts.entries()) {
-      const scene = await sceneFor(part, locale);
+      const scene = await sceneFor(part, locale, own);
       await db.insert(academyCreativeProjectsTable).values({
         academyId: venue.id,
         kind: scene.durationMs !== undefined ? "video" : "image",

@@ -339,7 +339,8 @@ export const sceneSchema = z.object({
    */
   slowZoom: z.boolean().optional(),
   /** Which template and style this came from (for re-styling). */
-  template: z.object({ key: z.string().max(80), style: z.enum(CREATIVE_STYLES) }).optional(),
+  /** The template it was made from; `mine`: the academy's own saved version of it (My templates). */
+  template: z.object({ key: z.string().max(80), style: z.enum(CREATIVE_STYLES), mine: z.number().int().positive().optional() }).optional(),
   locale: z.enum(["en", "ar"]).default("ar"),
   /** Video scenes: the venue's mark and sign-off card (see sceneBrandingSchema). */
   branding: sceneBrandingSchema.optional(),

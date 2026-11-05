@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS, FAVORITES_STATEMENTS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS, FAVORITES_STATEMENTS, MY_TEMPLATES_STATEMENTS, ACADEMY_IG_STATEMENTS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -117,6 +117,23 @@ describe("ensureAdditiveColumns", () => {
     expect(await ensureAdditiveColumns(pool)).toBe(1);
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0072_academy_favorites.sql", import.meta.url), "utf8");
     for (const statement of FAVORITES_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates the academy Instagram autopilot tables (0074), as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "academy_ig_items"`);
+    await pool.query(`DROP TABLE IF EXISTS "academy_ig_autopilot"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(2);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0074_academy_instagram_autopilot.sql", import.meta.url), "utf8");
+    for (const statement of ACADEMY_IG_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates academy_creative_templates (0073), as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "academy_creative_templates"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(1);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0073_academy_creative_templates.sql", import.meta.url), "utf8");
+    for (const statement of MY_TEMPLATES_STATEMENTS) expect(migration).toContain(`${statement};`);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 

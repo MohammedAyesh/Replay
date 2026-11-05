@@ -18,7 +18,8 @@ import {
 import { EXPORT_ENCODE_ARGS } from "../ffmpegExport";
 import { applyEndScreen, type EndScreenJob } from "../clipBranding/endScreenVideo";
 import { logger } from "../logger";
-import { renderScenePng, sceneSize, type ConcreteSource, type SceneRenderOptions } from "./render";
+import { createCanvas, type Canvas } from "@napi-rs/canvas";
+import { renderSceneCanvas, sceneSize, type ConcreteSource, type SceneRenderOptions } from "./render";
 import { ENTER_MS, PUSH_MS, SLIDE_PX, videoParts } from "./renderLayout";
 import { DIP_FADE_MS, hasFades, isFadeEntrance, wipeSpan } from "@workspace/api-zod";
 
@@ -181,6 +182,9 @@ export type Track =
     zoom?: { x: number; y: number };
     /** The layer's fades (fadeSegments). */
     fades?: FadeStep[];
+    /** Where the PNG's top-left sits on the canvas: stills are cropped to what they draw. */
+    x?: number;
+    y?: number;
   }
   | { type: "video"; layer: VideoLayer; file: VideoSourceFile };
 
@@ -261,7 +265,9 @@ export function audioMixFilters(footage: string[], music: string | null, duck: b
       `[voicemix][${music}d]amix=inputs=2:duration=first:normalize=0${limit}[aout]`,
     ];
   }
-  return [`${all.map((a) => `[${a}]`).join("")}amix=inputs=${all.length}:duration=longest:normalize=0,apad${limit}[aout]`];
+  // Padded to the scene's length, never open-ended: a bare apad makes silence without end, and
+  // ffmpeg kept making it (hundreds of MB a second, the video starved) until the server killed it.
+  return [`${all.map((a) => `[${a}]`).join("")}amix=inputs=${all.length}:duration=longest:normalize=0,apad=whole_dur=${sec(durationMs)}${limit}[aout]`];
 }
 const hexColor = (c: string) => `0x${c.replace(/^#/, "").slice(0, 6)}`;
 
@@ -376,6 +382,9 @@ export function buildFfmpegArgs(opts: {
   const { w: W, h: H } = sceneSize(scene);
   const inputs: string[] = ["-f", "lavfi", "-i", `color=c=${hexColor(opts.backgroundHex)}:s=${W}x${H}:r=${FPS}:d=${sec(D)}`];
   const filters: string[] = [`[0:v]format=yuv420p,setsar=1[b0]`];
+  // Sound goes after the picture in the graph. With [aout] declared first, ffmpeg pulled the sound
+  // ahead and queued every decoded 3840×1080 frame of the same file meanwhile: 2.1 GB for 15 s.
+  const afilters: string[] = [];
   const audio: string[] = [];
   let prev = "b0";
   let input = 1;
@@ -383,12 +392,19 @@ export function buildFfmpegArgs(opts: {
     const k = input++;
     const next = `b${n + 1}`;
     if (track.type === "png") {
-      inputs.push("-loop", "1", "-framerate", String(FPS), "-t", sec(D), "-i", track.path);
+      // A still is decoded only while it shows: its input starts at its own time (-itsoffset) and
+      // lasts its interval. Looping every still over the whole scene decoded and queued 20+ full
+      // frames per output frame: 3.3 GB and minutes for a 15 s story, which the server killed.
+      // A slow zoom keeps the whole-scene input: its zoom counts frames from the scene's start.
+      const bounded = !track.zoom;
+      const from = bounded ? Math.max(0, Math.min(track.fromMs, D)) : 0;
+      const len = bounded ? Math.max(1000 / FPS, Math.min(track.toMs, D) - from) : D;
+      inputs.push("-threads", "1", "-loop", "1", "-framerate", String(FPS), "-t", sec(len), ...(from > 0 ? ["-itsoffset", sec(from)] : []), "-i", track.path);
       const start = track.startMs ?? track.fromMs;
-      const xy = entranceXY(track.enter, start, "0", "0", { w: W, h: H }, track.endMs);
+      const xy = entranceXY(track.enter, start, String(track.x ?? 0), String(track.y ?? 0), { w: W, h: H }, track.endMs);
       const zoom = track.zoom ? `,${slowZoomFilter(track.zoom, D, { w: W, h: H })}` : "";
       filters.push(`[${k}:v]format=rgba${zoom}${fadeIn(track.enter, start)}${fadeFilters(track.fades)}[p${n}]`);
-      filters.push(`[${prev}][p${n}]overlay=x='${xy.x}':y='${xy.y}':enable='gte(t,${sec(track.fromMs)})*lt(t,${sec(track.toMs)})'[${next}]`);
+      filters.push(`[${prev}][p${n}]overlay=x='${xy.x}':y='${xy.y}':${bounded ? "eof_action=pass:" : ""}enable='gte(t,${sec(track.fromMs)})*lt(t,${sec(track.toMs)})'[${next}]`);
       prev = next;
       return;
     }
@@ -414,8 +430,11 @@ export function buildFfmpegArgs(opts: {
     });
     const joined = `v${n}j`;
     filters.push(parts.length > 1 ? `${vparts.map((p) => `[${p}]`).join("")}concat=n=${parts.length}:v=1:a=0[${joined}]` : `[${vparts[0]}]null[${joined}]`);
+    // Cover: cut the box's shape out of the source first, then scale it down. Scaling first blew a
+    // 3840×1080 panorama up to 6827×1920 RGBA for a 9:16 story (52 MB a frame) before cropping it.
+    const R = (bw / bh).toFixed(6);
     const fit = (layer.fit ?? "cover") === "cover"
-      ? `scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},format=rgba`
+      ? `crop=w='trunc(min(iw,ih*${R})/2)*2':h='trunc(min(ih,iw/${R})/2)*2',scale=${bw}:${bh},format=rgba`
       : `scale=${bw}:${bh}:force_original_aspect_ratio=decrease,format=rgba,pad=${bw}:${bh}:(ow-iw)/2:(oh-ih)/2:color=black@0`;
     const opacity = layer.opacity !== undefined && layer.opacity < 1 ? `,colorchannelmixer=aa=${layer.opacity.toFixed(3)}` : "";
     const rad = layer.rotation ? (layer.rotation * Math.PI) / 180 : 0;
@@ -429,15 +448,15 @@ export function buildFfmpegArgs(opts: {
 
     if (!layer.muted && file.hasAudio) {
       const aparts = parts.map((_, i) => `a${n}_${i}`);
-      if (parts.length > 1) filters.push(`[${k}:a]asplit=${parts.length}${aparts.map((p) => `[${p}in]`).join("")}`);
+      if (parts.length > 1) afilters.push(`[${k}:a]asplit=${parts.length}${aparts.map((p) => `[${p}in]`).join("")}`);
       parts.forEach((p, i) => {
         const src = parts.length > 1 ? `[${aparts[i]}in]` : `[${k}:a]`;
         const tempo = atempoChain(p.speed);
-        filters.push(`${src}atrim=start=${(file.zeroAtSec + p.srcFrom / 1000).toFixed(3)}:end=${(file.zeroAtSec + p.srcTo / 1000).toFixed(3)},asetpts=PTS-STARTPTS${tempo.length ? `,${tempo.join(",")}` : ""},aresample=44100,aformat=channel_layouts=stereo[${aparts[i]}]`);
+        afilters.push(`${src}atrim=start=${(file.zeroAtSec + p.srcFrom / 1000).toFixed(3)}:end=${(file.zeroAtSec + p.srcTo / 1000).toFixed(3)},asetpts=PTS-STARTPTS${tempo.length ? `,${tempo.join(",")}` : ""},aresample=44100,aformat=channel_layouts=stereo[${aparts[i]}]`);
       });
       const aj = `a${n}j`;
-      filters.push(parts.length > 1 ? `${aparts.map((p) => `[${p}]`).join("")}concat=n=${parts.length}:v=0:a=1[${aj}]` : `[${aparts[0]}]anull[${aj}]`);
-      filters.push(`[${aj}]atrim=end=${sec(E - S)},adelay=${Math.round(S)}:all=1[a${n}]`);
+      afilters.push(parts.length > 1 ? `${aparts.map((p) => `[${p}]`).join("")}concat=n=${parts.length}:v=0:a=1[${aj}]` : `[${aparts[0]}]anull[${aj}]`);
+      afilters.push(`[${aj}]atrim=end=${sec(E - S)},adelay=${Math.round(S)}:all=1[a${n}]`);
       audio.push(`a${n}`);
     }
   });
@@ -448,11 +467,11 @@ export function buildFfmpegArgs(opts: {
   if (music) {
     const k = input++;
     inputs.push("-stream_loop", "-1", "-i", music.path);
-    filters.push(...musicFilters(k, music, D, "am"));
+    afilters.push(...musicFilters(k, music, D, "am"));
   }
   let audioMap: string;
   if (audio.length || music) {
-    filters.push(...audioMixFilters(audio, music ? "am" : null, !!music?.duck, D));
+    afilters.push(...audioMixFilters(audio, music ? "am" : null, !!music?.duck, D));
     audioMap = "[aout]";
   } else {
     const k = input++;
@@ -465,7 +484,7 @@ export function buildFfmpegArgs(opts: {
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
     ...inputs,
-    "-filter_complex", filters.join(";"),
+    "-filter_complex", [...filters, ...afilters].join(";"),
     "-map", "[vout]", "-map", audioMap,
     ...EXPORT_ENCODE_ARGS.video,
     ...(cap ? ["-maxrate", `${cap}k`, "-bufsize", `${cap * 2}k`] : []),
@@ -487,11 +506,12 @@ export function runFfmpeg(args: string[], signal?: AbortSignal, timeoutMs = FFMP
     const timer = setTimeout(() => { kill(); reject(new Error("ffmpeg timed out")); }, timeoutMs);
     signal?.addEventListener("abort", kill, { once: true });
     proc.on("error", (e) => { clearTimeout(timer); reject(e); });
-    proc.on("close", (code) => {
+    proc.on("close", (code, sig) => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", kill);
       if (code === 0) resolve();
-      else reject(new Error(`ffmpeg exit ${code}: ${err.trim().split("\n").slice(-6).join(" | ")}`));
+      // A signal with no exit code: killed from outside, most often for memory (SIGKILL).
+      else reject(new Error(code === null ? `ffmpeg killed by ${sig ?? "a signal"}${sig === "SIGKILL" ? " (likely out of memory)" : ""}: ${err.trim().split("\n").slice(-6).join(" | ")}` : `ffmpeg exit ${code}: ${err.trim().split("\n").slice(-6).join(" | ")}`));
     });
   });
 }
@@ -509,6 +529,25 @@ export type VideoRenderOptions = Omit<SceneRenderOptions, "t" | "include" | "bac
   /** The venue's mark over everything, and its sign-off card after the scene (renderBranding). */
   branding?: { overlayPath: string | null; endScreen: EndScreenJob | null } | null;
 };
+
+/** The smallest box holding every pixel a still draws (alpha > 0), or null when it draws nothing. */
+export function drawnBox(canvas: Canvas): { x: number; y: number; w: number; h: number } | null {
+  const { width: W, height: H } = canvas;
+  const px = canvas.getContext("2d").getImageData(0, 0, W, H).data;
+  let x0 = W, y0 = H, x1 = -1, y1 = -1;
+  for (let y = 0; y < H; y += 1) {
+    const row = y * W * 4;
+    for (let x = 0; x < W; x += 1) {
+      if (px[row + x * 4 + 3] === 0) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      y1 = y;
+    }
+  }
+  if (x1 < 0) return null;
+  return { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
 
 /** Render a video scene to `opts.out`. */
 export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durationMs: number }> {
@@ -536,29 +575,41 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
   const stack = planStack(scene, (l) => footage.has(l.id), zooms);
   const tracks: Track[] = [];
   let png = 0;
-  const still = async (ids: Set<string>) => {
+  // Each still is cut down to what it draws: a full 1080×1920 RGBA frame per overlay, decoded and
+  // blended every frame, was most of a render's memory. A still that draws nothing is left out.
+  const still = async (ids: Set<string>, full = false): Promise<{ path: string; x: number; y: number } | null> => {
     const file = path.join(opts.workDir, `overlay-${String(png++).padStart(3, "0")}.png`);
-    const buf = await renderScenePng({ ...opts, t: null, include: (l) => ids.has(l.id), background: false });
-    await fs.promises.writeFile(file, buf);
-    return file;
+    const canvas = await renderSceneCanvas({ ...opts, t: null, include: (l) => ids.has(l.id), background: false });
+    const box = full ? { x: 0, y: 0, w: canvas.width, h: canvas.height } : drawnBox(canvas);
+    if (!box) return null;
+    const out = box.w === canvas.width && box.h === canvas.height ? canvas : (() => {
+      const c = createCanvas(box.w, box.h);
+      c.getContext("2d").drawImage(canvas, box.x, box.y, box.w, box.h, 0, 0, box.w, box.h);
+      return c;
+    })();
+    await fs.promises.writeFile(file, await out.encode("png"));
+    return { path: file, x: box.x, y: box.y };
   };
   for (const item of stack) {
     if (item.type === "video") {
       tracks.push({ type: "video", layer: item.layer, file: footage.get(item.layer.id)! });
     } else if (item.type === "animated") {
       const l = item.layer;
-      const file = await still(new Set([l.id]));
+      const img = await still(new Set([l.id]));
+      if (!img) continue;
       const own = { enter: l.enter, startMs: l.startMs ?? 0, ...(l.endMs !== undefined ? { endMs: l.endMs } : {}) };
-      if (!hasFades(l)) tracks.push({ type: "png", path: file, fromMs: l.startMs ?? 0, toMs: Math.min(l.endMs ?? D, D), ...own });
-      else for (const seg of fadeSegments(l, D)) tracks.push({ type: "png", path: file, fromMs: seg.fromMs, toMs: seg.toMs, ...own, fades: seg.fades });
+      if (!hasFades(l)) tracks.push({ type: "png", ...img, fromMs: l.startMs ?? 0, toMs: Math.min(l.endMs ?? D, D), ...own });
+      else for (const seg of fadeSegments(l, D)) tracks.push({ type: "png", ...img, fromMs: seg.fromMs, toMs: seg.toMs, ...own, fades: seg.fades });
     } else if (item.type === "zoom") {
       const first = item.layers[0]!;
-      const file = await still(new Set(item.layers.map((l) => l.id)));
-      if (!hasFades(first)) tracks.push({ type: "png", path: file, fromMs: first.startMs ?? 0, toMs: Math.min(first.endMs ?? D, D), zoom: item.origin });
-      else for (const seg of fadeSegments(first, D)) tracks.push({ type: "png", path: file, fromMs: seg.fromMs, toMs: seg.toMs, zoom: item.origin, fades: seg.fades });
+      // Zoomed about a canvas point: kept whole.
+      const img = (await still(new Set(item.layers.map((l) => l.id)), true))!;
+      if (!hasFades(first)) tracks.push({ type: "png", path: img.path, fromMs: first.startMs ?? 0, toMs: Math.min(first.endMs ?? D, D), zoom: item.origin });
+      else for (const seg of fadeSegments(first, D)) tracks.push({ type: "png", path: img.path, fromMs: seg.fromMs, toMs: seg.toMs, zoom: item.origin, fades: seg.fades });
     } else {
       for (const iv of overlayIntervals(item.layers, D)) {
-        tracks.push({ type: "png", path: await still(new Set(iv.ids)), fromMs: iv.fromMs, toMs: iv.toMs });
+        const img = await still(new Set(iv.ids));
+        if (img) tracks.push({ type: "png", ...img, fromMs: iv.fromMs, toMs: iv.toMs });
       }
     }
   }

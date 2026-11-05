@@ -1,6 +1,8 @@
 import { useMemo, useRef, useState } from "react";
 import { CalendarClock, Check, EyeOff, Facebook, ImagePlus, Instagram, Loader2, MessageCircle, RefreshCw, Send, Trash2, Upload } from "lucide-react";
 import { useSocialCopy } from "@/i18n/social-strings";
+import { useAcademyInstagramCopy } from "@/i18n/academy-instagram-strings";
+import { AcademyInstagramAutopilot } from "./instagram-autopilot";
 import {
   apiUrl,
   useCommentAction,
@@ -27,16 +29,17 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 
-type Tab = "overview" | "comments" | "posts";
+type Tab = "overview" | "comments" | "posts" | "autopilot";
 
 const fmtNumber = (locale: string, n: number | null | undefined) => (n == null ? "—" : new Intl.NumberFormat(locale === "ar" ? "ar-JO-u-nu-latn" : "en-GB", { notation: n >= 10000 ? "compact" : "standard" }).format(n));
 const fmtWhen = (locale: string, iso: string) => new Intl.DateTimeFormat(locale === "ar" ? "ar-JO-u-nu-latn" : "en-GB", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Amman" }).format(new Date(iso));
 
 /** Academy console → Instagram & Facebook. */
-export function AcademySocialSection({ academyId, onOpenChat }: { academyId: number; onOpenChat?: (threadId: number) => void }) {
+export function AcademySocialSection({ academyId, onOpenChat, initialTab }: { academyId: number; onOpenChat?: (threadId: number) => void; initialTab?: Tab }) {
   const copy = useSocialCopy();
+  const igCopy = useAcademyInstagramCopy();
   const overview = useSocialOverview(academyId);
-  const [tab, setTab] = useState<Tab>("overview");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "overview");
   const connected = overview.data?.connection?.status === "connected";
   return (
     <section className="space-y-5" dir={copy.locale === "ar" ? "rtl" : "ltr"} data-testid="academy-social">
@@ -50,10 +53,10 @@ export function AcademySocialSection({ academyId, onOpenChat }: { academyId: num
             <>
               {connected && (
                 <div className="flex gap-1.5" role="tablist">
-                  {(["overview", "comments", "posts"] as const).map((t) => (
+                  {(["overview", "comments", "posts", ...(overview.data!.canManage ? ["autopilot" as const] : [])] as const).map((t) => (
                     <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
                       className={cn("min-h-9 rounded-full px-4 text-sm font-semibold", tab === t ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")} data-testid={`social-tab-${t}`}>
-                      {copy.tabs[t]}{t === "comments" && overview.data!.openComments > 0 ? ` · ${overview.data!.openComments}` : ""}
+                      {t === "autopilot" ? igCopy.tab : copy.tabs[t]}{t === "comments" && overview.data!.openComments > 0 ? ` · ${overview.data!.openComments}` : ""}
                     </button>
                   ))}
                 </div>
@@ -61,6 +64,7 @@ export function AcademySocialSection({ academyId, onOpenChat }: { academyId: num
               {(!connected || tab === "overview") && <Overview academyId={academyId} data={overview.data!} />}
               {connected && tab === "comments" && <Comments academyId={academyId} onOpenChat={onOpenChat} />}
               {connected && tab === "posts" && <Posts academyId={academyId} canManage={overview.data!.canManage} data={overview.data!} />}
+              {connected && tab === "autopilot" && overview.data!.canManage && <AcademyInstagramAutopilot academyId={academyId} />}
             </>
           )}
     </section>

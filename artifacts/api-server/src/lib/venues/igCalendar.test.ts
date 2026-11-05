@@ -83,6 +83,17 @@ describe("Instagram calendar: the planner", () => {
     expect(plan.get(3)).toEqual({ slotAt: at("2026-11-05 16:00"), placement: "story" });
   });
 
+  it("posts fresh games first, then fills what's left with earlier days' games, newest first", () => {
+    const now = at("2026-11-05 15:00");
+    const plan = planSlots({ now, slots, items: [
+      item(1, "2026-11-05 15:00", 0, { gameAt: at("2026-10-28 20:00") }), // 8 days back
+      item(2, "2026-11-05 15:00", 0, { gameAt: at("2026-11-01 20:00") }), // 4 days back
+      item(3, "2026-11-05 15:00", 0, { gameAt: at("2026-11-04 21:00") }), // yesterday: fresh
+    ] });
+    const when = (id: number) => wallString(plan.get(id)!.slotAt!);
+    expect([3, 2, 1].map(when)).toEqual(["2026-11-05 16:00", "2026-11-05 16:00", "2026-11-05 19:00"]);
+  });
+
   it("fills a story slot up to its capacity, then the next one", () => {
     const now = at("2026-11-05 15:00");
     const items = [1, 2, 3, 4].map((id) => item(id, "2026-11-05 15:00", 0)); // score 0: never a Reel

@@ -82,8 +82,13 @@ export const IG_DAILY_LIMIT = 100;
 export const IG_RESERVE = 10;
 /** A clip needs this long between being ready and its slot (rendering, Instagram processing). */
 export const IG_LEAD_MINUTES = 20;
-/** A booking clip that hasn't gone out this long after its game is dropped: too old to post. */
+/** A game this recent is "fresh": its clip goes out before any older game's. */
 export const IG_MAX_AGE_HOURS = 72;
+/**
+ * How far back the autopilot looks for games to post: older games fill the calendar when there
+ * are no fresh ones. Bunny keeps footage 14 days; 12 leaves room to render and post.
+ */
+export const IG_BACKFILL_DAYS = 12;
 /** A slot this far in the past still publishes (a render that finished a little late). */
 export const IG_GRACE_MINUTES = 60;
 
@@ -175,6 +180,8 @@ export type PlanItem = {
   score: number;
   /** Wall minute the clip is ready to go (the footage came back). */
   readyAt: number;
+  /** Wall minute its game started (booking clips); older than IG_MAX_AGE_HOURS = a back-fill. */
+  gameAt?: number;
 };
 
 const MOVABLE = new Set(["planned", "approved"]);
@@ -203,7 +210,12 @@ export function planSlots(input: { now: number; slots: Slot[]; items: PlanItem[]
     used.set(key(slot.kind, slot.at), (used.get(key(slot.kind, slot.at)) ?? 0) + 1);
     out.set(item.id, { slotAt: slot.at, placement: slot.kind });
   };
-  const waiting = [...free].sort((a, b) => a.readyAt - b.readyAt || a.id - b.id);
+  // Fresh games first, in the order their footage came back; then earlier days' games, newest
+  // first, to fill what's left (a field with no new games still gets posts).
+  const fresh = (i: PlanItem) => (i.gameAt ?? i.readyAt) >= input.now - IG_MAX_AGE_HOURS * 60;
+  const waiting = [...free].sort((a, b) => Number(fresh(b)) - Number(fresh(a))
+    || (fresh(a) ? a.readyAt - b.readyAt : (b.gameAt ?? b.readyAt) - (a.gameAt ?? a.readyAt))
+    || a.id - b.id);
   // Reels first: each Reel time takes the best clip ready in the 24 hours before it.
   for (const slot of future.filter((s) => s.kind === "reel")) {
     if (room(slot) <= 0) continue;

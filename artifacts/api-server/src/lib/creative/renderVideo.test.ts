@@ -10,7 +10,7 @@ import {
 import { renderSceneCanvas } from "./render";
 import {
   DUCK, atempoChain, audioMixFilters, blurFilter, buildFfmpegArgs, entranceXY, fadeFilters, fadeSegments, musicFilters, musicMixFor, overlayIntervals, photoVideoMaxrateKbps, planStack,
-  renderSceneMp4, slowZoomFilter, type MusicMix,
+  drawnBox, renderSceneMp4, slowZoomFilter, type MusicMix,
 } from "./renderVideo";
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "creative-video-test-"));
@@ -106,10 +106,10 @@ describe("soundtrack filter graph", () => {
 
   it("sums footage and music, or ducks the music under the footage with a sidechain", () => {
     expect(audioMixFilters([], null, false, 5000)).toEqual([]);
-    expect(audioMixFilters(["a0"], null, false, 5000)).toEqual(["[a0]amix=inputs=1:duration=longest:normalize=0,apad[aout]"]);
-    expect(audioMixFilters(["a0"], "am", false, 5000)).toEqual(["[a0][am]amix=inputs=2:duration=longest:normalize=0,apad,alimiter=limit=0.891:level=false[aout]"]);
+    expect(audioMixFilters(["a0"], null, false, 5000)).toEqual(["[a0]amix=inputs=1:duration=longest:normalize=0,apad=whole_dur=5.000[aout]"]);
+    expect(audioMixFilters(["a0"], "am", false, 5000)).toEqual(["[a0][am]amix=inputs=2:duration=longest:normalize=0,apad=whole_dur=5.000,alimiter=limit=0.891:level=false[aout]"]);
     // Nothing to duck under: duck is ignored.
-    expect(audioMixFilters([], "am", true, 5000)).toEqual(["[am]amix=inputs=1:duration=longest:normalize=0,apad,alimiter=limit=0.891:level=false[aout]"]);
+    expect(audioMixFilters([], "am", true, 5000)).toEqual(["[am]amix=inputs=1:duration=longest:normalize=0,apad=whole_dur=5.000,alimiter=limit=0.891:level=false[aout]"]);
     const ducked = audioMixFilters(["a0", "a2"], "am", true, 5000);
     expect(ducked).toEqual([
       "[a0][a2]amix=inputs=2:duration=longest:normalize=0,apad=whole_dur=5.000[voice]",
@@ -327,6 +327,38 @@ describe("video renderer", () => {
     expect(level(6.85, 0.12)).toBeLessThan(level(5, 0.5) - 10);
     expect(level(0, 0.05)).toBeLessThan(level(1, 0.5) - 10);
   }, 60_000);
+});
+
+describe("render memory (production renders were killed: 2.8 GB for a 15 s story)", () => {
+  it("pads the mixed sound to the scene's length, never open-ended", () => {
+    for (const f of [audioMixFilters(["a0"], null, false, 15000), audioMixFilters(["a0"], "am", false, 15000), audioMixFilters([], "am", true, 15000)].flat()) {
+      expect(f).not.toMatch(/apad(?!=whole_dur)/);
+    }
+  });
+  it("declares the sound after the picture, and decodes each still only while it shows, cut to what it draws", () => {
+    const layer = { id: "vid", kind: "video" as const, src: { type: "clip" as const, clipId: 1 }, x: 0, y: 0, w: 1080, h: 1920, fit: "cover" as const, trimInMs: 0, speed: 1, muted: false };
+    const args = buildFfmpegArgs({
+      scene: { v: 1, format: "story", durationMs: 15000, background: "#000000", locale: "en", layers: [layer] },
+      backgroundHex: "#000000", out: "/tmp/x.mp4",
+      tracks: [
+        { type: "video", layer, file: { path: "/tmp/pano.mp4", zeroAtSec: 0, durationMs: 15000, hasAudio: true } },
+        { type: "png", path: "/tmp/title.png", fromMs: 12000, toMs: 15000, x: 120, y: 1500 },
+      ],
+    });
+    const graph = args[args.indexOf("-filter_complex") + 1];
+    expect(graph.indexOf("[vout]")).toBeLessThan(graph.indexOf("[aout]"));
+    // Cover crops the source to the box's shape before scaling (no 6827×1920 frames).
+    expect(graph).toContain("crop=w='trunc(min(iw,ih*0.562500)/2)*2':h='trunc(min(ih,iw/0.562500)/2)*2',scale=1080:1920");
+    const png = args.indexOf("/tmp/title.png");
+    expect(args.slice(png - 11, png)).toEqual(["-threads", "1", "-loop", "1", "-framerate", "30", "-t", "3.000", "-itsoffset", "12.000", "-i"]);
+    expect(graph).toContain("overlay=x='120':y='1500':eof_action=pass");
+  });
+  it("finds the box a still draws in", () => {
+    const c = createCanvas(200, 100);
+    expect(drawnBox(c)).toBeNull();
+    c.getContext("2d").fillRect(30, 40, 50, 10);
+    expect(drawnBox(c)).toEqual({ x: 30, y: 40, w: 50, h: 10 });
+  });
 });
 
 describe("slow zoom (a photo turned into a video)", () => {

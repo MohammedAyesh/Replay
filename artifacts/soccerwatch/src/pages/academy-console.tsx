@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
+import { AcademyInstagramToday } from "@/components/academy-console/instagram-autopilot";
 import { Link, useLocation } from "wouter";
 import {
   ArrowLeft,
@@ -353,7 +354,7 @@ function AcademyNoAccessState() {
   );
 }
 
-function Dashboard({ dashboard, isOwner }: { dashboard: AcademyConsoleDashboard; isOwner: boolean }) {
+function Dashboard({ dashboard, isOwner, onOpenInstagram }: { dashboard: AcademyConsoleDashboard; isOwner: boolean; onOpenInstagram?: () => void }) {
   const { t, locale } = useTranslation();
   const labels = t.academyConsole;
   const [, setLocation] = useLocation();
@@ -380,6 +381,7 @@ function Dashboard({ dashboard, isOwner }: { dashboard: AcademyConsoleDashboard;
         {isOwner && dashboard.collectThisWeek && <article className="rounded-2xl border border-line bg-surface p-5" data-testid="stat-collect-this-week"><div className="flex items-start justify-between gap-3"><span className="text-sm font-semibold text-muted-text">{labels.collectThisWeek}</span><span className="grid h-9 w-9 place-items-center rounded-xl bg-raised text-turf"><Coins className="h-4 w-4" aria-hidden="true" /></span></div><p className="mt-6 font-display text-3xl font-bold tabular-nums text-text"><bdi dir={locale === "ar" ? "rtl" : "ltr"}>{new Intl.NumberFormat(locale === "ar" ? "ar-JO" : "en-JO", { style: "currency", currency: "JOD", maximumFractionDigits: 3 }).format(dashboard.collectThisWeek.totalFils / 1000)}</bdi></p><p className="mt-2 text-xs leading-5 text-muted-text">{labels.collectThisWeekDescription(dashboard.collectThisWeek.playerCount)}</p></article>}
       </div>
       <DashboardLiveNow academyId={dashboard.academyId} />
+      {isOwner && onOpenInstagram ? <AcademyInstagramToday academyId={dashboard.academyId} onOpen={onOpenInstagram} /> : null}
       <section className="rounded-2xl border border-line bg-surface p-5 sm:p-6" data-testid="academy-getting-started">
         <div className="flex items-end justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.18em] text-muted-text">{labels.nextUp}</p><h2 className="mt-2 font-display text-2xl font-bold text-text">{labels.gettingStarted}</h2></div><span className="hidden text-xs text-muted-text sm:block">{isOwner ? labels.ownerAccess : labels.coachAccess}</span></div>
         <div className="mt-5 divide-y divide-line">{links.map(({ section, label, description, icon: Icon }) => <button key={section} type="button" onClick={() => setLocation(`/academy/${section}`)} className="flex w-full items-center gap-4 py-4 text-start transition-colors hover:text-turf" data-testid={`link-getting-started-${section}`}><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-raised text-turf"><Icon className="h-4 w-4" aria-hidden="true" /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-text">{label}</span><span className="mt-1 block text-xs leading-5 text-muted-text">{description}</span></span>{localeDirectionArrow(locale === "ar" ? "rtl" : "ltr")}</button>)}</div>
@@ -769,6 +771,7 @@ export default function AcademyConsole() {
   const { t, locale } = useTranslation();
   const [location, setLocation] = useLocation();
   const [section, setSection] = useState<ConsoleSection>("dashboard");
+  const [socialTab, setSocialTab] = useState<"autopilot" | null>(null);
   const [chatPhone, setChatPhone] = useState<string | null>(null);
   const [chatSocialThread, setChatSocialThread] = useState<number | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -898,7 +901,7 @@ export default function AcademyConsole() {
           {section === "dashboard" ? (
             dashboardQuery.isLoading ? <AcademyConsoleSkeleton /> :
               dashboardQuery.isError || !dashboardQuery.data ? <div className="rounded-2xl border border-line bg-surface p-6 text-sm text-muted-text" data-testid="academy-dashboard-error">{t.academyConsole.dashboardError}</div> :
-                <Dashboard dashboard={dashboardQuery.data} isOwner={manages("dashboard")} />
+                <Dashboard dashboard={dashboardQuery.data} isOwner={manages("dashboard")} onOpenInstagram={() => { setSocialTab("autopilot"); navigate("social"); }} />
           ) : section === "report" ? (
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyValueReportSection academyId={activeAcademyId} />
           ) : section === "squads" ? (
@@ -922,7 +925,7 @@ export default function AcademyConsole() {
           ) : section === "chats" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyChatsSection academyId={activeAcademyId} isOwner={manages("chats")} canManageChats={canManageChats} initialPhone={chatPhone} initialSocialThreadId={chatSocialThread} />
           ) : section === "social" ? (
-            !manages("social") && !canSee("social") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademySocialSection academyId={activeAcademyId} onOpenChat={(threadId) => { setChatSocialThread(threadId); navigate("chats"); }} />
+            !manages("social") && !canSee("social") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademySocialSection key={socialTab ?? "default"} academyId={activeAcademyId} initialTab={socialTab ?? undefined} onOpenChat={(threadId) => { setChatSocialThread(threadId); navigate("chats"); }} />
           ) : section === "people" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPeopleSection academyId={activeAcademyId} isOwner={manages("people")} onOpenChat={(phone) => { setChatPhone(phone); navigate("chats"); }} />
           ) : section === "ads" ? (

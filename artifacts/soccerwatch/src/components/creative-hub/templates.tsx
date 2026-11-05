@@ -29,6 +29,9 @@ import { StyleSwatch } from "./templates/style-swatch";
 import { TemplateCard } from "./templates/template-card";
 import { StarButton } from "./star-button";
 import { starredFirst, useFavorites } from "@/lib/favorites-api";
+import { useMyTemplatesCopy } from "@/i18n/my-templates-strings";
+import type { MyTemplate } from "@/lib/my-templates-api";
+import { MyTemplatesGrid } from "./my-templates";
 import type { SectionProps, TemplateSeed } from "./types";
 
 /**
@@ -45,7 +48,7 @@ import type { SectionProps, TemplateSeed } from "./types";
 
 const FORMATS: CreativeFormat[] = ["post", "square", "story"];
 const FIELD_FORMATS: CreativeFormat[] = ["story", "post"];
-type Group = TemplateCategory | "all" | "pack";
+type Group = TemplateCategory | "all" | "pack" | "mine";
 const POST_LOCALES: Array<"ar" | "en"> = ["ar", "en"];
 const FALLBACK_BRAND: CreativeBrand = { primary: "#7B5CFF", accent: "#D4FF4F", ink: "#0B0F1A", paper: "#FFFFFF", muted: "#8A93A6", nameEn: "", nameAr: null };
 type MediaLayer = Extract<SceneLayer, { kind: "image" | "video" }>;
@@ -80,6 +83,7 @@ function Segmented<T extends string>({ label, value, options, onChange, render }
 
 export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { seed?: TemplateSeed | null }) {
   const copy = useCreativeTemplatesCopy();
+  const mineCopy = useMyTemplatesCopy();
   const brandQ = useCreativeBrand(academyId);
   const fav = useFavorites(academyId);
   const [active, setActive] = useState<TemplateSeed | null>(seed ?? null);
@@ -158,6 +162,31 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
     }
   };
 
+  /** One of the academy's own templates: its saved design, filled like the template it came from. */
+  const openMine = async (t: MyTemplate) => {
+    setPending(`my-${t.id}`);
+    setFailed(null);
+    try {
+      const data = dataFor(t.baseKey);
+      const footage = active && (active.type === "clip" || active.type === "recording") && active.framing === undefined ? seedMedia(active) : null;
+      const framing = footage ? await followTheBall(academyId, footage) : null;
+      const seed = framing && active ? { ...active, framing } as TemplateSeed : active;
+      const project = await create.mutateAsync({
+        title: projectTitle(t.title, data, active),
+        templateKey: t.baseKey,
+        style: t.style ?? t.scene.template?.style ?? null,
+        scene: withSeedCamera(t.scene, seed),
+        data,
+        sourceSessionId: sessionId,
+      });
+      nav.openInEditor(project.id);
+    } catch {
+      setFailed(`my-${t.id}`);
+    } finally {
+      setPending(null);
+    }
+  };
+
   const cols = gridWidth < 560 ? 2 : gridWidth < 900 ? 3 : 4;
   const gap = 12;
   const cardW = gridWidth > 0 ? Math.floor((gridWidth - gap * (cols - 1)) / cols) : 0;
@@ -196,13 +225,14 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
         <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
           <Chip active={fieldOnly} onClick={() => { setCategory("pack"); if (!FIELD_FORMATS.includes(format)) setFormat("story"); }}
             testId={venue ? "creative-templates-cat-field" : "creative-templates-cat-club"}>{venue ? copy.fieldPack : copy.clubPack}</Chip>
+          <Chip active={category === "mine"} onClick={() => setCategory("mine")} testId="creative-templates-cat-mine">{mineCopy.chip}</Chip>
           <Chip active={category === "all"} onClick={() => setCategory("all")} testId="creative-templates-cat-all">{copy.all}</Chip>
           {TEMPLATE_CATEGORIES.map((c) => (
             <Chip key={c} active={category === c} onClick={() => setCategory(c)} testId={`creative-templates-cat-${c}`}>{copy.categories[c]}</Chip>
           ))}
         </div>
 
-        {fieldOnly ? <p className="text-xs text-muted-text" data-testid="creative-templates-field-hint">{venue ? copy.fieldPackHint : copy.clubPackHint}</p> : (
+        {category === "mine" ? <p className="text-xs text-muted-text" data-testid="creative-templates-mine-hint">{mineCopy.hint}</p> : fieldOnly ? <p className="text-xs text-muted-text" data-testid="creative-templates-field-hint">{venue ? copy.fieldPackHint : copy.clubPackHint}</p> : (
         <div>
           <p className="mb-1.5 text-xs font-semibold text-muted-text">{copy.styleLabel}</p>
           <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1" role="radiogroup" aria-label={copy.styleLabel}>
@@ -219,16 +249,24 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
         </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {category !== "mine" ? <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <Segmented label={copy.formatLabel} value={format} options={fieldOnly ? FIELD_FORMATS : FORMATS} onChange={(v) => setFormat(v as CreativeFormat)}
             render={(f: CreativeFormat) => <>{copy.formats[f]} <span className="font-mono opacity-70">{copy.formatHints[f]}</span></>} />
           <Segmented label={copy.languageLabel} value={postLocale} options={POST_LOCALES} onChange={(v) => setPostLocale(v as "ar" | "en")}
             render={(l: "ar" | "en") => <span lang={l}>{copy.languages[l]}</span>} />
-        </div>
+        </div> : null}
       </div>
 
       {brandQ.isError ? <p className="text-sm text-red-400" role="alert">{(brandQ.error as Error).message}</p> : null}
 
+      {category === "mine" ? (
+        <div ref={gridRef}>
+          <MyTemplatesGrid academyId={academyId} brand={brand} width={cardW} cols={cols} gap={gap} dataFor={dataFor} mediaUrl={mediaUrl}
+            onOpen={(t) => void openMine(t)} pending={pending?.startsWith("my-") ? Number(pending.slice(3)) : null}
+            labels={{ video: copy.video, seconds: copy.seconds, creating: copy.creating, open: copy.open }} />
+          {failed?.startsWith("my-") ? <p className="mt-2 text-xs text-red-400" role="alert">{copy.createFailed}</p> : null}
+        </div>
+      ) : (
       <div ref={gridRef} className="grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap }}>
         {brandQ.isLoading
           ? Array.from({ length: cols * 2 }, (_, i) => <div key={i} className="aspect-[4/5] animate-pulse rounded-xl bg-raised" />)
@@ -243,7 +281,8 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
             );
           })}
       </div>
-      {!brandQ.isLoading && templates.length === 0 ? <p className="text-sm text-muted-text">{copy.noTemplates}</p> : null}
+      )}
+      {category !== "mine" && !brandQ.isLoading && templates.length === 0 ? <p className="text-sm text-muted-text">{copy.noTemplates}</p> : null}
       {!active ? <p className="text-xs text-muted-text">{copy.sampleNote}</p> : null}
     </section>
   );

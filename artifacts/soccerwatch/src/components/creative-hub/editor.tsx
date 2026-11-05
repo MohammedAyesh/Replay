@@ -26,6 +26,7 @@ import { LibraryPicker } from "./library-picker";
 import type { SectionProps } from "./types";
 import { GENERAL_FIELDS, type EditorApi } from "./editor/editor-api";
 import { IconButton } from "./editor/controls";
+import { SaveTemplateButton } from "./my-templates";
 import { DataPanel } from "./editor/data-panel";
 import { FormatPanel } from "./editor/format-panel";
 import { useFitWidth, usePlayback } from "./editor/hooks";
@@ -287,6 +288,8 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
         <div className="flex items-center gap-1.5">
           <IconButton label={copy.undo} onClick={() => dispatch({ type: "undo" })} disabled={!canUndo(state)} testId="editor-undo"><Undo2 className="h-4 w-4 rtl:-scale-x-100" /></IconButton>
           <IconButton label={copy.redo} onClick={() => dispatch({ type: "redo" })} disabled={!canRedo(state)} testId="editor-redo"><Redo2 className="h-4 w-4 rtl:-scale-x-100" /></IconButton>
+          <SaveTemplateButton academyId={academyId} projectId={project.id} templateKey={project.templateKey} scene={scene} title={title}
+            flush={flush} onMarked={(t) => { if (t.scene.template) ed.updateScene({ template: t.scene.template }); }} />
           <Button type="button" variant="outline" className="min-h-10 rounded-xl" onClick={() => { setPlaying(false); setPreviewOpen(true); }} data-testid="editor-preview-open">
             <Eye className="h-4 w-4" /><span className="hidden sm:inline">{copy.preview}</span>
           </Button>
