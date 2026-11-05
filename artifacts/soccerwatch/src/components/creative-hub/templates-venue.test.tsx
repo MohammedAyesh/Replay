@@ -16,12 +16,17 @@ vi.mock("@/lib/creative-hub-api", () => ({
   useCreativeSessionData: () => ({ isLoading: false, isError: false, data: null }),
   useCreateCreativeProject: () => ({ mutateAsync: async () => ({ id: 1 }) }),
 }));
-vi.mock("@/lib/creative-hub-library-api", () => ({ useLibraryMatches: () => ({ items: [] }) }));
+vi.mock("@/lib/creative-hub-library-api", () => ({ useLibraryMatches: () => ({ items: [] }), useLibraryClips: () => ({ items: [] }) }));
 vi.mock("./templates/template-card", () => ({
   TemplateCard: ({ meta }: { meta: { key: string } }) => React.createElement("div", { "data-card": meta.key }),
 }));
 
-import { CreativeTemplates } from "./templates";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CreativeTemplates as Bare } from "./templates";
+
+// Match stills fetch their camera (useQueries).
+const CreativeTemplates = (p: React.ComponentProps<typeof Bare>) =>
+  <QueryClientProvider client={new QueryClient()}><Bare {...p} /></QueryClientProvider>;
 
 const nav = { openInEditor: () => {}, openInPublish: () => {}, openTemplates: () => {} };
 const cards = (html: string) => [...html.matchAll(/data-card="([^"]+)"/g)].map((m) => m[1]);

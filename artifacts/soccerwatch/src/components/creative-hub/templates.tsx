@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQueries, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import {
   CREATIVE_TEMPLATES,
@@ -9,7 +10,9 @@ import {
   buildTemplateScene,
   type CreativeBrand,
   type CreativeFormat,
+  type CreativeData,
   type CreativeStyle,
+  type Framing,
   type MediaSource,
   type Scene,
   type SceneLayer,
@@ -19,7 +22,7 @@ import { useCreativeTemplatesCopy } from "@/i18n/creative-templates-strings";
 import { useCreateCreativeProject, useCreativeBrand, useCreativeSessionData } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
 import { followTheBall } from "@/lib/creative-framing";
-import { useLibraryMatches } from "@/lib/creative-hub-library-api";
+import { useLibraryClips, useLibraryMatches } from "@/lib/creative-hub-library-api";
 import { offeredStyles } from "@/lib/creative-styles";
 import { cn } from "@/lib/utils";
 import { useConsoleKind } from "@/lib/console-kind";
@@ -92,7 +95,20 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
   const sessionId = active?.type === "session" ? active.sessionId : null;
   const sessionQ = useCreativeSessionData(academyId, sessionId);
   const matches = useLibraryMatches(academyId, {});
-  const stills = useMemo(() => matches.items.map((m) => m.still).filter((s): s is NonNullable<typeof s> => !!s).slice(0, 3) as MediaSource[], [matches.items]);
+  // The academy's own stills: its clips' (each at its moment of play) before its matches' (a
+  // quarter of the way in, often an empty pitch).
+  const clips = useLibraryClips(academyId, {});
+  const stills = useMemo(() => {
+    const out: MediaSource[] = [];
+    const seen = new Set<string>();
+    for (const s of [...clips.items.filter((c) => c.status === "ready").map((c) => c.still), ...matches.items.map((m) => m.still)]) {
+      if (!s || seen.has(stillKey(s))) continue;
+      seen.add(stillKey(s));
+      out.push(s);
+      if (out.length === 3) break;
+    }
+    return out;
+  }, [clips.items, matches.items]);
 
   const kind = seedKind(active);
   const venue = useConsoleKind() === "venue";
@@ -135,6 +151,18 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
   const dataFor = useCallback((key: string) => startingData({ key, locale: postLocale, academy, seed: active, session: sessionQ.data ?? null, stills }),
     [postLocale, academy, active, sessionQ.data, stills]);
 
+  // Stills of the match keep up with the ball: a story's narrow box otherwise showed the middle
+  // of the panorama, its stitch and an empty centre circle (2026-11-05).
+  const queryClient = useQueryClient();
+  const sampleStills = useMemo(() => framesIn(dataFor(PACK[0]?.key ?? "")), [dataFor, PACK]);
+  const cameraQs = useQueries({ queries: sampleStills.map((f) => stillCameraQuery(academyId, f)) });
+  const cameras = useMemo(() => {
+    const m = new Map<string, Framing>();
+    sampleStills.forEach((f, i) => { const c = cameraQs[i]?.data; if (c) m.set(stillKey(f), c); });
+    return m;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sampleStills, cameraQs.map((q) => q.dataUpdatedAt).join(",")]);
+
   const mediaUrl = useCallback((layer: MediaLayer) => creativeMediaUrl(academyId, layer.src, "still"), [academyId]);
 
   const open = async (key: string, title: string) => {
@@ -146,11 +174,12 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
       const footage = active && (active.type === "clip" || active.type === "recording") && active.framing === undefined ? seedMedia(active) : null;
       const framing = footage ? await followTheBall(academyId, footage) : null;
       const seed = framing && active ? { ...active, framing } as TemplateSeed : active;
+      const stillCams = await camerasFor(queryClient, academyId, data);
       const project = await create.mutateAsync({
         title: projectTitle(title, data, active),
         templateKey: key,
         style: styleOf(key),
-        scene: withSeedCamera(buildTemplateScene(key, styleOf(key), format, postLocale), seed),
+        scene: withSeedCamera(withStillCameras(buildTemplateScene(key, styleOf(key), format, postLocale), data, stillCams), seed),
         data,
         sourceSessionId: sessionId,
       });
@@ -171,11 +200,12 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
       const footage = active && (active.type === "clip" || active.type === "recording") && active.framing === undefined ? seedMedia(active) : null;
       const framing = footage ? await followTheBall(academyId, footage) : null;
       const seed = framing && active ? { ...active, framing } as TemplateSeed : active;
+      const stillCams = await camerasFor(queryClient, academyId, data);
       const project = await create.mutateAsync({
         title: projectTitle(t.title, data, active),
         templateKey: t.baseKey,
         style: t.style ?? t.scene.template?.style ?? null,
-        scene: withSeedCamera(t.scene, seed),
+        scene: withSeedCamera(withStillCameras(t.scene, data, stillCams), seed),
         data,
         sourceSessionId: sessionId,
       });
@@ -273,7 +303,7 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
           : templates.map((t) => {
             const title = t.title[copy.locale];
             return (
-              <TemplateCard key={t.key} meta={t} title={title} scene={scenes.get(t.key)!} data={dataFor(t.key)} brand={brand} width={cardW}
+              <TemplateCard key={t.key} meta={t} title={title} scene={withStillCameras(scenes.get(t.key)!, dataFor(t.key), cameras)} data={dataFor(t.key)} brand={brand} width={cardW}
                 mediaUrl={mediaUrl} onOpen={() => void open(t.key, title)} busy={pending === t.key} disabled={pending !== null}
                 failed={failed === t.key ? copy.createFailed : null}
                 labels={{ video: copy.video, seconds: copy.seconds, creating: copy.creating, open: copy.open(title) }}
@@ -305,4 +335,47 @@ function withSeedCamera(scene: Scene, seed: TemplateSeed | null): Scene {
       return framing ? { ...rest, framing } : rest;
     }),
   };
+}
+
+type Frame = Extract<MediaSource, { type: "frame" }>;
+const stillKey = (s: MediaSource) => JSON.stringify(s);
+
+/** The match stills a design's footage slots show: {{media}} and {{more.N}}. */
+function framesIn(data: CreativeData): Frame[] {
+  return [data.media, ...(data.more ?? [])].filter((m): m is Frame => m?.type === "frame");
+}
+
+const stillCameraQuery = (academyId: number, f: Frame) => ({
+  queryKey: ["creative", academyId, "still-camera", f.recordingId, f.atMs] as const,
+  queryFn: () => followTheBall(academyId, f),
+  staleTime: 30 * 60_000,
+});
+
+/** The cameras for a design's stills, waiting for any not loaded yet (followTheBall gives up after 8 s). */
+async function camerasFor(qc: QueryClient, academyId: number, data: CreativeData): Promise<Map<string, Framing>> {
+  const out = new Map<string, Framing>();
+  await Promise.all(framesIn(data).map(async (f) => {
+    const c = await qc.ensureQueryData(stillCameraQuery(academyId, f)).catch(() => null);
+    if (c) out.set(stillKey(f), c);
+  }));
+  return out;
+}
+
+/**
+ * Footage slots showing a still of the match get that still's camera (the ball's place then).
+ * A slot that already has a camera keeps it.
+ */
+export function withStillCameras(scene: Scene, data: CreativeData, cameras: ReadonlyMap<string, Framing>): Scene {
+  if (!cameras.size) return scene;
+  let changed = false;
+  const layers = scene.layers.map((l) => {
+    if (l.kind !== "video" || l.framing || l.src.type !== "binding") return l;
+    const m = /^more\.(\d+)$/.exec(l.src.path);
+    const src = l.src.path === "media" ? data.media : m ? data.more?.[Number(m[1])] : undefined;
+    const cam = src?.type === "frame" ? cameras.get(stillKey(src)) : undefined;
+    if (!cam) return l;
+    changed = true;
+    return { ...l, framing: cam };
+  });
+  return changed ? { ...scene, layers } : scene;
 }

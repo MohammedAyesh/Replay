@@ -19,6 +19,9 @@ export type FramingSource =
   | { type: "recording"; recordingId: number; fromMs: number; toMs: number }
   | { type: "clip"; clipId: number };
 
+/** How far past a still the ball is looked for. */
+export const STILL_LOOK_MS = 3000;
+
 export function fetchFraming(academyId: number, src: FramingSource): Promise<FramingAnswer> {
   return call<FramingAnswer>(creativePath(academyId, "/library/framing"), { method: "POST", body: JSON.stringify({ src }) });
 }
@@ -30,8 +33,12 @@ export function fetchFraming(academyId: number, src: FramingSource): Promise<Fra
  * its footage as it is, and the Camera button still opens the framer.
  */
 export async function followTheBall(academyId: number, src: MediaSource, timeoutMs = 8000): Promise<Framing | null> {
+  // A still of a match: where the ball is at that instant (its first key; a few seconds on, so a
+  // ball hidden for a moment is still found). A narrow box otherwise showed the middle of the
+  // panorama, its stitch and an empty centre circle (2026-11-05).
   const req: FramingSource | null = src.type === "clip" ? { type: "clip", clipId: src.clipId }
     : src.type === "recording" ? { type: "recording", recordingId: src.recordingId, fromMs: src.fromMs, toMs: src.toMs }
+    : src.type === "frame" ? { type: "recording", recordingId: src.recordingId, fromMs: src.atMs, toMs: src.atMs + STILL_LOOK_MS }
     : null;
   if (!req) return null;
   try {
