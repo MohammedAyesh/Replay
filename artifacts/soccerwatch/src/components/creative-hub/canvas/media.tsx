@@ -29,12 +29,20 @@ const clipFor = (layer: ImageLayer | VideoLayer) =>
 /** `quiet`: draw nothing instead of the placeholder (a background plate whose file is missing, as the export skips it). */
 export function ImageView({ layer, url, quiet = false }: { layer: ImageLayer | VideoLayer; url: string | null; quiet?: boolean }) {
   const [failed, setFailed] = useState<string | null>(null);
+  const [aspect, setAspect] = useState<number | null>(null);
+  // A footage slot showing a still (a frame of the match) keeps its camera: the window at its
+  // first moment, as the export draws it (render.ts), not the middle of the panorama.
+  const framing = layer.kind === "video" && layer.framing?.keys.length ? layer.framing : null;
+  const win = framing && aspect && layer.w > 0 && layer.h > 0
+    ? framingWindow(framing, layer.kind === "video" ? layer.trimInMs ?? 0 : 0, aspect, layer.w / layer.h)
+    : null;
   if (!url || failed === url) return quiet ? null : <MediaPlaceholder layer={layer} />;
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ clipPath: clipFor(layer) }}>
       <img src={url} alt="" draggable={false} onError={() => setFailed(url)}
-        className="pointer-events-none h-full w-full select-none"
-        style={{ objectFit: layer.fit ?? "cover", objectPosition: "center" }} />
+        onLoad={(e) => { const i = e.currentTarget; if (i.naturalWidth && i.naturalHeight) setAspect(i.naturalWidth / i.naturalHeight); }}
+        className={win ? "pointer-events-none select-none" : "pointer-events-none h-full w-full select-none"}
+        style={win ? framedVideoStyle(win) : { objectFit: layer.fit ?? "cover", objectPosition: "center" }} />
     </div>
   );
 }

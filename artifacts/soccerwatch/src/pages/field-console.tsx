@@ -26,6 +26,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/lib/auth";
+import { readChatLink } from "@/lib/push-notifications";
 import { useTranslation } from "@/i18n";
 import { useVenueCopy } from "@/i18n/venue-strings";
 import { cn } from "@/lib/utils";
@@ -75,9 +76,11 @@ export default function FieldConsole() {
   const igCopy = useInstagramCopy();
   const [location, setLocation] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [selected, setSelected] = useState<number | null>(readSelected);
-  const [chatPhone, setChatPhone] = useState<string | null>(null);
-  const [chatThread, setChatThread] = useState<number | null>(null);
+  // A notification opens /field/chats?a=<field>&phone=… (or &thread=…): that field, that chat.
+  const [chatLink] = useState(readChatLink);
+  const [selected, setSelected] = useState<number | null>(() => chatLink.academyId ?? readSelected());
+  const [chatPhone, setChatPhone] = useState<string | null>(chatLink.phone);
+  const [chatThread, setChatThread] = useState<number | null>(chatLink.thread);
   const [bookingDraft, setBookingDraft] = useState<{ pitchId?: number; name?: string; phone?: string } | null>(null);
   const memberships = useVenueMemberships(isSignedIn && !isGuest);
   const setUp = useSetUpVenue();

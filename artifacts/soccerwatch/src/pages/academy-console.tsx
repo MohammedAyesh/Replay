@@ -55,6 +55,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
+import { readChatLink } from "@/lib/push-notifications";
 import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -772,10 +773,12 @@ export default function AcademyConsole() {
   const [location, setLocation] = useLocation();
   const [section, setSection] = useState<ConsoleSection>("dashboard");
   const [socialTab, setSocialTab] = useState<"autopilot" | null>(null);
-  const [chatPhone, setChatPhone] = useState<string | null>(null);
-  const [chatSocialThread, setChatSocialThread] = useState<number | null>(null);
+  // A notification opens /academy/chats?a=<academy>&phone=… (or &thread=…): that academy, that chat.
+  const [chatLink] = useState(readChatLink);
+  const [chatPhone, setChatPhone] = useState<string | null>(chatLink.phone);
+  const [chatSocialThread, setChatSocialThread] = useState<number | null>(chatLink.thread);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [selectedAcademyId, setSelectedAcademyId] = useState<number | null>(readSelectedAcademyId);
+  const [selectedAcademyId, setSelectedAcademyId] = useState<number | null>(() => chatLink.academyId ?? readSelectedAcademyId());
   const membershipsQuery = useGetAcademyConsoleMemberships({
     query: {
       enabled: isSignedIn && !isGuest,

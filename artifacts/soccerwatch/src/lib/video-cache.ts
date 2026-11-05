@@ -38,6 +38,11 @@ function getRegistration() {
   return registrationPromise;
 }
 
+/** The site's service worker (it also shows chat notifications): null where there is none. */
+export function siteServiceWorker(): Promise<ServiceWorkerRegistration | null> {
+  return getRegistration();
+}
+
 export async function primeVideoCacheWorker(): Promise<boolean> {
   return Boolean(await getRegistration());
 }

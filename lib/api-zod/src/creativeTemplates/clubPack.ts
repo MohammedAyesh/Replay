@@ -327,7 +327,7 @@ const CLUB_DEFS: ClubDef[] = [
   {
     key: "club-week", title: { en: "The week in numbers", ar: "الأسبوع بالأرقام" }, formats: STORY,
     build: (c) => layouts.thanks(c, false),
-    sample: (ar) => ({ ...sampleCommon(), media: art("goal-clip"), custom: {
+    sample: (ar) => ({ ...sampleCommon(), custom: {
       ...endBits(ar), title: ar ? "أسبوعنا" : "Our week", sub: ar ? "شكراً للاعبين والأهالي" : "Thank you, players and parents",
       ...countData("matches", 18), matchesLabel: ar ? "تمرين وماتش متصوّر" : "sessions and games filmed",
       ...countData("goals", 64), goalsLabel: ar ? "جول" : "goals",
@@ -337,7 +337,7 @@ const CLUB_DEFS: ClubDef[] = [
   {
     key: "club-milestone", title: { en: "Milestone", ar: "إنجاز" }, formats: STORY,
     build: (c) => layouts.thanks(c, true),
-    sample: (ar) => ({ ...sampleCommon(), media: art("goal-clip"), custom: {
+    sample: (ar) => ({ ...sampleCommon(), custom: {
       ...endBits(ar), title: ar ? "شكراً إلكم" : "Thank you", sub: ar ? "وصلنا لرقم كبير" : "We reached a big one",
       ...countData("big", 200), bigLabel: ar ? "لاعب بالأكاديمية" : "players at the academy", bigSub: ar ? "وكل واحد إله فيديوهاته" : "and every one has his videos",
     } }),

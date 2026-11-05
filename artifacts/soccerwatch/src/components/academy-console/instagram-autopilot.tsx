@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, Check, ExternalLink, Film, Image as ImageIcon, Instagram, Plus, ShieldCheck, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { CalendarClock, Check, ExternalLink, Instagram, Plus, ShieldCheck, SkipForward, Undo2, X, Zap } from "lucide-react";
+import { PreviewButton, ProjectThumb } from "./design-preview";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useAcademyInstagramCopy } from "@/i18n/academy-instagram-strings";
-import { apiUrl } from "@/lib/academy-studio-api";
 import {
   useAcademyInstagram,
   useAcademyInstagramActions,
@@ -105,12 +105,6 @@ function Times({ times, busy, onSave, saved }: { times: AcademyIgTimes; busy: bo
   );
 }
 
-function Thumb({ item }: { item: { kind: string; renderStatus: string; outputUrl: string | null } | null }) {
-  const Icon = item?.kind === "video" ? Film : ImageIcon;
-  if (item?.outputUrl && item.kind === "image" && item.renderStatus === "done") return <img src={apiUrl(item.outputUrl)} alt="" className="h-14 w-11 shrink-0 rounded-lg bg-raised object-cover" />;
-  return <span className="grid h-14 w-11 shrink-0 place-items-center rounded-lg bg-turf/10 text-turf"><Icon className="h-4 w-4" aria-hidden="true" /></span>;
-}
-
 export function Suggestions({ academyId, list, compact }: { academyId: number; list: AcademyIgSuggestion[]; compact?: boolean }) {
   const copy = useAcademyInstagramCopy();
   const act = useAcademyInstagramActions(academyId);
@@ -120,9 +114,10 @@ export function Suggestions({ academyId, list, compact }: { academyId: number; l
       <ul className={cn("grid gap-2", !compact && "md:grid-cols-2")} data-testid="academy-ig-suggestion-list">
         {list.map((p) => (
           <li key={p.id} className="flex items-center gap-3 rounded-xl border border-dashed border-line bg-raised/40 p-2.5" data-testid={`academy-ig-suggestion-${p.id}`}>
-            <Thumb item={p} />
+            <ProjectThumb academyId={academyId} project={p} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-semibold text-text" dir="auto">{p.title || copy.fromYou}</span>
+              {p.about ? <span className="block truncate text-xs font-semibold text-turf" dir="auto">{p.about}</span> : null}
               <span className="block text-xs text-muted-text">{copy.kinds[p.placement]} · {p.origin === "auto" ? copy.fromReplay : copy.fromYou}</span>
             </span>
             <Button type="button" size="sm" variant="outline" disabled={act.add.isPending} onClick={() => act.add.mutate(p.id)} data-testid={`academy-ig-add-${p.id}`}>
@@ -179,9 +174,10 @@ function ItemRow({ academyId, item, auto }: { academyId: number; item: AcademyIg
   return (
     <li className="rounded-xl border border-line bg-raised/40 p-2.5" data-testid={`academy-ig-item-${item.id}`}>
       <div className="flex flex-wrap items-center gap-3">
-        <Thumb item={item.project} />
+        <ProjectThumb academyId={academyId} project={item.project} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-semibold text-text" dir="auto">{item.project?.title || copy.fromYou}</span>
+          {item.project?.about ? <span className="block truncate text-xs font-semibold text-turf" dir="auto">{item.project.about}</span> : null}
           <span className="block text-xs text-muted-text">
             {item.slotLocal ? <bdi>{clock(item.slotLocal, copy.locale)}</bdi> : null}{item.slotLocal ? " · " : ""}{copy.kinds[item.placement]} · {item.status === "planned" && auto ? copy.plannedAuto : copy.status[item.status]}
           </span>
@@ -195,6 +191,7 @@ function ItemRow({ academyId, item, auto }: { academyId: number; item: AcademyIg
               <Icon className="h-3.5 w-3.5" aria-hidden="true" />{copy.actions[a]}
             </button>
           ))}
+          {item.project ? <PreviewButton academyId={academyId} project={item.project} label={copy.preview} /> : null}
           {waiting ? <button type="button" onClick={() => setMoving(!moving)} className="inline-flex min-h-8 items-center gap-1 rounded-full border border-line px-2.5 text-xs font-semibold text-muted-text hover:text-text">
             <CalendarClock className="h-3.5 w-3.5" aria-hidden="true" />{copy.move}
           </button> : null}
@@ -230,7 +227,7 @@ export function AcademyInstagramToday({ academyId, onOpen }: { academyId: number
           {t.items.map((i) => (
             <li key={i.id} className="flex items-center gap-3 text-sm">
               <span className="w-[4.5rem] shrink-0 whitespace-nowrap font-display font-bold tabular-nums text-text">{i.slotLocal ? clock(i.slotLocal, copy.locale) : "—"}</span>
-              <span className="min-w-0 flex-1 truncate text-text" dir="auto">{i.project?.title || copy.fromYou}</span>
+              <span className="min-w-0 flex-1 truncate text-text" dir="auto">{i.project?.title || copy.fromYou}{i.project?.about ? ` · ${i.project.about}` : ""}</span>
               <span className="text-xs text-muted-text">{copy.status[i.status]}</span>
             </li>
           ))}

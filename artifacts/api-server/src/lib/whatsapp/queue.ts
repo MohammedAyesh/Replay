@@ -11,6 +11,7 @@ import {
   type AcademyWhatsappSettings,
 } from "@workspace/db";
 import { logger } from "../logger";
+import { notifyChatMessage } from "../push/webPush";
 import { upsertContact } from "./contacts";
 import { handleVenueInbound } from "../venues/agent";
 import { recordAdLead } from "../meta/leads";
@@ -704,6 +705,11 @@ export async function handleWahaWebhook(event: WebhookEvent): Promise<void> {
 
     if (fromMe || isGroup) return;
     const contact = await upsertContact(academyId, chatKey, { kind: "unknown", source: "whatsapp", name: pushName });
+    // The people who answer this chat get a notification on their phones (lib/push/webPush.ts).
+    void notifyChatMessage({
+      academyId, channel: "whatsapp", chatKey, from: contact.name || pushName || `+${chatKey}`, preview: text,
+      muted: contact.muted, assignedUserId: contact.assignedUserId,
+    });
 
     const word = body.trim().toLowerCase().replace(/[.!؟?]+$/, "");
     if (!STOP_WORDS.has(word) && !START_WORDS.has(word)) {
@@ -840,7 +846,11 @@ async function handleMissedCall(session: string, payload: Record<string, unknown
     waMessageId: `call-${callId}`,
   }).returning({ id: academyWhatsappMessagesTable.id }).catch(() => []);
   if (!stored) return;
-  await upsertContact(academyId, phone, { kind: "unknown", source: "whatsapp", name: null });
+  const contact = await upsertContact(academyId, phone, { kind: "unknown", source: "whatsapp", name: null });
+  void notifyChatMessage({
+    academyId, channel: "whatsapp", chatKey: phone, from: contact.name || `+${phone}`, preview: video ? "📹 Missed video call" : "📞 Missed call",
+    muted: contact.muted, assignedUserId: contact.assignedUserId,
+  });
   const options = parseChatOptions(settings.chatOptions, settings.locale);
   if (options.missedCall.enabled && senderSessionFor(settings)) {
     await enqueueMessages([{ academyId, kind: "auto_reply", phone, body: options.missedCall.text, dedupeKey: `auto-call:${academyId}:${phone}:${Math.floor(Date.now() / 3_600_000)}` }]);

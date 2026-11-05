@@ -588,13 +588,16 @@ function nomineesCover(c: Ctx) {
   return undefined;
 }
 
-/** Thank you: the week's numbers counting up over live footage, one after another. */
+/**
+ * Thank you and milestones: the numbers counting up, one after another, on the pack's own
+ * background. No footage: a number post has no moment to show, and a still of the pitch behind
+ * it was only an empty centre circle (Mohammed, 2026-11-05).
+ */
 function thanks(c: Ctx, milestone: boolean) {
   const intro = 2200;
   const D = 16000;
   const endAt = D - FIELD_TIMING.end;
-  footage(c, "video", { startMs: intro, blurFrom: endAt });
-  rect(c, "dim", { x: 0, y: 0, w: c.W, h: c.H }, { startMs: intro, endMs: endAt, fill: INK, opacity: 0.45, name: "bleed" });
+  backdrop(c, "bg", { startMs: intro });
   header(c, "head", { startMs: intro + 200, endMs: endAt, enter: "fade" });
   const t = { startMs: 0, endMs: intro };
   backdrop(c, "open-bg", t);
@@ -782,7 +785,7 @@ const FIELD_DEFS: FieldDef[] = [
   {
     key: "field-thanks", title: { en: "Thank you (the week in numbers)", ar: "شكراً (الأسبوع بالأرقام)" }, formats: STORY,
     build: (c) => thanks(c, false),
-    sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), custom: {
+    sample: (ar) => ({ ...sampleCommon(ar), custom: {
       ...endBits(ar), title: ar ? "شكراً إلكم" : "Thank you", sub: ar ? "على أسبوع حلو معنا" : "for a great week with us",
       ...countData("matches", 126), matchesLabel: ar ? "ماتش متصوّر" : "games filmed",
       ...countData("goals", 512), goalsLabel: ar ? "جول" : "goals",
@@ -792,7 +795,7 @@ const FIELD_DEFS: FieldDef[] = [
   {
     key: "field-milestone", title: { en: "Milestone", ar: "إنجاز" }, formats: STORY,
     build: (c) => thanks(c, true),
-    sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), custom: {
+    sample: (ar) => ({ ...sampleCommon(ar), custom: {
       ...endBits(ar), title: ar ? "شكراً إلكم" : "Thank you", sub: ar ? "وصلنا لرقم كبير" : "We reached a big one",
       ...countData("big", 1000), bigLabel: ar ? "ماتش متصوّر على أرضنا" : "games filmed on our pitches", bigSub: ar ? "وكل واحد إله فيديو" : "and every one has its video",
     } }),

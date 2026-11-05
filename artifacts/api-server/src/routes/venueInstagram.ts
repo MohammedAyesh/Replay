@@ -158,7 +158,10 @@ router.get(base, async (req, res): Promise<void> => {
     const check = await checkInstagram(account);
     const items = await db.select().from(venueIgItemsTable).where(and(
       eq(venueIgItemsTable.academyId, a.venue.id),
-      sql`(${venueIgItemsTable.slotAt} is null and ${venueIgItemsTable.status} in ('planned', 'approved')) or (${venueIgItemsTable.slotAt} >= ${from} and ${venueIgItemsTable.slotAt} < ${to}) or ${venueIgItemsTable.status} in ('removal_flagged', 'publishing')`,
+      // In brackets: and() doesn't bracket a raw sql chunk, so without them every field's posts in
+      // the window showed on this field's calendar (2026-11-05: "Pick clips" on another field's
+      // post answered Not found).
+      sql`((${venueIgItemsTable.slotAt} is null and ${venueIgItemsTable.status} in ('planned', 'approved')) or (${venueIgItemsTable.slotAt} >= ${from} and ${venueIgItemsTable.slotAt} < ${to}) or ${venueIgItemsTable.status} in ('removal_flagged', 'publishing'))`,
     )).orderBy(venueIgItemsTable.slotAt).limit(400);
     const bookingIds = [...new Set(items.map((i) => i.bookingId).filter((x): x is number => x !== null))];
     const awardIds = [...new Set(items.map((i) => i.awardId).filter((x): x is number => x !== null))];

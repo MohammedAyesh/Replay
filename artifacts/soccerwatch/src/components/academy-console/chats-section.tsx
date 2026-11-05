@@ -20,6 +20,7 @@ import { ContactEditor, LinkPlayerForm, RelationshipChips } from "./contact-edit
 import { useSocialCopy } from "@/i18n/social-strings";
 import { useHiddenSocialThreads, useSocialThreadState, useSocialThreads, type SocialThreadSummary } from "@/lib/academy-social-api";
 import { ChannelIcon, SocialChatRow, SocialThreadView } from "./social-chat";
+import { ChatNotifyButton } from "./chat-notify";
 
 function initials(name: string | null, fallback: string) {
   const source = (name ?? "").trim();
@@ -91,6 +92,7 @@ export function AcademyChatsSection({ academyId, isOwner, canManageChats = isOwn
       <header>
         <h1 className="font-display text-4xl font-bold tracking-tight text-text">{copy.chats.title}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-text">{copy.chats.description}</p>
+        <div className="mt-3"><ChatNotifyButton academyId={academyId} /></div>
       </header>
       {overview.data?.sender === "off" && <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">{copy.chats.off}</p>}
 
