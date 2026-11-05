@@ -246,6 +246,8 @@ async function publicBooking(venue: Venue, reference: string) {
     cliqName: b.payWith === "cliq" ? facts.aliasName : null,
     cardUrl: b.cardUrl,
     holdExpiresAt: b.holdExpiresAt?.toISOString() ?? null,
+    /** The match page (pitches with a camera): teams, who's coming, the video after. */
+    matchLink: facts.matchLink ?? null,
   };
 }
 

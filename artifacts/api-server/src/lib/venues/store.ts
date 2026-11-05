@@ -28,6 +28,7 @@ import {
 import { loadCommerce } from "../commerce";
 import { cancelFootageRequest, createFootageRequest, startCameraJob } from "../footageBooking";
 import { logger } from "../logger";
+import { ensureRoomForRequest } from "../matchRooms";
 import { normalizePhone } from "../whatsapp/phone";
 import { upsertContact } from "../whatsapp/contacts";
 import { mediaUrl } from "../whatsapp/media";
@@ -65,6 +66,7 @@ import {
   timeLabel,
   videoReadyMessage,
   type BookingFacts,
+  type BookingTerms,
   type Locale,
 } from "./messages";
 
@@ -746,6 +748,16 @@ export async function bookingFacts(venue: Venue, booking: VenueBooking, locale: 
     if (f?.shareToken && (f.status === "ready" || f.status === "partial")) link = `${publicBaseUrl()}/w/${f.shareToken}`;
   }
   const hold = booking.holdExpiresAt ? ammanLocal(booking.holdExpiresAt).slice(11) : null;
+  // The match page for a pitch with a camera (bookFootage runs before the confirmation goes out).
+  let matchLink: string | null = null;
+  if (booking.footageRequestId && booking.status !== "cancelled") {
+    const [req] = await db.select({ id: footageRequestsTable.id, fieldId: footageRequestsTable.fieldId, status: footageRequestsTable.status })
+      .from(footageRequestsTable).where(eq(footageRequestsTable.id, booking.footageRequestId));
+    if (req && req.status !== "cancelled" && req.status !== "failed") {
+      const room = await ensureRoomForRequest(req).catch(() => null);
+      if (room) matchLink = `${publicBaseUrl()}/m/${room.code}`;
+    }
+  }
   return {
     venue: locale === "ar" ? venue.nameAr || venue.name : venue.name,
     name: booking.customerName,
@@ -765,6 +777,37 @@ export async function bookingFacts(venue: Venue, booking: VenueBooking, locale: 
     feeFils: booking.feeFils,
     refundFils: Math.max(0, booking.refundDueFils - booking.refundedFils),
     reason: ((booking.policy as { reason?: string } | null)?.reason as BookingFacts["reason"]) ?? "standard",
+    matchLink,
+    manageLink: manageLinkFor(venue, booking.reference),
+    terms: booking.status === "held" || booking.status === "confirmed" ? bookingTerms(venue, booking, locale) : null,
+  };
+}
+
+/** The booking site's "Manage my booking", the code filled in (its own domain once that is live). */
+export function manageLinkFor(venue: Venue, reference: string): string | null {
+  const s = venue.settings as { slug?: string | null; customDomain?: string | null; domainStatus?: string | null };
+  const ref = encodeURIComponent(reference);
+  if (s.customDomain && s.domainStatus === "live") return `https://${s.customDomain}/?manage=${ref}#manage`;
+  return s.slug ? `${publicBaseUrl()}/v/${s.slug}?manage=${ref}#manage` : null;
+}
+
+/** "Thursday 5 Nov, 3:00 pm" / "الخميس 5/11 الساعة 3:00 م" for an instant. */
+function deadlineLabel(at: Date, locale: Locale): string {
+  const local = ammanLocal(at);
+  const day = dayLabel(local.slice(0, 10), locale);
+  const time = timeLabel(local.slice(11, 16), locale);
+  return locale === "ar" ? `${day} الساعة ${time}` : `${day}, ${time}`;
+}
+
+/** Change and cancel terms in words, from the policy the booking was made under. */
+export function bookingTerms(venue: Venue, booking: VenueBooking, locale: Locale, now = Date.now()): BookingTerms {
+  const policy = bookingPolicy(venue, booking);
+  const start = booking.startsAt.getTime();
+  const cancelBy = start - policy.cancelHours * 3_600_000;
+  const ch = changeQuote(policy, moneyOf(booking), now);
+  return {
+    change: { allowed: ch.allowed, until: ch.allowed ? deadlineLabel(new Date(start - policy.changeHours * 3_600_000), locale) : null, feeFils: ch.feeFils },
+    cancel: { until: cancelBy > now ? deadlineLabel(new Date(cancelBy), locale) : null, late: policy.lateCancelMode, value: policy.lateCancelValue },
   };
 }
 

@@ -421,19 +421,16 @@ export async function thanksDesign(venue: Venue, academy: Academy, s: IgSlotSett
   const ar = locale === "ar";
   const bits = fieldBits(venue, academy, locale);
   const name = ar ? venue.nameAr || venue.name : venue.name;
-  const { raw } = await weekMoments(venue, t.gamesWeek);
-  const [best] = pickSpread(bestMoments(raw), 1, 1);
-  const w = best ? await shortWindow(best, 6, 15_000) : null;
+  // Numbers on the pack's own background: no footage, so no one's game is in it.
   return {
-    moment: { bookingIds: best ? [best.booking.id] : [], numbers: n },
+    moment: { bookingIds: [], numbers: n },
     parts: [{
       templateKey: "field-thanks",
       format: "story",
       title: ar ? `شكراً · ${t.gamesWeek}` : `Thank you · ${t.gamesWeek}`,
-      windows: w ? [w] : [],
+      windows: [],
       data: {
         academy: bits.academy,
-        ...(w ? { media: recording(w) } : {}),
         custom: {
           ...bits.custom,
           title: ar ? "شكراً إلكم" : "Thank you",
@@ -768,23 +765,16 @@ export async function milestoneDesign(venue: Venue, academy: Academy, count: num
   const ar = locale === "ar";
   const bits = fieldBits(venue, academy, locale);
   const name = ar ? venue.nameAr || venue.name : venue.name;
-  const thisWeek = weekStartOf(nowWall(now));
-  let best: RawMoment | undefined;
-  for (const week of [thisWeek, addDays(thisWeek, -7)]) {
-    [best] = pickSpread(bestMoments((await weekMoments(venue, week, now)).raw), 1, 1);
-    if (best) break;
-  }
-  const w = best ? await shortWindow(best, 6, 15_000) : null;
+  // Numbers on the pack's own background: no footage, so no one's game is in it.
   return {
-    moment: { count, bookingIds: best ? [best.booking.id] : [] },
+    moment: { count, bookingIds: [] },
     parts: [{
       templateKey: "field-milestone",
       format: "story",
       title: ar ? `${count} ماتش متصوّر` : `${count} games filmed`,
-      windows: w ? [w] : [],
+      windows: [],
       data: {
         academy: bits.academy,
-        ...(w ? { media: recording(w) } : {}),
         custom: {
           ...bits.custom,
           title: ar ? "شكراً إلكم" : "Thank you",

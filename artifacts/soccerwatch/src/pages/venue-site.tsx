@@ -29,6 +29,7 @@ type Availability = { date: string; pitches: Array<{ pitchId: number; slots: Slo
 type BookingResult = {
   reference: string; status: string; paymentStatus: string; pitchName: string; pitchNameAr?: string | null; startLocal: string; endLocal: string;
   amountFils: number; dueOnlineFils: number; balanceFils: number; feeFils?: number; refundFils?: number; payWith: string; cliqAlias: string | null; cliqName: string | null; cardUrl: string | null; holdExpiresAt: string | null;
+  matchLink?: string | null;
 };
 
 type Quote = { amountFils: number; onlineDueFils: number; minimumOnlineFils: number; reason: "standard" | "rule"; methods: { cliq: boolean; card: boolean; field: boolean }; blocked: boolean };
@@ -90,6 +91,7 @@ const T = {
     payCardNow: "Pay now",
     holdUntil: (t: string) => `We hold it until ${t}.`,
     atField: (v: string) => `Pay ${v} at the field.`,
+    matchPage: "Open your match page",
     whatsapp: "WhatsApp us",
     directions: "Directions",
     pitches: "Pitches & prices",
@@ -170,6 +172,7 @@ const T = {
     payCardNow: "ادفع هلأ",
     holdUntil: (t: string) => `محجوزلك لحد ${t}.`,
     atField: (v: string) => `بتدفع ${v} بالملعب.`,
+    matchPage: "افتح صفحة الماتش",
     whatsapp: "واتساب",
     directions: "الموقع",
     pitches: "الملاعب والأسعار",
@@ -580,6 +583,9 @@ function Confirmation({ result, locale, slug, accent, wa, onNew }: { result: Boo
         <a href={r.cardUrl} className="mt-5 block rounded-2xl py-3 text-center font-bold text-[#0B0F1A]" style={{ background: accent }}>{t.payCardNow}</a>
       )}
       {r.balanceFils > 0 && (r.status === "confirmed" || r.status === "completed") && <p className="mt-4 text-sm text-white/70">{t.atField(jod(r.balanceFils, locale))}</p>}
+      {r.matchLink && r.status === "confirmed" && (
+        <a href={r.matchLink} className="mt-5 block rounded-2xl border border-white/20 py-3 text-center font-semibold" data-testid="venue-match-link">{t.matchPage}</a>
+      )}
       <button type="button" onClick={onNew} className="mt-6 text-sm font-semibold underline">{t.book}</button>
     </section>
   );
@@ -623,7 +629,7 @@ function ManageCard({ site, locale, slug, accent }: { site: Site; locale: Locale
   const b = m?.booking;
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:p-7" data-testid="venue-manage">
+    <section id="manage" className="scroll-mt-4 rounded-3xl border border-white/10 bg-white/[0.03] p-5 sm:p-7" data-testid="venue-manage">
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-3 text-start" aria-expanded={open}>
         <span><span className="block font-display text-xl font-bold">{t.manage}</span><span className="mt-1 block text-sm text-white/60">{t.manageHint}</span></span>
         <span className="text-2xl text-white/50">{open ? "−" : "+"}</span>
