@@ -8,8 +8,11 @@ import type { EditorApi } from "./editor-api";
 
 const ICON = { text: Type, image: Image, video: Film, shape: Shapes } as const;
 
-export function layerTitle(layer: SceneLayer, copy: CreativeEditorStrings, data: EditorApi["data"]): string {
+export function layerTitle(layer: SceneLayer, copy: CreativeEditorStrings, data: EditorApi["data"], slots: EditorApi["slots"] = []): string {
   if (layer.id === PLATE_LAYER_ID && layer.kind === "image") return copy.plateLayer;
+  // A part of a template's footage slot reads as the slot it plays: "Video 2 · B".
+  const slot = layer.kind === "video" && layer.src.type === "binding" ? slots.find((x) => x.layerIds.includes(layer.id))?.n ?? null : null;
+  if (slot) return layer.name && layer.name !== "bleed" ? `${copy.videos.slot(slot)} · ${layer.name}` : copy.videos.slot(slot);
   if (layer.name) return layer.name;
   if (layer.kind === "text") {
     const t = fillText(layer.text, data, true).replace(/\s+/g, " ").trim();
@@ -35,7 +38,7 @@ export function LayersPanel({ ed }: { ed: EditorApi }) {
               className={cn("flex items-center gap-1 rounded-xl border bg-surface p-1 ps-2", active ? "border-turf" : "border-line", layer.hidden && "opacity-60")}>
               <button type="button" onClick={() => ed.select(layer.id)} className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-start">
                 <Icon className="h-4 w-4 shrink-0 text-muted-text" />
-                <bdi dir="auto" className="truncate text-sm text-text">{layerTitle(layer, copy, ed.data)}</bdi>
+                <bdi dir="auto" className="truncate text-sm text-text">{layerTitle(layer, copy, ed.data, ed.slots)}</bdi>
               </button>
               <RowButton label={layer.hidden ? copy.show : copy.hide} onClick={() => ed.update(layer.id, { hidden: layer.hidden ? undefined : true })}>
                 {layer.hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}

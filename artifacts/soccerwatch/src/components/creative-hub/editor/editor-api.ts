@@ -1,5 +1,5 @@
-import type { CreativeBrand, CreativeData, CreativeFormat, CreativeStyle, MediaSource, Scene, SceneLayer, SceneMusic, TemplateMeta } from "@workspace/api-zod";
-import type { LayerChange, PlateChange } from "@/lib/creative-editor-state";
+import type { CreativeBrand, CreativeData, CreativeFormat, CreativeStyle, Framing, MediaSource, Scene, SceneLayer, SceneMusic, TemplateMeta } from "@workspace/api-zod";
+import type { LayerChange, PlateChange, VideoSlot } from "@/lib/creative-editor-state";
 
 /** What the editor's panels and timeline get to read and change. Built once per render in editor.tsx. */
 export type EditorApi = {
@@ -33,7 +33,14 @@ export type EditorApi = {
    * Footage was just picked for a video layer (or for the {{media}} slot): drop the old clip's
    * camera, then follow the ball through the new one once it is known.
    */
-  frameFootage: (target: { layerId: string } | { slot: "media" }, src: MediaSource) => void;
+  frameFootage: (target: { layerId: string } | { slot: string }, src: MediaSource) => void;
+  /** The template's footage slots, Video 1, Video 2 … in timeline order. */
+  slots: VideoSlot[];
+  /**
+   * Put footage in a slot: the data value, every layer showing it plays it from the start for
+   * `playMs`, and the design ripples to fit (one undo step). `framing` sets the camera too.
+   */
+  setSlotVideo: (path: string, src: MediaSource, playMs: number | null, framing?: Framing | null) => void;
   /** Open the Library picker. */
   pick: (accept: "image" | "video" | "any", onPick: (source: MediaSource, meta: { durationMs?: number; label?: string }) => void) => void;
   /** For SceneCanvas previews inside panels. */

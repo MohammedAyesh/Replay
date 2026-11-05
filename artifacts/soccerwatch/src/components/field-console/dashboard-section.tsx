@@ -1,9 +1,12 @@
 import { useState } from "react";
-import { AlertCircle, Bot, CalendarPlus, Copy, ExternalLink, Receipt, Timer } from "lucide-react";
+import { AlertCircle, Bot, CalendarPlus, Copy, ExternalLink, Instagram, Receipt, Timer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useVenueCopy } from "@/i18n/venue-strings";
+import { useInstagramCopy } from "@/i18n/instagram-strings";
+import { useInstagramToday } from "@/lib/instagram-api";
 import { clock, jod, useVenueDashboard } from "@/lib/venue-api";
 import { Card, ErrorText, Pill, Skeleton, Stat } from "./shared";
+import { SuggestionList } from "./instagram-suggestions";
 
 export type FieldSection = "dashboard" | "footage" | "bookings" | "customers" | "chats" | "people" | "agent" | "whatsapp" | "pitches" | "payments" | "website" | "ads" | "social" | "instagram" | "creative" | "studio" | "branding" | "profile" | "team";
 
@@ -85,6 +88,7 @@ export function DashboardSection({ venueId, onNavigate }: { venueId: number; onN
               </div>
             )}
           </Card>
+          {d.isOwner && <InstagramToday venueId={venueId} onOpen={() => onNavigate("instagram")} />}
           <Card>
             <p className="text-xs font-bold uppercase tracking-wide text-muted-text">{copy.dashboard.shareSite}</p>
             <p className="mt-2 truncate font-mono text-sm text-turf" dir="ltr">{siteUrl.replace(/^https?:\/\//, "")}</p>
@@ -98,5 +102,40 @@ export function DashboardSection({ venueId, onNavigate }: { venueId: number; onN
         </div>
       </div>
     </div>
+  );
+}
+
+/** Today on the field's Instagram: what goes out today, and the autopilot's next suggestions. Owner only. */
+export function InstagramToday({ venueId, onOpen }: { venueId: number; onOpen: () => void }) {
+  const copy = useInstagramCopy();
+  const q = useInstagramToday(venueId);
+  const t = q.data;
+  const needsOk = t ? t.items.filter((i) => i.status === "planned" && t.publishMode === "approve").length : 0;
+  return (
+    <Card data-testid="dashboard-instagram">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="flex items-center gap-2 font-display text-xl font-bold text-text"><Instagram className="h-5 w-5 text-turf" aria-hidden="true" />{copy.today.title}</h2>
+        {t && (t.consentMode === "off" ? <Pill kind="cancelled">{copy.today.consentOff}</Pill> : !t.autopilot ? <Pill kind="pending">{copy.today.off}</Pill> : null)}
+      </div>
+      {q.isLoading ? <Skeleton rows={2} /> : q.isError || !t ? <ErrorText error={q.error ?? copy.error} /> : (
+        <>
+          {t.items.length === 0 ? <p className="mt-3 text-sm text-muted-text">{copy.today.none}</p> : (
+            <ol className="mt-3 space-y-1.5" data-testid="dashboard-instagram-items">
+              {t.items.map((i) => (
+                <li key={i.id} className="flex items-center gap-3 text-sm">
+                  <span className="w-[4.5rem] shrink-0 whitespace-nowrap font-display font-bold tabular-nums text-text">{i.slotLocal ? clock(i.slotLocal, copy.locale) : "—"}</span>
+                  <span className="min-w-0 flex-1 truncate text-text">{i.reference ? copy.calendar.booking(i.reference) : copy.calendar.kinds[i.kind] ?? (i.kind === "award_nominees" ? copy.calendar.nominees : i.kind === "award_winner" ? copy.calendar.winner : i.kind)}</span>
+                  <span className="text-xs text-muted-text">{copy.calendar.status[i.status] ?? i.status}</span>
+                </li>
+              ))}
+            </ol>
+          )}
+          {needsOk > 0 && <button type="button" onClick={onOpen} className="mt-3 text-sm font-semibold text-amber-200 underline-offset-2 hover:underline">{copy.today.needsOk(needsOk)}</button>}
+          <p className="mt-4 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.today.next}</p>
+          <div className="mt-2"><SuggestionList venueId={venueId} suggestions={t.suggestions} disabled={t.consentMode === "off"} compact /></div>
+          <Button type="button" size="sm" variant="ghost" className="mt-3" onClick={onOpen}>{copy.today.open}</Button>
+        </>
+      )}
+    </Card>
   );
 }

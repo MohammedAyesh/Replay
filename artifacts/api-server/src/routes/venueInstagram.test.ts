@@ -646,6 +646,54 @@ describe("6. Field template pack: carousels, votes in the comments, weekly posts
   });
 });
 
+describe("7. Suggestions, always", () => {
+  it("lists what the autopilot will post next that isn't on the calendar, adds one at its own time, and shows today's posts", async () => {
+    await db.update(venueSettingsTable).set({ igSlots: { off: ["versus"] } }).where(eq(venueSettingsTable.academyId, venueId));
+    const got = await request(app).get(ig()).set(auth(ownerId)).expect(200);
+    const sug = got.body.suggestions as Array<{ kind: string; placement: string; at: string; originKey: string }>;
+    // Every kind that is on and not on the calendar yet comes up, free pitches for two days; versus is off,
+    // and last week's thank-you is already on the calendar (made by the test above).
+    const kinds = new Set(sug.map((x) => x.kind));
+    for (const k of ["top5", "match_week", "player_week", "open_slots"]) expect(kinds.has(k)).toBe(true);
+    expect(kinds.has("versus")).toBe(false);
+    const onCalendar = new Set((await items()).map((i) => i.originKey));
+    expect(sug.filter((x) => onCalendar.has(x.originKey))).toEqual([]);
+    expect(sug.filter((x) => x.kind === "open_slots")).toHaveLength(2);
+    expect(sug.find((x) => x.kind === "top5")).toMatchObject({ placement: "reel", at: expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/) });
+    expect(sug.find((x) => x.kind === "open_slots")?.placement).toBe("story");
+    expect([...sug].map((x) => x.at)).toEqual([...sug].map((x) => x.at).sort());
+    // Strangers see nothing; a made-up time or a switched-off kind is refused.
+    await request(app).get(`${ig()}/today`).set(auth(strangerId)).expect((r) => expect([403, 404]).toContain(r.status));
+    await request(app).post(`${ig()}/suggestions`).set(auth(strangerId)).send({ kind: "top5", at: sug[0].at }).expect((r) => expect([403, 404]).toContain(r.status));
+    await request(app).post(`${ig()}/suggestions`).set(auth(ownerId)).send({ kind: "nope", at: sug[0].at }).expect(400);
+    const thanks = sug.find((x) => x.kind === "top5")!;
+    await request(app).post(`${ig()}/suggestions`).set(auth(ownerId)).send({ kind: "thanks", at: thanks.at.replace(/:\d{2}$/, ":07") }).expect(409);
+    await request(app).post(`${ig()}/suggestions`).set(auth(ownerId)).send({ kind: "versus", at: thanks.at }).expect(409);
+    // Adding one pins it under the autopilot's own key: on the calendar, gone from the suggestions, never twice.
+    const added = await request(app).post(`${ig()}/suggestions`).set(auth(ownerId)).send({ kind: thanks.kind, at: thanks.at }).expect(201);
+    expect(added.body.originKey).toBe(thanks.originKey);
+    const [row] = (await items()).filter((i) => i.originKey === thanks.originKey);
+    expect(row).toMatchObject({ kind: "top5", placement: "reel", pinned: true, status: "planned", projectId: null });
+    expect(ammanLocal(row.slotAt!)).toBe(thanks.at);
+    await request(app).post(`${ig()}/suggestions`).set(auth(ownerId)).send({ kind: thanks.kind, at: thanks.at }).expect(409);
+    const again = await request(app).get(ig()).set(auth(ownerId)).expect(200);
+    expect(again.body.suggestions.some((x: { originKey: string }) => x.originKey === thanks.originKey)).toBe(false);
+    expect(again.body.suggestions.length).toBe(sug.length - 1);
+    // The autopilot's own run later finds it there and adds nothing.
+    const at = fromAmmanLocal(thanks.at)!;
+    await scheduleFieldPosts((await loadVenue(venueId))!, new Date(at.getTime() - 3 * 3_600_000));
+    expect((await items()).filter((i) => i.originKey === thanks.originKey)).toHaveLength(1);
+    // Today: the day's posts and the next few suggestions, for the dashboard.
+    const today = await request(app).get(`${ig()}/today`).set(auth(ownerId)).expect(200);
+    expect(today.body).toMatchObject({ autopilot: expect.any(Boolean), consentMode: expect.any(String) });
+    expect(today.body.suggestions.length).toBeGreaterThan(0);
+    expect(today.body.suggestions.length).toBeLessThanOrEqual(4);
+    const day = ammanLocal(new Date()).slice(0, 10);
+    for (const i of today.body.items as Array<{ slotAt: string | null }>) expect(i.slotAt && ammanLocal(new Date(i.slotAt)).slice(0, 10)).toBe(day);
+    await db.update(venueSettingsTable).set({ igSlots: {} }).where(eq(venueSettingsTable.academyId, venueId));
+  });
+});
+
 describe("consent switched off", () => {
   it("takes everything waiting off the calendar and turns the autopilot off", async () => {
     const waiting = await playedBooking({ hoursAgo: 14, consent: "yes" });

@@ -445,6 +445,8 @@ async function prepareRenders(venue: Venue, now: Date): Promise<number> {
     isNotNull(venueIgItemsTable.slotAt),
     lte(venueIgItemsTable.slotAt, soon),
     isNull(venueIgItemsTable.projectId),
+    // Free pitches are read as the story renders: only in its last hour, even if it was added days ago.
+    or(ne(venueIgItemsTable.kind, "open_slots"), lte(venueIgItemsTable.slotAt, new Date(now.getTime() + 3_600_000))),
   )).orderBy(asc(venueIgItemsTable.slotAt)).limit(3);
   for (const item of due) await ensureRendered(venue, item, now).catch((error) => logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram: render failed"));
   return due.length;
@@ -706,7 +708,7 @@ export async function pickWinner(venue: Venue, awardId: number, key: string, use
 // ─── 5b. Weekly, daily, monthly posts and milestones ─────────────────────────
 
 /** Put an item on the calendar at its own time (once: its origin key is unique per field). */
-async function pinItem(venue: Venue, originKey: string, kind: string, placement: "story" | "reel", at: number, now: Date, moment: Record<string, unknown> | null = null): Promise<boolean> {
+export async function pinItem(venue: Venue, originKey: string, kind: string, placement: "story" | "reel", at: number, now: Date, moment: Record<string, unknown> | null = null): Promise<boolean> {
   const rows = await db.insert(venueIgItemsTable).values({
     academyId: venue.id,
     originKey,

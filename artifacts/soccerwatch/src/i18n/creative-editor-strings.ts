@@ -27,7 +27,22 @@ const en = {
   previewTitle: "Preview",
   previewHint: "This is how it will look when it's exported.",
 
-  tools: { text: "Text", media: "Media", music: "Music", shapes: "Shapes", layers: "Layers", style: "Style", format: "Size", data: "Details" },
+  tools: { videos: "Videos", text: "Text", media: "Media", music: "Music", shapes: "Shapes", layers: "Layers", style: "Style", format: "Size", data: "Details" },
+  videos: {
+    slot: (n: number) => `Video ${n}`,
+    hint: (n: number) => (n === 1
+      ? "This template plays one video. Its length follows the video's."
+      : `This template plays ${n} videos. Its length follows theirs: a longer clip makes the design longer.`),
+    empty: "No video yet",
+    add: "Add video",
+    change: "Change video",
+    edit: "Camera & length",
+    editHint: "Trim it and set the camera, as in Clips.",
+    length: (s: string) => `${s} long`,
+    segments: (n: number) => (n === 1 ? "1 part on the timeline" : `${n} parts on the timeline`),
+    inDetails: "Videos are set in the Videos tab.",
+    open: "Open Videos",
+  },
   toolbar: "Editing tools",
   canvasLabel: "Design canvas",
   nothingSelected: "Tap something on the design to edit it.",
@@ -206,7 +221,22 @@ const ar: typeof en = {
   previewTitle: "معاينة",
   previewHint: "هيك رح يطلع لما تصدّره.",
 
-  tools: { text: "نص", media: "صور وفيديو", music: "موسيقى", shapes: "أشكال", layers: "الطبقات", style: "الستايل", format: "المقاس", data: "التفاصيل" },
+  tools: { videos: "الفيديوهات", text: "نص", media: "صور وفيديو", music: "موسيقى", shapes: "أشكال", layers: "الطبقات", style: "الستايل", format: "المقاس", data: "التفاصيل" },
+  videos: {
+    slot: (n: number) => `فيديو ${n}`,
+    hint: (n: number) => (n === 1
+      ? "هالقالب بيعرض فيديو واحد. مدته بتمشي حسب مدة الفيديو."
+      : n === 2 ? "هالقالب بيعرض فيديوين. مدته بتمشي حسب مدتهم: كليب أطول بيطوّل التصميم." : `هالقالب بيعرض ${n} فيديوهات. مدته بتمشي حسب مدتهم: كليب أطول بيطوّل التصميم.`),
+    empty: "لسا ما في فيديو",
+    add: "ضيف فيديو",
+    change: "غيّر الفيديو",
+    edit: "الكاميرا والمدة",
+    editHint: "قصّه وظبّط الكاميرا، متل المقاطع.",
+    length: (s: string) => `مدته ${s}`,
+    segments: (n: number) => (n === 1 ? "جزء واحد على الخط الزمني" : n === 2 ? "جزئين على الخط الزمني" : `${n} أجزاء على الخط الزمني`),
+    inDetails: "الفيديوهات بتنحط من تبويب الفيديوهات.",
+    open: "افتح الفيديوهات",
+  },
   toolbar: "أدوات التعديل",
   canvasLabel: "التصميم",
   nothingSelected: "اكبس على أي إشي بالتصميم عشان تعدّله.",

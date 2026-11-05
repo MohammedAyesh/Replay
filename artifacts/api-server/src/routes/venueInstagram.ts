@@ -33,11 +33,13 @@ import {
   monthlyReport,
   notPosted,
   pickWinner,
+  pinItem,
   removeBookingFromInstagram,
   type IgItemView,
 } from "../lib/venues/igAutopilot";
 import { DEFAULT_IG_SLOTS, OPTIONAL_KINDS, WEEKLY_KINDS, isQuiet, normaliseIgSlots, nowWall, pacing, slotsFor } from "../lib/venues/igCalendar";
 import { awardCommentVotes, versusVotes } from "../lib/venues/igVotes";
+import { SUGGEST_KINDS, suggestPosts, suggestionFor, type SuggestKind } from "../lib/venues/igSuggest";
 import { IG_CONSENT_MODES, consentMode } from "../lib/venues/igConsent";
 import { checkInstagram } from "../lib/venues/igGraph";
 import { loadVenue, venueBySlug, type Venue } from "../lib/venues/store";
@@ -121,6 +123,21 @@ function awardView(a: VenueIgAward, votes: Array<{ awardId: number; nomineeKey: 
   };
 }
 
+// ─── Suggestions (lib/venues/igSuggest.ts) ───────────────────────────────────
+
+/** What the autopilot would post on its own in the next `days` days and isn't on the calendar yet. */
+async function suggestionsFor(venue: Venue, now: Date, days: number) {
+  const s = igSettings(venue).slots;
+  const nowM = nowWall(now);
+  const all = suggestPosts({ s, now: nowM, days, taken: new Set() });
+  const keys = all.map((x) => x.originKey);
+  const taken = keys.length
+    ? new Set((await db.select({ k: venueIgItemsTable.originKey }).from(venueIgItemsTable)
+      .where(and(eq(venueIgItemsTable.academyId, venue.id), inArray(venueIgItemsTable.originKey, keys)))).map((r) => r.k))
+    : new Set<string>();
+  return all.filter((x) => !taken.has(x.originKey)).map((x) => ({ kind: x.kind, placement: x.placement, at: ammanLocalOfWall(x.at), originKey: x.originKey }));
+}
+
 // ─── Console: everything on one screen ───────────────────────────────────────
 
 const base = "/academy/console/academies/:academyId/venue/instagram";
@@ -202,6 +219,7 @@ router.get(base, async (req, res): Promise<void> => {
         thumbnailUrl: thumb(r.n.recordingId, nomUrls, r.n.atSeconds * 1000),
       })),
       flaggedRemovals: flagged.map((r) => ({ id: r.id, itemId: r.itemId, bookingId: r.bookingId, error: r.error, at: r.createdAt.toISOString() })),
+      suggestions: await suggestionsFor(a.venue, now, days),
       days,
     });
   } catch (error) {
@@ -239,6 +257,56 @@ const settingsSchema = z.object({
     boardTime: z.string().regex(timeRe).optional(),
     off: z.array(z.enum(OPTIONAL_KINDS)).optional(),
   }).optional(),
+});
+
+/**
+ * Field console → Today: what goes out on Instagram today (the calendar's items for the Amman
+ * day) and the next suggestions, without the account check the full screen makes.
+ */
+router.get(`${base}/today`, async (req, res): Promise<void> => {
+  const a = await owner(req, res);
+  if (!a) return;
+  try {
+    const s = igSettings(a.venue);
+    const now = new Date();
+    const today = ammanLocal(now).slice(0, 10);
+    const from = fromAmmanLocal(`${today} 00:00`) ?? new Date(now.getTime() - 86_400_000);
+    const to = new Date(from.getTime() + 86_400_000);
+    const items = await db.select().from(venueIgItemsTable).where(and(
+      eq(venueIgItemsTable.academyId, a.venue.id),
+      gte(venueIgItemsTable.slotAt, from),
+      sql`${venueIgItemsTable.slotAt} < ${to}`,
+      ne(venueIgItemsTable.status, "skipped"),
+    )).orderBy(venueIgItemsTable.slotAt).limit(50);
+    res.json({
+      autopilot: s.autopilot,
+      consentMode: s.mode,
+      publishMode: s.publishMode,
+      items: items.map((i) => itemView(i)),
+      suggestions: (await suggestionsFor(a.venue, now, 3)).slice(0, 4),
+    });
+  } catch (error) {
+    logger.warn({ error: (error as Error).message }, "Reading Instagram for today failed");
+    res.status(500).json({ error: "Reading Instagram for today failed" });
+  }
+});
+
+const suggestionSchema = z.object({ kind: z.enum(SUGGEST_KINDS), at: z.string().regex(/^\d{4}-\d{2}-\d{2} ([01]\d|2[0-3]):[0-5]\d$/) });
+
+/** Add a suggestion to the calendar now, at its own time, waiting for the owner's OK like any post. */
+router.post(`${base}/suggestions`, async (req, res): Promise<void> => {
+  const a = await owner(req, res);
+  if (!a) return;
+  const body = suggestionSchema.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Invalid suggestion" }); return; }
+  const s = igSettings(a.venue);
+  if (s.mode === "off") { res.status(409).json({ error: "Instagram consent is off for this field", code: "consent_off" }); return; }
+  const now = new Date();
+  const hit = suggestionFor(s.slots, body.data.kind as SuggestKind, wallMinutes(body.data.at), nowWall(now));
+  if (!hit || s.slots.off.includes(hit.kind)) { res.status(409).json({ error: "That post isn't due then", code: "not_due" }); return; }
+  const made = await pinItem(a.venue, hit.originKey, hit.kind, hit.placement, hit.at, now);
+  if (!made) { res.status(409).json({ error: "It's on the calendar already", code: "exists" }); return; }
+  res.status(201).json({ ok: true, originKey: hit.originKey });
 });
 
 /** The owner's own switches. The consent mode is not here: only an admin sets it. */

@@ -49,9 +49,15 @@ export function CameraDialog({ ed, layer, open, onOpenChange }: { ed: EditorApi;
     const before = (layer.trimOutMs ?? total) - (layer.trimInMs ?? 0);
     // A layer that played to the end of the video keeps doing so at its new length.
     const fillsScene = (layer.startMs ?? 0) === 0 && (layer.endMs === undefined || layer.endMs >= total) && before >= total - 50;
-    if (layer.src.type === "binding" && layer.src.path === "media") ed.setData("media", value.src);
+    // A template's footage slot: the clip goes to every part of the design that shows it, and the design follows its length.
+    if (layer.src.type === "binding") {
+      ed.setSlotVideo(layer.src.path, value.src, value.durationMs, value.framing ?? null);
+      ed.updateScene({ branding: value.branding });
+      onOpenChange(false);
+      return;
+    }
     ed.update(layer.id, {
-      ...(layer.src.type === "binding" ? {} : { src: value.src }),
+      src: value.src,
       framing: value.framing ?? undefined,
       trimInMs: 0,
       trimOutMs: value.durationMs,

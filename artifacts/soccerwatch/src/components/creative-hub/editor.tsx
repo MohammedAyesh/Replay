@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Music, Palette, Redo2,
+  ArrowLeft, ArrowRight, Check, Clapperboard, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Music, Palette, Redo2,
   Shapes, Smartphone, Trash2, Type, Undo2, X,
 } from "lucide-react";
 import {
@@ -9,7 +9,7 @@ import {
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
 import {
-  canRedo, canUndo, createEditorState, editorReducer, findLayer, sceneBindings, setPath, uniqueLayerId, type LayerChange,
+  canRedo, canUndo, createEditorState, editorReducer, findLayer, getPath, sceneBindings, setPath, uniqueLayerId, videoSlots, type LayerChange,
 } from "@/lib/creative-editor-state";
 import {
   useCreativeBrand, useCreativeProject, useUpdateCreativeProject, type CreativeBrandInfo, type CreativeProject,
@@ -38,9 +38,10 @@ import { ShapesPanel } from "./editor/shapes-panel";
 import { StylePanel } from "./editor/style-panel";
 import { TextPanel } from "./editor/text-panel";
 import { Timeline } from "./editor/timeline";
+import { VideosPanel } from "./editor/videos-panel";
 import { useAutosave, type SaveStatus } from "./editor/use-autosave";
 
-type Tool = "text" | "media" | "music" | "shapes" | "layers" | "style" | "format" | "data";
+type Tool = "videos" | "text" | "media" | "music" | "shapes" | "layers" | "style" | "format" | "data";
 const TOOLS: Array<{ id: Tool; icon: typeof Type }> = [
   { id: "text", icon: Type }, { id: "media", icon: Image }, { id: "shapes", icon: Shapes }, { id: "layers", icon: Layers },
   { id: "style", icon: Palette }, { id: "format", icon: Smartphone }, { id: "data", icon: Database },
@@ -48,6 +49,8 @@ const TOOLS: Array<{ id: Tool; icon: typeof Type }> = [
 /** Music after Media, on videos and stills alike (music makes a still a short video). */
 const ALL_TOOLS: Array<{ id: Tool; icon: typeof Type }> = [TOOLS[0]!, TOOLS[1]!, { id: "music", icon: Music }, ...TOOLS.slice(2)];
 const TOOL_FOR_KIND: Record<SceneLayer["kind"], Tool> = { text: "text", image: "media", video: "media", shape: "shapes" };
+/** A template with footage slots opens on them: Videos first. */
+const VIDEOS_TOOL = { id: "videos" as Tool, icon: Clapperboard };
 
 /** Replay's own palette, used only if the academy's brand fails to load. */
 const FALLBACK_BRAND: CreativeBrand = { primary: "#D4FF4F", accent: "#7B5CFF", ink: "#FFFFFF", paper: "#0B0F1A", muted: "#8A93A6", nameEn: "", nameAr: null };
@@ -102,7 +105,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   const [data, setDataState] = useState<CreativeData>(() => (project.data ?? {}) as CreativeData);
   const [dataRev, setDataRev] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tool, setTool] = useState<Tool>("text");
+  const [tool, setTool] = useState<Tool>(() => (videoSlots(project.scene).length ? "videos" : "text"));
   const [timeMs, setTimeMs] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [picker, setPicker] = useState<{ accept: "image" | "video" | "any"; onPick: (s: MediaSource, m: { durationMs?: number; label?: string }) => void } | null>(null);
@@ -171,7 +174,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   const sceneRef = useRef(scene);
   sceneRef.current = scene;
   const frameSeq = useRef(0);
-  const frameFootage = useCallback((target: { layerId: string } | { slot: "media" }, src: MediaSource) => {
+  const frameFootage = useCallback((target: { layerId: string } | { slot: string }, src: MediaSource) => {
     const ids = () => "layerId" in target ? [target.layerId]
       : sceneRef.current.layers.filter((l) => l.kind === "video" && l.src.type === "binding" && l.src.path === target.slot).map((l) => l.id);
     if (src.type !== "clip" && src.type !== "recording") return;
@@ -183,8 +186,27 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     });
   }, [academyId, update]);
 
+  const slots = useMemo(() => videoSlots(scene), [scene]);
+  // Footage already in a slot when the design opens (made from the Library) sets its length once,
+  // when it is known: a match moment's window. A slot that was fitted before keeps its timing.
+  const fitted = useRef(false);
+  useEffect(() => {
+    if (fitted.current) return;
+    fitted.current = true;
+    for (const slot of slots) {
+      const anchor = findLayer(scene, slot.anchorId);
+      if (anchor?.kind !== "video" || anchor.trimOutMs !== undefined) continue;
+      const src = getPath(data, slot.path) as MediaSource | undefined;
+      if (src?.type === "recording") dispatch({ type: "setSlotVideo", path: slot.path, playMs: src.toMs - src.fromMs });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const ed: EditorApi = {
-    academyId, scene, selected, brand, data: viewData, template, fields, mediaUrl, isVideo, timeMs, playing,
+    academyId, scene, selected, brand, data: viewData, template, fields, mediaUrl, isVideo, timeMs, playing, slots,
+    setSlotVideo: (path, src, playMs, framing) => {
+      setDataState((d) => setPath(d, path, src)); setDataRev((r) => r + 1);
+      dispatch({ type: "setSlotVideo", path, playMs, framing });
+    },
     select: setSelectedId,
     update,
     updateScene: (change, key) => dispatch({ type: "updateScene", change, key, at: Date.now() }),
@@ -209,7 +231,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   const selectFromCanvas = (id: string | null) => {
     setSelectedId(id);
     const layer = findLayer(scene, id);
-    if (layer && tool !== "layers") setTool(TOOL_FOR_KIND[layer.kind]);
+    if (layer && tool !== "layers") setTool(layer.kind === "video" && layer.src.type === "binding" && slots.length ? "videos" : TOOL_FOR_KIND[layer.kind]);
   };
   const onLayerChange = (id: string, change: Partial<Pick<SceneLayer, "x" | "y" | "w" | "h" | "rotation">>) => {
     if (findLayer(scene, id)?.locked) return;
@@ -239,10 +261,11 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const tools = ALL_TOOLS;
+  const tools = slots.length ? [VIDEOS_TOOL, ...ALL_TOOLS] : ALL_TOOLS;
   const goPublish = async () => { setPlaying(false); await flush(); nav.openInPublish(project.id); };
 
-  const panel = tool === "text" ? <TextPanel ed={ed} />
+  const panel = tool === "videos" && slots.length ? <VideosPanel ed={ed} />
+    : tool === "text" || tool === "videos" ? <TextPanel ed={ed} />
     : tool === "media" ? <MediaPanel ed={ed} />
     : tool === "music" ? <MusicPanel ed={ed} />
     : tool === "shapes" ? <ShapesPanel ed={ed} />
@@ -286,7 +309,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
           </div>
           {selected ? (
             <div className="flex items-center gap-1.5 rounded-2xl border border-line bg-surface p-1.5 ps-3" data-testid="editor-selection-bar">
-              <bdi dir="auto" className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{layerTitle(selected, copy, viewData)}</bdi>
+              <bdi dir="auto" className="min-w-0 flex-1 truncate text-sm font-semibold text-text">{layerTitle(selected, copy, viewData, slots)}</bdi>
               <IconButton label={copy.duplicate} onClick={() => ed.duplicate(selected.id)}><Copy className="h-4 w-4" /></IconButton>
               <IconButton label={copy.remove} onClick={() => ed.remove(selected.id)} className="hover:text-live"><Trash2 className="h-4 w-4" /></IconButton>
               <IconButton label={copy.deselect} onClick={() => setSelectedId(null)}><X className="h-4 w-4" /></IconButton>
@@ -296,7 +319,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
             <Timeline ed={ed} music={{
               title: musicTrack?.title ?? null, peaks: musicTrack?.waveform ?? [], trackMs: musicTrack?.durationMs ?? 0,
               startMs: scene.music?.startMs ?? 0, active: tool === "music", onOpen: () => setTool("music"),
-            }} />
+            }} onOpenVideos={() => setTool("videos")} />
           ) : null}
         </div>
 
@@ -307,7 +330,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
             {tools.map(({ id, icon: Icon }) => <ToolButton key={id} id={id} icon={Icon} active={tool === id} onClick={() => setTool(id)} label={copy.tools[id]} />)}
           </nav>
           <div className="rounded-2xl border border-line bg-surface p-4 lg:max-h-[calc(100vh-12rem)] lg:overflow-y-auto" data-testid={`editor-panel-${tool}`}>
-            <h2 className="mb-3 font-display text-base font-bold text-text">{copy.tools[tool]}</h2>
+            <h2 className="mb-3 font-display text-base font-bold text-text">{copy.tools[tool === "videos" && !slots.length ? "text" : tool]}</h2>
             {panel}
           </div>
         </aside>

@@ -64,8 +64,14 @@ export type InstagramData = {
   awards: IgAward[];
   nominations: Array<{ id: number; source: "player" | "shot"; recordingId: number; bookingId: number | null; atSeconds: number; reference: string | null; startLocal: string | null; createdAt: string; thumbnailUrl: string | null }>;
   flaggedRemovals: Array<{ id: number; itemId: number | null; bookingId: number | null; error: string | null; at: string }>;
+  /** What the autopilot posts next that isn't on the calendar yet: there is always something. */
+  suggestions: IgSuggestion[];
   days: number;
 };
+export type IgSuggestKind = IgWeeklyKind | "open_slots" | "leaderboard";
+/** `at` is Amman local "YYYY-MM-DD HH:MM". */
+export type IgSuggestion = { kind: IgSuggestKind; placement: "story" | "reel"; at: string; originKey: string };
+export type IgToday = { autopilot: boolean; consentMode: ConsentMode; publishMode: "approve" | "auto"; items: IgItem[]; suggestions: IgSuggestion[] };
 export type IgReport = {
   month: string;
   posts: { total: number; byType: Record<"story" | "reel" | "nominees" | "award" | "field", { posts: number; reach: number | null; views: number | null }> };
@@ -103,6 +109,16 @@ export function useInstagramItem(venueId: number) {
     nomination: useMutation({ mutationFn: ({ id, status }: { id: number; status: "approved" | "rejected" }) => venueCall(`${ig(venueId)}/nominations/${id}`, { method: "POST", ...json({ status }) }), onSuccess: refresh }),
     resolved: useMutation({ mutationFn: (id: number) => venueCall(`${ig(venueId)}/removals/${id}/resolved`, { method: "POST" }), onSuccess: refresh }),
   };
+}
+
+export function useInstagramToday(venueId: number, enabled = true) {
+  return useQuery({ queryKey: ["venue", venueId, "instagram", "today"], queryFn: () => venueCall<IgToday>(`${ig(venueId)}/today`), enabled, refetchInterval: 60_000 });
+}
+
+/** Put a suggestion on the calendar now, at its own time. */
+export function useAddSuggestion(venueId: number) {
+  const refresh = useRefresh(venueId);
+  return useMutation({ mutationFn: (s: Pick<IgSuggestion, "kind" | "at">) => venueCall<{ ok: true; originKey: string }>(`${ig(venueId)}/suggestions`, { method: "POST", ...json(s) }), onSuccess: refresh });
 }
 
 export function useInstagramReport(venueId: number, month: string) {

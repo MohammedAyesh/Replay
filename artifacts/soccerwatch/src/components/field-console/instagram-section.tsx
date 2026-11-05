@@ -21,6 +21,7 @@ import {
   type InstagramData,
 } from "@/lib/instagram-api";
 import { Card, ErrorText, Pill, SectionHeader, Skeleton, ToggleRow } from "./shared";
+import { SuggestionList } from "./instagram-suggestions";
 
 /**
  * Field console → Instagram autopilot: the field's consent (read-only, Replay sets it), the
@@ -56,6 +57,13 @@ function Body({ venueId, data }: { venueId: number; data: InstagramData }) {
         <SettingsCard venueId={venueId} data={data} />
       </div>
       {data.flaggedRemovals.length > 0 && <Removals venueId={venueId} data={data} />}
+      <Card data-testid="instagram-suggestions">
+        <h2 className="font-display text-lg font-bold text-text">{copy.suggestions.title}</h2>
+        <p className="mt-1 text-xs leading-5 text-muted-text">{copy.suggestions.hint}</p>
+        {data.settings.consentMode === "off" ? <p className="mt-2 text-xs font-semibold text-amber-200">{copy.suggestions.consentOff}</p>
+          : !data.settings.autopilot ? <p className="mt-2 text-xs font-semibold text-amber-200">{copy.suggestions.autopilotOff}</p> : null}
+        <div className="mt-3"><SuggestionList venueId={venueId} suggestions={data.suggestions ?? []} disabled={data.settings.consentMode === "off"} /></div>
+      </Card>
       <Calendar venueId={venueId} data={data} />
       {data.notPosted.length > 0 && (
         <Card>

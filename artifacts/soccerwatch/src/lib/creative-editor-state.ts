@@ -12,6 +12,7 @@ import {
   type CreativeData,
   type CreativeFormat,
   type CreativeStyle,
+  type Framing,
   type MediaSource,
   type Scene,
   type SceneLayer,
@@ -79,6 +80,12 @@ export type EditorAction =
   | { type: "setStyle"; style: CreativeStyle }
   | { type: "setPlate"; change: PlateChange; key?: string; at?: number }
   | { type: "setAutoMusic"; music: SceneMusic | null }
+  /**
+   * A template video slot ({{media}}, {{more.0}} …) got new footage: every layer showing it
+   * plays it from its start for `playMs`, and the design's timing ripples so the slot's main
+   * segment lasts that long (retimeSlot). `framing`: a camera for all of them; undefined keeps theirs.
+   */
+  | { type: "setSlotVideo"; path: string; playMs: number | null; framing?: Framing | null }
   | { type: "checkpoint" }
   | { type: "undo" }
   | { type: "redo" };
@@ -179,6 +186,8 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
       return isPhotoVideo(state.scene) ? commit(state, photoFrom(state.scene)) : state;
     case "setAutoMusic":
       return JSON.stringify(state.autoMusic) === JSON.stringify(action.music) ? state : { ...state, autoMusic: action.music };
+    case "setSlotVideo":
+      return commit(state, slotVideo(state.scene, action.path, action.playMs, action.framing));
     case "checkpoint":
       return { ...state, lastKey: null };
     case "undo": {
@@ -635,4 +644,108 @@ export function sceneBindings(scene: Scene): string[] {
     if ((l.kind === "image" || l.kind === "video") && l.src.type === "binding") add(l.src.path.replace(/^\{\{\s*|\s*\}\}$/g, ""));
   }
   return out;
+}
+
+// ── Video slots ─────────────────────────────────────────────────────────────
+
+/**
+ * A template's footage slot: every video layer bound to one {{path}} ("media", "more.0" …).
+ * `n` numbers the slots in the order they first appear on the timeline (Video 1, Video 2 …);
+ * `anchorId` is the slot's main segment, its longest layer, whose length follows the footage.
+ */
+export type VideoSlot = { path: string; n: number; layerIds: string[]; anchorId: string };
+
+const slotRank = (path: string) => (path === "media" ? -1 : Number(/^more\.(\d+)$/.exec(path)?.[1] ?? 99));
+
+export function videoSlots(scene: Scene): VideoSlot[] {
+  const D = scene.durationMs ?? 0;
+  const by = new Map<string, VideoLayer[]>();
+  for (const l of scene.layers) {
+    if (l.kind !== "video" || l.src.type !== "binding") continue;
+    const list = by.get(l.src.path) ?? [];
+    list.push(l);
+    by.set(l.src.path, list);
+  }
+  const slots = [...by.entries()].map(([path, layers]) => {
+    const wins = layers.map((l) => ({ l, w: layerWindow(l, D) }));
+    const anchor = [...wins].sort((a, b) => (b.w.end - b.w.start) - (a.w.end - a.w.start) || a.w.start - b.w.start)[0]!;
+    return { path, first: Math.min(...wins.map((x) => x.w.start)), layerIds: layers.map((l) => l.id), anchorId: anchor.l.id };
+  });
+  slots.sort((a, b) => a.first - b.first || slotRank(a.path) - slotRank(b.path) || a.path.localeCompare(b.path));
+  return slots.map((x, i) => ({ path: x.path, n: i + 1, layerIds: x.layerIds, anchorId: x.anchorId }));
+}
+
+export const VIDEO_SLOT_MIN_MS = 1000;
+export const VIDEO_SLOT_MAX_MS = 180_000;
+
+/**
+ * Ripple the design so slot `path`'s main segment (its anchor) lasts `playMs`, like a ripple
+ * edit: what comes after the segment moves by the difference, what spans it (a header, a
+ * caption on the clip) stretches with it, and what starts late in it (an end card, a vote)
+ * moves with its end. What ends before it stays. A slot playing beside another one at the same
+ * time (two angles) lasts as long as the longer of them.
+ */
+export function retimeSlot(scene: Scene, path: string, playMs: number): Scene {
+  const D = scene.durationMs;
+  if (D === undefined) return scene;
+  const slots = videoSlots(scene);
+  const slot = slots.find((s) => s.path === path);
+  if (!slot) return scene;
+  const anchor = findLayer(scene, slot.anchorId) as VideoLayer;
+  const win = layerWindow(anchor, D);
+  const old = win.end - win.start;
+  // Two angles at once: the longer one sets the length.
+  let target = playMs;
+  for (const other of slots) {
+    if (other.path === path) continue;
+    const a = findLayer(scene, other.anchorId) as VideoLayer;
+    const w = layerWindow(a, D);
+    const overlap = Math.min(w.end, win.end) - Math.max(w.start, win.start);
+    const known = videoPlayMs(a);
+    if (overlap > 0.5 * Math.min(old, w.end - w.start) && known) target = Math.max(target, known);
+  }
+  target = clamp(Math.round(target), VIDEO_SLOT_MIN_MS, VIDEO_SLOT_MAX_MS);
+  const delta = target - old;
+  if (Math.abs(delta) < 50) return scene;
+  const newD = clamp(D + delta, VIDEO_SLOT_MIN_MS, VIDEO_SLOT_MAX_MS);
+  const pivot = win.end;
+  const tol = Math.min(1000, old / 2);
+  const lateFrom = win.start + old / 2;
+  const place = (l: SceneLayer, start: number, end: number): SceneLayer => {
+    const next = { ...l } as SceneLayer;
+    const s = clamp(Math.round(start), 0, newD);
+    const e = clamp(Math.round(end), s + 200, newD);
+    if (s > 0) next.startMs = s; else delete next.startMs;
+    if (e < newD) next.endMs = e; else delete next.endMs;
+    return next;
+  };
+  const shiftBlur = (l: SceneLayer): SceneLayer => {
+    if (l.kind !== "video" || !l.blur || l.blur.fromMs < lateFrom) return l;
+    return { ...l, blur: { ...l.blur, fromMs: Math.max(0, l.blur.fromMs + delta) } } as SceneLayer;
+  };
+  const layers = scene.layers.map((l) => {
+    const w = layerWindow(l, D);
+    if (l.id === anchor.id) return shiftBlur(place(l, w.start, w.end + delta));
+    if (w.end < pivot - tol) return l;
+    if (w.start >= pivot - tol || w.start >= lateFrom) return shiftBlur(place(l, w.start + delta, w.end + delta));
+    return shiftBlur(place(l, w.start, w.end + delta));
+  });
+  return { ...scene, durationMs: newD, layers };
+}
+
+/** New footage in a slot: its layers play it from the start for `playMs`, then the design ripples to fit. */
+export function slotVideo(scene: Scene, path: string, playMs: number | null, framing?: Framing | null): Scene {
+  const slot = videoSlots(scene).find((s) => s.path === path);
+  if (!slot) return scene;
+  let next = scene;
+  for (const id of slot.layerIds) {
+    next = updateLayer(next, id, {
+      trimInMs: 0,
+      trimOutMs: playMs ?? undefined,
+      slowMo: undefined,
+      speed: undefined,
+      ...(framing !== undefined ? { framing: framing ?? undefined } : {}),
+    } as LayerChange);
+  }
+  return playMs ? retimeSlot(next, path, playMs) : next;
 }

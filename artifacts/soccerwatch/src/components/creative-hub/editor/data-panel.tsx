@@ -19,7 +19,9 @@ export function DataPanel({ ed }: { ed: EditorApi }) {
   const [offer, setOffer] = useState<PickedPlayer | null>(null);
   const customKeys = [...Object.keys(ed.data.custom ?? {}).map((k) => `custom.${k}`), ...extra];
   // A line-up's row photos only exist for an academy that shows players' names (the server drops them otherwise).
-  const fields = [...new Set([...ed.fields, ...customKeys])].filter((f) => showNames || !/^photos\.\d+$/.test(f));
+  // A template's footage slots (Video 1, Video 2 …) are set in the Videos tab, with their camera and length.
+  const slotPaths = new Set(ed.slots.map((s) => s.path));
+  const fields = [...new Set([...ed.fields, ...customKeys])].filter((f) => (showNames || !/^photos\.\d+$/.test(f)) && !slotPaths.has(f));
   const playerFields = ed.fields.some((f) => f.startsWith("player."));
   const fillPlayer = (p: PickedPlayer) => {
     if (p.number !== null) ed.setData("player.number", p.number);
@@ -38,6 +40,7 @@ export function DataPanel({ ed }: { ed: EditorApi }) {
   return (
     <div className="space-y-4" data-testid="editor-data-panel">
       <p className="text-xs text-muted-text">{copy.dataHint}</p>
+      {slotPaths.size ? <p className="rounded-xl bg-violet/10 p-2.5 text-xs text-violet-200" data-testid="editor-data-videos-note">{copy.videos.inDetails}</p> : null}
       {offer ? (
         <div className="space-y-2 rounded-xl border border-turf/50 bg-turf/10 p-3" data-testid="editor-data-fill-player">
           <p className="text-xs text-muted-text">{copy.fillPlayerHint}</p>
@@ -64,7 +67,6 @@ export function DataPanel({ ed }: { ed: EditorApi }) {
                 <Button type="button" size="sm" variant="outline" className="min-h-9 rounded-xl" data-testid={`editor-data-pick-${path}`}
                   onClick={() => ed.pick(path === "media" ? "any" : "image", (picked, meta) => {
                     ed.setData(path, picked);
-                    if (path === "media") ed.frameFootage({ slot: "media" }, picked);
                     // Picked from the Player picker: offer his number, position and (names allowed) first name.
                     const who = (meta as { player?: PickedPlayer }).player;
                     if (who && playerFields) setOffer(who);

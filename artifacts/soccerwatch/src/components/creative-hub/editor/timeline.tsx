@@ -1,5 +1,5 @@
-import { useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { Music2, Pause, Play, Plus, Scissors } from "lucide-react";
+import { useRef, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { Film, Music2, Pause, Play, Plus, Scissors } from "lucide-react";
 import { isPhotoVideo, PHOTO_VIDEO_MAX_MS, PHOTO_VIDEO_MIN_MS, type SceneLayer } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
 import { useCreativeMusicCopy } from "@/i18n/creative-music-strings";
@@ -27,10 +27,20 @@ const SLOW_SPEEDS = [0.25, 0.5, 0.75];
 export type MusicLane = { title: string | null; peaks: number[]; trackMs: number; startMs: number; active: boolean; onOpen: () => void };
 
 /** Under the canvas for video scenes: playhead, one track per layer, the music lane, and the selected video's trim / speed / slow motion. */
-export function Timeline({ ed, music }: { ed: EditorApi; music?: MusicLane }) {
+export function Timeline({ ed, music, onOpenVideos }: { ed: EditorApi; music?: MusicLane; onOpenVideos?: () => void }) {
   const copy = useCreativeEditorCopy();
   const duration = ed.scene.durationMs ?? 0;
   const layers = [...ed.scene.layers].reverse();
+  // A template's footage slot is one lane, "Video 1", with a bar for each part of the design that shows it.
+  const slotOf = new Map(ed.slots.flatMap((s) => s.layerIds.map((id) => [id, s] as const)));
+  const lanes: Array<{ key: string; label: string; layers: SceneLayer[]; slot: boolean }> = [];
+  // The videos first, in order (Video 1, Video 2 …), then everything else as before.
+  for (const slot of ed.slots) {
+    lanes.push({ key: `slot:${slot.path}`, label: copy.videos.slot(slot.n), layers: layers.filter((l) => slot.layerIds.includes(l.id)), slot: true });
+  }
+  for (const layer of layers) {
+    if (!slotOf.has(layer.id)) lanes.push({ key: layer.id, label: layerTitle(layer, copy, ed.data, ed.slots), layers: [layer], slot: false });
+  }
   const video = ed.selected?.kind === "video" ? ed.selected : null;
   const pct = (ms: number) => `${(duration ? (ms / duration) * 100 : 0).toFixed(3)}%`;
   // A photo with music is a short video: 5–30 s.
@@ -62,8 +72,8 @@ export function Timeline({ ed, music }: { ed: EditorApi; music?: MusicLane }) {
       </div>
 
       <div className="relative max-h-56 space-y-1 overflow-y-auto pe-1">
-        {layers.map((layer) => (
-          <Track key={layer.id} ed={ed} layer={layer} duration={duration} pct={pct} />
+        {lanes.map((lane) => (
+          <Lane key={lane.key} ed={ed} lane={lane} duration={duration} pct={pct} onOpenVideos={onOpenVideos} />
         ))}
         {music ? <MusicTrackLane lane={music} ed={ed} duration={duration} pct={pct} /> : null}
       </div>
@@ -74,9 +84,29 @@ export function Timeline({ ed, music }: { ed: EditorApi; music?: MusicLane }) {
   );
 }
 
-function Track({ ed, layer, duration, pct }: { ed: EditorApi; layer: SceneLayer; duration: number; pct: (ms: number) => string }) {
-  const copy = useCreativeEditorCopy();
+function Lane({ ed, lane, duration, pct, onOpenVideos }: {
+  ed: EditorApi; lane: { key: string; label: string; layers: SceneLayer[]; slot: boolean }; duration: number; pct: (ms: number) => string; onOpenVideos?: () => void;
+}) {
   const area = useRef<HTMLDivElement>(null);
+  const active = lane.layers.some((l) => l.id === ed.selected?.id);
+  const first = lane.layers[0]!;
+  return (
+    <div className="flex items-center gap-2" data-testid={lane.slot ? `editor-track-${lane.key.replace(":", "-")}` : `editor-track-${first.id}`}>
+      <button type="button" onClick={() => { ed.select(first.id); if (lane.slot) onOpenVideos?.(); }}
+        className={cn("w-20 shrink-0 truncate text-start text-[11px]", active ? "font-semibold text-text" : "text-muted-text", lane.slot && "flex items-center gap-1")}>
+        {lane.slot ? <Film className="h-3 w-3 shrink-0 text-violet-300" aria-hidden /> : null}
+        <bdi dir="auto" className="truncate">{lane.label}</bdi>
+      </button>
+      <div ref={area} className={cn("relative h-8 flex-1 rounded-md bg-raised", lane.layers.every((l) => l.hidden) && "opacity-40")}
+        onPointerDown={(e) => { if (e.target === e.currentTarget) { ed.setPlaying(false); ed.setTimeMs(((e.clientX - e.currentTarget.getBoundingClientRect().left) / e.currentTarget.clientWidth) * duration); } }}>
+        {lane.layers.map((layer) => <Bar key={layer.id} ed={ed} layer={layer} area={area} duration={duration} pct={pct} />)}
+        <span className="pointer-events-none absolute inset-y-0 w-0.5 bg-floodlight" style={{ left: pct(Math.min(ed.timeMs, duration)) }} aria-hidden />
+      </div>
+    </div>
+  );
+}
+
+function Bar({ ed, layer, area, duration, pct }: { ed: EditorApi; layer: SceneLayer; area: RefObject<HTMLDivElement | null>; duration: number; pct: (ms: number) => string }) {
   const drag = useRef<{ edge: "move" | "start" | "end"; x: number; win: { start: number; end: number }; width: number } | null>(null);
   const win = layerWindow(layer, duration);
   const active = ed.selected?.id === layer.id;
@@ -97,26 +127,16 @@ function Track({ ed, layer, duration, pct }: { ed: EditorApi; layer: SceneLayer;
   const up = () => { drag.current = null; };
 
   return (
-    <div className="flex items-center gap-2" data-testid={`editor-track-${layer.id}`}>
-      <button type="button" onClick={() => ed.select(layer.id)}
-        className={cn("w-20 shrink-0 truncate text-start text-[11px]", active ? "font-semibold text-text" : "text-muted-text")}>
-        <bdi dir="auto">{layerTitle(layer, copy, ed.data)}</bdi>
-      </button>
-      <div ref={area} className={cn("relative h-8 flex-1 rounded-md bg-raised", layer.hidden && "opacity-40")}
-        onPointerDown={(e) => { if (e.target === e.currentTarget) { ed.setPlaying(false); ed.setTimeMs(((e.clientX - e.currentTarget.getBoundingClientRect().left) / e.currentTarget.clientWidth) * duration); } }}>
-        <div
-          className={cn("absolute inset-y-1 touch-none rounded-md", BAR_COLOR[layer.kind], active && "ring-2 ring-text", layer.locked ? "cursor-not-allowed" : "cursor-grab")}
-          style={{ left: pct(win.start), width: pct(win.end - win.start) }}
-          onPointerDown={down("move")} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-          {!layer.locked ? (
-            <>
-              <span className="absolute inset-y-0 start-0 w-3 cursor-ew-resize touch-none rounded-s-md bg-black/25" onPointerDown={down("start")} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-hidden />
-              <span className="absolute inset-y-0 end-0 w-3 cursor-ew-resize touch-none rounded-e-md bg-black/25" onPointerDown={down("end")} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-hidden />
-            </>
-          ) : null}
-        </div>
-        <span className="pointer-events-none absolute inset-y-0 w-0.5 bg-floodlight" style={{ left: pct(Math.min(ed.timeMs, duration)) }} aria-hidden />
-      </div>
+    <div data-testid={`editor-bar-${layer.id}`}
+      className={cn("absolute inset-y-1 touch-none rounded-md border border-black/20", BAR_COLOR[layer.kind], active && "z-10 ring-2 ring-text", layer.hidden && "opacity-40", layer.locked ? "cursor-not-allowed" : "cursor-grab")}
+      style={{ left: pct(win.start), width: pct(win.end - win.start) }}
+      onPointerDown={down("move")} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+      {!layer.locked ? (
+        <>
+          <span className="absolute inset-y-0 start-0 w-3 cursor-ew-resize touch-none rounded-s-md bg-black/25" onPointerDown={down("start")} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-hidden />
+          <span className="absolute inset-y-0 end-0 w-3 cursor-ew-resize touch-none rounded-e-md bg-black/25" onPointerDown={down("end")} onPointerMove={move} onPointerUp={up} onPointerCancel={up} aria-hidden />
+        </>
+      ) : null}
     </div>
   );
 }
