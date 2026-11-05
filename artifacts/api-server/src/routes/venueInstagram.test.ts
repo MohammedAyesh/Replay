@@ -662,7 +662,10 @@ describe("7. Suggestions, always", () => {
     expect(kinds.has("versus")).toBe(false);
     const onCalendar = new Set((await items()).map((i) => i.originKey));
     expect(sug.filter((x) => onCalendar.has(x.originKey))).toEqual([]);
-    expect(sug.filter((x) => x.kind === "open_slots")).toHaveLength(2);
+    // Two days of free pitches, or one when today's has passed the lead time and the day after's is past the window.
+    const slots = sug.filter((x) => x.kind === "open_slots").length;
+    expect(slots).toBeGreaterThanOrEqual(1);
+    expect(slots).toBeLessThanOrEqual(2);
     expect(sug.find((x) => x.kind === "top5")).toMatchObject({ placement: "reel", at: expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/) });
     expect(sug.find((x) => x.kind === "open_slots")?.placement).toBe("story");
     expect([...sug].map((x) => x.at)).toEqual([...sug].map((x) => x.at).sort());
@@ -740,6 +743,18 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     // Posts that choose their own clips can't be picked.
     const [slots] = (await items()).filter((i) => i.kind === "open_slots" || i.kind === "thanks");
     if (slots) await request(app).get(`${ig()}/items/${slots.id}/candidates`).set(auth(ownerId)).expect(409);
+  });
+
+  it("shows only this field's posts on its calendar", async () => {
+    const [f] = await db.insert(fieldsTable).values({ name: `Other pitch ${tag}`, cameraId: `other-cam-${tag}` }).returning({ id: fieldsTable.id });
+    const other = await createVenue({ name: `Other field ${tag}`, fieldIds: [f.id], ownerUserId: strangerId });
+    const soon = new Date(Date.now() + 2 * 3_600_000);
+    const [theirs] = await db.insert(venueIgItemsTable).values({
+      academyId: other.id, originKey: `versus:other-${tag}`, kind: "versus", placement: "reel", source: "field", slotAt: soon, status: "planned", pinned: true,
+    }).returning();
+    const got = await request(app).get(ig()).set(auth(ownerId)).expect(200);
+    expect(got.body.items.some((i: { id: number }) => i.id === theirs.id)).toBe(false);
+    for (const i of got.body.items as Array<{ id: number }>) expect((await items()).some((x) => x.id === i.id)).toBe(true);
   });
 
   it("puts yesterday's best clips on at its own time, under the games' day", async () => {

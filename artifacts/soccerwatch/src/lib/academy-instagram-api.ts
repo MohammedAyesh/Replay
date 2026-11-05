@@ -10,6 +10,8 @@ export type AcademyIgSettings = { enabled: boolean; publishMode: "approve" | "au
 export type AcademyIgProject = {
   id: number; title: string; kind: "image" | "video"; format: string; templateKey: string | null; origin: "auto" | "manual";
   renderStatus: string; outputUrl: string | null; createdAt: string;
+  /** Who it's about: the player (name when shown, else his number) and the opponent. */
+  about?: string | null;
 };
 export type AcademyIgItem = {
   id: number; projectId: number; placement: AcademyIgPlacement;

@@ -46,9 +46,23 @@ function itemView(i: AcademyIgItem, p: AcademyCreativeProject | null) {
     project: p ? projectView(p) : null,
   };
 }
+/**
+ * Who or what a design is about, for the calendar line: the player (his name when the design
+ * carries it, which it only does when the academy shows names, else his shirt number) and the
+ * opponent.
+ */
+export function projectAbout(data: unknown): string | null {
+  const d = (data && typeof data === "object" ? data : {}) as { player?: { name?: unknown; number?: unknown }; match?: { opponent?: unknown } };
+  const who = typeof d.player?.name === "string" && d.player.name.trim() ? d.player.name.trim()
+    : typeof d.player?.number === "number" || (typeof d.player?.number === "string" && d.player.number) ? `#${d.player!.number}` : null;
+  const vs = typeof d.match?.opponent === "string" && d.match.opponent.trim() ? `vs ${d.match.opponent.trim()}` : null;
+  return [who, vs].filter(Boolean).join(" · ") || null;
+}
+
 function projectView(p: AcademyCreativeProject) {
   return {
     id: p.id, title: p.title, kind: p.kind, format: p.format, templateKey: p.templateKey, origin: p.origin, renderStatus: p.renderStatus,
+    about: projectAbout(p.data),
     outputUrl: p.outputPath ? `/api/academy/console/academies/${p.academyId}/creative/projects/${p.id}/output` : null,
     createdAt: p.createdAt.toISOString(),
   };

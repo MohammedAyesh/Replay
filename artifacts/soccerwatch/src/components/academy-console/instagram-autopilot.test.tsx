@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ locale: "en" as "en" | "ar" }));
 vi.mock("@/i18n/context", () => ({ useLocale: () => ({ locale: state.locale, setLocale: () => {} }) }));
 vi.mock("@/lib/venue-api", async (orig) => ({ ...(await orig<typeof import("@/lib/venue-api")>()), ammanToday: () => "2026-11-05" }));
+// The row pictures read each design (useDesign): none here, so they draw an empty frame.
+vi.mock("@/lib/creative-hub-api", () => ({ useCreativeProject: () => ({ isLoading: false, data: null }), useCreativeBrand: () => ({ isLoading: false, data: null }) }));
 vi.mock("@/lib/academy-instagram-api", () => {
   const proj = (id: number, title: string, kind: "image" | "video", origin: "auto" | "manual" = "auto") => ({ id, title, kind, format: "post", templateKey: null, origin, renderStatus: "none", outputUrl: null, createdAt: "" });
   const item = (id: number, title: string, slot: string | null, status: string, extra = {}) => ({ id, projectId: id, placement: "feed", status, pinned: false, slotAt: slot, slotLocal: slot, error: null, igPermalink: null, publishedAt: null, project: proj(id, title, "image"), ...extra });
