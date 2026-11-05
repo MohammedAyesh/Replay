@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Check, Clapperboard, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Music, Palette, Redo2,
-  Shapes, Smartphone, Trash2, Type, Undo2, X,
+  Shapes, Smartphone, Trash2, Type, Undo2, UserRound, X,
 } from "lucide-react";
 import {
   CLUB_TEMPLATES, CREATIVE_TEMPLATES, FIELD_TEMPLATES, recommendationSceneMusic, resolveSource,
-  type CreativeBrand, type CreativeData, type MediaSource, type SceneLayer,
+  type CreativeBrand, type CreativeData, type MediaSource, type Scene, type SceneLayer,
 } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
 import {
@@ -40,9 +40,10 @@ import { StylePanel } from "./editor/style-panel";
 import { TextPanel } from "./editor/text-panel";
 import { Timeline } from "./editor/timeline";
 import { VideosPanel } from "./editor/videos-panel";
+import { PlayerPanel } from "./editor/player-panel";
 import { useAutosave, type SaveStatus } from "./editor/use-autosave";
 
-type Tool = "videos" | "text" | "media" | "music" | "shapes" | "layers" | "style" | "format" | "data";
+type Tool = "videos" | "player" | "text" | "media" | "music" | "shapes" | "layers" | "style" | "format" | "data";
 const TOOLS: Array<{ id: Tool; icon: typeof Type }> = [
   { id: "text", icon: Type }, { id: "media", icon: Image }, { id: "shapes", icon: Shapes }, { id: "layers", icon: Layers },
   { id: "style", icon: Palette }, { id: "format", icon: Smartphone }, { id: "data", icon: Database },
@@ -52,6 +53,9 @@ const ALL_TOOLS: Array<{ id: Tool; icon: typeof Type }> = [TOOLS[0]!, TOOLS[1]!,
 const TOOL_FOR_KIND: Record<SceneLayer["kind"], Tool> = { text: "text", image: "media", video: "media", shape: "shapes" };
 /** A template with footage slots opens on them: Videos first. */
 const VIDEOS_TOOL = { id: "videos" as Tool, icon: Clapperboard };
+/** A template that shows a player (his photo, number, name) gets its own place to choose him. */
+const PLAYER_TOOL = { id: "player" as Tool, icon: UserRound };
+const showsPlayer = (scene: Scene) => sceneBindings(scene).some((p) => p.startsWith("player."));
 
 /** Replay's own palette, used only if the academy's brand fails to load. */
 const FALLBACK_BRAND: CreativeBrand = { primary: "#D4FF4F", accent: "#7B5CFF", ink: "#FFFFFF", paper: "#0B0F1A", muted: "#8A93A6", nameEn: "", nameAr: null };
@@ -106,10 +110,10 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   const [data, setDataState] = useState<CreativeData>(() => (project.data ?? {}) as CreativeData);
   const [dataRev, setDataRev] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tool, setTool] = useState<Tool>(() => (videoSlots(project.scene).length ? "videos" : "text"));
+  const [tool, setTool] = useState<Tool>(() => (videoSlots(project.scene).length ? "videos" : showsPlayer(project.scene) ? "player" : "text"));
   const [timeMs, setTimeMs] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [picker, setPicker] = useState<{ accept: "image" | "video" | "any"; onPick: (s: MediaSource, m: { durationMs?: number; label?: string }) => void } | null>(null);
+  const [picker, setPicker] = useState<{ accept: "image" | "video" | "any"; onPick: (s: MediaSource, m: { durationMs?: number; label?: string }) => void; tab?: "library" | "players" } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const isVideo = scene.durationMs !== undefined;
@@ -221,7 +225,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     setStyle: (style) => dispatch({ type: "setStyle", style }),
     setPlate: (change, key) => dispatch({ type: "setPlate", change, key: key ? `plate:${key}` : undefined, at: Date.now() }),
     setData: (path, value) => { setDataState((d) => setPath(d, path, value)); setDataRev((r) => r + 1); },
-    pick: (accept, onPick) => setPicker({ accept, onPick }),
+    pick: (accept, onPick, opts) => setPicker({ accept, onPick, tab: opts?.tab }),
     frameFootage,
     setTimeMs: (t) => setTimeMs(t),
     setPlaying,
@@ -262,10 +266,13 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const tools = slots.length ? [VIDEOS_TOOL, ...ALL_TOOLS] : ALL_TOOLS;
+  const playerTool = showsPlayer(scene);
+  const tools = [...(slots.length ? [VIDEOS_TOOL] : []), ...(playerTool ? [PLAYER_TOOL] : []), ...ALL_TOOLS];
   const goPublish = async () => { setPlaying(false); await flush(); nav.openInPublish(project.id); };
 
   const panel = tool === "videos" && slots.length ? <VideosPanel ed={ed} />
+    : tool === "player" && playerTool ? <PlayerPanel ed={ed} />
+    : tool === "player" ? <TextPanel ed={ed} />
     : tool === "text" || tool === "videos" ? <TextPanel ed={ed} />
     : tool === "media" ? <MediaPanel ed={ed} />
     : tool === "music" ? <MusicPanel ed={ed} />
@@ -333,7 +340,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
             {tools.map(({ id, icon: Icon }) => <ToolButton key={id} id={id} icon={Icon} active={tool === id} onClick={() => setTool(id)} label={copy.tools[id]} />)}
           </nav>
           <div className="rounded-2xl border border-line bg-surface p-4 lg:max-h-[calc(100vh-12rem)] lg:overflow-y-auto" data-testid={`editor-panel-${tool}`}>
-            <h2 className="mb-3 font-display text-base font-bold text-text">{copy.tools[tool === "videos" && !slots.length ? "text" : tool]}</h2>
+            <h2 className="mb-3 font-display text-base font-bold text-text">{copy.tools[(tool === "videos" && !slots.length) || (tool === "player" && !playerTool) ? "text" : tool]}</h2>
             {panel}
           </div>
         </aside>
@@ -345,7 +352,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
       </nav>
 
       {picker ? (
-        <LibraryPicker academyId={academyId} accept={picker.accept}
+        <LibraryPicker academyId={academyId} accept={picker.accept} initialTab={picker.tab}
           onPick={(src, meta) => { picker.onPick(src, meta); setPicker(null); }} onClose={() => setPicker(null)} />
       ) : null}
       <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} scene={scene} brand={brand} data={viewData} mediaUrl={mediaUrl} music={musicSource} />

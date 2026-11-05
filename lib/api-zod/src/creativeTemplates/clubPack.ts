@@ -25,6 +25,7 @@ export type ClubTemplateKey =
   | "club-fulltime"
   | "club-matchday"
   | "club-lineup"
+  | "club-player"
   | "club-potm"
   | "club-award"
   | "club-top5"
@@ -178,6 +179,70 @@ function lineup(c: Ctx, n: number) {
   return undefined;
 }
 
+/**
+ * Player spotlight (a still): the player standing in front of the floodlit stadium, his shirt
+ * number huge and outlined behind him, his name in heavy capitals, the facts in white pills.
+ * The photo is meant as a cut-out (a PNG without its background, which the owner provides); it is
+ * drawn whole ("contain"), so an ordinary photo still shows, just not standing free. Without a
+ * photo the number is the picture. Names only when the academy shows them; otherwise "#10".
+ */
+function playerSpotlight(c: Ctx) {
+  backdrop(c, "bg");
+  header(c, "head", {});
+  const hasPhoto = [{ path: "player.photo" }];
+  const noPhoto = [{ path: "player.photo", not: true }];
+  const named = [{ path: "player.name" }];
+  const unnamed = [{ path: "player.name", not: true }];
+  const nameH = c.pick(150, 130, 190);
+  const pillsH = c.pick(66, 58, 74);
+  const bottom = c.B - c.pick(10, 10, 20);
+  const nameY = bottom - pillsH - c.pick(28, 24, 34) - nameH;
+  const kickY = c.T + c.pick(120, 110, 170);
+  pill(c, "kicker", C("kicker"), kickY, { align: "start", w: c.CW * 0.62 });
+  // The number behind him: huge, outlined in silver, the main colour's glow.
+  const numTop = kickY + c.pick(70, 60, 140);
+  text(c, "big-number", "{{player.number}}", { x: 0, y: numTop, w: c.W, h: c.pick(620, 520, 860) }, {
+    size: c.pick(600, 500, 820), font: "display", weight: 900, color: "#FFFFFF0D", stroke: { color: "#C9CED666", width: 6 },
+    align: "center", num: true, fit: true, mirror: false, shadow: { color: "@primary", blur: 60, x: 0, y: 0 },
+  });
+  // A soft pool of the main colour where he stands, and his shadow.
+  const figTop = kickY + c.pick(80, 70, 150);
+  const figH = nameY + nameH * 0.55 - figTop;
+  const figW = Math.min(c.CW, figH * 0.82);
+  const fig = { x: (c.W - figW) / 2, y: figTop, w: figW, h: figH };
+  c.only(hasPhoto, () => {
+    // Soft-edged: rings of the main colour, each a little stronger towards the middle.
+    [0.95, 0.75, 0.55].forEach((k, i) => ellipse(c, `pool-${i + 1}`, {
+      x: c.W * (0.5 - 0.42 * k), y: fig.y + fig.h * (0.6 - 0.36 * k), w: c.W * 0.84 * k, h: fig.h * 0.72 * k,
+    }, { fill: "@primary", opacity: 0.12, mirror: false }));
+    ellipse(c, "shadow", { x: fig.x + fig.w * 0.18, y: fig.y + fig.h - 40, w: fig.w * 0.64, h: 60 }, { fill: "#000000", opacity: 0.45, mirror: false });
+    image(c, "player-photo", { type: "binding", path: "player.photo" }, fig, { fit: "contain", name: "Player cut-out", mirror: false });
+  });
+  // His name over his feet, on a fade to the dark so it always reads.
+  // Steep enough to hide where his photo stops (a waist-up cut-out ends in a straight line).
+  const fadeTop = nameY - c.pick(150, 130, 200);
+  const fadeEnd = nameY + nameH * 0.7;
+  rect(c, "foot-fade", { x: 0, y: fadeTop, w: c.W, h: fadeEnd - fadeTop }, { gradient: { from: "#00000000", to: "#000000F2" }, name: "bleed" });
+  rect(c, "foot-dark", { x: 0, y: fadeEnd - 1, w: c.W, h: c.H - fadeEnd + 1 }, { fill: "#000000F2", name: "bleed" });
+  c.only(named, () => text(c, "name", "{{player.name}}", { x: c.M, y: nameY, w: c.CW, h: nameH }, {
+    size: c.pick(140, 120, 180), font: "display", weight: 900, color: PAPER, align: "start", fit: true,
+  }));
+  c.only(unnamed, () => text(c, "name-number", "#{{player.number}}", { x: c.M, y: nameY, w: c.CW, h: nameH }, {
+    size: c.pick(140, 120, 180), font: "display", weight: 900, color: PAPER, align: "start", num: true, fit: true,
+  }));
+  c.only(noPhoto, () => rect(c, "rule", { x: c.M, y: nameY - 26, w: 160, h: 10 }, { fill: "#C9CED6", radius: 5 }));
+  // The facts: position, squad, the line under (each only when there is one).
+  const py = bottom - pillsH;
+  const pw = (c.CW - 24) / 3;
+  ([["pos", "{{player.position}}", "player.position"], ["squad", "{{player.squad}}", "player.squad"], ["meta", C("meta"), "custom.meta"]] as const).forEach(([id, v, path], i) => {
+    c.only([{ path }], () => {
+      rect(c, `${id}-bg`, { x: c.M + i * (pw + 12), y: py, w: pw, h: pillsH }, { fill: "#F3F6FF", radius: pillsH / 2 });
+      text(c, id, v, { x: c.M + i * (pw + 12) + 18, y: py + pillsH * 0.16, w: pw - 36, h: pillsH * 0.68 }, { size: Math.round(pillsH * 0.4), font: "body", weight: 700, color: "@ink", align: "center", fit: true });
+    });
+  });
+  return undefined;
+}
+
 // ── Catalogue ───────────────────────────────────────────────────────────────
 
 const art = (key: string): MediaSource => ({ type: "artwork", key: `sample/${key}` });
@@ -223,6 +288,13 @@ const CLUB_DEFS: ClubDef[] = [
       ...Object.fromEntries(([[1, "GK"], [4, "DF"], [5, "DF"], [8, "MF"], [10, "MF"], [7, "FW"], [9, "FW"]] as const).flatMap(([num, pos], i) => [
         [`n${i + 1}`, String(num)], [`p${i + 1}`, ""], [`pos${i + 1}`, ar ? ({ GK: "حارس", DF: "دفاع", MF: "وسط", FW: "هجوم" } as Record<string, string>)[pos] : pos],
       ])),
+    } }),
+  },
+  {
+    key: "club-player", title: { en: "Player spotlight", ar: "لاعب تحت الأضواء" }, formats: POST_STORY,
+    build: playerSpotlight,
+    sample: (ar) => ({ ...sampleCommon(), player: { number: 10, position: ar ? "وسط" : "Midfielder", squad: ar ? "تحت 12" : "U12" }, custom: {
+      ...endBits(ar), kicker: ar ? "نجم الماتش" : "Player of the match", meta: ar ? "ضد الوحدات" : "vs Wehdat",
     } }),
   },
   {

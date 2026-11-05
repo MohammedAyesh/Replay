@@ -22,6 +22,8 @@ export type LibraryPickerProps = {
   accept: "image" | "video" | "any";
   onPick: (source: MediaSource, meta: { durationMs?: number; label?: string }) => void;
   onClose: () => void;
+  /** Open on the Players tab (the editor's Player tool). */
+  initialTab?: "library" | "players";
 };
 
 /**
@@ -35,10 +37,10 @@ export type LibraryPickerProps = {
  * meta.player (number, first name when allowed, position) so the Editor can
  * offer to fill the template's player details; the props are unchanged.
  */
-export function LibraryPicker({ academyId, accept, onPick, onClose }: LibraryPickerProps) {
+export function LibraryPicker({ academyId, accept, onPick, onClose, initialTab }: LibraryPickerProps) {
   const copy = useCreativeLibraryCopy();
   const brand = useCreativeBrand(academyId);
-  const [tab, setTab] = useState<"library" | "players">("library");
+  const [tab, setTab] = useState<"library" | "players">(initialTab ?? "library");
   const dir = copy.locale === "ar" ? "rtl" : "ltr";
   const pickAs = accept === "any" ? "video" : accept;
 
