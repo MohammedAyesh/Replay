@@ -81,7 +81,15 @@ export function startingData(input: StartingInput): CreativeData {
   if (data.match) data.match = clean(data.match);
   if (isFieldTemplate(key)) data.custom = fieldCustom(data.custom ?? {}, locale, name, academy);
   // The academy pack: its own name and phone (blank when it has none); players are shirt numbers in the samples.
-  if (isClubTemplate(key)) data.custom = { ...(data.custom ?? {}), field: name || "", ...("endBig" in (data.custom ?? {}) ? { endBig: academy.phone ?? "" } : {}) };
+  if (isClubTemplate(key)) {
+    data.custom = { ...(data.custom ?? {}), field: name || "", ...("endBig" in (data.custom ?? {}) ? { endBig: academy.phone ?? "" } : {}) };
+    // A real player card: his first name (when names are shown) or "#10", and his number in the disc
+    // when there is no photo of him.
+    if (real && data.player && "initials" in (data.custom ?? {})) {
+      const num = data.player.number != null ? String(data.player.number) : "";
+      data.custom = { ...data.custom, title: data.player.name || (num ? `#${num}` : data.custom!.title ?? ""), initials: num };
+    }
+  }
   return clean(data);
 }
 

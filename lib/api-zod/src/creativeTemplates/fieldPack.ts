@@ -1,5 +1,5 @@
 import type { CreativeData, CreativeFormat, MediaSource, Scene, SceneLayer } from "../creativeScene";
-import { Ctx as Canvas, crest, ellipse, rect, text, video, type Box, type Ctx, type Locale, type TextOpts, type Timing } from "./kit";
+import { Ctx as Canvas, crest, ellipse, image, rect, text as kitText, video, type Box, type Ctx, type Locale, type TextOpts, type Timing } from "./kit";
 
 /**
  * Football fields' template pack (Mohammed, 2026-11-04; design canvas "Field template pack").
@@ -63,6 +63,48 @@ const INK = "@ink";
 const MAIN = "@primary";
 const ON_MAIN = "@on-primary";
 
+/**
+ * The pack's skin: which colour each role takes, the type and the background. The field pack
+ * wears its own (the main colour does everything); the academy pack wears the Souqar look
+ * (clubPack.ts: CLUB_SKIN). A build runs synchronously inside withSkin, so the pieces read the
+ * skin of the pack being built.
+ */
+export type PackSkin = {
+  /** Pills (kickers, tags, calls to action) and their words. */
+  pill: string; onPill: string;
+  /** Solid highlights (the booking band, a badge, the first row) and their words. */
+  hi: string; onHi: string;
+  /** Big numbers and the end card's line. */
+  accent: string;
+  /** Rings, rules and the REPLAY mark. */
+  metal: string;
+  /** Faces by role (Montserrat display, Inter body, Cairo Arabic); none = the house faces. */
+  family?: { display: string; body: string; arabic: string };
+  /** Display capitals with a glow in this colour. */
+  glow?: string;
+  /** The background behind cards: none = the field pack's dark with two bands. */
+  backdrop?: (c: Ctx, id: string, t: Timing) => void;
+};
+const FIELD_SKIN: PackSkin = { pill: MAIN, onPill: ON_MAIN, hi: MAIN, onHi: ON_MAIN, accent: MAIN, metal: MAIN };
+let skin: PackSkin = FIELD_SKIN;
+/** Build with another pack's skin (synchronous). */
+export function withSkin<T>(s: PackSkin, build: () => T): T {
+  const before = skin;
+  skin = s;
+  try { return build(); } finally { skin = before; }
+}
+
+/** A text layer in the skin's faces; big display words in capitals with its glow. */
+function text(c: Ctx, id: string, value: string, b: Box, o: TextOpts): SceneLayer {
+  const display = o.font === "display" || o.font === "condensed" || (o.weight ?? 400) >= 900;
+  const big = display && (o.size ?? 0) >= 56 && !o.num;
+  const layer = kitText(c, id, value, b, skin.glow && big ? { ...o, upper: o.upper ?? true, ...(o.shadow || o.bg ? {} : { shadow: { color: skin.glow, blur: 36, x: 0, y: 0 } }) } : o);
+  if (skin.family && layer.kind === "text") {
+    layer.family = layer.font.startsWith("arabic") ? skin.family.arabic : display ? skin.family.display : skin.family.body;
+  }
+  return layer;
+}
+
 /** The count-up frames for a number: fieldCountSteps(25.5, 1) → ["3.6", …, "21.9"] then the value itself. */
 export function fieldCountSteps(value: number, decimals = 0, steps: number = FIELD_TIMING.steps): string[] {
   const out: string[] = [];
@@ -91,9 +133,13 @@ export function countData(key: string, value: number, decimals = 0): Record<stri
 
 const C = (path: string) => `{{custom.${path}}}`;
 const when = (path: string) => [{ path: `custom.${path}` }];
+/** A player's own photo (data.player.photo), and its absence. */
+const PHOTO = [{ path: "player.photo" }];
+const NO_PHOTO = [{ path: "player.photo", not: true }];
 
 /** The dark background, with two quiet diagonal bands of the main colour across the lower corner. */
 function backdrop(c: Ctx, id: string, t: Timing = {}) {
+  if (skin.backdrop) { skin.backdrop(c, id, t); return; }
   rect(c, `${id}-ink`, { x: 0, y: 0, w: c.W, h: c.H }, { ...t, fill: INK, name: "bleed" });
   // Two diagonal bands in the main colour across the lower corner: quiet enough for any colour.
   const y = c.H * c.pick(0.8, 0.8, 0.82);
@@ -107,8 +153,8 @@ function pill(c: Ctx, id: string, value: string, y: number, o: { size?: number; 
   const w = o.w ?? c.CW;
   const x = o.x ?? c.M;
   return text(c, id, value, { x, y, w, h: size * 1.9 }, {
-    size, weight: 900, font: "condensed", color: ON_MAIN, align: o.align ?? "center",
-    bg: { color: MAIN, padding: Math.round(size * 0.42), radius: 999 },
+    size, weight: 900, font: "condensed", color: skin.onPill, align: o.align ?? "center",
+    bg: { color: skin.pill, padding: Math.round(size * 0.42), radius: 999 },
     startMs: o.startMs, endMs: o.endMs, enter: o.enter, arScale: 0.95,
   });
 }
@@ -116,9 +162,9 @@ function pill(c: Ctx, id: string, value: string, y: number, o: { size?: number; 
 /** A square (or round) badge in the main colour with a number or letter in the middle. */
 function badge(c: Ctx, id: string, value: string, b: Box, o: Timing & { radius?: number; size?: number; mirror?: boolean } = {}) {
   const t = { startMs: o.startMs, endMs: o.endMs, enter: o.enter, mirror: o.mirror };
-  rect(c, `${id}-bg`, b, { ...t, fill: MAIN, radius: o.radius ?? Math.round(b.w * 0.24) });
+  rect(c, `${id}-bg`, b, { ...t, fill: skin.hi, radius: o.radius ?? Math.round(b.w * 0.24) });
   text(c, id, value, { x: b.x, y: b.y + b.h * 0.12, w: b.w, h: b.h * 0.76 }, {
-    ...t, size: o.size ?? b.h * 0.56, weight: 900, color: ON_MAIN, align: "center", num: true, fit: true,
+    ...t, size: o.size ?? b.h * 0.56, weight: 900, color: skin.onHi, align: "center", num: true, fit: true,
   });
 }
 
@@ -131,7 +177,7 @@ function header(c: Ctx, id: string, t: Timing, o: { crestSize?: number } = {}) {
     ...t, size: c.pick(34, 32, 38), weight: 800, color: PAPER, fit: true, shadow: { color: "#00000099", blur: 12, x: 0, y: 2 },
   });
   text(c, `${id}-replay`, "REPLAY", { x: c.W - c.M - 190, y: y + s * 0.22, w: 190, h: s * 0.56 }, {
-    ...t, size: c.pick(28, 26, 30), weight: 800, font: "condensed", color: MAIN, align: "end", ls: 6, num: true,
+    ...t, size: c.pick(28, 26, 30), weight: 800, font: "condensed", color: skin.accent, align: "end", ls: 6, num: true,
   });
 }
 
@@ -139,12 +185,13 @@ function header(c: Ctx, id: string, t: Timing, o: { crestSize?: number } = {}) {
 function bookingBand(c: Ctx, id: string, t: Timing) {
   const h = c.pick(104, 96, 112);
   const y = c.B - h;
-  rect(c, `${id}-band`, { x: c.M, y, w: c.CW, h }, { ...t, fill: MAIN, radius: 28 });
-  text(c, `${id}-line`, C("bookLine"), { x: c.M + 34, y: y + h * 0.22, w: c.CW * 0.58, h: h * 0.56 }, {
-    ...t, size: c.pick(34, 32, 36), weight: 900, color: ON_MAIN, fit: true,
+  rect(c, `${id}-band`, { x: c.M, y, w: c.CW, h }, { ...t, fill: skin.hi, radius: 28 });
+  // A skin's wider faces (Montserrat) need a gap between the line and the phone.
+  text(c, `${id}-line`, C("bookLine"), { x: c.M + 34, y: y + h * 0.22, w: c.CW * 0.58 - (skin.family ? 56 : 0), h: h * 0.56 }, {
+    ...t, size: c.pick(34, 32, 36), weight: 900, color: skin.onHi, fit: true,
   });
   text(c, `${id}-phone`, "{{academy.phone}}", { x: c.M + c.CW * 0.58, y: y + h * 0.18, w: c.CW * 0.42 - 34, h: h * 0.64 }, {
-    ...t, size: c.pick(48, 44, 52), weight: 800, font: "condensed", color: ON_MAIN, align: "end", num: true, fit: true,
+    ...t, size: c.pick(48, 44, 52), weight: 800, font: "condensed", color: skin.onHi, align: "end", num: true, fit: true,
   });
 }
 
@@ -197,7 +244,7 @@ function onClip(c: Ctx, id: string, t: Timing, o: { tag?: string; headline?: str
   crest(c, `${id}-crest`, { x: c.M, y, w: s, h: s }, { startMs: t.startMs, endMs: t.endMs });
   if (o.tag) pill(c, `${id}-tag`, o.tag, y + s * 0.08, { x: c.M + s + 18, w: c.CW * 0.62, align: "start", size: c.pick(32, 30, 36), startMs: t.startMs, endMs: t.endMs, enter: o.still ? undefined : "slide-left" });
   text(c, `${id}-replay`, "REPLAY", { x: c.W - c.M - 180, y: y + s * 0.2, w: 180, h: s * 0.6 }, {
-    startMs: t.startMs, endMs: t.endMs, size: c.pick(26, 24, 28), weight: 800, font: "condensed", color: MAIN, align: "end", ls: 6, num: true,
+    startMs: t.startMs, endMs: t.endMs, size: c.pick(26, 24, 28), weight: 800, font: "condensed", color: skin.accent, align: "end", ls: 6, num: true,
   });
   const by = c.B - c.pick(150, 140, 190);
   if (o.headline) text(c, `${id}-head`, o.headline, { x: c.M, y: by - c.pick(96, 88, 112), w: c.CW, h: c.pick(96, 88, 112) }, {
@@ -222,7 +269,7 @@ function endCard(c: Ctx, id: string, at: number, end: number) {
     startMs: at + 450, endMs: end, enter: "slide-up", size: c.pick(40, 36, 44), weight: 700, color: PAPER, align: "center", opacity: 0.92,
   });
   text(c, `${id}-big`, C("endBig"), { x: c.M, y: top + s + c.pick(210, 190, 236), w: c.CW, h: c.pick(120, 110, 136) }, {
-    startMs: at + 550, endMs: end, enter: "slide-up", size: c.pick(104, 94, 118), weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true,
+    startMs: at + 550, endMs: end, enter: "slide-up", size: c.pick(104, 94, 118), weight: 800, font: "condensed", color: skin.accent, align: "center", num: true, fit: true,
   });
   text(c, `${id}-small`, C("endSmall"), { x: c.M, y: top + s + c.pick(342, 312, 384), w: c.CW, h: c.pick(52, 48, 58) }, {
     startMs: at + 650, endMs: end, size: c.pick(32, 30, 36), weight: 600, color: PAPER, align: "center", opacity: 0.85,
@@ -243,12 +290,17 @@ function openingCard(c: Ctx, id: string, o: { end: number; stat?: string; statLa
   const height = lead + statH + c.pick(80, 74, 88) + (o.reserve ?? 0);
   const top = Math.round(c.T + Math.max(0, (c.B - c.T - height) / 2) - c.pick(20, 10, 40));
   if (o.avatar) {
-    // Player cards: an initials disc in the main colour's ring (names and photos only with the player's OK).
+    // Player cards: the player's photo in a disc in the main colour's ring when there is one (an
+    // academy that shows names, a family that agreed), else his initials or shirt number.
     const d = c.pick(300, 250, 340);
-    ellipse(c, `${id}-ring`, { x: (c.W - d) / 2, y: top, w: d, h: d }, { startMs: 80, endMs: o.end, enter: "pop", fill: "#FFFFFF14", stroke: { color: MAIN, width: 12 }, mirror: false });
-    text(c, `${id}-initials`, C("initials"), { x: (c.W - d) / 2, y: top + d * 0.26, w: d, h: d * 0.48 }, {
-      startMs: 200, endMs: o.end, enter: "fade", size: c.pick(110, 96, 124), weight: 900, color: PAPER, align: "center", mirror: false,
+    ellipse(c, `${id}-ring`, { x: (c.W - d) / 2, y: top, w: d, h: d }, { startMs: 80, endMs: o.end, enter: "pop", fill: "#FFFFFF14", stroke: { color: skin.metal, width: 12 }, mirror: false });
+    const inset = 14;
+    image(c, `${id}-photo`, { type: "binding", path: "player.photo" }, { x: (c.W - d) / 2 + inset, y: top + inset, w: d - inset * 2, h: d - inset * 2 }, {
+      startMs: 120, endMs: o.end, enter: "pop", fit: "cover", radius: (d - inset * 2) / 2, when: PHOTO, mirror: false, name: "Player photo",
     });
+    c.only(NO_PHOTO, () => text(c, `${id}-initials`, C("initials"), { x: (c.W - d) / 2, y: top + d * 0.26, w: d, h: d * 0.48 }, {
+      startMs: 200, endMs: o.end, enter: "fade", size: c.pick(110, 96, 124), weight: 900, color: PAPER, align: "center", mirror: false,
+    }));
     crest(c, `${id}-crest`, { x: (c.W + d) / 2 - 86, y: top + d - 96, w: 96, h: 96 }, { startMs: 300, endMs: o.end, enter: "pop", mirror: false });
   } else {
     crest(c, `${id}-crest`, { x: (c.W - s) / 2, y: top, w: s, h: s }, { startMs: 80, endMs: o.end, enter: "pop", mirror: false });
@@ -259,13 +311,13 @@ function openingCard(c: Ctx, id: string, o: { end: number; stat?: string; statLa
   text(c, `${id}-title`, C("title"), { x: c.M, y: below + c.pick(100, 92, 116), w: c.CW, h: titleH }, {
     startMs: 450, endMs: o.end, enter: "slide-up", size: o.titleSize ?? c.pick(128, 112, 148), weight: 900, font: "condensed", color: PAPER, align: "center", fit: true,
   });
-  rect(c, `${id}-rule`, { x: (c.W - 140) / 2, y: below + c.pick(100, 92, 116) + titleH + 14, w: 140, h: 12 }, { startMs: 500, endMs: o.end, enter: "fade", fill: MAIN, radius: 6, mirror: false });
+  rect(c, `${id}-rule`, { x: (c.W - 140) / 2, y: below + c.pick(100, 92, 116) + titleH + 14, w: 140, h: 12 }, { startMs: 500, endMs: o.end, enter: "fade", fill: skin.metal, radius: 6, mirror: false });
   let y = below + c.pick(100, 92, 116) + titleH + c.pick(56, 48, 70);
   if (o.stat) {
     const h = c.pick(190, 160, 220);
     countUp(c, `${id}-stat`, o.stat, { x: c.M, y, w: c.CW, h }, {
       from: FIELD_TIMING.countFrom, to: FIELD_TIMING.countTo, endMs: o.end,
-      size: c.pick(190, 160, 220), weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true,
+      size: c.pick(190, 160, 220), weight: 800, font: "condensed", color: skin.accent, align: "center", num: true, fit: true,
     });
     y += h;
     if (o.statLabel) {
@@ -305,7 +357,7 @@ function statsRow(c: Ctx, id: string, end: number, y: number, h: number) {
     const x = c.M + (i - 1) * (w + gap);
     c.only(when(`s${i}v`), () => {
       rect(c, `${id}-${i}-card`, { x, y, w, h }, { startMs: 1200 + i * 80, endMs: end, enter: "slide-up", fill: "#FFFFFF14", radius: 26 });
-      text(c, `${id}-${i}-v`, C(`s${i}v`), { x, y: y + 16, w, h: h * 0.5 }, { startMs: 1200 + i * 80, endMs: end, enter: "slide-up", size: c.pick(70, 62, 80), weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true });
+      text(c, `${id}-${i}-v`, C(`s${i}v`), { x, y: y + 16, w, h: h * 0.5 }, { startMs: 1200 + i * 80, endMs: end, enter: "slide-up", size: c.pick(70, 62, 80), weight: 800, font: "condensed", color: skin.accent, align: "center", num: true, fit: true });
       text(c, `${id}-${i}-l`, C(`s${i}l`), { x: x + 8, y: y + h * 0.62, w: w - 16, h: h * 0.3 }, { startMs: 1200 + i * 80, endMs: end, enter: "slide-up", size: c.pick(26, 24, 30), weight: 700, color: PAPER, align: "center", fit: true });
     });
   }
@@ -339,7 +391,7 @@ function matchWeek(c: Ctx) {
   pill(c, "open-kicker", C("kicker"), top, { startMs: 200, endMs: intro, enter: "slide-up" });
   const sy = top + c.pick(170, 150, 260);
   countUp(c, "open-goals-big", "goals", { x: c.M, y: sy + 60, w: c.CW, h: c.pick(300, 260, 340) }, {
-    from: 500, to: 1700, endMs: intro, size: c.pick(250, 220, 300), weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true,
+    from: 500, to: 1700, endMs: intro, size: c.pick(250, 220, 300), weight: 800, font: "condensed", color: skin.accent, align: "center", num: true, fit: true,
   });
   c.only(when("goalsLabel"), () => text(c, "open-goals-label-big", C("goalsLabel"), { x: c.M, y: sy + 60 + c.pick(300, 260, 340) + 10, w: c.CW, h: 64 }, {
     startMs: 1000, endMs: intro, enter: "fade", size: c.pick(40, 36, 46), weight: 800, color: PAPER, align: "center",
@@ -371,7 +423,7 @@ function top5(c: Ctx) {
     onClip(c, `clip-${n}`, { startMs: s + 250, endMs: i === 4 ? endAt : s + per }, { tag: C("kicker"), headline: C(`l${n}`), meta: C(`m${n}`), still: i > 0 });
     // The big number, on its own for a moment as the clip comes in.
     text(c, `num-${n}`, String(n), { x: c.M, y: c.H / 2 - 260, w: c.CW, h: 520 }, {
-      startMs: s, endMs: s + 900, enter: "pop", size: 520, weight: 800, font: "condensed", color: MAIN, align: "center", num: true,
+      startMs: s, endMs: s + 900, enter: "pop", size: 520, weight: 800, font: "condensed", color: skin.accent, align: "center", num: true,
       shadow: { color: "#000000AA", blur: 40, x: 0, y: 8 },
     });
   });
@@ -387,9 +439,9 @@ function top5(c: Ctx) {
     const y = rowsTop + (5 - n) * (rowH + 14);
     // The rows build one by one (no slide: fifteen moving layers would slow the render a lot).
     const at = 600 + (5 - n) * 140;
-    rect(c, `open-row-${n}`, { x: c.M, y, w: c.CW, h: rowH }, { startMs: at, endMs: intro, fill: n === 1 ? MAIN : "#FFFFFF14", radius: 24 });
-    text(c, `open-row-${n}-n`, String(n), { x: c.M + 24, y: y + rowH * 0.12, w: 80, h: rowH * 0.76 }, { startMs: at, endMs: intro, size: rowH * 0.66, weight: 800, font: "condensed", color: n === 1 ? ON_MAIN : MAIN, align: "center", num: true, mirror: true });
-    text(c, `open-row-${n}-l`, C(`l${n}`), { x: c.M + 130, y: y + rowH * 0.22, w: c.CW - 160, h: rowH * 0.56 }, { startMs: at, endMs: intro, size: rowH * 0.36, weight: 800, color: n === 1 ? ON_MAIN : PAPER, fit: true });
+    rect(c, `open-row-${n}`, { x: c.M, y, w: c.CW, h: rowH }, { startMs: at, endMs: intro, fill: n === 1 ? skin.hi : "#FFFFFF14", radius: 24 });
+    text(c, `open-row-${n}-n`, String(n), { x: c.M + 24, y: y + rowH * 0.12, w: 80, h: rowH * 0.76 }, { startMs: at, endMs: intro, size: rowH * 0.66, weight: 800, font: "condensed", color: n === 1 ? skin.onHi : skin.accent, align: "center", num: true, mirror: true });
+    text(c, `open-row-${n}-l`, C(`l${n}`), { x: c.M + 130, y: y + rowH * 0.22, w: c.CW - 160, h: rowH * 0.56 }, { startMs: at, endMs: intro, size: rowH * 0.36, weight: 800, color: n === 1 ? skin.onHi : PAPER, fit: true });
   }
   wipe(c, "wipe", intro);
   for (let i = 1; i < 5; i++) wipe(c, `wipe-${i}`, intro + i * per, { edge: false });
@@ -460,7 +512,7 @@ function nomineeSlide(c: Ctx) {
   badge(c, "corner-number", C("n"), { x: c.W - c.M - 110, y: c.T - c.pick(0, 0, 40), w: 110, h: 110 }, { startMs: intro, endMs: D, enter: "pop", radius: 30 });
   text(c, "label", C("label"), { x: c.M, y: c.B - c.pick(220, 200, 260), w: c.CW, h: 70 }, { startMs: intro, endMs: D, enter: "slide-up", size: c.pick(40, 36, 46), weight: 800, color: PAPER });
   text(c, "cta", C("cta"), { x: c.M, y: c.B - c.pick(130, 120, 160), w: c.CW, h: 90 }, {
-    startMs: intro + 400, endMs: D, enter: "slide-up", size: c.pick(46, 42, 52), weight: 900, color: ON_MAIN, align: "start", bg: { color: MAIN, padding: 22, radius: 999 },
+    startMs: intro + 400, endMs: D, enter: "slide-up", size: c.pick(46, 42, 52), weight: 900, color: skin.onPill, align: "start", bg: { color: skin.pill, padding: 22, radius: 999 },
   });
   return D;
 }
@@ -482,7 +534,7 @@ function nomineesCover(c: Ctx) {
       text(c, `row-${i}-l`, C(`n${i}`), { x: c.M + rowH + 10, y: y + rowH * 0.25, w: c.CW - rowH - 40, h: rowH * 0.5 }, { size: rowH * 0.3, weight: 800, color: PAPER, fit: true });
     });
   }
-  text(c, "cta", C("cta"), { x: c.M, y: rowsTop + 4 * (rowH + 16) + c.pick(24, 20, 40), w: c.CW, h: 90 }, { size: c.pick(44, 40, 50), weight: 900, color: ON_MAIN, align: "center", bg: { color: MAIN, padding: 22, radius: 999 } });
+  text(c, "cta", C("cta"), { x: c.M, y: rowsTop + 4 * (rowH + 16) + c.pick(24, 20, 40), w: c.CW, h: 90 }, { size: c.pick(44, 40, 50), weight: 900, color: skin.onPill, align: "center", bg: { color: skin.pill, padding: 22, radius: 999 } });
   return undefined;
 }
 
@@ -502,7 +554,7 @@ function thanks(c: Ctx, milestone: boolean) {
   c.only(when("sub"), () => text(c, "open-sub", C("sub"), { x: c.M, y: top + c.pick(460, 430, 500), w: c.CW, h: 64 }, { startMs: 600, endMs: intro, enter: "fade", size: c.pick(38, 34, 44), weight: 700, color: PAPER, align: "center", opacity: 0.9 }));
   if (milestone) {
     const s = intro + 400;
-    countUp(c, "big", "big", { x: c.M, y: c.H / 2 - 260, w: c.CW, h: 320 }, { from: s, to: s + 1600, endMs: endAt, size: 300, weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true, shadow: { color: "#000000AA", blur: 30, x: 0, y: 6 } });
+    countUp(c, "big", "big", { x: c.M, y: c.H / 2 - 260, w: c.CW, h: 320 }, { from: s, to: s + 1600, endMs: endAt, size: 300, weight: 800, font: "condensed", color: skin.accent, align: "center", num: true, fit: true, shadow: { color: "#000000AA", blur: 30, x: 0, y: 6 } });
     text(c, "big-label", C("bigLabel"), { x: c.M, y: c.H / 2 + 80, w: c.CW, h: 120 }, { startMs: s + 400, endMs: endAt, enter: "slide-up", size: c.pick(64, 58, 76), weight: 900, color: PAPER, align: "center", fit: true });
     c.only(when("bigSub"), () => text(c, "big-sub", C("bigSub"), { x: c.M, y: c.H / 2 + 220, w: c.CW, h: 70 }, { startMs: s + 900, endMs: endAt, enter: "fade", size: c.pick(38, 34, 44), weight: 700, color: PAPER, align: "center", opacity: 0.9 }));
   } else {
@@ -514,7 +566,7 @@ function thanks(c: Ctx, milestone: boolean) {
       const s = intro + 500 + i * 1700;
       const y = first + i * blockH;
       c.only(when(key), () => {
-        countUp(c, `n-${key}`, key, { x: c.M, y, w: c.CW, h: blockH * 0.68 }, { from: s, to: s + 1100, endMs: endAt, size: blockH * 0.62, weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true, shadow: { color: "#000000AA", blur: 24, x: 0, y: 4 } });
+        countUp(c, `n-${key}`, key, { x: c.M, y, w: c.CW, h: blockH * 0.68 }, { from: s, to: s + 1100, endMs: endAt, size: blockH * 0.62, weight: 800, font: "condensed", color: skin.accent, align: "center", num: true, fit: true, shadow: { color: "#000000AA", blur: 24, x: 0, y: 4 } });
         text(c, `n-${key}-label`, C(label), { x: c.M, y: y + blockH * 0.66, w: c.CW, h: blockH * 0.26 }, { startMs: s + 200, endMs: endAt, enter: "slide-up", size: c.pick(44, 38, 52), weight: 800, color: PAPER, align: "center", fit: true });
       });
     });
@@ -540,7 +592,7 @@ function openSlots(c: Ctx) {
       rect(c, `row-${i}`, { x: c.M, y, w: c.CW, h: rowH }, { fill: "#FFFFFF14", radius: 28 });
       text(c, `row-${i}-t`, C(`t${i}`), { x: c.M + 34, y: y + rowH * 0.12, w: c.CW * 0.55, h: rowH * 0.46 }, { size: rowH * 0.36, weight: 900, color: PAPER, fit: true });
       text(c, `row-${i}-p`, C(`p${i}`), { x: c.M + 34, y: y + rowH * 0.56, w: c.CW * 0.55, h: rowH * 0.32 }, { size: rowH * 0.22, weight: 600, color: PAPER, opacity: 0.85, fit: true });
-      text(c, `row-${i}-free`, C("free"), { x: c.M + c.CW - 34 - 220, y: y + rowH * 0.27, w: 220, h: rowH * 0.46 }, { size: rowH * 0.22, weight: 900, color: ON_MAIN, align: "center", bg: { color: MAIN, padding: 14, radius: 999 } });
+      text(c, `row-${i}-free`, C("free"), { x: c.M + c.CW - 34 - 220, y: y + rowH * 0.27, w: 220, h: rowH * 0.46 }, { size: rowH * 0.22, weight: 900, color: skin.onPill, align: "center", bg: { color: skin.pill, padding: 14, radius: 999 } });
     });
   }
   bookingBand(c, "band", {});
@@ -560,10 +612,10 @@ function leaderboard(c: Ctx) {
     c.only(when(`r${i}n`), () => {
       const y = rowsTop + (i - 1) * (rowH + 14);
       const first = i === 1;
-      rect(c, `row-${i}`, { x: c.M, y, w: c.CW, h: rowH }, { fill: first ? MAIN : "#FFFFFF14", radius: 26 });
-      text(c, `row-${i}-rank`, String(i), { x: c.M + 20, y: y + rowH * 0.14, w: 70, h: rowH * 0.72 }, { size: rowH * 0.56, weight: 800, font: "condensed", color: first ? ON_MAIN : MAIN, align: "center", num: true, mirror: true });
-      text(c, `row-${i}-name`, C(`r${i}n`), { x: c.M + 110, y: y + rowH * 0.24, w: c.CW * 0.6, h: rowH * 0.52 }, { size: rowH * 0.34, weight: 900, color: first ? ON_MAIN : PAPER, fit: true });
-      text(c, `row-${i}-v`, C(`r${i}v`), { x: c.M + c.CW - 30 - 260, y: y + rowH * 0.18, w: 260, h: rowH * 0.64 }, { size: rowH * 0.44, weight: 800, font: "condensed", color: first ? ON_MAIN : PAPER, align: "end", num: true, fit: true });
+      rect(c, `row-${i}`, { x: c.M, y, w: c.CW, h: rowH }, { fill: first ? skin.hi : "#FFFFFF14", radius: 26 });
+      text(c, `row-${i}-rank`, String(i), { x: c.M + 20, y: y + rowH * 0.14, w: 70, h: rowH * 0.72 }, { size: rowH * 0.56, weight: 800, font: "condensed", color: first ? skin.onHi : skin.accent, align: "center", num: true, mirror: true });
+      text(c, `row-${i}-name`, C(`r${i}n`), { x: c.M + 110, y: y + rowH * 0.24, w: c.CW * 0.6, h: rowH * 0.52 }, { size: rowH * 0.34, weight: 900, color: first ? skin.onHi : PAPER, fit: true });
+      text(c, `row-${i}-v`, C(`r${i}v`), { x: c.M + c.CW - 30 - 260, y: y + rowH * 0.18, w: 260, h: rowH * 0.64 }, { size: rowH * 0.44, weight: 800, font: "condensed", color: first ? skin.onHi : PAPER, align: "end", num: true, fit: true });
     });
   }
   c.only(when("note"), () => text(c, "note", C("note"), { x: c.M, y: rowsTop + 5 * (rowH + 14) + 6, w: c.CW, h: 54 }, { size: c.pick(28, 26, 32), weight: 600, color: PAPER, opacity: 0.8 }));
@@ -742,7 +794,7 @@ export function fieldSampleData(key: string, locale: Locale): CreativeData {
  * words. Not part of the catalogue contract.
  */
 export const FIELD_KIT = {
-  PAPER, INK, MAIN, ON_MAIN, C, when,
+  PAPER, INK, MAIN, ON_MAIN, C, when, text, withSkin,
   backdrop, pill, badge, header, bookingBand, countUp, wipe, footage, footShade, onClip, endCard, openingCard, clipSequence, statsRow,
   layouts: { bookingClip, award, playerCard, top5, versus, nomineeSlide, nomineesCover, thanks, openSlots, leaderboard },
 };

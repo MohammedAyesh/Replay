@@ -1,6 +1,8 @@
 import type { CreativeData, CreativeFormat, MediaSource, Scene } from "../creativeScene";
-import { Ctx as Canvas, crest, rect, text, type Ctx, type Locale } from "./kit";
-import { FIELD_KIT, FIELD_TIMING, countData } from "./fieldPack";
+import { Ctx as Canvas, crest, ellipse, image, rect, type Box, type Ctx, type Locale, type Timing } from "./kit";
+import { FIELD_KIT, FIELD_TIMING, countData, type PackSkin } from "./fieldPack";
+import { playerTiles, type TileLook } from "./players";
+import type { Content } from "./content";
 
 /**
  * Academies' template pack (Mohammed, 2026-11-04: "make new branding for academies the same way
@@ -22,6 +24,7 @@ export type ClubTemplateKey =
   | "club-goal"
   | "club-fulltime"
   | "club-matchday"
+  | "club-lineup"
   | "club-potm"
   | "club-award"
   | "club-top5"
@@ -42,7 +45,38 @@ type ClubDef = {
   sample: (ar: boolean) => CreativeData;
 };
 
-const { PAPER, MAIN, C, when, backdrop, pill, header, bookingBand, footage, onClip, endCard, wipe, layouts } = FIELD_KIT;
+const { PAPER, C, when, text, withSkin, backdrop, pill, header, bookingBand, footage, onClip, endCard, wipe, layouts } = FIELD_KIT;
+
+// ── The Souqar look, in each academy's own colours ──────────────────────────
+//
+// Mohammed, 2026-11-05: "I want it to be souqar style". The brand deck of Sports iN Souqar
+// (pack-souqar.ts): every match under floodlights. A night-stadium plate tinted in the academy's
+// main colour behind a dark scrim, floodlight sparkles at the top, heavy white Montserrat capitals
+// with a glow in the main colour, silver for the metal (rings, rules, labels, the REPLAY mark),
+// clean white pills with dark words, and the accent colour only on the score.
+
+const WHITE = "#F3F6FF";
+const SILVER = "#C9CED6";
+
+function souqarStage(c: Ctx, id: string, t: Timing) {
+  const all: Box = { x: 0, y: 0, w: c.W, h: c.H };
+  rect(c, `${id}-sky`, all, { ...t, gradient: { from: "@primary", to: "@ink" }, name: "bleed" });
+  const plate = image(c, `${id}-plate`, { type: "artwork", key: "bg/stadium/2" }, all, { ...t, fit: "cover", name: "bleed" });
+  (plate as { tint?: unknown }).tint = { color: "@primary", mode: "color" };
+  rect(c, `${id}-tint`, all, { ...t, fill: "@ink", opacity: 0.5, name: "bleed" });
+  rect(c, `${id}-scrim`, all, { ...t, gradient: { from: "#0000001A", to: "#000000C7" }, name: "bleed" });
+  rect(c, `${id}-scrim-top`, { x: 0, y: 0, w: c.W, h: c.T + 260 }, { ...t, gradient: { from: "#00000080", to: "#00000000" }, name: "bleed" });
+  const spots: Array<[number, number, number, number]> = [[0.86, 0.05, 14, 0.55], [0.93, 0.12, 6, 0.5], [0.7, 0.09, 5, 0.4], [0.08, 0.16, 8, 0.4], [0.18, 0.07, 5, 0.35]];
+  spots.forEach(([fx, fy, d, o], i) => ellipse(c, `${id}-flare-${i + 1}`, { x: Math.round(c.W * fx), y: Math.round(c.T * 0.4 + c.H * fy * 0.6), w: d, h: d }, { ...t, fill: WHITE, opacity: o, mirror: false }));
+}
+
+export const CLUB_SKIN: PackSkin = {
+  pill: WHITE, onPill: "@ink", hi: WHITE, onHi: "@ink", accent: WHITE, metal: SILVER,
+  family: { display: "Montserrat", body: "Inter", arabic: "Cairo" },
+  glow: "@primary",
+  backdrop: souqarStage,
+};
+const MAIN = SILVER;
 
 const STORY: CreativeFormat[] = ["story"];
 const STORY_POST: CreativeFormat[] = ["story", "post"];
@@ -75,7 +109,8 @@ function fullTime(c: Ctx) {
     startMs: 450, endMs: intro, enter: "fade", size: c.pick(44, 40, 52), weight: 900, color: PAPER, align: "center", fit: true, mirror: false,
   });
   c.only(when("score"), () => text(c, "open-score", C("score"), { x: c.M, y: ry + nameH + 10, w: c.CW, h: c.pick(250, 220, 300) }, {
-    startMs: 600, endMs: intro, enter: "pop", size: c.pick(250, 220, 300), weight: 800, font: "condensed", color: MAIN, align: "center", num: true, fit: true, mirror: false,
+    startMs: 600, endMs: intro, enter: "pop", size: c.pick(250, 220, 300), weight: 900, font: "display", color: "@accent", align: "center", num: true, fit: true, mirror: false,
+    shadow: { color: "#000000B3", blur: 30, x: 0, y: 6 },
   }));
   c.only(when("meta"), () => text(c, "open-meta", C("meta"), { x: c.M + 40, y: ry + nameH + c.pick(290, 256, 340), w: c.CW - 80, h: 70 }, {
     startMs: 1200, endMs: intro, enter: "fade", size: c.pick(32, 30, 36), weight: 600, color: PAPER, align: "center", bg: { color: "#FFFFFF1F", padding: 18, radius: 999 },
@@ -104,6 +139,41 @@ function matchday(c: Ctx) {
     });
   }
   c.only(when("note"), () => text(c, "note", C("note"), { x: c.M, y: rowsTop + 3 * (rowH + 18) + 6, w: c.CW, h: 60 }, { size: c.pick(32, 30, 36), weight: 600, color: PAPER, opacity: 0.85 }));
+  bookingBand(c, "band", {});
+  return undefined;
+}
+
+/** The pack's player tile: a soft panel, the photo (a cut-out or a card), the number, a bar in the main colour. */
+const CLUB_TILE: TileLook = {
+  backdrop: (c, id, b) => { rect(c, id, b, { fill: "#FFFFFF14", stroke: { color: SILVER, width: 2 }, radius: 26 }); },
+  bar: (c, id, b) => { rect(c, id, b, { fill: WHITE, radius: 18 }); },
+  num: { font: "display", color: WHITE, weight: 900, shadow: { color: "@primary", blur: 30, x: 0, y: 0 } },
+  name: { font: "display", color: "@ink", weight: 900 },
+  pos: { font: "body", color: "@ink", weight: 700 },
+  shadow: "#000000",
+  cardRadius: 20,
+  gap: 16,
+  text: (c, id, value, b, o) => text(c, id, value, b, o),
+};
+
+/**
+ * Line-up / call-up (a still): a tile per player. With photos (an academy that shows names, each
+ * child whose family agreed: data.photos) the player stands in his tile; without, his shirt number
+ * fills it. Names only when the academy shows them; otherwise the bar carries the position.
+ */
+function lineup(c: Ctx, n: number) {
+  backdrop(c, "bg");
+  header(c, "head", {});
+  const top = c.T + c.pick(130, 120, 190);
+  pill(c, "kicker", C("kicker"), top, { align: "start", w: c.CW * 0.56 });
+  // The match's own opponent (a session's facts), so a real line-up never says the sample's.
+  text(c, "title", c.ar ? "ضد {{match.opponent}}" : "vs {{match.opponent}}", { x: c.M, y: top + c.pick(92, 84, 110), w: c.CW, h: c.pick(110, 96, 130) }, { size: c.pick(92, 80, 108), weight: 900, font: "condensed", color: PAPER, fit: true });
+  c.only([{ path: "match.date" }], () => text(c, "when", "{{match.date}} · {{match.time}}", { x: c.M, y: top + c.pick(204, 184, 246), w: c.CW, h: c.pick(52, 46, 58) }, { size: c.pick(32, 30, 36), weight: 700, color: MAIN }));
+  const gridTop = top + c.pick(272, 246, 326);
+  const band = c.pick(104, 96, 112);
+  const k = { rows: Array.from({ length: n }, (_, i) => [`{{custom.n${i + 1}}}`, `{{custom.p${i + 1}}}`, `{{custom.pos${i + 1}}}`] as [string, string, string]) } as Content;
+  // A story is tall: three across gives each child a bigger tile.
+  playerTiles(c, k, { x: c.M, y: gridTop, w: c.CW, h: c.B - band - 30 - gridTop }, c.format === "story" ? { ...CLUB_TILE, cols: 3 } : CLUB_TILE);
   bookingBand(c, "band", {});
   return undefined;
 }
@@ -143,6 +213,16 @@ const CLUB_DEFS: ClubDef[] = [
       ...endBits(ar), kicker: ar ? "يوم الماتش" : "Matchday", vsLine: ar ? "تحت 12 ضد" : "U12 vs", opponent: ar ? "الوحدات" : "Wehdat",
       l1: ar ? "اليوم" : "Day", d1: ar ? "السبت 8 تشرين الثاني" : "Sat 8 Nov", l2: ar ? "البداية" : "Kick-off", d2: ar ? "5:00 م" : "5:00 PM", l3: ar ? "المكان" : "Where", d3: ar ? "ملعبنا · ملعب 1" : "Home · Pitch 1",
       note: ar ? "تعالوا شجّعونا" : "Come and cheer us on",
+    } }),
+  },
+  {
+    key: "club-lineup", title: { en: "Line-up", ar: "التشكيلة" }, formats: POST_STORY,
+    build: (c) => lineup(c, 7),
+    sample: (ar) => ({ ...sampleCommon(), match: { opponent: ar ? "الوحدات" : "Wehdat", date: ar ? "السبت 8 تشرين الثاني" : "Sat 8 Nov", time: ar ? "5:00 م" : "5:00 PM" }, custom: {
+      ...endBits(ar), kicker: ar ? "تشكيلة اليوم" : "Starting line-up",
+      ...Object.fromEntries(([[1, "GK"], [4, "DF"], [5, "DF"], [8, "MF"], [10, "MF"], [7, "FW"], [9, "FW"]] as const).flatMap(([num, pos], i) => [
+        [`n${i + 1}`, String(num)], [`p${i + 1}`, ""], [`pos${i + 1}`, ar ? ({ GK: "حارس", DF: "دفاع", MF: "وسط", FW: "هجوم" } as Record<string, string>)[pos] : pos],
+      ])),
     } }),
   },
   {
@@ -244,7 +324,7 @@ export function buildClubScene(key: ClubTemplateKey, format: CreativeFormat, loc
   const def = CLUB_DEFS.find((d) => d.key === key)!;
   const f = def.formats.includes(format) ? format : def.formats[0];
   const c = new Canvas(f, locale);
-  const durationMs = def.build(c);
+  const durationMs = withSkin(CLUB_SKIN, () => def.build(c));
   return {
     v: 1,
     format: f,

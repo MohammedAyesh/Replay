@@ -41,8 +41,11 @@ const intOf = (v: unknown): number | null => {
 const playerOfMedia = (m: MediaLike): number | null =>
   m && typeof m === "object" && m.type === "player" ? intOf(m.playerId) : null;
 
-/** List templates whose rows are players (call-up, line-up): custom.n1 … n9 are shirt numbers. */
-export const PLAYER_ROW_TEMPLATES = new Set(["lineup", "callup"]);
+/**
+ * List templates whose rows are players (call-up, line-up, the academy pack's line-up): custom.n1 …
+ * n9 are shirt numbers, photos[i] their pictures. The consent gate counts every row.
+ */
+export const PLAYER_ROW_TEMPLATES = new Set(["lineup", "callup", "club-lineup"]);
 
 /**
  * The academy players a design shows. The template's own player (data.player:
