@@ -17,7 +17,7 @@ describe("Instagram suggestions", () => {
     expect(out.map((x) => x.at)).toEqual([...out.map((x) => x.at)].sort((a, b) => a - b));
     for (const x of out) expect(x.at).toBeGreaterThanOrEqual(now + 20);
     // Within three days the dashboard still gets the free pitches even with every weekly post switched off.
-    const bare = suggestPosts({ s: { ...s, off: ["thanks", "top5", "match_week", "player_week", "versus", "leaderboard"] }, now, days: 3, taken: new Set() });
+    const bare = suggestPosts({ s: { ...s, off: ["thanks", "top5", "match_week", "player_week", "versus", "leaderboard", "day_best"] }, now, days: 3, taken: new Set() });
     expect(bare.map((x) => x.kind)).toEqual(["open_slots", "open_slots"]);
   });
 

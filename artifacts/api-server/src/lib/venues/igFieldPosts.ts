@@ -30,6 +30,7 @@ import {
   type RawMoment,
 } from "./igAwards";
 import { AWARD_ORDER, nowWall, weekStartOf, weeklyTimes, type AwardCategory, type IgSlotSettings } from "./igCalendar";
+import { wallMinutes } from "./core";
 import { windowAround } from "./igPick";
 import { dayLabel, timeLabel, type Locale } from "./messages";
 import { availability, type Venue } from "./store";
@@ -55,7 +56,8 @@ import { availability, type Venue } from "./store";
  */
 
 export type Window = { recordingId: number; fromMs: number; toMs: number };
-export type FieldPart = { templateKey: string; format: "story" | "post"; title: string; data: CreativeData; windows: Window[] };
+/** One design of a post. `clips`: a montage laid out for that many clips (2–5). */
+export type FieldPart = { templateKey: string; format: "story" | "post"; title: string; data: CreativeData; windows: Window[]; clips?: number };
 /** parts to render; skip: nothing to post (and why); wait: not ready yet (try again later). */
 export type FieldDesign = { parts: FieldPart[]; moment?: Record<string, unknown> } | { skip: string } | { wait: string };
 
@@ -219,18 +221,25 @@ export async function winnerDesign(venue: Venue, academy: Academy, award: VenueI
 // ─── Which is nicer? ─────────────────────────────────────────────────────────
 
 /** This week's two best moments (two bookings when possible), A against B. */
-export async function versusDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale): Promise<FieldDesign> {
+export async function versusDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
   const t = weeklyTimes(s, "versus", nowWall(slotAt));
-  const until = fromAmmanLocal(wallString(t.gamesUntil!)) ?? slotAt;
-  const { raw } = await weekMoments(venue, t.gamesWeek, until);
-  const goals = pickSpread(raw.goal, 2, 1);
-  const pair = goals.length === 2 ? goals : pickSpread(bestMoments(raw), 2, 1);
-  if (pair.length < 2) return { skip: "Fewer than two moments to compare this week" };
+  let a: Window, b: Window, na: Nominee, nb: Nominee;
+  if (picks.length >= 2) {
+    // The owner's two clips.
+    [na, nb] = picks;
+    [a, b] = [nomineeWindow(na, 4.5, 12_000), nomineeWindow(nb, 4.5, 12_000)];
+  } else {
+    const until = fromAmmanLocal(wallString(t.gamesUntil!)) ?? slotAt;
+    const { raw } = await weekMoments(venue, t.gamesWeek, until);
+    const goals = pickSpread(raw.goal, 2, 1);
+    const pair = goals.length === 2 ? goals : pickSpread(bestMoments(raw), 2, 1);
+    if (pair.length < 2) return { skip: "Fewer than two moments to compare this week" };
+    [a, b] = await Promise.all(pair.map((m) => shortWindow(m, 4.5, 12_000)));
+    [na, nb] = await Promise.all(pair.map((m) => toNominee(m)));
+  }
   const ar = locale === "ar";
   const bits = fieldBits(venue, academy, locale);
-  const [a, b] = await Promise.all(pair.map((m) => shortWindow(m, 4.5, 12_000)));
-  const [na, nb] = await Promise.all(pair.map((m) => toNominee(m)));
-  const bothGoals = pair.every((m) => m.source === "confirmed_goal");
+  const bothGoals = [na, nb].every((m) => m.source === "confirmed_goal");
   return {
     moment: { choices: [na, nb].map((n) => ({ key: n.key, bookingId: n.bookingId, label: n.label, labelAr: n.labelAr })) },
     parts: [{
@@ -258,15 +267,23 @@ export async function versusDesign(venue: Venue, academy: Academy, s: IgSlotSett
 
 // ─── Top 5 ───────────────────────────────────────────────────────────────────
 
-export async function top5Design(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale): Promise<FieldDesign> {
+export async function top5Design(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
   const t = weeklyTimes(s, "top5", nowWall(slotAt));
-  const { raw } = await weekMoments(venue, t.gamesWeek);
-  const five = pickSpread(bestMoments(raw), 5, 2);
-  if (five.length < 5) return { skip: "Fewer than five moments last week" };
+  let windows: Window[];
+  let nominees: Nominee[];
+  if (picks.length >= 5) {
+    // The owner's five, #1 first.
+    nominees = picks.slice(0, 5);
+    windows = nominees.map((n) => nomineeWindow(n, 2.4, 6_000));
+  } else {
+    const { raw } = await weekMoments(venue, t.gamesWeek);
+    const five = pickSpread(bestMoments(raw), 5, 2);
+    if (five.length < 5) return { skip: "Fewer than five moments last week" };
+    windows = await Promise.all(five.map((m) => shortWindow(m, 2.4, 6_000)));
+    nominees = await Promise.all(five.map((m) => toNominee(m)));
+  }
   const ar = locale === "ar";
   const bits = fieldBits(venue, academy, locale);
-  const windows = await Promise.all(five.map((m) => shortWindow(m, 2.4, 6_000)));
-  const nominees = await Promise.all(five.map((m) => toNominee(m)));
   const custom: Record<string, string> = { ...bits.custom, kicker: ar ? "الأسبوع الماضي على أرضنا" : "Last week on our pitches", title: ar ? "أحلى 5 لقطات" : "Top 5 clips" };
   nominees.forEach((n, i) => {
     // #1 is the best: data.media; #2 … #5 are more.0 … more.3.
@@ -274,7 +291,7 @@ export async function top5Design(venue: Venue, academy: Academy, s: IgSlotSettin
     custom[`m${i + 1}`] = ar ? n.labelAr : n.label;
   });
   return {
-    moment: { bookingIds: [...new Set(five.map((m) => m.booking.id))] },
+    moment: { bookingIds: [...new Set(nominees.map((n) => n.bookingId))] },
     parts: [{
       templateKey: "field-top5",
       format: "story",
@@ -465,6 +482,148 @@ export async function matchWeekDesign(venue: Venue, academy: Academy, s: IgSlotS
           goalsLabel: ar ? `جول ${span}` : `goals ${span}`,
           headline: ar ? `${goals.length} جول بماتش واحد` : `${goals.length} goals, one game`,
           meta: ar ? n.labelAr : n.label,
+        },
+      },
+    }],
+  };
+}
+
+// ─── Picked clips, match highlights and the day's best ───────────────────────
+
+/** A window on a nominee's moment: `leadSec` before it (a dribble or a sprint from its own start). */
+export function nomineeWindow(n: Nominee, leadSec: number, lengthMs: number): Window {
+  const from = n.source === "dribble" || n.source === "fastest" ? n.fromMs : Math.max(0, n.atMs - Math.round(leadSec * 1000));
+  return { recordingId: n.recordingId, fromMs: from, toMs: from + lengthMs };
+}
+
+/** The kinds whose clips the owner can pick, and how many each takes. */
+export const PICKABLE: Record<string, { min: number; max: number }> = {
+  booking_clip: { min: 1, max: 1 },
+  versus: { min: 2, max: 2 },
+  top5: { min: 5, max: 5 },
+  match_highlights: { min: 2, max: 5 },
+  day_best: { min: 2, max: 5 },
+};
+
+const momentsOfDay = async (venue: Venue, date: string): Promise<RawMoment[]> => {
+  const { raw } = await weekMoments(venue, weekStartOf(wallMinutes(`${date} 12:00`)));
+  return bestMoments(raw).filter((m) => m.booking.startLocal.slice(0, 10) === date);
+};
+
+const momentsOfBooking = async (venue: Venue, booking: VenueBooking): Promise<RawMoment[]> => {
+  const { raw } = await weekMoments(venue, weekStartOf(wallMinutes(booking.startLocal)));
+  return bestMoments(raw).filter((m) => m.booking.id === booking.id);
+};
+
+/**
+ * The moments an item may show, best first (what the owner picks from): a booking's own for its
+ * clip and its highlights; this week's for "which is nicer?"; last week's for the top 5; the
+ * day's for the day's best. Every one is from a booking the field may post.
+ */
+export async function itemMoments(venue: Venue, item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSettings, now: Date): Promise<RawMoment[]> {
+  const slotAt = item.slotAt ?? now;
+  switch (item.kind) {
+    case "booking_clip":
+    case "match_highlights":
+      return booking ? momentsOfBooking(venue, booking) : [];
+    case "versus": {
+      const t = weeklyTimes(s, "versus", nowWall(slotAt));
+      return bestMoments((await weekMoments(venue, t.gamesWeek, fromAmmanLocal(wallString(t.gamesUntil!)) ?? slotAt)).raw);
+    }
+    case "top5": return bestMoments((await weekMoments(venue, weeklyTimes(s, "top5", nowWall(slotAt)).gamesWeek)).raw);
+    case "day_best": return momentsOfDay(venue, item.originKey.slice("day:".length));
+    default: return [];
+  }
+}
+
+const montageCustom = (ar: boolean, nominees: Nominee[], meta: (n: Nominee) => string) => {
+  const out: Record<string, string> = {};
+  nominees.forEach((n, i) => {
+    out[`l${i + 1}`] = sourceLabel(n.source, ar);
+    out[`m${i + 1}`] = meta(n);
+  });
+  return out;
+};
+
+const montageHeadline = (n: Nominee, ar: boolean) => (n.source === "confirmed_goal" ? (ar ? "جووول!" : "Goal!") : sourceLabel(n.source, ar));
+
+/** One game's highlights: its best moments one after another, the date big and the kick-off under it. */
+export async function highlightsDesign(venue: Venue, academy: Academy, booking: VenueBooking, locale: Locale, facts: { date: string; time: string; place: string }, picks: Nominee[] = []): Promise<FieldDesign> {
+  let nominees = picks;
+  if (nominees.length < 2) {
+    const best = pickSpread(await momentsOfBooking(venue, booking), 4, 4);
+    if (best.length < 2) return { skip: "Fewer than two moments in this game" };
+    // In the order they happened.
+    nominees = await Promise.all(best.sort((a, b) => a.t - b.t).map((m) => toNominee(m)));
+  }
+  nominees = nominees.slice(0, 5);
+  const ar = locale === "ar";
+  const bits = fieldBits(venue, academy, locale, booking.reference);
+  const windows = nominees.map((n) => nomineeWindow(n, 2.6, 4_000));
+  return {
+    moment: { bookingIds: [booking.id] },
+    parts: [{
+      templateKey: "field-match-highlights",
+      format: "story",
+      clips: windows.length,
+      title: ar ? `ملخص الماتش · ${booking.reference}` : `Match highlights · ${booking.reference}`,
+      windows,
+      data: {
+        academy: bits.academy,
+        match: facts,
+        media: recording(windows[0]),
+        more: windows.slice(1).map(recording),
+        custom: {
+          ...bits.custom,
+          kicker: ar ? "ملخص الماتش" : "Match highlights",
+          title: facts.date,
+          meta: [facts.time, facts.place].filter(Boolean).join(" · "),
+          headline: montageHeadline(nominees[0], ar),
+          ...montageCustom(ar, nominees, () => ""),
+        },
+      },
+    }],
+  };
+}
+
+/** Yesterday's (or any day's) best clips across its games, best first. */
+export async function dayBestDesign(venue: Venue, academy: Academy, date: string, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
+  let nominees = picks;
+  let games: number;
+  if (nominees.length < 2) {
+    const moments = await momentsOfDay(venue, date);
+    const best = pickSpread(moments, 5, 1);
+    if (best.length < 2) return { skip: "Fewer than two moments that day" };
+    nominees = await Promise.all(best.map((m) => toNominee(m)));
+    games = new Set(moments.map((m) => m.booking.id)).size;
+  } else {
+    games = new Set(nominees.map((n) => n.bookingId)).size;
+  }
+  nominees = nominees.slice(0, 5);
+  const ar = locale === "ar";
+  const bits = fieldBits(venue, academy, locale);
+  const windows = nominees.map((n) => nomineeWindow(n, 2.6, 4_000));
+  // "Thu 6 Nov · 9:00 PM · Pitch 2" → the time and pitch (the day is the title).
+  const where = (n: Nominee) => (ar ? n.labelAr : n.label).split(" · ").slice(1).join(" · ");
+  return {
+    moment: { bookingIds: [...new Set(nominees.map((n) => n.bookingId))] },
+    parts: [{
+      templateKey: "field-day-best",
+      format: "story",
+      clips: windows.length,
+      title: ar ? `أحلى لقطات اليوم · ${date}` : `Best of the day · ${date}`,
+      windows,
+      data: {
+        academy: bits.academy,
+        media: recording(windows[0]),
+        more: windows.slice(1).map(recording),
+        custom: {
+          ...bits.custom,
+          kicker: ar ? "أحلى لقطات اليوم" : "Best of the day",
+          title: dayLabel(date, locale),
+          meta: ar ? `من ${games} ${games === 1 ? "ماتش" : "ماتشات"}` : `From ${games} ${games === 1 ? "game" : "games"}`,
+          headline: montageHeadline(nominees[0], ar),
+          ...montageCustom(ar, nominees, where),
         },
       },
     }],

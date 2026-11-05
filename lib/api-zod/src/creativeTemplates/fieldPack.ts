@@ -41,7 +41,9 @@ export type FieldTemplateKey =
   | "field-thanks"
   | "field-milestone"
   | "field-open-slots"
-  | "field-leaderboard";
+  | "field-leaderboard"
+  | "field-match-highlights"
+  | "field-day-best";
 
 type FieldDef = {
   key: FieldTemplateKey;
@@ -449,6 +451,54 @@ function top5(c: Ctx) {
   return D;
 }
 
+/** Montage clips: from 2 to 5, played in order (data.media first, then more.0 …). */
+export const MONTAGE = { min: 2, max: 5, default: 4, per: 4200, intro: 2600 } as const;
+
+/**
+ * A montage (match highlights, the day's best): the opening card (crest, kicker, the date big,
+ * the time and place under it), then `n` clips one after another, each behind a wipe in the main
+ * colour with its label, then the end card over the last clip. One clip per data slot, in play
+ * order: media, more.0, more.1 … (a montage made for fewer clips is shorter, buildFieldMontage).
+ */
+function montage(c: Ctx, n: number = MONTAGE.default) {
+  const count = Math.max(MONTAGE.min, Math.min(MONTAGE.max, Math.round(n)));
+  const intro = MONTAGE.intro;
+  const per = MONTAGE.per;
+  const D = intro + per * count + FIELD_TIMING.end;
+  const endAt = D - FIELD_TIMING.end;
+  const paths = ["media", ...Array.from({ length: count - 1 }, (_, i) => `more.${i}`)];
+  paths.forEach((path, i) => {
+    const s = intro + i * per;
+    const last = i === count - 1;
+    footage(c, `video-${i + 1}`, { startMs: s, endMs: last ? D : s + per, path, blurFrom: last ? endAt : undefined, muted: !last });
+  });
+  paths.forEach((_, i) => {
+    const s = intro + i * per;
+    const k = i + 1;
+    onClip(c, `clip-${k}`, { startMs: s + 250, endMs: i === count - 1 ? endAt : s + per }, { tag: C(`l${k}`), headline: i === 0 ? C("headline") : undefined, meta: C(`m${k}`), still: i > 0 });
+  });
+  const t = { startMs: 0, endMs: intro };
+  backdrop(c, "open-bg", t);
+  const s = c.pick(190, 160, 220);
+  const top = Math.round(c.T + Math.max(0, (c.B - c.T - c.pick(760, 680, 880)) / 2));
+  crest(c, "open-crest", { x: (c.W - s) / 2, y: top, w: s, h: s }, { startMs: 80, endMs: intro, enter: "pop", mirror: false });
+  pill(c, "open-kicker", C("kicker"), top + s + c.pick(44, 36, 60), { startMs: 300, endMs: intro, enter: "slide-up" });
+  const ty = top + s + c.pick(150, 132, 190);
+  text(c, "open-title", C("title"), { x: c.M, y: ty, w: c.CW, h: c.pick(150, 132, 176) }, {
+    startMs: 450, endMs: intro, enter: "slide-up", size: c.pick(124, 108, 144), weight: 900, font: "condensed", color: PAPER, align: "center", fit: true,
+  });
+  c.only(when("meta"), () => text(c, "open-meta", C("meta"), { x: c.M + 40, y: ty + c.pick(170, 150, 200), w: c.CW - 80, h: c.pick(70, 64, 78) }, {
+    startMs: 700, endMs: intro, enter: "fade", size: c.pick(34, 32, 38), weight: 700, color: ON_MAIN, align: "center", bg: { color: MAIN, padding: 18, radius: 999 },
+  }));
+  c.only(when("sub"), () => text(c, "open-sub", C("sub"), { x: c.M, y: ty + c.pick(270, 240, 310), w: c.CW, h: 60 }, {
+    startMs: 1000, endMs: intro, enter: "fade", size: c.pick(34, 30, 38), weight: 600, color: PAPER, align: "center", opacity: 0.9,
+  }));
+  wipe(c, "wipe", intro);
+  for (let i = 1; i < count; i++) wipe(c, `wipe-${i}`, intro + i * per, { edge: false });
+  endCard(c, "end", endAt, D);
+  return D;
+}
+
 /** Which is nicer: A on top, B below; A fills the screen; B pushes up over it; both again; the vote. */
 function versus(c: Ctx, story: boolean) {
   const split = 2000;
@@ -626,6 +676,16 @@ function leaderboard(c: Ctx) {
 // ── Catalogue ───────────────────────────────────────────────────────────────
 
 const art = (key: string): MediaSource => ({ type: "artwork", key: `sample/${key}` });
+/** Labels for a montage's clips: l1 … ln and m1 … mn. */
+const montageLabels = (ar: boolean, n: number) => {
+  const kinds = ar ? ["جول", "مراوغة", "تسديدة", "تصدّي", "جول"] : ["Goal", "Dribble", "Shot", "Save", "Goal"];
+  const out: Record<string, string> = {};
+  for (let i = 1; i <= n; i++) {
+    out[`l${i}`] = kinds[(i - 1) % kinds.length];
+    out[`m${i}`] = ar ? `الدقيقة ${i * 9}` : `Minute ${i * 9}`;
+  }
+  return out;
+};
 const sampleCommon = (ar: boolean) => ({
   academy: { name: "Jordan Galaxy", nameAr: "ملاعب جوردن جلاكسي", phone: "07 9920 4098" },
 });
@@ -756,6 +816,28 @@ const FIELD_DEFS: FieldDef[] = [
   },
 ];
 
+FIELD_DEFS.push(
+  {
+    key: "field-match-highlights", title: { en: "Match highlights", ar: "ملخص الماتش" }, formats: STORY,
+    build: (c) => montage(c),
+    sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), more: [art("goal-clip"), art("goal-clip"), art("goal-clip")], custom: {
+      ...endBits(ar, "JG-4F7K2Q"), kicker: ar ? "ملخص الماتش" : "Match highlights", title: ar ? "الخميس 6 تشرين الثاني" : "Thu 6 Nov",
+      meta: ar ? "9:00 م · ملعب 2" : "9:00 PM · Pitch 2", headline: ar ? "ماتش ناري" : "What a game", ...montageLabels(ar, 4),
+    } }),
+  },
+  {
+    key: "field-day-best", title: { en: "Best clips of the day", ar: "أحلى لقطات اليوم" }, formats: STORY,
+    build: (c) => montage(c),
+    sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), more: [art("goal-clip"), art("goal-clip"), art("goal-clip")], custom: {
+      ...endBits(ar), kicker: ar ? "أحلى لقطات اليوم" : "Best of the day", title: ar ? "الأربعاء 5 تشرين الثاني" : "Wed 5 Nov",
+      meta: ar ? "من 7 ماتشات" : "From 7 games", headline: ar ? "أحلى لقطة اليوم" : "Clip of the day", ...montageLabels(ar, 4),
+    } }),
+  },
+);
+
+/** Montage templates: their clip count can be 2 to 5 (buildFieldMontage). */
+export const isMontageTemplate = (key: string) => key === "field-match-highlights" || key === "field-day-best" || key === "club-highlights";
+
 export const FIELD_TEMPLATE_KEYS = FIELD_DEFS.map((d) => d.key);
 export const isFieldTemplate = (key: string): key is FieldTemplateKey => FIELD_DEFS.some((d) => d.key === key);
 export const fieldTemplateTitle = (key: string, ar: boolean) => {
@@ -784,6 +866,15 @@ export function buildFieldScene(key: FieldTemplateKey, format: CreativeFormat, l
   } as Scene;
 }
 
+/** A montage template laid out for `clips` clips (2–5): shorter or longer, the same look. */
+export function buildFieldMontage(key: FieldTemplateKey, clips: number, format: CreativeFormat, locale: Locale): Scene {
+  const def = FIELD_DEFS.find((d) => d.key === key)!;
+  const f = def.formats.includes(format) ? format : def.formats[0];
+  const c = new Canvas(f, locale);
+  const durationMs = montage(c, clips);
+  return { v: 1, format: f, durationMs, background: INK, layers: [...c.layers], template: { key, style: FIELD_STYLE }, locale } as Scene;
+}
+
 export function fieldSampleData(key: string, locale: Locale): CreativeData {
   const def = FIELD_DEFS.find((d) => d.key === key);
   return def ? def.sample(locale === "ar") : {};
@@ -796,5 +887,5 @@ export function fieldSampleData(key: string, locale: Locale): CreativeData {
 export const FIELD_KIT = {
   PAPER, INK, MAIN, ON_MAIN, C, when, text, withSkin,
   backdrop, pill, badge, header, bookingBand, countUp, wipe, footage, footShade, onClip, endCard, openingCard, clipSequence, statsRow,
-  layouts: { bookingClip, award, playerCard, top5, versus, nomineeSlide, nomineesCover, thanks, openSlots, leaderboard },
+  layouts: { bookingClip, award, playerCard, top5, versus, nomineeSlide, nomineesCover, thanks, openSlots, leaderboard, montage },
 };

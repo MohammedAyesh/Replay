@@ -164,7 +164,10 @@ export const TEMPLATE_RECOMMENDED_MUSIC: Record<string, BuiltInTemplateMusic> = 
   "field-nominee-slide": pick("hype", ["cc0/energetic-electro-tune", "cc0/warped"], { volume: 0.6 }),
   "field-thanks": pick("cinematic", ["cc0/flags", "cc0/adventure-intro", "replay/proud-moments"]),
   "field-milestone": pick("epic", ["cc0/epic-endgame", "cc0/great-mission", "replay/final-whistle"]),
+  "field-match-highlights": pick("hype", ["cc0/energetic-electro-tune", "cc0/fight-for-a-better-future", "replay/matchday-anthem"], { volume: 0.7 }),
+  "field-day-best": pick("hype", ["cc0/now-thats-automation", "cc0/serum-patches", "replay/stadium-stomp"], { volume: 0.7 }),
   // Academies' pack (clubPack.ts).
+  "club-highlights": pick("hype", ["cc0/energetic-electro-tune", "cc0/fight-for-a-better-future", "replay/matchday-anthem"], { volume: 0.7 }),
   "club-goal": pick("hype", ["cc0/energetic-electro-tune", "cc0/warped", "replay/matchday-anthem"], { volume: 0.6 }),
   "club-fulltime": pick("epic", ["cc0/epic-endgame", "cc0/great-mission", "replay/final-whistle"], { volume: 0.7 }),
   "club-potm": pick("epic", ["cc0/great-mission", "cc0/epic-endgame", "replay/rising-star"], { volume: 0.7 }),

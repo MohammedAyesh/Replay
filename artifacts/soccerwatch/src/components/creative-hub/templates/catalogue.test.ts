@@ -191,3 +191,24 @@ describe("the academy pack", () => {
     expect(CLUB_TEMPLATES.find((t) => t.key === "club-matchday")?.kind).toBe("image");
   });
 });
+
+describe("montages: match highlights and the day's best", () => {
+  it("lay out for 2 to 5 clips, one video slot each in play order, longer with each clip", async () => {
+    const { buildFieldMontage, MONTAGE } = await import("@workspace/api-zod");
+    let last = 0;
+    for (let n = 2; n <= 5; n++) {
+      for (const key of ["field-match-highlights", "field-day-best"] as const) {
+        const scene = buildFieldMontage(key, n, "story", "ar");
+        expect(sceneSchema.safeParse(scene).success).toBe(true);
+        const paths = scene.layers.filter((l): l is Extract<SceneLayer, { kind: "video" }> => l.kind === "video").map((l) => (l.src.type === "binding" ? l.src.path : ""));
+        expect(paths).toEqual(["media", ...Array.from({ length: n - 1 }, (_, i) => `more.${i}`)]);
+        expect(scene.durationMs).toBe(MONTAGE.intro + MONTAGE.per * n + 3000);
+      }
+      const d = buildFieldMontage("field-match-highlights", n, "story", "en").durationMs!;
+      expect(d).toBeGreaterThan(last);
+      last = d;
+    }
+    // Out of range counts are clamped.
+    expect(buildFieldMontage("field-day-best", 9, "story", "en").durationMs).toBe(buildFieldMontage("field-day-best", 5, "story", "en").durationMs);
+  });
+});

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  ArrowLeft, ArrowRight, Check, Clapperboard, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Music, Palette, Redo2,
+  ArrowLeft, ArrowRight, Check, Clapperboard, CloudOff, Copy, Database, Eye, Image, LayoutTemplate, Layers, Loader2, Music, Palette, PenTool, Redo2,
   Shapes, Smartphone, Trash2, Type, Undo2, UserRound, X,
 } from "lucide-react";
 import {
@@ -12,7 +12,7 @@ import {
   canRedo, canUndo, createEditorState, editorReducer, findLayer, getPath, sceneBindings, setPath, uniqueLayerId, videoSlots, type LayerChange,
 } from "@/lib/creative-editor-state";
 import {
-  useCreativeBrand, useCreativeProject, useUpdateCreativeProject, type CreativeBrandInfo, type CreativeProject,
+  useCreativeBrand, useCreativeProject, useCreativeProjects, useUpdateCreativeProject, type CreativeBrandInfo, type CreativeProject,
 } from "@/lib/creative-hub-api";
 import { creativeMediaUrl } from "@/lib/creative-hub-media";
 import { followTheBall } from "@/lib/creative-framing";
@@ -75,6 +75,7 @@ export function CreativeEditor({ academyId, nav, projectId }: SectionProps & { p
         <Button type="button" className="mt-2 min-h-11 rounded-xl" onClick={() => nav.openTemplates()} data-testid="editor-open-templates">
           {copy.emptyCta}
         </Button>
+        <RecentDrafts academyId={academyId} nav={nav} />
       </div>
     );
   }
@@ -92,10 +93,35 @@ export function CreativeEditor({ academyId, nav, projectId }: SectionProps & { p
       <div className="space-y-3 rounded-2xl border border-line bg-surface p-6 text-center" data-testid="creative-editor">
         <p className="text-sm text-red-400" role="alert">{copy.loadError}</p>
         <Button type="button" variant="outline" className="rounded-xl" onClick={() => void project.refetch()}>{copy.retry}</Button>
+        <RecentDrafts academyId={academyId} nav={nav} />
       </div>
     );
   }
   return <EditorWorkspace key={project.data.id} academyId={academyId} nav={nav} project={project.data} brandInfo={brand.data ?? null} />;
+}
+
+/** The latest designs (newest edit first): one tap carries on where the owner left off. */
+function RecentDrafts({ academyId, nav }: SectionProps) {
+  const copy = useCreativeEditorCopy();
+  const drafts = useCreativeProjects(academyId, { status: ["draft", "ready"] });
+  const list = (drafts.data ?? []).slice(0, 6);
+  if (!list.length) return null;
+  return (
+    <div className="mt-4 w-full max-w-md text-start" data-testid="editor-recent-drafts">
+      <p className="mb-2 text-xs font-semibold text-muted-text">{copy.continueDraft}</p>
+      <ul className="space-y-1.5">
+        {list.map((p) => (
+          <li key={p.id}>
+            <button type="button" onClick={() => nav.openInEditor(p.id)} data-testid={`editor-recent-${p.id}`}
+              className="flex min-h-11 w-full items-center gap-2 rounded-xl bg-raised px-3 text-start text-sm font-semibold text-text hover:bg-raised/80">
+              <PenTool className="h-4 w-4 shrink-0 text-turf" aria-hidden />
+              <span className="min-w-0 flex-1 truncate" dir="auto">{p.title || copy.untitled}</span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & { project: CreativeProject; brandInfo: CreativeBrandInfo | null }) {

@@ -28,7 +28,7 @@ describe("Instagram suggestions", () => {
     expect(html).toContain('data-testid="ig-suggestion-open_slots"');
     expect(html).toContain("Free tonight");
     expect(html).toContain("Today");
-    expect(html).toContain("Top 5 of the week");
+    expect(html).toContain("Best of the week");
     expect(html).toContain("Reel");
     expect(html.match(/Add now/g)).toHaveLength(2);
   });

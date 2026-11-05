@@ -19,22 +19,27 @@ import {
   type VenueIgAward,
   type VenueIgItem,
 } from "@workspace/db";
-import { FIELD_STYLE, awardTitle, buildTemplateScene, resolveSource, sceneSchema, type Scene } from "@workspace/api-zod";
+import { FIELD_STYLE, awardTitle, buildFieldMontage, buildTemplateScene, resolveSource, sceneSchema, type FieldTemplateKey, type Scene } from "@workspace/api-zod";
 import { replacementScenes, withReplacements } from "../creative/myTemplates";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { framingFor } from "../creative/framing";
 import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "../creative/music";
 import { ensureCreativeMedia, renderIsDone } from "../creative/publishMedia";
 import { queueVideoRender, renderStillNow } from "../creative/renderJobs";
+import { deleteOutput } from "../creative/renderStore";
 import { logger } from "../logger";
 import { getSocialAccount } from "../social/account";
 import { getWhatsappSettings } from "../whatsapp/queue";
 import { publicBaseUrl } from "../whatsapp/waha";
 import { addDays, ammanLocal, fromAmmanLocal, normaliseHours, wallMinutes, wallString } from "./core";
-import { AWARDS, closeVoting, readNominees, weekCandidates, type Nominee } from "./igAwards";
+import { AWARDS, closeVoting, pickSpread, readNominees, toNominee, weekCandidates, type Nominee } from "./igAwards";
 import {
+  PICKABLE,
   bookingClipDesign,
+  dayBestDesign,
+  itemMoments,
   gamesFilmed,
+  highlightsDesign,
   leaderboardDesign,
   matchWeekDesign,
   milestoneDesign,
@@ -57,6 +62,7 @@ import {
   IG_BACKFILL_DAYS,
   announcingWeek,
   awardTimes,
+  isQuiet,
   boardTimes,
   milestoneCrossed,
   normaliseIgSlots,
@@ -310,6 +316,8 @@ export async function designFor(venue: Venue, academy: Academy, item: VenueIgIte
   const ar = locale === "ar";
   const slots = igSettings(venue).slots;
   const slotAt = item.slotAt ?? now;
+  // The clips the owner picked, in play order (an empty list: the design picks its own).
+  const picks = readNominees(item.picks);
   switch (item.kind) {
     case "booking_clip": {
       const b = await bookingFor(item.bookingId);
@@ -332,8 +340,14 @@ export async function designFor(venue: Venue, academy: Academy, item: VenueIgIte
       if (!award || !winner || !b) return { skip: "Its footage is gone" };
       return winnerDesign(venue, academy, award, winner, b, locale, await bookingFacts(b, locale));
     }
-    case "versus": return versusDesign(venue, academy, slots, slotAt, locale);
-    case "top5": return top5Design(venue, academy, slots, slotAt, locale);
+    case "versus": return versusDesign(venue, academy, slots, slotAt, locale, picks);
+    case "top5": return top5Design(venue, academy, slots, slotAt, locale, picks);
+    case "match_highlights": {
+      const b = await bookingFor(item.bookingId);
+      if (!b) return { skip: "The booking is gone" };
+      return highlightsDesign(venue, academy, b, locale, await bookingFacts(b, locale), picks);
+    }
+    case "day_best": return dayBestDesign(venue, academy, item.originKey.slice("day:".length), locale, picks);
     case "thanks": return thanksDesign(venue, academy, slots, slotAt, locale);
     case "match_week": return matchWeekDesign(venue, academy, slots, slotAt, locale);
     case "player_week": return playerWeekDesign(venue, academy, slots, slotAt, locale);
@@ -350,7 +364,11 @@ export async function designFor(venue: Venue, academy: Academy, item: VenueIgIte
  */
 async function sceneFor(part: FieldPart, locale: Locale, own: Map<string, Scene> = new Map()): Promise<Scene> {
   // The field's own version of the template (My templates, "use instead"), else the catalogue's.
-  let scene = sceneSchema.parse(withReplacements(own, buildTemplateScene)(part.templateKey, FIELD_STYLE, part.format, locale));
+  // A montage is laid out for its own number of clips, unless the field replaced the template.
+  const montage = part.clips && !own.has(`${part.templateKey}:${part.format}`);
+  let scene = sceneSchema.parse(montage
+    ? buildFieldMontage(part.templateKey as FieldTemplateKey, part.clips!, part.format, locale)
+    : withReplacements(own, buildTemplateScene)(part.templateKey, FIELD_STYLE, part.format, locale));
   if (scene.durationMs === undefined) return scene;
   const framed = new Map<string, Promise<Awaited<ReturnType<typeof framingFor>> | null>>();
   const layers = await Promise.all(scene.layers.map(async (l) => {
@@ -444,6 +462,52 @@ export async function ensureRenderedAll(venue: Venue, item: VenueIgItem, now = n
   return out;
 }
 
+// ─── 3b. The owner picks the clips ───────────────────────────────────────────
+
+/** Can the owner pick this item's clips, and how many? Null when not (awards are voted, the rest choose their own). */
+export function pickRule(item: Pick<VenueIgItem, "kind" | "status">): { min: number; max: number } | null {
+  const rule = PICKABLE[item.kind];
+  return rule && ["planned", "approved", "skipped", "failed"].includes(item.status) ? rule : null;
+}
+
+/** The moments the owner may pick from for this item, best first (every one from a postable booking). */
+export async function itemCandidates(venue: Venue, item: VenueIgItem, now = new Date()): Promise<Nominee[]> {
+  const moments = await itemMoments(venue, item, await bookingFor(item.bookingId), igSettings(venue).slots, now);
+  const spread = pickSpread(moments, 30, 30);
+  const out: Nominee[] = [];
+  for (const m of spread) out.push(await toNominee(m));
+  return out;
+}
+
+/**
+ * The owner's clips for an item, in play order: the design is made again from them (its old
+ * render is dropped) and rendered straight away, so the calendar shows the new edit. A skipped
+ * or failed item comes back. A booking clip takes its one pick as its moment.
+ */
+export async function setItemPicks(venue: Venue, item: VenueIgItem, picks: Nominee[], now = new Date()): Promise<VenueIgItem> {
+  const old = await itemProjects(venue.id, item.id);
+  await db.update(venueIgItemsTable).set({
+    picks: item.kind === "booking_clip" ? null : picks,
+    ...(item.kind === "booking_clip" && picks[0] ? {
+      moment: { recordingId: picks[0].recordingId, fromMs: picks[0].fromMs, toMs: picks[0].toMs, atSeconds: picks[0].atSeconds },
+      recordingId: picks[0].recordingId,
+      source: picks[0].source,
+    } : {}),
+    projectId: null,
+    error: null,
+    ...(item.status === "skipped" || item.status === "failed" ? { status: "planned", pinned: true } : {}),
+    updatedAt: now,
+  }).where(eq(venueIgItemsTable.id, item.id));
+  if (old.length) {
+    await db.delete(academyCreativeProjectsTable).where(inArray(academyCreativeProjectsTable.id, old.map((p) => p.id)));
+    for (const p of old) if (p.outputPath) void deleteOutput(p.outputPath, venue.id);
+  }
+  const [row] = await db.select().from(venueIgItemsTable).where(eq(venueIgItemsTable.id, item.id));
+  await ensureRendered(venue, row, now).catch((error) => logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram: re-edit after picks failed"));
+  const [after] = await db.select().from(venueIgItemsTable).where(eq(venueIgItemsTable.id, item.id));
+  return after;
+}
+
 /** The item's first project (a carousel's cover), rendered. */
 export async function ensureRendered(venue: Venue, item: VenueIgItem, now = new Date()): Promise<AcademyCreativeProject | null> {
   return (await ensureRenderedAll(venue, item, now))?.[0] ?? null;
@@ -469,13 +533,15 @@ async function prepareRenders(venue: Venue, now: Date): Promise<number> {
 /** The bookings an item shows footage from. */
 async function bookingsShown(item: VenueIgItem): Promise<number[]> {
   if (item.kind === "booking_clip") return item.bookingId ? [item.bookingId] : [];
+  const picked = readNominees(item.picks).map((n) => n.bookingId);
+  if (item.kind === "match_highlights") return [...new Set([...(item.bookingId ? [item.bookingId] : []), ...picked])];
   if (item.kind === "award_winner" || item.kind === "award_nominees") {
     const award = await awardOf(item);
     const nominees = readNominees(award?.nominees);
     return item.kind === "award_winner" ? nominees.filter((n) => n.key === award?.winnerKey).map((n) => n.bookingId) : nominees.map((n) => n.bookingId);
   }
   const m = (item.moment ?? {}) as { bookingIds?: number[]; choices?: Array<{ bookingId: number }> };
-  return [...new Set([...(m.bookingIds ?? []), ...(m.choices ?? []).map((c) => c.bookingId)])];
+  return [...new Set([...(m.bookingIds ?? []), ...(m.choices ?? []).map((c) => c.bookingId), ...picked])];
 }
 
 /**
@@ -760,6 +826,13 @@ export async function scheduleFieldPosts(venue: Venue, now = new Date()): Promis
     // Late: what's free is read as it renders, so it is made just an hour before.
     if (nowM >= at - 60 && nowM < at + IG_GRACE_MINUTES && await pinItem(venue, `slots:${today}`, "open_slots", "story", at, now)) added += 1;
   }
+  if (!off.has("day_best")) {
+    // Yesterday's best clips, at dayBestTime (the key is the games' day).
+    const today = ammanLocal(now).slice(0, 10);
+    const at = wallMinutes(`${today} ${s.dayBestTime}`);
+    if (inWindow(at) && await pinItem(venue, `day:${addDays(today, -1)}`, "day_best", "reel", at, now)) added += 1;
+  }
+  if (!off.has("match_highlights")) added += await scheduleHighlights(venue, s, now);
   if (!off.has("leaderboard")) {
     const b = boardTimes(s, nowM);
     if (inWindow(b.at) && await pinItem(venue, `board:${b.month}`, "leaderboard", "story", b.at, now)) added += 1;
@@ -772,6 +845,55 @@ export async function scheduleFieldPosts(venue: Venue, now = new Date()): Promis
       const reel = slotsFor(s, normaliseHours(venue.settings.openingHours), ammanLocal(now).slice(0, 10), 2)
         .find((x) => x.kind === "reel" && x.at >= nowM + IG_LEAD_MINUTES + 60);
       if (reel && await pinItem(venue, `milestone:${n}`, "milestone", "reel", reel.at, now, { count: n })) added += 1;
+    }
+  }
+  return added;
+}
+
+/**
+ * Match highlights: each Amman day, the games with the best clips (their booking clips' scores:
+ * confirmed goals first), up to highlightsPerDay, each a Reel two hours after it ends (not at
+ * night: then at the end of the quiet hours). Only games whose booking clip went on the calendar,
+ * so consent was already checked; it is checked again at posting.
+ */
+async function scheduleHighlights(venue: Venue, s: IgSlotSettings, now: Date): Promise<number> {
+  const since = new Date(now.getTime() - 2 * 86_400_000);
+  const clips = await db.select({ item: venueIgItemsTable, booking: venueBookingsTable }).from(venueIgItemsTable)
+    .innerJoin(venueBookingsTable, eq(venueBookingsTable.id, venueIgItemsTable.bookingId))
+    .where(and(
+      eq(venueIgItemsTable.academyId, venue.id),
+      eq(venueIgItemsTable.kind, "booking_clip"),
+      notInArray(venueIgItemsTable.status, ["skipped", "failed", "removed", "removal_flagged"]),
+      gte(venueBookingsTable.startsAt, since),
+      lt(venueBookingsTable.endsAt, now),
+    ));
+  if (!clips.length) return 0;
+  const existing = await db.select({ originKey: venueIgItemsTable.originKey, bookingId: venueIgItemsTable.bookingId }).from(venueIgItemsTable).where(and(
+    eq(venueIgItemsTable.academyId, venue.id),
+    eq(venueIgItemsTable.kind, "match_highlights"),
+    gte(venueIgItemsTable.createdAt, new Date(since.getTime() - 86_400_000)),
+  ));
+  const have = new Set(existing.map((e) => e.bookingId));
+  const perDay = new Map<string, number>();
+  for (const c of clips) if (have.has(c.booking.id)) perDay.set(c.booking.startLocal.slice(0, 10), (perDay.get(c.booking.startLocal.slice(0, 10)) ?? 0) + 1);
+  const ranked = [...clips].sort((a, b) => b.item.score - a.item.score || b.booking.startsAt.getTime() - a.booking.startsAt.getTime());
+  let added = 0;
+  for (const { booking } of ranked) {
+    if (have.has(booking.id)) continue;
+    const day = booking.startLocal.slice(0, 10);
+    if ((perDay.get(day) ?? 0) >= s.highlightsPerDay) continue;
+    // Still postable now (a player may have asked to take it down since its clip was planned).
+    if (!(await consentNow(venue, booking)).ok) continue;
+    let at = Math.max(nowWall(now) + IG_LEAD_MINUTES + 30, wallMinutes(ammanLocal(booking.endsAt)) + 120);
+    for (let i = 0; i < 24 * 4 && isQuiet(s, at); i += 1) at += 15;
+    const rows = await db.insert(venueIgItemsTable).values({
+      academyId: venue.id, originKey: `highlights:${booking.id}`, kind: "match_highlights", placement: "reel", bookingId: booking.id,
+      source: "field", score: 0, slotAt: dateOfWall(at), pinned: true, status: "planned",
+    }).onConflictDoNothing().returning({ id: venueIgItemsTable.id });
+    if (rows.length) {
+      added += 1;
+      perDay.set(day, (perDay.get(day) ?? 0) + 1);
+      have.add(booking.id);
     }
   }
   return added;
@@ -941,7 +1063,10 @@ export function itemView(i: VenueIgItem, extra: { project?: AcademyCreativeProje
     consentMode: i.consentMode,
     consentRef: i.consentRef,
     insights: i.insights,
-    thumbnailFrom: typeof (i.moment as { recordingId?: unknown } | null)?.recordingId === "number"
+    picks: readNominees(i.picks).map((n) => ({ key: n.key, recordingId: n.recordingId, atMs: n.atMs, source: n.source, label: n.label, labelAr: n.labelAr })),
+    thumbnailFrom: readNominees(i.picks)[0]
+      ? { recordingId: readNominees(i.picks)[0]!.recordingId, atMs: readNominees(i.picks)[0]!.atMs }
+      : typeof (i.moment as { recordingId?: unknown } | null)?.recordingId === "number"
       ? { recordingId: (i.moment as { recordingId: number }).recordingId, atMs: (i.moment as { fromMs: number }).fromMs + 3000 }
       : null,
   };

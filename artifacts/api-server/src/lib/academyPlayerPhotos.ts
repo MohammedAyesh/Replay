@@ -2,6 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { createCanvas, loadImage, type Image } from "@napi-rs/canvas";
 import {
@@ -75,13 +76,46 @@ export function transparentShare(rgba: Uint8ClampedArray | Uint8Array, width: nu
   return seen ? clear / seen : 0;
 }
 
+/**
+ * Any picture FFmpeg can read (PNG variants Skia refuses, 16-bit or odd colour types, HEIC or
+ * AVIF saved under a .png name, GIF, TIFF …) as an 8-bit RGBA PNG, its alpha kept. Null if it
+ * can't.
+ */
+export function decodeWithFfmpeg(input: Buffer, timeoutMs = 30_000): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    const proc = spawn("ffmpeg", ["-nostdin", "-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-frames:v", "1",
+      "-vf", `scale='min(${PLAYER_PHOTO_MAX_SIDE * 2},iw)':-2`, "-pix_fmt", "rgba", "-f", "image2pipe", "-c:v", "png", "pipe:1"], { stdio: ["pipe", "pipe", "pipe"] });
+    const out: Buffer[] = [];
+    let err = "";
+    const timer = setTimeout(() => proc.kill("SIGKILL"), timeoutMs);
+    proc.stdout.on("data", (d: Buffer) => out.push(d));
+    proc.stderr.on("data", (d: Buffer) => { err = (err + d.toString()).slice(-500); });
+    proc.on("error", () => { clearTimeout(timer); resolve(null); });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0 || !out.length) {
+        logger.warn({ code, err }, "Player photos: FFmpeg couldn't read the picture either");
+        resolve(null);
+      } else resolve(Buffer.concat(out));
+    });
+    proc.stdin.on("error", () => undefined);
+    proc.stdin.end(input);
+  });
+}
+
 /** Decode, scale down to PLAYER_PHOTO_MAX_SIDE, detect transparency and encode (PNG with alpha, else WebP). */
 export async function processPlayerPhoto(input: Buffer): Promise<ProcessedPhoto> {
   let img: Image;
   try {
     img = await loadImage(input);
-  } catch {
-    throw new PlayerPhotoError("That file isn't a picture we can read. Use a PNG, WebP or JPG.");
+  } catch (error) {
+    // Skia refuses some real PNGs (2026-11-05: an owner's PNG cut-out was turned away). Say why
+    // in the log, then let FFmpeg read it.
+    logger.warn({ error: (error as Error)?.message, bytes: input.length, head: input.subarray(0, 16).toString("hex") }, "Player photos: Skia couldn't read a picture; trying FFmpeg");
+    const png = await decodeWithFfmpeg(input);
+    const again = png ? await loadImage(png).catch(() => null) : null;
+    if (!again) throw new PlayerPhotoError("That file isn't a picture we can read. Use a PNG, WebP or JPG.");
+    img = again;
   }
   if (!img.width || !img.height || Math.min(img.width, img.height) < PLAYER_PHOTO_MIN_SIDE) {
     throw new PlayerPhotoError("That picture is too small. Use one at least 64 pixels wide and tall.");

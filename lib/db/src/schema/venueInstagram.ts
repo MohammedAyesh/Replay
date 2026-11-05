@@ -109,7 +109,7 @@ export const venueIgItemsTable = pgTable("venue_ig_items", {
   academyId: integer("academy_id").notNull().references(() => academiesTable.id, { onDelete: "cascade" }),
   /**
    * booking:<id> · nominees:<awardId> · winner:<awardId> · versus:<week> · top5:<week> · thanks:<week> ·
-   * match:<week> · potw:<week> · board:<YYYY-MM> · slots:<date> · milestone:<n>. Unique per field: an item is never made twice.
+   * match:<week> · potw:<week> · board:<YYYY-MM> · slots:<date> · milestone:<n> · highlights:<bookingId> · day:<date>. Unique per field: an item is never made twice.
    */
   originKey: text("origin_key").notNull(),
   kind: text("kind").notNull(),
@@ -123,6 +123,11 @@ export const venueIgItemsTable = pgTable("venue_ig_items", {
   source: text("source").notNull(),
   /** The footage: { recordingId, fromMs, toMs } in the recording's video time, or a clip. */
   moment: jsonb("moment"),
+  /**
+   * The clips the owner picked for it, in play order (igAwards Nominee[]): the design uses these
+   * instead of choosing its own. Picked only from moments the field may post.
+   */
+  picks: jsonb("picks"),
   /** How good it is, for promoting the best of the day to a Reel (confirmed goals first). */
   score: integer("score").notNull().default(0),
   slotAt: timestamp("slot_at", { withTimezone: true }),
@@ -150,7 +155,7 @@ export const venueIgItemsTable = pgTable("venue_ig_items", {
   unique("venue_ig_items_origin_unique").on(table.academyId, table.originKey),
   index("venue_ig_items_slot_idx").on(table.academyId, table.slotAt),
   index("venue_ig_items_status_idx").on(table.status, table.slotAt),
-  check("venue_ig_items_kind_check", sql`${table.kind} in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard')`),
+  check("venue_ig_items_kind_check", sql`${table.kind} in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard', 'match_highlights', 'day_best')`),
   check("venue_ig_items_placement_check", sql`${table.placement} in ('story', 'reel', 'carousel')`),
   check("venue_ig_items_status_check", sql`${table.status} in ('planned', 'approved', 'rendering', 'ready', 'publishing', 'published', 'skipped', 'failed', 'removed', 'removal_flagged')`),
 ]);

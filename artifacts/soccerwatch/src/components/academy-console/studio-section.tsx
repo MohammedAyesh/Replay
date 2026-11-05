@@ -217,21 +217,38 @@ function PhotoPicker({ label, hint, value, onChange }: { label: string; hint?: s
   );
 }
 
+type QuickMemo = { template?: Template; format?: Format; locale?: Locale; registration?: RegistrationForm; announcement?: { title: string; body: string } };
+const quickKey = (academyId: number) => `replay:quick-posts:${academyId}`;
+function readQuickMemo(academyId: number): QuickMemo {
+  try {
+    const raw = typeof window === "undefined" ? null : window.localStorage.getItem(quickKey(academyId));
+    return raw ? (JSON.parse(raw) as QuickMemo) : {};
+  } catch {
+    return {};
+  }
+}
+function writeQuickMemo(academyId: number, memo: QuickMemo) {
+  try { window.localStorage.setItem(quickKey(academyId), JSON.stringify(memo)); } catch { /* forget */ }
+}
+
 function PostsTab({ academyId, data }: { academyId: number; data: StudioData }) {
   const fav = useFavorites(academyId);
   const all = useStudioCopy();
   const copy = all.studio;
-  const [template, setTemplate] = useState<Template>("match");
-  const [format, setFormat] = useState<Format>("post");
-  const [locale, setLocale] = useState<Locale>(all.locale);
+  // What the owner last made here comes back when he returns (template, size, language, texts).
+  const [memo] = useState(() => readQuickMemo(academyId));
+  const [template, setTemplate] = useState<Template>(memo.template ?? "match");
+  const [format, setFormat] = useState<Format>(memo.format ?? "post");
+  const [locale, setLocale] = useState<Locale>(memo.locale ?? all.locale);
   const [background, setBackground] = useState<string | null>(null);
   const scoredMatches = useMemo(() => data.matches.filter((m) => m.ownScore !== null && m.opponentScore !== null), [data.matches]);
   const [match, setMatch] = useState<MatchForm>(() => matchFormFrom(scoredMatches[0]));
   const [player, setPlayer] = useState<PlayerForm>(() => playerFormFrom(data.players[0]));
   const [skipRows, setSkipRows] = useState<Set<number>>(new Set());
   const ageGroups = useMemo(() => [...new Set(data.squads.map((s) => s.ageGroup).filter(Boolean))].join(", "), [data.squads]);
-  const [registration, setRegistration] = useState<RegistrationForm>({ kind: "registration", headline: "", ageGroups, startDate: "", priceJod: "" });
-  const [announcement, setAnnouncement] = useState({ title: "", body: "" });
+  const [registration, setRegistration] = useState<RegistrationForm>(memo.registration ?? { kind: "registration", headline: "", ageGroups, startDate: "", priceJod: "" });
+  const [announcement, setAnnouncement] = useState(memo.announcement ?? { title: "", body: "" });
+  useEffect(() => writeQuickMemo(academyId, { template, format, locale, registration, announcement }), [academyId, template, format, locale, registration, announcement]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [rendering, setRendering] = useState(false);
@@ -275,29 +292,38 @@ function PostsTab({ academyId, data }: { academyId: number; data: StudioData }) 
           startDate: registration.startDate || null, priceJod: numOrNull(registration.priceJod),
         };
       default:
-        return announcement.title.trim() ? { ...common, template, title: announcement.title, body: announcement.body || null } : null;
+        // Drawn straight away: an empty title shows "Announcement" until one is typed.
+        return { ...common, template, title: announcement.title.trim() || copy.templates.announcement, body: announcement.body || null };
     }
   }, [template, format, locale, background, match, player, registration, registrationHeadline, announcement, names, selectedMatch, data.week, weekRows, skipRows]);
 
   const payloadKey = payload ? JSON.stringify(payload) : null;
+  // Every preview drawn stays: going back to a template, size or text already seen is instant.
+  const drawn = useRef(new Map<string, string>());
+  useEffect(() => () => { for (const url of drawn.current.values()) URL.revokeObjectURL(url); }, []);
   useEffect(() => {
-    if (!payloadKey) { setPreviewError(null); return; }
+    // Nothing to draw (a required field is empty): no spinner. (Before, an aborted draw left
+    // "Drawing…" on for ever, over the previous template's picture.)
+    if (!payloadKey) { setPreviewError(null); setRendering(false); return; }
+    const cached = drawn.current.get(payloadKey);
+    if (cached) { setPreviewUrl(cached); setPreviewError(null); setRendering(false); return; }
     const controller = new AbortController();
+    setRendering(true);
     const timer = setTimeout(async () => {
-      setRendering(true);
       try {
         const blob = await renderPost(academyId, { ...JSON.parse(payloadKey), preview: true }, controller.signal);
-        setPreviewUrl((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(blob); });
+        const url = URL.createObjectURL(blob);
+        drawn.current.set(payloadKey, url);
+        setPreviewUrl(url);
         setPreviewError(null);
       } catch (error) {
         if ((error as Error).name !== "AbortError") setPreviewError((error as Error).message);
       } finally {
         if (!controller.signal.aborted) setRendering(false);
       }
-    }, 600);
+    }, 300);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [academyId, payloadKey]);
-  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const runAction = async (what: "download" | "ad") => {
     if (!payload) return;

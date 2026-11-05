@@ -11,12 +11,12 @@ import { IG_LEAD_MINUTES, WEEKLY_KINDS, boardTimes, weeklyTimes, type IgSlotSett
  * The key a suggestion is added under is the same one the autopilot uses for that post
  * (scheduleFieldPosts), so adding one never makes the same post twice.
  */
-export const SUGGEST_KINDS = [...WEEKLY_KINDS, "open_slots", "leaderboard"] as const;
+export const SUGGEST_KINDS = [...WEEKLY_KINDS, "open_slots", "leaderboard", "day_best"] as const;
 export type SuggestKind = (typeof SUGGEST_KINDS)[number];
 export type IgSuggestion = { kind: SuggestKind; placement: "story" | "reel"; at: number; originKey: string };
 
 const PLACEMENT: Record<SuggestKind, "story" | "reel"> = {
-  thanks: "reel", top5: "reel", match_week: "reel", player_week: "reel", versus: "reel", open_slots: "story", leaderboard: "story",
+  thanks: "reel", top5: "reel", match_week: "reel", player_week: "reel", versus: "reel", open_slots: "story", leaderboard: "story", day_best: "reel",
 };
 
 /** The next time this kind of post goes out at or after `from`, and the key it goes out under. */
@@ -27,6 +27,15 @@ export function nextOccurrence(s: IgSlotSettings, kind: SuggestKind, from: numbe
       const date = addDays(today, d);
       const at = wallMinutes(`${date} ${s.openSlotsTime}`);
       if (at >= from) return { at, originKey: `slots:${date}` };
+    }
+  }
+  if (kind === "day_best") {
+    // Yesterday's games, posted at dayBestTime: the key is the games' day.
+    const today = wallString(from).slice(0, 10);
+    for (let d = 0; d < 3; d += 1) {
+      const date = addDays(today, d);
+      const at = wallMinutes(`${date} ${s.dayBestTime}`);
+      if (at >= from) return { at, originKey: `day:${addDays(date, -1)}` };
     }
   }
   if (kind === "leaderboard") {

@@ -29,6 +29,9 @@ import { readNominees, saveCandidates, awardVotes } from "../lib/venues/igAwards
 import {
   ensureRendered,
   igSettings,
+  itemCandidates,
+  pickRule,
+  setItemPicks,
   itemView,
   monthlyReport,
   notPosted,
@@ -255,6 +258,8 @@ const settingsSchema = z.object({
     weekly: z.record(z.enum(WEEKLY_KINDS), z.object({ day: z.number().int().min(0).max(6), time: z.string().regex(timeRe) })).optional(),
     openSlotsTime: z.string().regex(timeRe).optional(),
     boardTime: z.string().regex(timeRe).optional(),
+    dayBestTime: z.string().regex(timeRe).optional(),
+    highlightsPerDay: z.number().int().min(1).max(10).optional(),
     off: z.array(z.enum(OPTIONAL_KINDS)).optional(),
   }).optional(),
 });
@@ -386,6 +391,60 @@ router.post(`${base}/items/:itemId/action`, async (req, res): Promise<void> => {
     res.json({ item: itemView(row, { project: project ?? null }) });
   } catch (error) {
     logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram item action failed");
+    res.status(500).json({ error: "That didn't work. Try again." });
+  }
+});
+
+/** The moments the owner can pick for a post, best first, with a frame each. */
+router.get(`${base}/items/:itemId/candidates`, async (req, res): Promise<void> => {
+  const a = await owner(req, res);
+  if (!a) return;
+  const item = await itemOf(a, intParam(req.params.itemId));
+  if (!item) { res.status(404).json({ error: "Not found" }); return; }
+  const rule = pickRule(item);
+  if (!rule) { res.status(409).json({ error: "This post's clips can't be picked", code: "not_pickable" }); return; }
+  try {
+    const list = await itemCandidates(a.venue, item);
+    const urls = await videoUrlsFor(list.map((n) => n.recordingId));
+    const picked = readNominees(item.picks).map((n) => n.key);
+    res.json({
+      min: rule.min,
+      max: rule.max,
+      picked,
+      candidates: list.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: thumb(n.recordingId, urls, n.atMs) })),
+    });
+  } catch (error) {
+    logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram: reading clip candidates failed");
+    res.status(500).json({ error: "Couldn't read the clips. Try again." });
+  }
+});
+
+/** The owner's clips for a post, in play order: it is edited again from them and rendered now. */
+router.put(`${base}/items/:itemId/picks`, async (req, res): Promise<void> => {
+  const a = await owner(req, res);
+  if (!a) return;
+  const item = await itemOf(a, intParam(req.params.itemId));
+  if (!item) { res.status(404).json({ error: "Not found" }); return; }
+  const rule = pickRule(item);
+  if (!rule) { res.status(409).json({ error: "This post's clips can't be picked", code: "not_pickable" }); return; }
+  const body = z.object({ keys: z.array(z.string().max(80)).max(5) }).safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Pick the clips" }); return; }
+  const keys = [...new Set(body.data.keys)];
+  if (keys.length && (keys.length < rule.min || keys.length > rule.max)) {
+    res.status(400).json({ error: rule.min === rule.max ? `Pick ${rule.min}` : `Pick ${rule.min} to ${rule.max}`, code: "count" });
+    return;
+  }
+  try {
+    // Only moments this post may show (the same list the owner was offered).
+    const list = keys.length ? await itemCandidates(a.venue, item) : [];
+    const byKey = new Map(list.map((n) => [n.key, n]));
+    const picks = keys.map((k) => byKey.get(k));
+    if (picks.some((p) => !p)) { res.status(409).json({ error: "One of those clips can't be used any more", code: "gone" }); return; }
+    const row = await setItemPicks(a.venue, item, picks as NonNullable<(typeof picks)[number]>[]);
+    const [project] = row.projectId ? await db.select().from(academyCreativeProjectsTable).where(eq(academyCreativeProjectsTable.id, row.projectId)) : [];
+    res.json({ item: itemView(row, { project: project ?? null }) });
+  } catch (error) {
+    logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram: saving picks failed");
     res.status(500).json({ error: "That didn't work. Try again." });
   }
 });

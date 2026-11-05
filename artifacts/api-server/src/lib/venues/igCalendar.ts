@@ -40,6 +40,10 @@ export type IgSlotSettings = {
   openSlotsTime: string;
   /** Last month's scorers, on the 1st. */
   boardTime: string;
+  /** Yesterday's best clips, every day at this time. */
+  dayBestTime: string;
+  /** Match highlights: at most this many games a day (the ones with the best moments). */
+  highlightsPerDay: number;
   /** Kinds the owner switched off. */
   off: OptionalKind[];
 };
@@ -48,7 +52,7 @@ export type IgSlotSettings = {
 export const WEEKLY_KINDS = ["thanks", "top5", "match_week", "player_week", "versus"] as const;
 export type WeeklyKind = (typeof WEEKLY_KINDS)[number];
 /** What the owner can switch off (booking clips and awards have their own switches). */
-export const OPTIONAL_KINDS = [...WEEKLY_KINDS, "milestone", "open_slots", "leaderboard"] as const;
+export const OPTIONAL_KINDS = [...WEEKLY_KINDS, "milestone", "open_slots", "leaderboard", "match_highlights", "day_best"] as const;
 export type OptionalKind = (typeof OPTIONAL_KINDS)[number];
 
 export const DEFAULT_IG_SLOTS: IgSlotSettings = {
@@ -74,6 +78,8 @@ export const DEFAULT_IG_SLOTS: IgSlotSettings = {
   },
   openSlotsTime: "17:00",
   boardTime: "14:00",
+  dayBestTime: "13:00",
+  highlightsPerDay: 3,
   off: [],
 };
 
@@ -123,6 +129,8 @@ export function normaliseIgSlots(raw: unknown): IgSlotSettings {
     })) as IgSlotSettings["weekly"],
     openSlotsTime: time(r.openSlotsTime, d.openSlotsTime),
     boardTime: time(r.boardTime, d.boardTime),
+    dayBestTime: time(r.dayBestTime, d.dayBestTime),
+    highlightsPerDay: clampInt(r.highlightsPerDay, 1, 10, d.highlightsPerDay),
     off: Array.isArray(r.off) ? [...new Set(r.off.filter((k): k is OptionalKind => (OPTIONAL_KINDS as readonly unknown[]).includes(k)))] : [],
   };
 }

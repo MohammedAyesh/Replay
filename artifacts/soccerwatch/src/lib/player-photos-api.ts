@@ -19,8 +19,38 @@ export const playerPhotoKeys = {
 };
 
 /** Accepted picture types (JPG is accepted and kept opaque; PNG / WebP keep transparency). */
-export const PLAYER_PHOTO_ACCEPT = "image/png,image/webp,image/jpeg";
+/** HEIC, AVIF and GIF too: the browser redraws them as PNG before upload (cleanPhotoFile). */
+export const PLAYER_PHOTO_ACCEPT = "image/png,image/webp,image/jpeg,image/heic,image/heif,image/avif,image/gif";
 export const PLAYER_PHOTO_MAX_MB = 12;
+
+/**
+ * The picture as a clean PNG drawn by the browser (alpha kept, at most 1600 px), so the server
+ * always gets a file it can read: whatever the phone or PC saved under ".png" (an iPhone HEIC,
+ * a 16-bit export, a renamed WebP), if the browser can show it, it uploads. Falls back to the
+ * original file when the browser can't decode it either.
+ */
+export async function cleanPhotoFile(file: File, maxSide = 1600): Promise<File> {
+  if (typeof createImageBitmap !== "function" || typeof document === "undefined") return file;
+  try {
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+    const w = Math.max(1, Math.round(bmp.width * k));
+    const h = Math.max(1, Math.round(bmp.height * k));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close?.();
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+    if (!blob) return file;
+    const name = (file.name || "photo").replace(/\.[a-z0-9]+$/i, "") + ".png";
+    return new File([blob], name, { type: "image/png" });
+  } catch {
+    return file;
+  }
+}
 
 /** A checkerboard behind a picture, so a cut-out's transparency shows. */
 export const CHECKER: CSSProperties = {
@@ -60,7 +90,8 @@ function useInvalidate(academyId: number) {
 export function useUploadPlayerPhoto(academyId: number) {
   const done = useInvalidate(academyId);
   return useMutation({
-    mutationFn: ({ playerId, file, label, primary }: { playerId: number; file: File; label?: string; primary?: boolean }) => {
+    mutationFn: async ({ playerId, file: picked, label, primary }: { playerId: number; file: File; label?: string; primary?: boolean }) => {
+      const file = await cleanPhotoFile(picked);
       const form = new FormData();
       if (label) form.append("label", label);
       if (primary) form.append("primary", "true");
@@ -76,11 +107,14 @@ export type ShootAssignment = { file: File; playerId: number | null; label?: str
 export function useUploadShoot(academyId: number) {
   const done = useInvalidate(academyId);
   return useMutation({
-    mutationFn: (items: ShootAssignment[]) => {
+    mutationFn: async (items: ShootAssignment[]) => {
       const form = new FormData();
       const kept = items.filter((i) => i.playerId !== null);
       form.append("assign", JSON.stringify(kept.map((i) => ({ playerId: i.playerId, label: i.label ?? null }))));
-      for (const i of kept) form.append("files", i.file, i.file.name || "photo.png");
+      for (const i of kept) {
+        const file = await cleanPhotoFile(i.file);
+        form.append("files", file, file.name || "photo.png");
+      }
       return call<{ added: PlayerPhoto[]; skipped: Array<{ index: number; name: string; error: string }> }>(`${base(academyId)}/photos/bulk`, { method: "POST", body: form });
     },
     onSuccess: done,

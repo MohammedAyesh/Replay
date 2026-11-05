@@ -1,5 +1,5 @@
 import { useMemo, useState, type DragEvent } from "react";
-import { ArrowLeftRight, CalendarClock, Check, ExternalLink, Eye, Instagram, Pin, ShieldCheck, SkipForward, Trophy, Undo2, Zap } from "lucide-react";
+import { ArrowLeftRight, CalendarClock, Check, ExternalLink, Eye, Film, Instagram, Pin, ShieldCheck, SkipForward, Trophy, Undo2, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { ammanToday, clock, dayName } from "@/lib/venue-api";
 import {
   IG_OPTIONAL_KINDS,
+  IG_PICKABLE,
   IG_WEEKLY_KINDS,
   useInstagram,
   useInstagramItem,
@@ -22,6 +23,8 @@ import {
 } from "@/lib/instagram-api";
 import { Card, ErrorText, Pill, SectionHeader, Skeleton, ToggleRow } from "./shared";
 import { SuggestionList } from "./instagram-suggestions";
+import { DesignThumb, PickClipsDialog } from "./instagram-design";
+import { apiUrl } from "@/lib/academy-studio-api";
 
 /**
  * Field console → Instagram autopilot: the field's consent (read-only, Replay sets it), the
@@ -216,6 +219,14 @@ function SettingsCard({ venueId, data }: { venueId: number; data: InstagramData 
                   </>}
                   {on && k === "open_slots" && timeInput(slots.openSlotsTime, (v) => set("openSlotsTime", v), copy.settings.kinds[k])}
                   {on && k === "leaderboard" && timeInput(slots.boardTime, (v) => set("boardTime", v), copy.settings.kinds[k])}
+                  {on && k === "day_best" && timeInput(slots.dayBestTime ?? "13:00", (v) => set("dayBestTime", v), copy.settings.kinds[k])}
+                  {on && k === "match_highlights" && (
+                    <label className="flex items-center gap-1.5 text-xs text-muted-text">
+                      <Input type="number" min={1} max={10} value={slots.highlightsPerDay ?? 3} aria-label={copy.settings.kinds[k]}
+                        onChange={(e) => set("highlightsPerDay", Math.max(1, Math.min(10, Number(e.target.value) || 1)))} className="min-h-9 w-16" />
+                      {copy.calendar.perDay}
+                    </label>
+                  )}
                 </div>
               );
             })}
@@ -362,6 +373,9 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
   const copy = useInstagramCopy();
   const m = useInstagramItem(venueId);
   const [moving, setMoving] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const pickable = !!IG_PICKABLE[item.kind] && ["planned", "approved", "skipped", "failed"].includes(item.status);
+  const renderedStill = item.render?.status === "done" && item.render.kind === "image" && item.render.outputUrl ? apiUrl(item.render.outputUrl) : null;
   const [when, setWhen] = useState(item.slotLocal?.replace(" ", "T") ?? `${ammanToday()}T18:00`);
   const movable = item.status === "planned" || item.status === "approved";
   const auto = data.settings.publishMode === "auto";
@@ -379,7 +393,10 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
     <article draggable={movable} onDragStart={(e) => { e.dataTransfer.setData("text/plain", String(item.id)); onDrag(item.id); }} onDragEnd={() => onDrag(null)}
       className={cn("flex gap-3 rounded-xl border bg-raised p-2.5", swapFrom === item.id ? "border-amber-300" : "border-line", movable && "cursor-grab")} data-testid={`ig-item-${item.id}`}>
       <div className="relative h-24 w-[3.4rem] shrink-0 overflow-hidden rounded-lg bg-void">
-        {item.thumbnailUrl && <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />}
+        {/* A frame of its footage, its rendered picture, or (before either exists) its design drawn live. */}
+        {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />
+          : renderedStill ? <img src={renderedStill} alt="" className="h-full w-full object-cover" loading="lazy" />
+          : <DesignThumb venueId={venueId} item={item} width={54} />}
         <span className={cn("absolute bottom-1 start-1 rounded px-1 text-[9px] font-bold uppercase", item.placement === "reel" ? "bg-[#7B5CFF] text-white" : item.placement === "carousel" ? "bg-amber-300 text-void" : "bg-turf text-void")}>{item.placement === "reel" ? copy.calendar.reel : item.placement === "carousel" ? copy.calendar.carousel : copy.calendar.story}</span>
       </div>
       <div className="min-w-0 flex-1">
@@ -394,6 +411,7 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
           {item.consentMode ? ` · ${copy.calendar.consentOn(copy.consent.modes[item.consentMode] ?? item.consentMode)}` : ""}
         </p>
         {item.error && item.status !== "published" && <p className="mt-1 text-xs text-amber-200">{item.error}</p>}
+        {(item.picks?.length ?? 0) > 0 && <p className="mt-1 text-xs font-semibold text-turf">{copy.calendar.picked(item.picks!.length)}</p>}
         {item.votes && <p className="mt-1 text-xs font-semibold text-turf" data-testid={`ig-ab-votes-${item.id}`}>{copy.calendar.abVotes(item.votes.a, item.votes.b)}</p>}
         {item.insights && (item.insights.views != null || item.insights.reach != null) && (
           <p className="mt-1 text-xs text-muted-text">{copy.report.plays}: {item.insights.views ?? "—"} · {copy.report.reach}: {item.insights.reach ?? "—"}</p>
@@ -410,6 +428,7 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
           {item.status === "approved" && <Small onClick={() => m.action.mutate({ id: item.id, action: "unapprove" })} icon={<Undo2 className="h-3.5 w-3.5" />} label={copy.calendar.unapprove} />}
           {movable && <Small onClick={() => setMoving(!moving)} icon={<CalendarClock className="h-3.5 w-3.5" />} label={copy.calendar.move} />}
           {movable && <Small onClick={pickForSwap} icon={<ArrowLeftRight className="h-3.5 w-3.5" />} label={copy.calendar.swap} />}
+          {pickable && <Small onClick={() => setPicking(true)} icon={<Film className="h-3.5 w-3.5" />} label={copy.calendar.pick} primary={item.status === "skipped" || item.status === "failed"} testId={`ig-pick-open-${item.id}`} />}
           {movable && <Small onClick={() => m.action.mutate({ id: item.id, action: "now" })} icon={<Zap className="h-3.5 w-3.5" />} label={copy.calendar.now} />}
           {(movable || item.render) && (
             <Small onClick={() => { if (item.render?.status === "done") onPreview(item); else m.action.mutate({ id: item.id, action: "preview" }, { onSuccess: (r) => { if (r.item.render?.status === "done") onPreview({ ...item, render: r.item.render }); } }); }}
@@ -417,6 +436,7 @@ function ItemCard({ venueId, item, data, swapFrom, setSwapFrom, onPreview, onDra
           )}
           {movable && <Small onClick={() => m.action.mutate({ id: item.id, action: "skip" })} icon={<SkipForward className="h-3.5 w-3.5" />} label={copy.calendar.skip} />}
           {(item.status === "skipped" || item.status === "failed") && <Small onClick={() => m.action.mutate({ id: item.id, action: "restore" })} icon={<Undo2 className="h-3.5 w-3.5" />} label={copy.calendar.restore} />}
+          {picking && <PickClipsDialog venueId={venueId} item={item} onClose={() => setPicking(false)} />}
           {item.igPermalink && <a href={item.igPermalink} target="_blank" rel="noreferrer" className="inline-flex min-h-8 items-center gap-1 rounded-full border border-line px-2.5 text-xs font-semibold text-turf"><ExternalLink className="h-3.5 w-3.5" />{copy.calendar.open}</a>}
         </div>
       </div>

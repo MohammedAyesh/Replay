@@ -6,6 +6,7 @@ export { AUTOPILOT_AWARD_KEYS, AUTOPILOT_TEMPLATE_KEYS, awardTemplateKey, awardT
 export {
   FIELD_STYLE, FIELD_TEMPLATE_KEYS, FIELD_TIMING, buildFieldScene, countData, fieldCountSteps, fieldSampleData, fieldTemplateFormats,
   fieldTemplateTitle, formatNumber, isFieldTemplate, type FieldTemplateKey,
+  MONTAGE, buildFieldMontage, isMontageTemplate,
 } from "./creativeTemplates/fieldPack";
 import { FIELD_TEMPLATE_DEFS, buildFieldScene, fieldSampleData, isFieldTemplate } from "./creativeTemplates/fieldPack";
 import { CLUB_TEMPLATE_DEFS, buildClubScene, clubSampleData, isClubTemplate } from "./creativeTemplates/clubPack";

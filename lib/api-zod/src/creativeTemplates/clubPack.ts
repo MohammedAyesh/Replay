@@ -36,7 +36,8 @@ export type ClubTemplateKey =
   | "club-versus"
   | "club-versus-story"
   | "club-nominee-slide"
-  | "club-nominees-cover";
+  | "club-nominees-cover"
+  | "club-highlights";
 
 type ClubDef = {
   key: ClubTemplateKey;
@@ -367,6 +368,15 @@ const CLUB_DEFS: ClubDef[] = [
       metaA: ar ? "تحت 10 · الثلاثاء" : "U10 · Tuesday", metaB: ar ? "تحت 12 · الجمعة" : "U12 · Friday", cta: ar ? "علّقوا: أ ولا ب؟" : "Comment: A or B?",
     } }),
   })),
+  {
+    key: "club-highlights", title: { en: "Match highlights", ar: "ملخص الماتش" }, formats: STORY,
+    build: (c) => layouts.montage(c),
+    sample: (ar) => ({ ...sampleCommon(), media: art("goal-clip"), more: [art("goal-clip"), art("goal-clip"), art("goal-clip")], custom: {
+      ...endBits(ar), kicker: ar ? "ملخص الماتش" : "Match highlights", title: ar ? "السبت 8 تشرين الثاني" : "Sat 8 Nov",
+      meta: ar ? "5:00 م · تحت 12 ضد الوحدات" : "5:00 PM · U12 vs Wehdat", headline: ar ? "ماتش حلو" : "Great game",
+      l1: ar ? "جول" : "Goal", m1: ar ? "#10" : "#10", l2: ar ? "تصدّي" : "Save", m2: "#1", l3: ar ? "مراوغة" : "Dribble", m3: "#7", l4: ar ? "جول" : "Goal", m4: "#9",
+    } }),
+  },
   {
     key: "club-nominee-slide", title: { en: "Nominee (carousel slide)", ar: "مرشّح (شريحة)" }, formats: POST_STORY,
     build: layouts.nomineeSlide,

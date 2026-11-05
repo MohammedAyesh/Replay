@@ -12,11 +12,11 @@ export type IgSlots = {
   nomineesDay: number; nomineesTime: string; votingEndDay: number; votingEndTime: string;
   winnerDay: number; winnerTime: string; winnerGapMinutes: number; minVotes: number;
   weekly: Record<IgWeeklyKind, { day: number; time: string }>;
-  openSlotsTime: string; boardTime: string; off: IgOptionalKind[];
+  openSlotsTime: string; boardTime: string; dayBestTime: string; highlightsPerDay: number; off: IgOptionalKind[];
 };
 export const IG_WEEKLY_KINDS = ["thanks", "top5", "player_week", "match_week", "versus"] as const;
 export type IgWeeklyKind = (typeof IG_WEEKLY_KINDS)[number];
-export const IG_OPTIONAL_KINDS = [...IG_WEEKLY_KINDS, "open_slots", "leaderboard", "milestone"] as const;
+export const IG_OPTIONAL_KINDS = [...IG_WEEKLY_KINDS, "match_highlights", "day_best", "open_slots", "leaderboard", "milestone"] as const;
 export type IgOptionalKind = (typeof IG_OPTIONAL_KINDS)[number];
 export type ConsentEvent = { id: number; oldMode: ConsentMode | null; newMode: ConsentMode; wording: string | null; by: string | null; at: string };
 export type IgItem = {
@@ -45,6 +45,14 @@ export type IgItem = {
   thumbnailUrl: string | null;
   /** "Which is nicer?": A and B votes from its comments. */
   votes: { a: number; b: number } | null;
+  /** The clips the owner picked, in play order (empty: the autopilot picks). */
+  picks?: Array<{ key: string; source: string; label: string; labelAr: string }>;
+};
+export type IgCandidate = { key: string; source: string; label: string; labelAr: string; bookingId: number; thumbnailUrl: string | null };
+export type IgCandidates = { min: number; max: number; picked: string[]; candidates: IgCandidate[] };
+/** Posts whose clips the owner can pick, and how many (lib/venues/igFieldPosts.ts PICKABLE). */
+export const IG_PICKABLE: Record<string, { min: number; max: number }> = {
+  booking_clip: { min: 1, max: 1 }, versus: { min: 2, max: 2 }, top5: { min: 5, max: 5 }, match_highlights: { min: 2, max: 5 }, day_best: { min: 2, max: 5 },
 };
 export type IgNominee = { key: string; label: string; labelAr: string; source: string; value: number | null; bookingId: number; votes: number | null; thumbnailUrl: string | null };
 export type IgAward = {
@@ -109,6 +117,22 @@ export function useInstagramItem(venueId: number) {
     nomination: useMutation({ mutationFn: ({ id, status }: { id: number; status: "approved" | "rejected" }) => venueCall(`${ig(venueId)}/nominations/${id}`, { method: "POST", ...json({ status }) }), onSuccess: refresh }),
     resolved: useMutation({ mutationFn: (id: number) => venueCall(`${ig(venueId)}/removals/${id}/resolved`, { method: "POST" }), onSuccess: refresh }),
   };
+}
+
+/** The moments an item's clips can be picked from (loaded when the picker opens). */
+export function useItemCandidates(venueId: number, itemId: number | null) {
+  return useQuery({
+    queryKey: ["venue", venueId, "instagram", "candidates", itemId],
+    queryFn: () => venueCall<IgCandidates>(`${ig(venueId)}/items/${itemId}/candidates`),
+    enabled: itemId !== null,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Save the picked clips: the post is edited again from them and rendered now. */
+export function useSavePicks(venueId: number) {
+  const refresh = useRefresh(venueId);
+  return useMutation({ mutationFn: ({ id, keys }: { id: number; keys: string[] }) => venueCall<{ item: IgItem }>(`${ig(venueId)}/items/${id}/picks`, { method: "PUT", ...json({ keys }) }), onSuccess: refresh });
 }
 
 export function useInstagramToday(venueId: number, enabled = true) {

@@ -69,3 +69,15 @@ describe("which picture stands for a player", () => {
     expect(pickPlayerPicture([], { userId: null, avatarPath: null })).toBeNull();
   });
 });
+
+describe("a picture Skia refuses", () => {
+  it("is read through FFmpeg instead of being turned away", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { processPlayerPhoto: process_ } = await import("./academyPlayerPhotos");
+    // A PPM: a real picture Skia doesn't decode.
+    const ppm = execFileSync("ffmpeg", ["-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=s=320x240", "-frames:v", "1", "-f", "image2pipe", "-c:v", "ppm", "pipe:1"]);
+    const out = await process_(ppm);
+    expect(out).toMatchObject({ width: 320, height: 240, transparent: false, mime: "image/webp" });
+    await expect(process_(Buffer.from("not a picture at all"))).rejects.toThrow(/isn't a picture we can read/);
+  }, 30_000);
+});

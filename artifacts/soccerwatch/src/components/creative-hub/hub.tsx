@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Clapperboard, ImagePlus, LayoutTemplate, Library, PenTool, Send, Sparkles, Users } from "lucide-react";
 import { useFavoriteCopy } from "@/i18n/favorite-strings";
 import { StudioClipsPanel, StudioQuickPosts } from "@/components/academy-console/studio-section";
@@ -35,14 +35,35 @@ export function tabFromUrl(search: string): Tab | null {
   return isTab(v) ? v : null;
 }
 
+/**
+ * Where the owner was in the hub (tab and open design), per academy, so leaving the hub and
+ * coming back (or reloading) reopens the same design instead of an empty editor. In
+ * localStorage, wrapped: private modes and full storage just forget.
+ */
+const memoKey = (academyId: number) => `replay:creative-hub:${academyId}`;
+export function rememberedHub(academyId: number): { tab: Tab | null; projectId: number | null } {
+  try {
+    const raw = typeof window === "undefined" ? null : window.localStorage.getItem(memoKey(academyId));
+    const v = raw ? (JSON.parse(raw) as { tab?: string; projectId?: number }) : {};
+    return { tab: isTab(v.tab ?? null) ? (v.tab as Tab) : null, projectId: Number.isSafeInteger(v.projectId) && (v.projectId as number) > 0 ? (v.projectId as number) : null };
+  } catch {
+    return { tab: null, projectId: null };
+  }
+}
+function rememberHub(academyId: number, tab: Tab, projectId: number | null) {
+  try { window.localStorage.setItem(memoKey(academyId), JSON.stringify({ tab, projectId })); } catch { /* forget */ }
+}
+
 /** Academy console → Creative hub (owner only). Also holds what used to be the Studio section. */
 export function AcademyCreativeHub({ academyId, initialTab }: { academyId: number; initialTab?: Tab | null }) {
   const copy = useCreativeCopy();
   const featured = useFeaturedCopy();
   const fav = useFavoriteCopy();
   const tabLabel = (id: Tab) => (id === "squad" ? featured.squad.tab : id === "clips" || id === "quick" ? fav.tabs[id] : copy.tabs[id]);
-  const [tab, setTab] = useState<Tab>(initialTab ?? (typeof window === "undefined" ? null : tabFromUrl(window.location.search)) ?? "forYou");
-  const [projectId, setProjectId] = useState<number | null>(null);
+  const [memo] = useState(() => rememberedHub(academyId));
+  const [tab, setTab] = useState<Tab>(initialTab ?? (typeof window === "undefined" ? null : tabFromUrl(window.location.search)) ?? memo.tab ?? "forYou");
+  const [projectId, setProjectId] = useState<number | null>(memo.projectId);
+  useEffect(() => rememberHub(academyId, tab, projectId), [academyId, tab, projectId]);
   const [seed, setSeed] = useState<TemplateSeed | null>(null);
 
   const nav: HubNav = {

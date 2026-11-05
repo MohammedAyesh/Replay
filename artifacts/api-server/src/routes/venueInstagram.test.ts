@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import {
   academyCreativeProjectsTable,
   academySocialAccountsTable,
@@ -146,7 +146,8 @@ const tomorrow = addDays(ammanLocal(new Date()).slice(0, 10), 1);
 
 const tick = async (now = new Date()) => { resetIgTick(); await runIgAutopilotTick(now, { force: true }); };
 const items = async () => db.select().from(venueIgItemsTable).where(eq(venueIgItemsTable.academyId, venueId));
-const itemFor = async (bookingId: number) => (await db.select().from(venueIgItemsTable).where(and(eq(venueIgItemsTable.academyId, venueId), eq(venueIgItemsTable.bookingId, bookingId))))[0];
+/** A booking's own item (its clip); its match highlights are a separate item, read by origin key. */
+const itemFor = async (bookingId: number) => (await db.select().from(venueIgItemsTable).where(and(eq(venueIgItemsTable.academyId, venueId), eq(venueIgItemsTable.bookingId, bookingId), ne(venueIgItemsTable.kind, "match_highlights"))))[0];
 
 /** A game played hoursAgo hours ago: its footage came back, a match room, optionally a player's saved clip and a tracking bundle. */
 async function playedBooking(opts: { hoursAgo: number; consent?: "yes" | "no" | null; source?: string | null; under18?: boolean; clip?: boolean; bundle?: boolean; academyFootage?: boolean }) {
@@ -453,7 +454,10 @@ describe("removal from the match page", () => {
     expect((await itemFor(storyGame.booking.id)).status).toBe("removed");
     // Nothing from that booking is made again.
     await tick();
-    expect((await items()).filter((i) => i.bookingId === reelGame.booking.id)).toHaveLength(1);
+    // (Its match highlights, if they were planned, were taken off with it.)
+    const left = (await items()).filter((i) => i.bookingId === reelGame.booking.id);
+    expect(left.filter((i) => i.kind === "booking_clip")).toHaveLength(1);
+    for (const i of left) expect(["removed", "removal_flagged", "skipped"]).toContain(i.status);
   });
 });
 
@@ -701,6 +705,54 @@ describe("8. Earlier days' games", () => {
     await tick();
     expect(await itemFor(recent.booking.id)).toMatchObject({ kind: "booking_clip", status: "planned" });
     expect(await itemFor(old.booking.id)).toBeUndefined();
+  });
+});
+
+describe("9. Match highlights, the day's best, and picking the clips", () => {
+  it("puts each game's highlights on the calendar after it, offers its moments to pick from, and checks the picks", async () => {
+    const played = await playedBooking({ hoursAgo: 5, consent: "yes" });
+    await tick();
+    const clip = await itemFor(played.booking.id);
+    expect(clip.kind).toBe("booking_clip");
+    // The best game of the day (its clip's score), with room for it.
+    await db.update(venueIgItemsTable).set({ score: 999 }).where(eq(venueIgItemsTable.id, clip.id));
+    await db.update(venueSettingsTable).set({ igSlots: { highlightsPerDay: 10 } }).where(eq(venueSettingsTable.academyId, venueId));
+    await db.delete(venueIgItemsTable).where(and(eq(venueIgItemsTable.academyId, venueId), eq(venueIgItemsTable.kind, "match_highlights")));
+    const venue = (await loadVenue(venueId))!;
+    await scheduleFieldPosts(venue, new Date());
+    const [hl] = (await items()).filter((i) => i.originKey === `highlights:${played.booking.id}`);
+    expect(hl).toMatchObject({ kind: "match_highlights", placement: "reel", bookingId: played.booking.id, pinned: true, status: "planned" });
+    // Not before two hours after the game, and never twice.
+    expect(hl.slotAt!.getTime()).toBeGreaterThanOrEqual(played.booking.endsAt.getTime() + 119 * 60_000);
+    await scheduleFieldPosts(venue, new Date());
+    expect((await items()).filter((i) => i.originKey === `highlights:${played.booking.id}`)).toHaveLength(1);
+    // Its moments (none here: no analysis), how many to pick, and a pick that isn't one of them refused.
+    const cands = await request(app).get(`${ig()}/items/${hl.id}/candidates`).set(auth(ownerId)).expect(200);
+    expect(cands.body).toMatchObject({ min: 2, max: 5, picked: [], candidates: [] });
+    await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: ["1:2.0"] }).expect(400);
+    await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: ["1:2.0", "1:9.0"] }).expect(409);
+    await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(strangerId)).send({ keys: [] }).expect((r) => expect([403, 404]).toContain(r.status));
+    // Back to automatic: the design is made again, and with no moments the game is skipped, saying why.
+    const cleared = await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: [] }).expect(200);
+    expect(cleared.body.item).toMatchObject({ kind: "match_highlights", picks: [] });
+    const [after] = (await items()).filter((i) => i.id === hl.id);
+    expect(after).toMatchObject({ status: "skipped", error: "Fewer than two moments in this game" });
+    // Posts that choose their own clips can't be picked.
+    const [slots] = (await items()).filter((i) => i.kind === "open_slots" || i.kind === "thanks");
+    if (slots) await request(app).get(`${ig()}/items/${slots.id}/candidates`).set(auth(ownerId)).expect(409);
+  });
+
+  it("puts yesterday's best clips on at its own time, under the games' day", async () => {
+    await db.update(venueSettingsTable).set({ igSlots: { dayBestTime: "13:00" } }).where(eq(venueSettingsTable.academyId, venueId));
+    const venue = (await loadVenue(venueId))!;
+    const today = ammanLocal(new Date()).slice(0, 10);
+    // Three hours before 13:00 is inside the render-ahead window.
+    await scheduleFieldPosts(venue, fromAmmanLocal(`${today} 10:00`)!);
+    const [day] = (await items()).filter((i) => i.originKey === `day:${addDays(today, -1)}`);
+    expect(day).toMatchObject({ kind: "day_best", placement: "reel", status: "planned" });
+    const cands = await request(app).get(`${ig()}/items/${day.id}/candidates`).set(auth(ownerId)).expect(200);
+    expect(cands.body).toMatchObject({ min: 2, max: 5 });
+    await db.update(venueSettingsTable).set({ igSlots: {} }).where(eq(venueSettingsTable.academyId, venueId));
   });
 });
 

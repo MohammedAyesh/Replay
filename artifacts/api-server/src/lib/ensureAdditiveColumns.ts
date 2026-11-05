@@ -417,6 +417,8 @@ export const COLUMNS: Array<{ table: string; column: string; type: string }> = [
   { table: "recordings", column: "camera_tilted", type: "boolean DEFAULT false NOT NULL" },
   // 0061_academy_creative_pack.sql
   { table: "academies", column: "creative_pack", type: CREATIVE_PACK_COLUMN },
+  // 0075_field_ig_picks_and_highlights.sql: the clips the owner picked for a calendar post.
+  { table: "venue_ig_items", column: "picks", type: "jsonb" },
 ];
 
 const TABLES: Array<{ table: string; statements: string[] }> = [
@@ -726,7 +728,8 @@ const WIDENED_CHECKS: Array<{ table: string; name: string; mustContain: string; 
   // 0065_creative_wide_format.sql: 16:9 clip videos.
   { table: "academy_creative_projects", name: "academy_creative_projects_format_check", mustContain: "'wide'", definition: `CHECK ("format" in ('post', 'square', 'story', 'wide'))` },
   // 0071_field_instagram_templates.sql: more autopilot kinds, nominees as a carousel.
-  { table: "venue_ig_items", name: "venue_ig_items_kind_check", mustContain: "'leaderboard'", definition: `CHECK ("kind" in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard'))` },
+  // 0075: match highlights and the day's best.
+  { table: "venue_ig_items", name: "venue_ig_items_kind_check", mustContain: "'day_best'", definition: `CHECK ("kind" in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard', 'match_highlights', 'day_best'))` },
   { table: "venue_ig_items", name: "venue_ig_items_placement_check", mustContain: "'carousel'", definition: `CHECK ("placement" in ('story', 'reel', 'carousel'))` },
 ];
 
