@@ -42,7 +42,7 @@ export type EditorApi = {
    */
   setSlotVideo: (path: string, src: MediaSource, playMs: number | null, framing?: Framing | null) => void;
   /** Open the Library picker. */
-  pick: (accept: "image" | "video" | "any", onPick: (source: MediaSource, meta: { durationMs?: number; label?: string }) => void) => void;
+  pick: (accept: "image" | "video" | "any", onPick: (source: MediaSource, meta: { durationMs?: number; label?: string }) => void, opts?: { tab?: "library" | "players" }) => void;
   /** For SceneCanvas previews inside panels. */
   mediaUrl: (layer: Extract<SceneLayer, { kind: "image" | "video" }>) => string | null;
   isVideo: boolean;

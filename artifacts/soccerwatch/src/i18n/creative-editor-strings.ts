@@ -27,7 +27,21 @@ const en = {
   previewTitle: "Preview",
   previewHint: "This is how it will look when it's exported.",
 
-  tools: { videos: "Videos", text: "Text", media: "Media", music: "Music", shapes: "Shapes", layers: "Layers", style: "Style", format: "Size", data: "Details" },
+  tools: { videos: "Videos", player: "Player", text: "Text", media: "Media", music: "Music", shapes: "Shapes", layers: "Layers", style: "Style", format: "Size", data: "Details" },
+  player: {
+    hint: "Who this design is about: his photo, shirt number and name.",
+    choose: "Choose a player",
+    change: "Change player",
+    chooseHint: "From your Players: his photo, number, position and first name come in together.",
+    upload: "Use a photo without a background",
+    uploadHint: "A PNG with the background already removed stands in front of the stadium. Upload it in Library → Uploads, or add it to the player's photos in Players.",
+    photo: "Photo",
+    noPhoto: "No photo: his number is the picture.",
+    cutout: "Cut-out",
+    card: "Photo with its background",
+    remove: "Remove photo",
+    namesOff: "Names are hidden for your academy, so his number shows instead.",
+  },
   videos: {
     slot: (n: number) => `Video ${n}`,
     hint: (n: number) => (n === 1
@@ -221,7 +235,21 @@ const ar: typeof en = {
   previewTitle: "معاينة",
   previewHint: "هيك رح يطلع لما تصدّره.",
 
-  tools: { videos: "الفيديوهات", text: "نص", media: "صور وفيديو", music: "موسيقى", shapes: "أشكال", layers: "الطبقات", style: "الستايل", format: "المقاس", data: "التفاصيل" },
+  tools: { videos: "الفيديوهات", player: "اللاعب", text: "نص", media: "صور وفيديو", music: "موسيقى", shapes: "أشكال", layers: "الطبقات", style: "الستايل", format: "المقاس", data: "التفاصيل" },
+  player: {
+    hint: "مين اللاعب بهالتصميم: صورته ورقم قميصه واسمه.",
+    choose: "اختار لاعب",
+    change: "غيّر اللاعب",
+    chooseHint: "من لاعبينك: صورته ورقمه ومركزه واسمه الأول بيجوا مع بعض.",
+    upload: "استخدم صورة بدون خلفية",
+    uploadHint: "صورة PNG مشالة خلفيتها بتوقف قدام الملعب. ارفعها من المكتبة ← المرفوعات، أو ضيفها لصور اللاعب من اللاعبين.",
+    photo: "الصورة",
+    noPhoto: "ما في صورة: رقمه هو الصورة.",
+    cutout: "مقصوصة",
+    card: "صورة مع خلفيتها",
+    remove: "شيل الصورة",
+    namesOff: "الأسماء مخفية بأكاديميتك، فبيطلع رقمه بدالها.",
+  },
   videos: {
     slot: (n: number) => `فيديو ${n}`,
     hint: (n: number) => (n === 1
