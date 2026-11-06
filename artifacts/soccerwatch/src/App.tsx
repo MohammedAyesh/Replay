@@ -34,6 +34,7 @@ const AdminDebug = lazyPage(() => import("@/pages/admin-debug"));
 const AdminSetup = lazyPage(() => import("@/pages/admin-setup"));
 const Onboarding = lazyPage(() => import("@/pages/onboarding"));
 const NotFound = lazyPage(() => import("@/pages/not-found"));
+const InstagramCallbackPage = lazyPage(() => import("@/pages/instagram-callback"));
 const Academies = lazyPage(() => import("@/pages/academies"));
 const View = lazyPage(() => import("@/pages/view"));
 const Live = lazyPage(() => import("@/pages/live"));
@@ -487,13 +488,14 @@ function ClerkQueryClientCacheInvalidator() {
 }
 
 function AuthRedirectGuard() {
-  const { user, isLoading, isGuest } = useAuth();
-  const { isSignedIn } = useUser();
   const [location, setLocation] = useLocation();
+  const pathname = location.split(/[?#]/)[0];
+  const isPublicLegalRoute = ["/privacy", "/terms", "/delete-account"].includes(pathname);
+  const { user, isLoading, isGuest } = useAuth({ skipSignedOutQuery: isPublicLegalRoute });
+  const { isSignedIn } = useUser();
 
   useEffect(() => {
     if (isLoading) return;
-    const pathname = location.split("?")[0];
     const isAuthPage = pathname === "/" || pathname.startsWith("/sign-in") || pathname.startsWith("/sign-up");
 
     // AppRouter renders the identity-confirmation screen before protected
@@ -544,10 +546,12 @@ function FindQuickRedirect() {
 }
 
 function AppRouter() {
-  const { user, isLoading, isGuest, isSignedIn, refetchLocalUser } = useAuth();
+  const [location] = useLocation();
+  const routePath = location.split(/[?#]/)[0];
+  const isPublicLegalRoute = ["/privacy", "/terms", "/delete-account"].includes(routePath);
+  const { user, isLoading, isGuest, isSignedIn, refetchLocalUser } = useAuth({ skipSignedOutQuery: isPublicLegalRoute });
   const { signOut } = useClerk();
   const { locale } = useLocale();
-  const [location] = useLocation();
   const isPublicJoinRoute = location.split("?")[0].startsWith("/join/") || location.split("?")[0].startsWith("/v/");
   const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/") || location.split(/[?#]/)[0].startsWith("/academy/invite/");
   const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute;
@@ -560,7 +564,7 @@ function AppRouter() {
   const [signOutPending, setSignOutPending] = useState(false);
   const [signOutFailed, setSignOutFailed] = useState(false);
 
-  if (isSignedIn && !user && !isGuest && !isPublicStandaloneRoute) {
+  if (isSignedIn && !user && !isGuest && !isPublicStandaloneRoute && !isPublicLegalRoute) {
     const retryIdentity = async () => {
       setRetryingIdentity(true);
       try {
@@ -601,6 +605,7 @@ function AppRouter() {
       <AuthRedirectGuard />
       <Suspense fallback={<PageLoading />}>
       <Switch>
+        <Route path="/connect/instagram/callback" component={InstagramCallbackPage} />
         <Route path="/join/:code" component={AcademyJoinPage} />
         <Route path="/p/:token"><AcademyFamilyPage source="token" /></Route>
         <Route path="/academy/invite/:token" component={AcademyInvitePage} />
@@ -721,8 +726,9 @@ function AppContent() {
   // /demo is the short page; /demo/full the long one. Both are public, with
   // no sign-in and no app chrome.
   const publicDemo = location === "/demo" || location === "/demo/full";
+  const publicLegalPage = ["/privacy", "/terms", "/delete-account"].includes(location.split(/[?#]/)[0]);
   return (
-    <LocaleProvider publicPage={publicDemo}>
+    <LocaleProvider publicPage={publicDemo || publicLegalPage} defaultLocale={publicLegalPage ? "en" : undefined}>
       <FullscreenVideoProvider>
         {publicDemo
           ? <Suspense fallback={<PageLoading />}>{location === "/demo" ? <SimpleDemo /> : <DemoPage />}</Suspense>

@@ -26,10 +26,18 @@ import {
   disconnectSocial,
   getSocialAccount,
   listPages,
+  markSocialReconnect,
   mediaSignature,
   selectPage,
   socialLoginConfigId,
 } from "../lib/social/account";
+import {
+  createInstagramLoginUrl,
+  finishInstagramLogin,
+  instagramLoginAcademyHint,
+  listPendingInstagramAssets,
+  selectInstagramAsset,
+} from "../lib/social/instagramLogin";
 import { backfillConversations, hideComment, privateReply, replyToComment, replyWindow, sendThreadMessage } from "../lib/social/inbox";
 import { libraryMedia, publishPost, syncSocial, type Format, type Target } from "../lib/social/posts";
 import { upsertContact } from "../lib/whatsapp/contacts";
@@ -64,6 +72,24 @@ async function access(req: Request, res: Response, needManage = false): Promise<
   return { user, academyId, manages };
 }
 
+async function instagramCallbackAccess(req: Request, res: Response, state: string): Promise<Access | null> {
+  const academyId = instagramLoginAcademyHint(state);
+  if (!academyId) {
+    res.status(400).json({ error: "Instagram sign-in state is invalid. Start again." });
+    return null;
+  }
+  const user = await requireAcademyConsoleUser(req, res);
+  if (!user) return null;
+  const roles = await requireAcademyMembership(user.id, academyId, res);
+  if (!roles) return null;
+  const manages = roles.includes("owner");
+  if (!manages) {
+    res.status(403).json({ error: "Only the academy owner can connect Instagram." });
+    return null;
+  }
+  return { user, academyId, manages };
+}
+
 function fail(res: Response, error: unknown, what: string) {
   const cause = (error as { cause?: { code?: string } })?.cause;
   if (cause?.code === "42P01") {
@@ -80,6 +106,12 @@ router.get(base, async (req, res): Promise<void> => {
   if (!a) return;
   try {
     const account = await getSocialAccount(a.academyId);
+    const storedInsights = account?.insights && typeof account.insights === "object"
+      ? account.insights as Record<string, unknown>
+      : null;
+    const publicInsights = storedInsights
+      ? Object.fromEntries(Object.entries(storedInsights).filter(([key]) => key !== "__replayInstagramLogin"))
+      : null;
     const config = metaConfig();
     const [counts] = (await db.execute(sql`
       select
@@ -98,7 +130,7 @@ router.get(base, async (req, res): Promise<void> => {
         subscribed: account.subscribed,
         error: account.error,
         connectedAt: account.connectedAt,
-        insights: account.insights,
+        insights: publicInsights,
         insightsAt: account.insightsAt,
         postsSyncedAt: account.postsSyncedAt,
       } : null,
@@ -109,6 +141,65 @@ router.get(base, async (req, res): Promise<void> => {
     });
   } catch (error) {
     fail(res, error, "Reading the social connection failed");
+  }
+});
+
+router.post(`${base}/connect/instagram`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  try {
+    res.json({ url: await createInstagramLoginUrl(a.academyId, a.user.id) });
+  } catch (error) {
+    fail(res, error, "Starting Instagram sign-in failed");
+  }
+});
+
+router.post("/academy/console/social/instagram/callback", async (req, res): Promise<void> => {
+  const state = typeof req.body?.state === "string" ? req.body.state : "";
+  if (!state) {
+    res.status(400).json({ error: "Instagram sign-in state is missing. Start again." });
+    return;
+  }
+  const a = await instagramCallbackAccess(req, res, state);
+  if (!a) return;
+  try {
+    const result = await finishInstagramLogin({
+      academyId: a.academyId,
+      userId: a.user.id,
+      state,
+      code: typeof req.body?.code === "string" ? req.body.code : undefined,
+      oauthError: typeof req.body?.error === "string" ? req.body.error : undefined,
+      errorDescription: typeof req.body?.errorDescription === "string" ? req.body.errorDescription : undefined,
+    });
+    if (result.status === "connected") {
+      const account = await getSocialAccount(a.academyId);
+      if (account) void backfillConversations(account).catch(() => undefined);
+    }
+    res.json(result);
+  } catch (error) {
+    fail(res, error, "Connecting Instagram failed");
+  }
+});
+
+router.get(`${base}/instagram-accounts`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  try {
+    res.json(await listPendingInstagramAssets(a.academyId));
+  } catch (error) {
+    fail(res, error, "Listing Instagram accounts failed");
+  }
+});
+
+router.post(`${base}/instagram-account`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  const instagramId = typeof req.body?.instagramId === "string" ? req.body.instagramId : "";
+  try {
+    const account = await selectInstagramAsset(a.academyId, a.user.id, instagramId);
+    res.json({ status: account.status, igUsername: account.igUsername });
+  } catch (error) {
+    fail(res, error, "Choosing an Instagram account failed");
   }
 });
 
@@ -173,6 +264,7 @@ router.post(`${base}/sync`, async (req, res): Promise<void> => {
   try {
     res.json(await syncSocial(a.academyId));
   } catch (error) {
+    await markSocialReconnect(a.academyId, error).catch(() => false);
     fail(res, error, "Syncing posts failed");
   }
 });
@@ -612,7 +704,13 @@ router.post(`${base}/posts`, async (req, res): Promise<void> => {
       return;
     }
     if (targets.includes("instagram") && !account.igUserId) {
-      res.status(409).json({ error: "No Instagram account is linked to your Facebook Page. Link it in Instagram settings, then connect again." });
+      res.status(409).json({ error: account.pageId
+        ? "No Instagram account is linked to your Facebook Page. Link it in Instagram settings, then connect again."
+        : "Connect an Instagram account first." });
+      return;
+    }
+    if (targets.includes("facebook") && !account.pageId) {
+      res.status(409).json({ error: "Connect a Facebook Page before posting to Facebook." });
       return;
     }
     const media = await libraryMedia(a.academyId, mediaIds);

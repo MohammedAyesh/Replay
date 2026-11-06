@@ -3,6 +3,7 @@ import { CalendarClock, Check, EyeOff, Facebook, ImagePlus, Instagram, Loader2, 
 import { useSocialCopy } from "@/i18n/social-strings";
 import { useAcademyInstagramCopy } from "@/i18n/academy-instagram-strings";
 import { AcademyInstagramAutopilot } from "./instagram-autopilot";
+import { InstagramUnifiedLogin } from "./instagram-unified-login";
 import {
   apiUrl,
   useCommentAction,
@@ -84,7 +85,8 @@ function Overview({ academyId, data }: { academyId: number; data: SocialOverview
   const [working, setWorking] = useState(false);
   const c = data.connection;
   const pending = c?.status === "pending";
-  const pages = useSocialPages(academyId, Boolean(pending && data.canManage));
+  const instagramPending = c?.error === "instagram_assets_pending";
+  const pages = useSocialPages(academyId, Boolean(pending && data.canManage && !instagramPending));
   const [confirmOff, setConfirmOff] = useState(false);
 
   const start = async () => {
@@ -112,9 +114,10 @@ function Overview({ academyId, data }: { academyId: number; data: SocialOverview
         <div className="flex items-center gap-2 text-turf"><Instagram className="h-6 w-6" aria-hidden="true" /><Facebook className="h-6 w-6" aria-hidden="true" /></div>
         <h2 className="mt-3 font-display text-2xl font-bold text-text">{copy.connect.title}</h2>
         <p className="mt-2 max-w-xl text-sm leading-6 text-muted-text">{copy.connect.body}</p>
+        {c?.status === "error" && c.error && <p className="mt-4 rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100" role="alert">{c.error}</p>}
         {!data.canManage ? <p className="mt-4 text-sm text-amber-200">{copy.connect.ownerOnly}</p>
           : !data.app.configured ? <p className="mt-4 text-sm text-amber-200">{copy.connect.notReady}</p>
-            : pending && (pages.data?.length ?? 0) > 1 ? (
+            : pending && !instagramPending && (pages.data?.length ?? 0) > 1 ? (
               <div className="mt-5 space-y-2">
                 <p className="text-sm font-semibold text-text">{copy.connect.pickPage}</p>
                 {pages.data!.map((p) => (
@@ -127,10 +130,13 @@ function Overview({ academyId, data }: { academyId: number; data: SocialOverview
                 ))}
               </div>
             ) : (
-              <Button type="button" onClick={() => void start()} disabled={working || connect.isPending} className="mt-5 rounded-xl bg-[#1877F2] font-bold text-white hover:bg-[#166fe0]" data-testid="button-social-connect">
-                {working || connect.isPending ? <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Facebook className="me-2 h-4 w-4" aria-hidden="true" />}
-                {working || connect.isPending ? copy.connect.working : copy.connect.button}
-              </Button>
+              <div className="mt-5 space-y-4">
+                <Button type="button" onClick={() => void start()} disabled={working || connect.isPending} className="rounded-xl bg-[#1877F2] font-bold text-white hover:bg-[#166fe0]" data-testid="button-social-connect">
+                  {working || connect.isPending ? <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Facebook className="me-2 h-4 w-4" aria-hidden="true" />}
+                  {working || connect.isPending ? copy.connect.working : copy.connect.button}
+                </Button>
+                {data.canManage && <InstagramUnifiedLogin academyId={academyId} pending={instagramPending} reconnect={c?.status === "error"} />}
+              </div>
             )}
         {(error || connect.isError || select.isError) && <p className="mt-3 text-sm text-red-400" role="alert">{error ?? ((connect.error ?? select.error) as Error).message}</p>}
       </div>
@@ -145,19 +151,21 @@ function Overview({ academyId, data }: { academyId: number; data: SocialOverview
     [copy.stats.views, ig.views],
     [copy.stats.engaged, ig.accounts_engaged],
     [copy.stats.profileViews, ig.profile_views],
-    [copy.stats.fbFollowers, fb.followers],
     [copy.stats.unread, data.unreadThreads],
     [copy.stats.openComments, data.openComments],
   ];
+  if (c.pageId) tiles.splice(5, 0, [copy.stats.fbFollowers, fb.followers]);
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface p-4">
         {c.igPicture ? <img src={c.igPicture} alt="" className="h-11 w-11 rounded-full object-cover" /> : <Instagram className="h-9 w-9 text-turf" aria-hidden="true" />}
         <div className="min-w-0 flex-1">
-          <p className="font-semibold text-text">{c.igUsername ? `@${c.igUsername}` : copy.connect.noInstagram} · <span dir="auto">{c.pageName}</span></p>
+          <p className="font-semibold text-text">{c.pageId
+            ? <>{c.igUsername ? `@${c.igUsername}` : copy.connect.noInstagram} · <span dir="auto">{c.pageName}</span></>
+            : copy.connect.instagramConnected(c.igUsername ?? "Instagram")}</p>
           <p className="text-xs text-turf"><Check className="me-1 inline h-3.5 w-3.5" aria-hidden="true" />{copy.connect.connected}{c.insightsAt ? ` · ${copy.stats.syncedAt(fmtWhen(copy.locale, c.insightsAt))}` : ""}</p>
         </div>
-        {data.canManage && (
+      {data.canManage && (
           <>
             <Button type="button" variant="ghost" size="sm" className="border border-line" disabled={sync.isPending} onClick={() => sync.mutate()} data-testid="button-social-sync">
               <RefreshCw className={cn("me-1.5 h-4 w-4", sync.isPending && "animate-spin")} aria-hidden="true" />{copy.stats.sync}
@@ -172,7 +180,7 @@ function Overview({ academyId, data }: { academyId: number; data: SocialOverview
           </>
         )}
       </div>
-      {!c.subscribed && <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">{copy.connect.notSubscribed}</p>}
+      {c.pageId && !c.subscribed && <p className="rounded-xl border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-100">{copy.connect.notSubscribed}</p>}
       {c.igUsername && <p className="rounded-xl border border-line bg-raised/60 p-3 text-xs leading-5 text-muted-text">{copy.connect.allowMessages}</p>}
       {sync.isError && <p className="text-sm text-red-400" role="alert">{(sync.error as Error).message}</p>}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -320,7 +328,7 @@ function Posts({ academyId, canManage, data }: { academyId: number; canManage: b
   const [composing, setComposing] = useState(false);
   return (
     <div className="space-y-4">
-      {canManage && (composing ? <Composer academyId={academyId} hasInstagram={Boolean(data.connection?.igUserId)} onDone={() => setComposing(false)} />
+      {canManage && (composing ? <Composer academyId={academyId} hasInstagram={Boolean(data.connection?.igUserId)} hasFacebook={Boolean(data.connection?.pageId)} onDone={() => setComposing(false)} />
         : <Button type="button" onClick={() => setComposing(true)} className="rounded-xl bg-floodlight font-bold text-void" data-testid="button-new-post"><ImagePlus className="me-2 h-4 w-4" aria-hidden="true" />{copy.posts.newPost}</Button>)}
       {posts.isLoading ? <div className="h-40 animate-pulse rounded-2xl bg-raised" />
         : (posts.data ?? []).length === 0 ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-sm text-muted-text">{copy.posts.empty}</p>
@@ -329,13 +337,13 @@ function Posts({ academyId, canManage, data }: { academyId: number; canManage: b
   );
 }
 
-function Composer({ academyId, hasInstagram, onDone }: { academyId: number; hasInstagram: boolean; onDone: () => void }) {
+function Composer({ academyId, hasInstagram, hasFacebook, onDone }: { academyId: number; hasInstagram: boolean; hasFacebook: boolean; onDone: () => void }) {
   const copy = useSocialCopy();
   const media = useSocialMedia(academyId, true);
   const upload = useUploadSocialPhoto(academyId);
   const create = useCreatePost(academyId);
   const file = useRef<HTMLInputElement>(null);
-  const [targets, setTargets] = useState<Array<"instagram" | "facebook">>(hasInstagram ? ["instagram", "facebook"] : ["facebook"]);
+  const [targets, setTargets] = useState<Array<"instagram" | "facebook">>(hasInstagram ? (hasFacebook ? ["instagram", "facebook"] : ["instagram"]) : (hasFacebook ? ["facebook"] : []));
   const [format, setFormat] = useState<"image" | "carousel" | "reel" | "story">("image");
   const [caption, setCaption] = useState("");
   const [picked, setPicked] = useState<number[]>([]);
@@ -378,7 +386,7 @@ function Composer({ academyId, hasInstagram, onDone }: { academyId: number; hasI
     <div className="space-y-4 rounded-2xl border border-line bg-surface p-5" data-testid="social-composer">
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-text">{copy.posts.where}</span>
-        {(["instagram", "facebook"] as const).filter((t) => t === "facebook" || hasInstagram).map((t) => (
+        {(["instagram", "facebook"] as const).filter((t) => t === "facebook" ? hasFacebook : hasInstagram).map((t) => (
           <button key={t} type="button" onClick={() => setTargets((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]))}
             className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold", targets.includes(t) ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")}>
             {t === "instagram" ? <Instagram className="h-3.5 w-3.5" aria-hidden="true" /> : <Facebook className="h-3.5 w-3.5" aria-hidden="true" />}{t === "instagram" ? "Instagram" : "Facebook"}

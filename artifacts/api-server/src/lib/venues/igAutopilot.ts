@@ -640,7 +640,7 @@ export async function publishItem(venue: Venue, item: VenueIgItem, now = new Dat
   if (!consent.ok) return set({ status: "skipped", error: consent.reason });
   const account = await getSocialAccount(venue.id);
   const check = await checkInstagram(account);
-  if (!check.ok) return set({ error: check.error });
+  if (!check.ok) return set({ ...(check.code === "reconnect" ? { status: "failed" as const } : {}), error: check.error });
   const room = pacing(check.limit?.used ?? (await usedToday(venue.id, now)), check.limit?.total);
   if (room.paused) return set({ error: `Waiting: ${room.used} of ${room.total} Instagram posts used in the last 24 hours` });
   const failed = projects.find((p) => p.renderStatus === "failed");
@@ -929,12 +929,18 @@ async function refreshInsights(venue: Venue, now: Date): Promise<number> {
   )).limit(5);
   if (!rows.length) return 0;
   const account = await getSocialAccount(venue.id);
-  if (!account?.pageTokenEnc || account.status !== "connected") return 0;
+  if ((!account?.pageTokenEnc && !account?.tokenEnc) || account.status !== "connected") return 0;
   const { pageToken } = await import("../social/account");
   const token = pageToken(account);
   for (const item of rows) {
     // A Story's numbers exist for 24 hours: keep what was read before, add what's new.
-    const fresh = await mediaInsights(item.igMediaId!, item.placement as "story" | "reel", token).catch(() => ({}));
+    let reconnectRequired = false;
+    const fresh = await mediaInsights(item.igMediaId!, item.placement as "story" | "reel", token).catch(async (error) => {
+      const { markSocialReconnect } = await import("../social/account");
+      reconnectRequired = await markSocialReconnect(venue.id, error).catch(() => false);
+      return {};
+    });
+    if (reconnectRequired) return 0;
     const kept = (item.insights ?? {}) as Record<string, number | null>;
     const merged: Record<string, number | null> = { ...kept };
     for (const [k, v] of Object.entries(fresh)) if (v !== null && v !== undefined) merged[k] = v;

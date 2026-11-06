@@ -10,7 +10,7 @@ export default function DeleteAccountPage() {
   const copy = useLegalCopy();
   const { supportEmail } = useSupportContact();
   const supportHref = supportMailto(supportEmail);
-  const { user, isGuest, isSignedIn, isLoading } = useAuth();
+  const { user, isGuest, isSignedIn, isLoading } = useAuth({ skipSignedOutQuery: true });
   const [, setLocation] = useLocation();
 
   return (
@@ -61,6 +61,11 @@ export default function DeleteAccountPage() {
             <ul className="mt-3 list-disc space-y-2 ps-6 text-sm text-muted-text">
               {copy.accountDeletion.retainedItems.map((item) => <li key={item}>{item}</li>)}
             </ul>
+          </section>
+
+          <section className="rounded-2xl border border-line bg-surface p-5 leading-7 sm:p-6">
+            <h2 className="text-lg font-semibold">{copy.accountDeletion.fieldsDisconnectHeading}</h2>
+            <p className="mt-3 text-sm text-muted-text">{copy.accountDeletion.fieldsDisconnectBody}</p>
           </section>
 
           <section className="rounded-2xl border border-line bg-surface p-5 leading-7 sm:p-6">

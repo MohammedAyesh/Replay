@@ -25,6 +25,8 @@ import { Card, ErrorText, Pill, SectionHeader, Skeleton, ToggleRow } from "./sha
 import { SuggestionList } from "./instagram-suggestions";
 import { DesignThumb, PickClipsDialog } from "./instagram-design";
 import { apiUrl } from "@/lib/academy-studio-api";
+import { InstagramUnifiedLogin } from "@/components/academy-console/instagram-unified-login";
+import { useSocialCopy } from "@/i18n/social-strings";
 
 /**
  * Field console → Instagram autopilot: the field's consent (read-only, Replay sets it), the
@@ -56,7 +58,7 @@ function Body({ venueId, data }: { venueId: number; data: InstagramData }) {
     <>
       <div className="grid gap-4 lg:grid-cols-3">
         <ConsentCard data={data} />
-        <AccountCard data={data} />
+        <AccountCard academyId={venueId} data={data} />
         <SettingsCard venueId={venueId} data={data} />
       </div>
       {data.flaggedRemovals.length > 0 && <Removals venueId={venueId} data={data} />}
@@ -122,15 +124,23 @@ function ConsentCard({ data }: { data: InstagramData }) {
   );
 }
 
-function AccountCard({ data }: { data: InstagramData }) {
+function AccountCard({ academyId, data }: { academyId: number; data: InstagramData }) {
   const copy = useInstagramCopy();
+  const socialCopy = useSocialCopy();
   const a = data.account;
   const pct = Math.min(100, Math.round((a.limit.used / a.limit.total) * 100));
   return (
     <Card data-testid="instagram-account">
       <div className="flex items-center gap-2"><Instagram className="h-4 w-4 text-turf" /><h2 className="font-display text-lg font-bold text-text">{copy.account.title}</h2></div>
-      {a.ok ? <p className="mt-3 font-semibold text-text" dir="ltr">{a.username ? copy.account.connected(a.username) : "—"}</p> : (
-        <p className="mt-3 rounded-xl border border-[#FF5A3C]/40 bg-[#FF5A3C]/10 p-3 text-sm leading-6 text-[#FF8A73]" role="alert">{a.error}</p>
+      {a.ok ? <p className="mt-3 font-semibold text-text" dir="ltr">{a.username ? socialCopy.connect.instagramConnected(a.username) : "—"}</p> : (
+        <div className="mt-3 space-y-3">
+          <p className="rounded-xl border border-[#FF5A3C]/40 bg-[#FF5A3C]/10 p-3 text-sm leading-6 text-[#FF8A73]" role="alert">{a.error}</p>
+          <InstagramUnifiedLogin
+            academyId={academyId}
+            pending={a.code === "instagram_assets_pending"}
+            reconnect={a.code === "reconnect"}
+          />
+        </div>
       )}
       <div className="mt-4">
         <p className="text-xs text-muted-text">{copy.account.limit(a.limit.used, a.limit.total)}</p>

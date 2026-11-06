@@ -7,9 +7,8 @@ import { decryptToken, encryptToken } from "../meta/crypto";
 import { graphGet, graphPost, MetaGraphError } from "../meta/graph";
 
 /**
- * An academy's Facebook Page and its linked Instagram professional account, connected with
- * Facebook Login for Business ("Academy social" configuration). Everything the inbox, comments,
- * publishing and insights do runs with the Page token stored here.
+ * An academy's Facebook Page and Instagram professional account, connected with
+ * Facebook Login for Business or Instagram API with Unified Login.
  */
 
 export function socialLoginConfigId(): string {
@@ -34,7 +33,7 @@ export async function accountByInstagram(igUserId: string): Promise<AcademySocia
   return row ?? null;
 }
 
-async function save(academyId: number, patch: Partial<AcademySocialAccount>): Promise<AcademySocialAccount> {
+export async function saveSocialAccount(academyId: number, patch: Partial<AcademySocialAccount>): Promise<AcademySocialAccount> {
   const now = new Date();
   await db.insert(academySocialAccountsTable).values({ academyId, ...patch, updatedAt: now })
     .onConflictDoUpdate({ target: academySocialAccountsTable.academyId, set: { ...patch, updatedAt: now } });
@@ -42,8 +41,9 @@ async function save(academyId: number, patch: Partial<AcademySocialAccount>): Pr
 }
 
 export function pageToken(account: AcademySocialAccount): string {
-  if (!account.pageTokenEnc) throw new MetaGraphError("Connect your Facebook Page first", 409);
-  return decryptToken(account.pageTokenEnc);
+  const encrypted = account.pageTokenEnc ?? (!account.pageId ? account.tokenEnc : null);
+  if (!encrypted) throw new MetaGraphError(account.pageId ? "Connect your Facebook Page first" : "Connect Instagram first", 409);
+  return decryptToken(encrypted);
 }
 
 type PageRow = {
@@ -83,7 +83,7 @@ export async function connectWithCode(academyId: number, code: string, userId: n
   if (!exchange.ok || !body?.access_token) throw new MetaGraphError(body?.error?.message ?? "Meta refused the sign-in", exchange.status || 400);
   const token = body.access_token;
   const pages = await pagesFor(token);
-  let account = await save(academyId, { tokenEnc: encryptToken(token), status: "pending", error: null, connectedBy: userId });
+  let account = await saveSocialAccount(academyId, { tokenEnc: encryptToken(token), status: "pending", error: null, connectedBy: userId });
   if (pages.length === 1) account = await selectPage(academyId, pages[0].id);
   return { account, pages: pages.map(choice) };
 }
@@ -116,7 +116,7 @@ export async function selectPage(academyId: number, pageId: string): Promise<Aca
   if (other && other.academyId !== academyId) throw new MetaGraphError("That Page is already connected to another academy on Replay.", 409);
   const ig = page.instagram_business_account ?? null;
   const subscribed = await subscribePage(page.id, page.access_token);
-  return save(academyId, {
+  return saveSocialAccount(academyId, {
     pageId: page.id,
     pageName: page.name,
     pageTokenEnc: encryptToken(page.access_token),
@@ -133,6 +133,24 @@ export async function selectPage(academyId: number, pageId: string): Promise<Aca
 export async function disconnectSocial(academyId: number): Promise<void> {
   // The Page stays subscribed (the ads lead forms may use it); Replay just forgets the tokens.
   await db.delete(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, academyId));
+}
+
+const RECONNECT_MESSAGE = "Reconnect Instagram. Meta authorization expired or the Instagram permissions changed. Connect again and allow every permission.";
+const PERMISSION_RECONNECT_MESSAGE = "Reconnect Instagram. Replay doesn't have permission for this Instagram account yet. Connect again and allow every permission.";
+
+/** Meta auth/permission failures must stop scheduled retries until the owner reconnects. */
+export async function markSocialReconnect(academyId: number, error: unknown): Promise<boolean> {
+  const e = error as { code?: number; status?: number; message?: string };
+  if (!(e?.code === 190 || e?.code === 10 || e?.code === 200 || e?.status === 401 || e?.status === 403)) return false;
+  const [updated] = await db.update(academySocialAccountsTable)
+    .set({
+      status: "error",
+      error: e.code === 10 || e.code === 200 ? PERMISSION_RECONNECT_MESSAGE : RECONNECT_MESSAGE,
+      updatedAt: new Date(),
+    })
+    .where(eq(academySocialAccountsTable.academyId, academyId))
+    .returning({ academyId: academySocialAccountsTable.academyId });
+  return Boolean(updated);
 }
 
 // ─── Public media links Meta can fetch when publishing ──────────────────────

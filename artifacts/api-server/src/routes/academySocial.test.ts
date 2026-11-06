@@ -18,6 +18,11 @@ import {
   usersTable,
 } from "@workspace/db";
 
+const instagramLoginMock = vi.hoisted(() => ({
+  assets: [] as Array<{ id: string; username?: string; profile_picture_url?: string }>,
+  limitError: null as null | { message: string; status: number; code?: number },
+}));
+
 process.env.META_ACCESS_TOKEN = "test-token";
 process.env.META_AD_ACCOUNT_ID = "123456";
 process.env.META_APP_SECRET = "test-app-secret";
@@ -52,6 +57,15 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
   return {
     ...actual,
     graphGet: vi.fn(async (path: string, params: Record<string, string> = {}) => {
+      if (path === "me") return { client_business_id: "test-business" };
+      if (path === "me/assigned_instagram_accounts") return { data: instagramLoginMock.assets };
+      if (path.endsWith("/content_publishing_limit")) {
+        if (instagramLoginMock.limitError) {
+          const e = instagramLoginMock.limitError;
+          throw new actual.MetaGraphError(e.message, e.status, e.code);
+        }
+        return { data: [{ quota_usage: 3, config: { quota_total: 100 } }] };
+      }
       if (path === IGSID) return { name: "Sami Haddad", username: "sami.h", profile_pic: "https://pic/x.jpg" };
       if (path === PSID) return { first_name: "Abu", last_name: "Kareem" };
       if (path.startsWith("ig-media-")) return { permalink: `https://instagram.com/p/${path}`, caption: "Training day" };
@@ -80,6 +94,7 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
 import { encryptToken } from "../lib/meta/crypto";
 import { mediaSignature } from "../lib/social/account";
 import { maybeRunSocial } from "../lib/social/posts";
+import { checkInstagram } from "../lib/venues/igGraph";
 import { sectionForPath } from "../lib/academyPermissions";
 import metaRouter from "./metaAds";
 import socialRouter from "./academySocial";
@@ -292,5 +307,157 @@ describe("posts", () => {
     await request(app).get(`/api/social/media/${mediaId}/deadbeefdeadbeefdeadbeef.jpg`).expect(404);
     const ok = await request(app).get(`/api/social/media/${mediaId}/${mediaSignature(mediaId)}.jpg`).expect(200);
     expect(ok.headers["content-type"]).toBe("image/jpeg");
+  });
+});
+
+describe("Instagram API with Unified Login", () => {
+  const instagramId1 = `8${stamp}`;
+  const instagramId2 = `9${stamp}`;
+  let unifiedFieldId = 0;
+  let unifiedAcademyId = 0;
+  beforeAll(async () => {
+    const [field] = await db.insert(fieldsTable).values({ name: `Instagram Login ${stamp}`, cameraId: `ig-login-${stamp}` }).returning({ id: fieldsTable.id });
+    unifiedFieldId = field.id;
+    const [academy] = await db.insert(academiesTable).values({ name: `Instagram Login Academy ${stamp}`, fieldId: field.id }).returning({ id: academiesTable.id });
+    unifiedAcademyId = academy.id;
+    await db.insert(academyMembersTable).values({ academyId: unifiedAcademyId, userId: ownerId, role: "owner" });
+  });
+  afterAll(async () => {
+    if (unifiedAcademyId) await db.delete(academiesTable).where(eq(academiesTable.id, unifiedAcademyId));
+    if (unifiedFieldId) await db.delete(fieldsTable).where(eq(fieldsTable.id, unifiedFieldId));
+  });
+
+  const startLogin = async (academy = unifiedAcademyId) => {
+    const res = await request(app).post(`/api/academy/console/academies/${academy}/social/connect/instagram`)
+      .set(auth(ownerId)).send({}).expect(200);
+    return { url: new URL(res.body.url as string), state: new URL(res.body.url as string).searchParams.get("state")! };
+  };
+  const completeLogin = async (state: string, assets: typeof instagramLoginMock.assets) => {
+    instagramLoginMock.assets = assets;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ access_token: "test-instagram-system-token" }), { status: 200 }),
+    );
+    try {
+      return await request(app).post("/api/academy/console/social/instagram/callback").set(auth(ownerId))
+        .send({ state, code: "test-auth-code" });
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  };
+
+  it("signs and consumes owner/academy state, exchanges one account, and saves it without a Page", async () => {
+    const { url, state } = await startLogin();
+    expect(url.origin + url.pathname).toBe("https://www.facebook.com/dialog/oauth");
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({
+      client_id: "1401484938413305",
+      config_id: "1126113460026170",
+      redirect_uri: "https://replayjo.com/connect/instagram/callback",
+      response_type: "code",
+      display: "popup",
+      prompt: "login",
+    });
+    expect(state).toBeTruthy();
+
+    const invalid = `${state.slice(0, -1)}${state.endsWith("A") ? "B" : "A"}`;
+    await request(app).post("/api/academy/console/social/instagram/callback").set(auth(ownerId))
+      .send({ state: invalid, code: "test-auth-code" }).expect(400);
+
+    const connected = await completeLogin(state, [{ id: instagramId1, username: "jordangalaxy0", profile_picture_url: "https://pic/ig.jpg" }]);
+    expect(connected.status).toBe(200);
+    expect(connected.body).toMatchObject({ status: "connected", igUsername: "jordangalaxy0", academyId: unifiedAcademyId });
+    const [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved).toMatchObject({
+      status: "connected",
+      pageId: null,
+      pageName: null,
+      pageTokenEnc: null,
+      igUserId: instagramId1,
+      igUsername: "jordangalaxy0",
+      igPicture: "https://pic/ig.jpg",
+      connectedBy: ownerId,
+    });
+    expect(saved.tokenEnc).toBeTruthy();
+    expect(saved.connectedAt).toBeInstanceOf(Date);
+
+    await request(app).post("/api/academy/console/social/instagram/callback").set(auth(ownerId))
+      .send({ state, code: "test-auth-code" }).expect(400);
+  });
+
+  it("lets the owner choose among multiple assigned accounts", async () => {
+    const { state } = await startLogin();
+    const response = await completeLogin(state, [
+      { id: instagramId1, username: "first" },
+      { id: instagramId2, username: "second" },
+    ]);
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ status: "pending", accounts: [{ id: instagramId1 }, { id: instagramId2 }] });
+    const unifiedBase = `/api/academy/console/academies/${unifiedAcademyId}/social`;
+    const choices = await request(app).get(`${unifiedBase}/instagram-accounts`).set(auth(ownerId)).expect(200);
+    expect(choices.body.map((item: { id: string }) => item.id)).toEqual([instagramId1, instagramId2]);
+
+    const selected = await request(app).post(`${unifiedBase}/instagram-account`).set(auth(ownerId))
+      .send({ instagramId: instagramId2 }).expect(200);
+    expect(selected.body).toMatchObject({ status: "connected", igUsername: "second" });
+    const [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved).toMatchObject({ pageId: null, pageName: null, pageTokenEnc: null, igUserId: instagramId2, igUsername: "second" });
+  });
+
+  it("explains when Meta returned no Instagram assets", async () => {
+    const { state } = await startLogin();
+    const response = await completeLogin(state, []);
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("Pick your Instagram account when Meta asks, then try again");
+  });
+
+  it("marks permission and expired-token errors for reconnect without treating account type as permission", async () => {
+    const [account] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    instagramLoginMock.limitError = { message: "Permissions error", status: 403, code: 200 };
+    const permission = await checkInstagram(account);
+    expect(permission).toMatchObject({
+      ok: false,
+      code: "reconnect",
+      error: "Replay doesn't have permission for this Instagram account yet. Connect again and allow every permission.",
+    });
+    let [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved.status).toBe("error");
+
+    await db.update(academySocialAccountsTable).set({ status: "connected", error: null }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    instagramLoginMock.limitError = { message: "Error validating access token", status: 400, code: 190 };
+    const [active] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(await checkInstagram(active)).toMatchObject({ ok: false, code: "reconnect" });
+    [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved.status).toBe("error");
+
+    await db.update(academySocialAccountsTable).set({ status: "connected", error: null }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    instagramLoginMock.limitError = { message: "Instagram account type is not supported for publishing", status: 400, code: 100 };
+    const [current] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(await checkInstagram(current)).toMatchObject({ ok: false, code: "not_business" });
+    [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved.status).toBe("connected");
+    instagramLoginMock.limitError = null;
+  });
+
+  it("refuses an Instagram account already connected to another academy", async () => {
+    const [field] = await db.insert(fieldsTable).values({ name: `Other Social ${stamp}`, cameraId: `other-${stamp}` }).returning({ id: fieldsTable.id });
+    const [otherAcademy] = await db.insert(academiesTable).values({ name: `Other Social Academy ${stamp}`, fieldId: field.id }).returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: otherAcademy.id, userId: ownerId, role: "owner" });
+    try {
+      const { state } = await startLogin(otherAcademy.id);
+      const response = await completeLogin(state, [{ id: instagramId2, username: "already.connected" }]);
+      expect(response.status).toBe(409);
+      expect(response.body.error).toContain("already connected to another academy");
+    } finally {
+      await db.delete(academiesTable).where(eq(academiesTable.id, otherAcademy.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, field.id));
+    }
+  });
+
+  it("keeps an existing Facebook Page connection intact", async () => {
+    const [before] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, academyId));
+    const response = await request(app).post(`/api/academy/console/academies/${academyId}/social/connect/instagram`)
+      .set(auth(ownerId)).send({});
+    expect(response.status).toBe(409);
+    const [after] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, academyId));
+    expect(after).toMatchObject({ pageId: before.pageId, pageTokenEnc: before.pageTokenEnc, igUserId: before.igUserId });
   });
 });

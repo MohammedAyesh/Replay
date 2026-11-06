@@ -3,8 +3,8 @@ import type { LegalDoc } from "./types";
 export const privacy: { en: LegalDoc; ar: LegalDoc } = {
   en: {
     title: "Privacy Policy",
-    lastUpdated: "2026-09-26",
-    draftNotice: "Draft — pending legal review",
+    lastUpdated: "2026-11-06",
+    draftNotice: "",
     sections: [
       {
         heading: "Who we are",
@@ -33,6 +33,12 @@ export const privacy: { en: LegalDoc; ar: LegalDoc } = {
         ],
       },
       {
+        heading: "Facebook and Instagram (for fields)",
+        paragraphs: [
+          "If you run a field on Replay and connect your Facebook Page and Instagram professional account, Replay receives from Meta: your Page's id, name and access token; your Instagram account's id, username and profile picture; messages and comments sent to your Page and Instagram account; and statistics for your posts. We use this only to publish the posts you approve, show and answer your messages and comments in the field console, count award votes, and make your monthly report. We store access tokens encrypted. We don't sell this data or use it for advertising. You can disconnect at any time in the field console under Instagram & Facebook, or by removing Replay in Facebook Settings → Business integrations; Replay then deletes your stored tokens. To have the rest deleted, email abilal@replayjo.com and we will delete it within 30 days.",
+        ],
+      },
+      {
         heading: "Who processes data for us",
         paragraphs: [],
         bullets: [
@@ -41,6 +47,7 @@ export const privacy: { en: LegalDoc; ar: LegalDoc } = {
           "Bunny.net: video storage and delivery (Germany, EU).",
           "Contabo: video processing server (Germany).",
           "Cloud GPU providers that analyse match video. They may be outside Jordan, including in Asia.",
+          "Meta Platforms (Facebook and Instagram): connecting fields' Pages and Instagram accounts, publishing posts, and messages (USA/Ireland).",
         ],
       },
       {
@@ -80,8 +87,8 @@ export const privacy: { en: LegalDoc; ar: LegalDoc } = {
   },
   ar: {
     title: "سياسة الخصوصية",
-    lastUpdated: "2026-09-26",
-    draftNotice: "مسودة — قيد المراجعة القانونية",
+    lastUpdated: "2026-11-06",
+    draftNotice: "",
     sections: [
       {
         heading: "من نحن",
@@ -110,6 +117,12 @@ export const privacy: { en: LegalDoc; ar: LegalDoc } = {
         ],
       },
       {
+        heading: "فيسبوك وإنستغرام (للملاعب)",
+        paragraphs: [
+          "إذا كنت تدير ملعبًا على Replay وتربط صفحة فيسبوك وحساب إنستغرام احترافيًا، تستلم Replay من Meta: معرّف صفحتك واسمها ورمز الوصول؛ ومعرّف حساب إنستغرام واسم المستخدم وصورة الملف الشخصي؛ والرسائل والتعليقات المرسلة إلى صفحتك وحساب إنستغرام؛ وإحصاءات منشوراتك. نستخدم هذه البيانات فقط لنشر المنشورات التي توافق عليها، وعرض رسائلك وتعليقاتك والرد عليها في لوحة الملعب، واحتساب أصوات الجوائز، وإعداد تقريرك الشهري. نخزّن رموز الوصول مشفّرة. لا نبيع هذه البيانات ولا نستخدمها للإعلانات. يمكنك قطع الاتصال في أي وقت من لوحة الملعب ضمن إنستغرام وفيسبوك، أو بإزالة Replay من إعدادات فيسبوك ← تكاملات الأعمال؛ وبعدها تحذف Replay رموز الوصول المخزّنة لديك. لحذف بقية البيانات، راسل abilal@replayjo.com وسنحذفها خلال 30 يومًا.",
+        ],
+      },
+      {
         heading: "من يعالج البيانات نيابة عنا",
         paragraphs: [],
         bullets: [
@@ -118,6 +131,7 @@ export const privacy: { en: LegalDoc; ar: LegalDoc } = {
           "Bunny.net: تخزين الفيديو وتوصيله (ألمانيا، الاتحاد الأوروبي).",
           "Contabo: خادم معالجة الفيديو (ألمانيا).",
           "مزودو وحدات معالجة الرسومات السحابية الذين يحللون فيديو المباريات. قد يكونون خارج الأردن، بما في ذلك في آسيا.",
+          "Meta Platforms (فيسبوك وإنستغرام): ربط صفحات الملاعب وحسابات إنستغرام، ونشر المنشورات، والرسائل (الولايات المتحدة/أيرلندا).",
         ],
       },
       {

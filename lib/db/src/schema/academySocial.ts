@@ -5,9 +5,8 @@ import { academyContactsTable } from "./academyWhatsapp";
 import { usersTable } from "./users";
 
 /**
- * An academy's Facebook Page and the Instagram professional account linked to it,
- * connected with Facebook Login for Business. Both tokens are stored encrypted
- * (see lib/meta/crypto.ts); the Page token is what reads and answers messages and comments.
+ * An academy's Facebook Page and Instagram professional account, connected with
+ * Facebook Login for Business or Instagram API with Unified Login. Tokens are encrypted.
  */
 export const academySocialAccountsTable = pgTable("academy_social_accounts", {
   academyId: integer("academy_id").primaryKey().references(() => academiesTable.id, { onDelete: "cascade" }),

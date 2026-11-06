@@ -41,6 +41,13 @@ export type SocialOverview = {
 };
 
 export type PageChoice = { id: string; name: string; instagram: { id: string; username: string | null } | null };
+export type InstagramAssetChoice = { id: string; username: string | null; profilePictureUrl: string | null };
+export type InstagramLoginResult = {
+  status: "connected" | "pending";
+  igUsername?: string | null;
+  accounts?: InstagramAssetChoice[];
+  academyId: number;
+};
 
 export type SocialChannel = "instagram" | "messenger";
 export type LeadStage = "new" | "contacted" | "trial" | "joined" | "lost";
@@ -146,6 +153,46 @@ export function useSocialConnect(academyId: number) {
   return useMutation({
     mutationFn: (code: string) => call<{ status: string; pages: PageChoice[] }>(`${root(academyId)}/connect`, { method: "POST", body: JSON.stringify({ code }) }),
     onSuccess: done,
+  });
+}
+
+export function useInstagramLoginStart(academyId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: () => call<{ url: string }>(`${root(academyId)}/connect/instagram`, { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: done,
+  });
+}
+
+export function completeInstagramLogin(input: { code?: string; state: string; error?: string; errorDescription?: string }) {
+  return call<InstagramLoginResult>("/academy/console/social/instagram/callback", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function usePendingInstagramAssets(academyId: number, enabled: boolean) {
+  return useQuery({
+    queryKey: ["academy-social", academyId, "instagram-assets"],
+    queryFn: () => call<InstagramAssetChoice[]>(`${root(academyId)}/instagram-accounts`),
+    enabled,
+    retry: false,
+  });
+}
+
+export function useSelectInstagramAsset(academyId: number) {
+  const done = useInvalidate(academyId);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (instagramId: string) => call<{ status: string; igUsername: string | null }>(`${root(academyId)}/instagram-account`, {
+      method: "POST",
+      body: JSON.stringify({ instagramId }),
+    }),
+    onSuccess: async () => {
+      await done();
+      await qc.invalidateQueries({ queryKey: ["venue", academyId, "instagram"] });
+      await qc.invalidateQueries({ queryKey: ["academy-social", academyId, "instagram-assets"] });
+    },
   });
 }
 

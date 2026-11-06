@@ -23,6 +23,7 @@ const en = {
   account: {
     title: "Instagram account",
     connected: (u: string) => `@${u}`,
+    reconnect: "Reconnect Instagram",
     limit: (used: number, total: number) => `${used} of ${total} API posts in the last 24 hours`,
     limitOurs: "Meta's count couldn't be read; this is Replay's own count.",
     paused: "Paused: Instagram's 24-hour limit is nearly used. Posts wait for room.",
@@ -266,6 +267,7 @@ const ar: Strings = {
   account: {
     title: "حساب إنستغرام",
     connected: (u: string) => `@${u}`,
+    reconnect: "أعد ربط إنستغرام",
     limit: (used: number, total: number) => `${used} من ${total} بوست عن طريق الـAPI بآخر 24 ساعة`,
     limitOurs: "ما قدرنا نقرأ عدّاد ميتا؛ هاد عدّاد ريبلاي.",
     paused: "موقّف: قرّبنا على حد إنستغرام لـ24 ساعة. البوستات بتستنى.",

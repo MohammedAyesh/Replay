@@ -16,10 +16,14 @@ const LocaleContext = createContext<LocaleContextValue>({
   setLocale: () => {},
 });
 
-export function LocaleProvider({ children, publicPage = false }: { children: React.ReactNode; publicPage?: boolean }) {
+export function LocaleProvider({ children, publicPage = false, defaultLocale = "ar" }: {
+  children: React.ReactNode;
+  publicPage?: boolean;
+  defaultLocale?: Locale;
+}) {
   const [locale, setLocaleState] = useState<Locale>(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    return saved === "en" ? "en" : "ar";
+    return saved === "en" || saved === "ar" ? saved : defaultLocale;
   });
 
   const prevMeIdRef = useRef<number | undefined>(undefined);

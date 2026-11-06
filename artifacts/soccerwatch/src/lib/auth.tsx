@@ -3,12 +3,12 @@ import { useGetMe, getGetMeQueryKey, type User } from "@workspace/api-client-rea
 
 export type { User };
 
-export function useAuth() {
+export function useAuth({ skipSignedOutQuery = false }: { skipSignedOutQuery?: boolean } = {}) {
   const { isSignedIn, isLoaded } = useUser();
 
   const { data: localUser, isLoading: isMeLoading, refetch: refetchLocalUser } = useGetMe({
     query: {
-      enabled: isLoaded,
+      enabled: isLoaded && (!skipSignedOutQuery || isSignedIn === true),
       // Retry when Clerk says the user IS signed in but the server returns an
       // error — this handles the race condition where the Clerk session cookie
       // is set in the browser but the server middleware hasn't verified it yet.

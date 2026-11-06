@@ -1,5 +1,6 @@
 - [HEVC→H264 HLS transcode](hevc-hls-transcode.md) — fMP4 HLS output option is `-hls_fmp4_init_filename`, not `-hls_init_filename`; 4096×1152 HEVC takes ~17s for first segment on Replit CPU.
 - [Clerk auth setup](clerk-auth.md) — Replit-managed Clerk replaces cookie auth; real users JIT-provisioned via clerkId in DB; guests use guestId httpOnly cookie alongside Clerk.
+- [Instagram-only login scope](instagram-login-scope.md) — Unified Login is for academies without a Facebook Page; never replace an active Page connection with its token.
 - [Mobile app-shell header positioning](mobile-app-shell-header.md) — Keep mobile headers in layout flow and sticky; fixed top bars can desync from mobile browser chrome while content scrolls behind them.
 - [Public demo authentication](public-demo-auth.md) — Bypassing ClerkProvider is not enough if a shared locale provider still queries `/api/auth/me`.
 - [Clerk ↔ local user race](clerk-local-user-race.md) — After sign-in, Clerk's `isSignedIn` is true before the server has verified the session cookie. Guards that redirect on `!user` must also check `isSignedIn` to avoid bouncing the user back to login during the handshake window.

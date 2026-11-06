@@ -11,7 +11,7 @@ import {
 import { logger } from "../logger";
 import { metaConfig } from "../meta/config";
 import { graphGet, graphPost, MetaGraphError } from "../meta/graph";
-import { accountByInstagram, accountByPage, pageToken } from "./account";
+import { accountByInstagram, accountByPage, markSocialReconnect, pageToken } from "./account";
 
 /**
  * Instagram Direct and Messenger conversations, and comments on the academy's posts.
@@ -46,7 +46,7 @@ export type WebhookEntry = { id?: string; time?: number; messaging?: MessagingEv
 // ─── Threads ────────────────────────────────────────────────────────────────
 
 /** Name, @username and picture of the person, as far as Meta lets us read them. */
-async function profileOf(channel: Channel, userId: string, token: string): Promise<{ name: string | null; username: string | null; picture: string | null }> {
+async function profileOf(channel: Channel, userId: string, token: string, academyId: number): Promise<{ name: string | null; username: string | null; picture: string | null }> {
   try {
     if (channel === "instagram") {
       const p = await graphGet<{ name?: string; username?: string; profile_pic?: string }>(userId, { fields: "name,username,profile_pic" }, { token });
@@ -56,6 +56,7 @@ async function profileOf(channel: Channel, userId: string, token: string): Promi
     const name = [p.first_name, p.last_name].filter(Boolean).join(" ") || p.name || null;
     return { name, username: null, picture: p.profile_pic ?? null };
   } catch (error) {
+    await markSocialReconnect(academyId, error).catch(() => false);
     logger.info({ channel, error: (error as Error).message }, "Reading a social profile failed");
     return { name: null, username: null, picture: null };
   }
@@ -69,8 +70,8 @@ export async function ensureThread(account: AcademySocialAccount, channel: Chann
   );
   const [existing] = await db.select().from(academySocialThreadsTable).where(where);
   if (existing) {
-    if (!existing.name && !existing.username && account.pageTokenEnc) {
-      const profile = await profileOf(channel, userId, pageToken(account));
+    if (!existing.name && !existing.username && (account.pageTokenEnc || (!account.pageId && account.tokenEnc))) {
+      const profile = await profileOf(channel, userId, pageToken(account), account.academyId);
       if (profile.name || profile.username) {
         const [updated] = await db.update(academySocialThreadsTable).set({ ...profile, updatedAt: new Date() })
           .where(eq(academySocialThreadsTable.id, existing.id)).returning();
@@ -79,7 +80,9 @@ export async function ensureThread(account: AcademySocialAccount, channel: Chann
     }
     return existing;
   }
-  const profile = account.pageTokenEnc ? await profileOf(channel, userId, pageToken(account)) : { name: null, username: null, picture: null };
+  const profile = account.pageTokenEnc || (!account.pageId && account.tokenEnc)
+    ? await profileOf(channel, userId, pageToken(account), account.academyId)
+    : { name: null, username: null, picture: null };
   const [created] = await db.insert(academySocialThreadsTable)
     .values({ academyId: account.academyId, channel, externalUserId: userId, ...profile, stage: "new" })
     .onConflictDoNothing()
@@ -160,7 +163,7 @@ async function handleMessaging(account: AcademySocialAccount, channel: Channel, 
 
 const postCache = new Map<string, { permalink: string | null; caption: string | null }>();
 
-async function postInfo(channel: "instagram" | "facebook", postId: string, token: string) {
+async function postInfo(channel: "instagram" | "facebook", postId: string, token: string, academyId: number) {
   const hit = postCache.get(postId);
   if (hit) return hit;
   let info = { permalink: null as string | null, caption: null as string | null };
@@ -173,6 +176,7 @@ async function postInfo(channel: "instagram" | "facebook", postId: string, token
       info = { permalink: p.permalink_url ?? null, caption: p.message ?? null };
     }
   } catch (error) {
+    await markSocialReconnect(academyId, error).catch(() => false);
     logger.info({ postId, error: (error as Error).message }, "Reading a post for a comment failed");
   }
   postCache.set(postId, info);
@@ -185,7 +189,8 @@ export async function recordComment(account: AcademySocialAccount, channel: "ins
 }): Promise<boolean> {
   // The academy's own replies aren't comments to answer.
   if (c.fromId && (c.fromId === account.pageId || c.fromId === account.igUserId)) return false;
-  const post = c.postId && account.pageTokenEnc ? await postInfo(channel, c.postId, pageToken(account)) : { permalink: null, caption: null };
+  const canReadSocialPosts = Boolean(account.pageTokenEnc || (!account.pageId && account.tokenEnc));
+  const post = c.postId && canReadSocialPosts ? await postInfo(channel, c.postId, pageToken(account), account.academyId) : { permalink: null, caption: null };
   const rows = await db.insert(academySocialCommentsTable).values({
     academyId: account.academyId,
     channel,
@@ -264,7 +269,8 @@ export function replyWindow(thread: Pick<AcademySocialThread, "lastInAt">, now =
 }
 
 export async function sendThreadMessage(account: AcademySocialAccount, thread: AcademySocialThread, text: string, userId: number): Promise<{ id: number; status: "sent" | "failed"; error: string | null }> {
-  if (!account.pageId) throw new MetaGraphError("Connect your Facebook Page first", 409);
+  const senderId = account.pageId ?? (thread.channel === "instagram" ? account.igUserId : null);
+  if (!senderId) throw new MetaGraphError(thread.channel === "instagram" ? "Connect Instagram first" : "Connect your Facebook Page first", 409);
   const window = replyWindow(thread);
   if (window === "closed") {
     throw new MetaGraphError("Meta only lets businesses reply within 24 hours of the person's last message (7 days for a person answering by hand). Wait for them to write again.", 409);
@@ -278,9 +284,10 @@ export async function sendThreadMessage(account: AcademySocialAccount, thread: A
   let externalId: string | null = null;
   let error: string | null = null;
   try {
-    const res = await graphPost<{ message_id?: string }>(`${account.pageId}/messages`, params, { token: pageToken(account) });
+    const res = await graphPost<{ message_id?: string }>(`${senderId}/messages`, params, { token: pageToken(account) });
     externalId = res.message_id ?? null;
   } catch (e) {
+    await markSocialReconnect(account.academyId, e).catch(() => false);
     error = (e as Error).message;
   }
   const now = new Date();
@@ -301,23 +308,40 @@ export async function sendThreadMessage(account: AcademySocialAccount, thread: A
 /** Reply under the comment, publicly. */
 export async function replyToComment(account: AcademySocialAccount, channel: "instagram" | "facebook", commentId: string, text: string): Promise<void> {
   const token = pageToken(account);
-  if (channel === "instagram") await graphPost(`${commentId}/replies`, { message: text }, { token });
-  else await graphPost(`${commentId}/comments`, { message: text }, { token });
+  try {
+    if (channel === "instagram") await graphPost(`${commentId}/replies`, { message: text }, { token });
+    else await graphPost(`${commentId}/comments`, { message: text }, { token });
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error).catch(() => false);
+    throw error;
+  }
 }
 
 export async function hideComment(account: AcademySocialAccount, channel: "instagram" | "facebook", commentId: string, hidden: boolean): Promise<void> {
   const token = pageToken(account);
-  if (channel === "instagram") await graphPost(commentId, { hide: hidden ? "true" : "false" }, { token });
-  else await graphPost(commentId, { is_hidden: hidden ? "true" : "false" }, { token });
+  try {
+    if (channel === "instagram") await graphPost(commentId, { hide: hidden ? "true" : "false" }, { token });
+    else await graphPost(commentId, { is_hidden: hidden ? "true" : "false" }, { token });
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error).catch(() => false);
+    throw error;
+  }
 }
 
 /** One private message to the commenter (once per comment, within 7 days). It opens a DM thread. */
 export async function privateReply(account: AcademySocialAccount, channel: "instagram" | "facebook", commentId: string, fromId: string | null, text: string, userId: number): Promise<number | null> {
-  if (!account.pageId) throw new MetaGraphError("Connect your Facebook Page first", 409);
-  const res = await graphPost<{ message_id?: string; recipient_id?: string }>(`${account.pageId}/messages`, {
-    recipient: JSON.stringify({ comment_id: commentId }),
-    message: JSON.stringify({ text }),
-  }, { token: pageToken(account) });
+  const senderId = account.pageId ?? (channel === "instagram" ? account.igUserId : null);
+  if (!senderId) throw new MetaGraphError(channel === "instagram" ? "Connect Instagram first" : "Connect your Facebook Page first", 409);
+  let res: { message_id?: string; recipient_id?: string };
+  try {
+    res = await graphPost<{ message_id?: string; recipient_id?: string }>(`${senderId}/messages`, {
+      recipient: JSON.stringify({ comment_id: commentId }),
+      message: JSON.stringify({ text }),
+    }, { token: pageToken(account) });
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error).catch(() => false);
+    throw error;
+  }
   const recipient = res.recipient_id ?? fromId;
   if (!recipient) return null;
   const thread = await ensureThread(account, channel === "instagram" ? "instagram" : "messenger", recipient);
@@ -341,22 +365,23 @@ type ConversationRow = {
 
 /** Recent conversations from before Replay was connected, so the inbox isn't empty on day one. */
 export async function backfillConversations(account: AcademySocialAccount): Promise<number> {
-  if (!account.pageId) return 0;
+  if (!account.pageId && !account.igUserId) return 0;
   const token = pageToken(account);
   let stored = 0;
-  const platforms: Array<{ platform: string; channel: Channel; ownId: string | null }> = [
-    { platform: "messenger", channel: "messenger", ownId: account.pageId },
-    ...(account.igUserId ? [{ platform: "instagram", channel: "instagram" as Channel, ownId: account.igUserId }] : []),
+  const platforms: Array<{ baseId: string; platform: string; channel: Channel; ownId: string | null }> = [
+    ...(account.pageId ? [{ baseId: account.pageId, platform: "messenger", channel: "messenger" as Channel, ownId: account.pageId }] : []),
+    ...(account.igUserId ? [{ baseId: account.pageId ?? account.igUserId, platform: "instagram", channel: "instagram" as Channel, ownId: account.igUserId }] : []),
   ];
-  for (const { platform, channel, ownId } of platforms) {
+  for (const { baseId, platform, channel, ownId } of platforms) {
     let rows: ConversationRow[] = [];
     try {
-      rows = (await graphGet<{ data: ConversationRow[] }>(`${account.pageId}/conversations`, {
+      rows = (await graphGet<{ data: ConversationRow[] }>(`${baseId}/conversations`, {
         platform,
         fields: "id,updated_time,participants,messages.limit(15){id,message,created_time,from}",
         limit: "25",
       }, { token })).data ?? [];
     } catch (error) {
+      await markSocialReconnect(account.academyId, error).catch(() => false);
       logger.info({ platform, error: (error as Error).message }, "Backfilling conversations failed");
       continue;
     }

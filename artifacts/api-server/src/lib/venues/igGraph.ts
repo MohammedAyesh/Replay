@@ -1,7 +1,7 @@
 import type { AcademySocialAccount } from "@workspace/db";
 import { logger } from "../logger";
 import { graphDelete, graphGet, MetaGraphError } from "../meta/graph";
-import { pageToken } from "../social/account";
+import { markSocialReconnect, pageToken } from "../social/account";
 import { IG_DAILY_LIMIT } from "./igCalendar";
 
 /**
@@ -11,9 +11,10 @@ import { IG_DAILY_LIMIT } from "./igCalendar";
 
 export type IgAccountCheck =
   | { ok: true; username: string | null; limit: { used: number; total: number } | null; limitError: string | null }
-  | { ok: false; code: "not_connected" | "no_instagram" | "not_business" | "error"; error: string };
+  | { ok: false; code: "not_connected" | "no_instagram" | "not_business" | "error" | "reconnect" | "instagram_assets_pending"; error: string };
 
-const NOT_BUSINESS = "This Instagram account can't publish through Replay. It has to be an Instagram Business account linked to your Facebook Page: in Instagram, Settings → Account type and tools → Switch to professional account → Business, link it to the Page, then connect again in Instagram & Facebook.";
+const NOT_BUSINESS = "This Instagram account can't publish through Replay. It has to be an Instagram Business or Creator account. Check Instagram's account type, then connect again in Instagram & Facebook.";
+const PERMISSION_ERROR = "Replay doesn't have permission for this Instagram account yet. Connect again and allow every permission.";
 
 /** Meta's count of API posts in the last 24 hours (content_publishing_limit). */
 export async function publishingLimit(igUserId: string, token: string): Promise<{ used: number; total: number }> {
@@ -30,11 +31,19 @@ export async function publishingLimit(igUserId: string, token: string): Promise<
  * Business account (content_publishing_limit refuses it), gets a clear error.
  */
 export async function checkInstagram(account: AcademySocialAccount | null): Promise<IgAccountCheck> {
+  if (account?.error === "instagram_assets_pending") {
+    return { ok: false, code: "instagram_assets_pending", error: "Choose your Instagram account in Social to finish connecting." };
+  }
+  if (account?.status === "error") {
+    return { ok: false, code: "reconnect", error: account.error ?? "Reconnect Instagram." };
+  }
   if (!account || account.status !== "connected") {
-    return { ok: false, code: "not_connected", error: "Connect your Facebook Page and Instagram first (Instagram & Facebook)." };
+    return { ok: false, code: "not_connected", error: "Connect Instagram first in Social." };
   }
   if (!account.igUserId) {
-    return { ok: false, code: "no_instagram", error: "No Instagram Business account is linked to your Facebook Page. Link one in Meta Business Suite, then connect again." };
+    return { ok: false, code: "no_instagram", error: account.pageId
+      ? "No Instagram account is linked to your Facebook Page. Link one in Meta Business Suite, then connect again."
+      : "Connect an Instagram professional account in Social first." };
   }
   let token: string;
   try {
@@ -49,7 +58,15 @@ export async function checkInstagram(account: AcademySocialAccount | null): Prom
     const e = error as MetaGraphError;
     // 10 / 200: permission; 100 with "account type"/"business": a personal or creator account.
     const msg = (e.message ?? "").toLowerCase();
-    if (e.code === 10 || e.code === 200 || /business|professional|account type|not supported/.test(msg)) {
+    if (e.code === 10 || e.code === 200) {
+      await markSocialReconnect(account.academyId, error).catch(() => false);
+      return { ok: false, code: "reconnect", error: PERMISSION_ERROR };
+    }
+    if (e.code === 190 || e.status === 401 || e.status === 403) {
+      await markSocialReconnect(account.academyId, error).catch(() => false);
+      return { ok: false, code: "reconnect", error: account.error ?? "Reconnect Instagram. Meta authorization expired or changed. Connect again and allow every permission." };
+    }
+    if (e.code === 100 && /(account type|must be (an? )?(instagram )?(business|professional)|not a (business|professional)|professional account required)/.test(msg)) {
       return { ok: false, code: "not_business", error: NOT_BUSINESS };
     }
     logger.info({ igUserId: account.igUserId, error: e.message }, "Instagram publishing limit could not be read");
@@ -63,6 +80,7 @@ export async function deleteInstagramMedia(account: AcademySocialAccount, igMedi
     await graphDelete(igMediaId, { token: pageToken(account) });
     return { ok: true };
   } catch (error) {
+    await markSocialReconnect(account.academyId, error).catch(() => false);
     return { ok: false, error: (error as Error).message || "Meta refused the delete" };
   }
 }
@@ -71,6 +89,10 @@ export async function deleteInstagramMedia(account: AcademySocialAccount, igMedi
 export async function mediaInsights(igMediaId: string, placement: "story" | "reel", token: string): Promise<Record<string, number | null>> {
   const metrics = placement === "story" ? ["views", "reach", "replies", "shares", "navigation"] : ["views", "reach", "likes", "comments", "shares", "saved"];
   const out: Record<string, number | null> = {};
+  const isReconnectError = (error: unknown) => {
+    const e = error as { code?: number; status?: number };
+    return e?.code === 190 || e?.code === 10 || e?.code === 200 || e?.status === 401 || e?.status === 403;
+  };
   const read = async (list: string[]) => {
     const res = await graphGet<{ data?: Array<{ name: string; values?: Array<{ value: number }>; total_value?: { value: number } }> }>(
       `${igMediaId}/insights`, { metric: list.join(",") }, { token },
@@ -79,9 +101,17 @@ export async function mediaInsights(igMediaId: string, placement: "story" | "ree
   };
   try {
     await read(metrics);
-  } catch {
+  } catch (error) {
+    if (isReconnectError(error)) throw error;
     // One metric Meta doesn't give for this post fails the whole call: ask one by one.
-    for (const m of metrics) await read([m]).catch(() => { out[m] = null; });
+    for (const m of metrics) {
+      try {
+        await read([m]);
+      } catch (metricError) {
+        if (isReconnectError(metricError)) throw metricError;
+        out[m] = null;
+      }
+    }
   }
   // "plays" is what the report calls a video's views.
   if (out.views !== undefined) out.plays = out.views;

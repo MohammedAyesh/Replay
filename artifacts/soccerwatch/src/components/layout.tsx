@@ -16,7 +16,8 @@ import { recordInAppLocation } from "@/lib/find-nav";
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { t, locale, setLocale } = useTranslation();
-  const { user, isGuest } = useAuth();
+  const isLegalDocument = location === "/privacy" || location === "/terms" || location === "/delete-account";
+  const { user, isGuest } = useAuth({ skipSignedOutQuery: isLegalDocument });
   const matchCopy = useMatchCopy();
   const myMatches = useMyMatches(Boolean(user) && !isGuest);
   const academyFamily = useGetAcademyFamilyMe(undefined, { query: { queryKey: getGetAcademyFamilyMeQueryKey(), enabled: Boolean(user) && !isGuest, retry: false } });
@@ -41,7 +42,6 @@ export function Layout({ children }: { children: React.ReactNode }) {
   // Find yourself is part of the app (header, language switch, tab bar) but
   // scrolls as a document, so its tab bar is pinned to the viewport.
   const isWholeGameClaim = location.startsWith("/find/");
-  const isLegalDocument = location === "/privacy" || location === "/terms" || location === "/delete-account";
   const isOwnerShare = location.startsWith("/w/");
   const isOwnerVar = location.startsWith("/owner/var/");
   const isMatchRoom = location.startsWith("/m/");

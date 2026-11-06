@@ -26,7 +26,7 @@ export async function pullComments(academyId: number, igMediaId: string, force =
   if (!force && Date.now() - (lastPull.get(key) ?? 0) < PULL_EVERY_MS) return 0;
   lastPull.set(key, Date.now());
   const account = await getSocialAccount(academyId);
-  if (!account?.pageTokenEnc || account.status !== "connected") return 0;
+  if ((!account?.pageTokenEnc && !account?.tokenEnc) || account.status !== "connected") return 0;
   const token = pageToken(account);
   let added = 0;
   let after: string | undefined;
@@ -52,6 +52,8 @@ export async function pullComments(academyId: number, igMediaId: string, force =
       if (!after) break;
     }
   } catch (error) {
+    const { markSocialReconnect } = await import("../social/account");
+    await markSocialReconnect(academyId, error).catch(() => false);
     logger.warn({ academyId, igMediaId, error: (error as Error).message }, "Instagram: reading a post's comments failed");
   }
   return added;

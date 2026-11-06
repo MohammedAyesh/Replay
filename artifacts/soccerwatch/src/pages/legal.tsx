@@ -52,13 +52,15 @@ export function LegalPage({ doc }: { doc: "privacy" | "terms" }) {
             {copy.lastUpdated}{" "}
             <time dateTime={content.lastUpdated}>{updatedDate}</time>
           </p>
-          <p
-            role="status"
-            data-testid="status-legal-draft"
-            className="mt-4 rounded-xl border border-line bg-raised px-3 py-2 text-xs leading-5 text-muted-text"
-          >
-            {fill(content.draftNotice)}
-          </p>
+          {content.draftNotice.trim() && (
+            <p
+              role="status"
+              data-testid="status-legal-draft"
+              className="mt-4 rounded-xl border border-line bg-raised px-3 py-2 text-xs leading-5 text-muted-text"
+            >
+              {fill(content.draftNotice)}
+            </p>
+          )}
         </header>
 
         <div className="mt-4 space-y-4">

@@ -10,7 +10,7 @@ import {
 import { logger } from "../logger";
 import { graphGet, graphPost, MetaGraphError } from "../meta/graph";
 import { publicBaseUrl } from "../whatsapp/waha";
-import { getSocialAccount, pageToken, publicMediaUrl } from "./account";
+import { getSocialAccount, markSocialReconnect, pageToken, publicMediaUrl } from "./account";
 import { recordComment } from "./inbox";
 
 /**
@@ -70,7 +70,10 @@ async function publishInstagram(account: AcademySocialAccount, post: { format: F
     creation = await item(post.media[0], { caption: post.caption });
   }
   const published = await graphPost<{ id: string }>(`${ig}/media_publish`, { creation_id: creation }, { token });
-  const info = await graphGet<{ permalink?: string }>(published.id, { fields: "permalink" }, { token }).catch(() => ({ permalink: undefined }));
+  const info = await graphGet<{ permalink?: string }>(published.id, { fields: "permalink" }, { token }).catch(async (error) => {
+    await markSocialReconnect(account.academyId, error).catch(() => false);
+    return { permalink: undefined };
+  });
   return { id: published.id, permalink: info.permalink ?? null };
 }
 
@@ -99,7 +102,10 @@ async function publishFacebook(account: AcademySocialAccount, post: { format: Fo
   } else {
     id = (await graphPost<{ id: string }>(`${page}/feed`, { message: post.caption }, { token })).id;
   }
-  const info = await graphGet<{ permalink_url?: string }>(id, { fields: "permalink_url" }, { token }).catch(() => ({ permalink_url: undefined }));
+  const info = await graphGet<{ permalink_url?: string }>(id, { fields: "permalink_url" }, { token }).catch(async (error) => {
+    await markSocialReconnect(account.academyId, error).catch(() => false);
+    return { permalink_url: undefined };
+  });
   return { id, permalink: info.permalink_url ?? null };
 }
 
@@ -127,6 +133,7 @@ export async function publishPost(postId: number): Promise<AcademySocialPost> {
         patch.igMediaId = r.id;
         patch.igPermalink = r.permalink;
       } catch (e) {
+        await markSocialReconnect(account.academyId, e).catch(() => false);
         errors.push(`Instagram: ${(e as Error).message}`);
       }
     }
@@ -136,6 +143,7 @@ export async function publishPost(postId: number): Promise<AcademySocialPost> {
         patch.fbPostId = r.id;
         patch.fbPermalink = r.permalink;
       } catch (e) {
+        await markSocialReconnect(account.academyId, e).catch(() => false);
         errors.push(`Facebook: ${(e as Error).message}`);
       }
     }
@@ -191,7 +199,7 @@ type IgMedia = {
   comments?: { data?: Array<{ id: string; text?: string; username?: string; timestamp?: string; from?: { id?: string; username?: string } }> };
 };
 
-async function igMediaInsights(id: string, product: string | undefined, token: string): Promise<Insights> {
+async function igMediaInsights(id: string, product: string | undefined, token: string, academyId: number): Promise<Insights> {
   const metrics = product === "STORY" ? ["views", "reach", "replies", "shares", "total_interactions"]
     : ["views", "reach", "saved", "shares", "total_interactions"];
   const out: Insights = {};
@@ -199,6 +207,7 @@ async function igMediaInsights(id: string, product: string | undefined, token: s
     const res = await graphGet<{ data: Array<{ name: string; values?: Array<{ value: number }>; total_value?: { value: number } }> }>(`${id}/insights`, { metric: metrics.join(",") }, { token });
     for (const m of res.data ?? []) out[m.name] = m.total_value?.value ?? m.values?.[0]?.value ?? null;
   } catch (error) {
+    if (await markSocialReconnect(academyId, error).catch(() => false)) throw error;
     logger.info({ id, error: (error as Error).message }, "Instagram media insights failed");
   }
   return out;
@@ -212,7 +221,7 @@ async function syncInstagram(account: AcademySocialAccount, token: string): Prom
   }, { token });
   let n = 0;
   for (const m of res.data ?? []) {
-    const insights: Insights = { likes: m.like_count ?? null, comments: m.comments_count ?? null, ...(await igMediaInsights(m.id, m.media_product_type, token)) };
+    const insights: Insights = { likes: m.like_count ?? null, comments: m.comments_count ?? null, ...(await igMediaInsights(m.id, m.media_product_type, token, account.academyId)) };
     const thumb = m.thumbnail_url ?? (m.media_type === "VIDEO" ? null : m.media_url ?? null);
     const format: Format = m.media_type === "CAROUSEL_ALBUM" ? "carousel" : m.media_product_type === "REELS" ? "reel" : m.media_type === "VIDEO" ? "video" : "image";
     await db.insert(academySocialPostsTable).values({
@@ -248,14 +257,15 @@ type FbPost = {
   comments?: { summary?: { total_count?: number }; data?: Array<{ id: string; message?: string; created_time?: string; from?: { id?: string; name?: string } }> };
 };
 
-async function fbPostInsights(id: string, token: string): Promise<Insights> {
+async function fbPostInsights(id: string, token: string, academyId: number): Promise<Insights> {
   const out: Insights = {};
   for (const metric of ["post_impressions_unique", "post_clicks"]) {
     try {
       const res = await graphGet<{ data: Array<{ name: string; values?: Array<{ value: number }> }> }>(`${id}/insights`, { metric }, { token });
       const v = res.data?.[0]?.values?.[0]?.value;
       out[metric === "post_impressions_unique" ? "reach" : "clicks"] = typeof v === "number" ? v : null;
-    } catch {
+    } catch (error) {
+      if (await markSocialReconnect(academyId, error).catch(() => false)) throw error;
       // Not every post type or Page size has these.
     }
   }
@@ -274,7 +284,7 @@ async function syncFacebook(account: AcademySocialAccount, token: string): Promi
       reactions: p.reactions?.summary?.total_count ?? null,
       comments: p.comments?.summary?.total_count ?? null,
       shares: p.shares?.count ?? 0,
-      ...(await fbPostInsights(p.id, token)),
+      ...(await fbPostInsights(p.id, token, account.academyId)),
     };
     await db.insert(academySocialPostsTable).values({
       academyId: account.academyId, source: "synced", targets: ["facebook"], format: "image", caption: p.message ?? "",
@@ -311,6 +321,7 @@ async function accountInsights(account: AcademySocialAccount, token: string) {
       ig.followers = p.followers_count ?? null;
       ig.posts = p.media_count ?? null;
     } catch (error) {
+      if (await markSocialReconnect(account.academyId, error).catch(() => false)) return out;
       logger.info({ error: (error as Error).message }, "Instagram profile numbers failed");
     }
     const until = Math.floor(Date.now() / 1000);
@@ -321,7 +332,8 @@ async function accountInsights(account: AcademySocialAccount, token: string) {
           metric, period: "day", metric_type: "total_value", since: String(since), until: String(until),
         }, { token });
         ig[metric] = res.data?.[0]?.total_value?.value ?? null;
-      } catch {
+      } catch (error) {
+        if (await markSocialReconnect(account.academyId, error).catch(() => false)) return out;
         ig[metric] = null;
       }
     }
@@ -343,10 +355,20 @@ export async function syncSocial(academyId: number): Promise<{ instagram: number
   const account = await getSocialAccount(academyId);
   if (!account || account.status !== "connected") throw new MetaGraphError("Instagram and Facebook aren't connected", 409);
   const token = pageToken(account);
-  const instagram = await syncInstagram(account, token).catch((e) => { logger.warn({ academyId, error: (e as Error).message }, "Instagram sync failed"); return 0; });
-  const facebook = await syncFacebook(account, token).catch((e) => { logger.warn({ academyId, error: (e as Error).message }, "Facebook sync failed"); return 0; });
+  const instagram = await syncInstagram(account, token).catch(async (e) => { await markSocialReconnect(academyId, e).catch(() => false); logger.warn({ academyId, error: (e as Error).message }, "Instagram sync failed"); return 0; });
+  const current = await getSocialAccount(academyId);
+  if (!current || current.status !== "connected") return { instagram, facebook: 0 };
+  const facebook = await syncFacebook(current, token).catch(async (e) => { await markSocialReconnect(academyId, e).catch(() => false); logger.warn({ academyId, error: (e as Error).message }, "Facebook sync failed"); return 0; });
   const insights = await accountInsights(account, token);
-  await db.update(academySocialAccountsTable).set({ insights, insightsAt: new Date(), postsSyncedAt: new Date(), updatedAt: new Date() })
+  const stateMetadata = current.insights && typeof current.insights === "object"
+    ? (current.insights as Record<string, unknown>).__replayInstagramLogin
+    : undefined;
+  await db.update(academySocialAccountsTable).set({
+    insights: stateMetadata ? { ...insights, __replayInstagramLogin: stateMetadata } : insights,
+    insightsAt: new Date(),
+    postsSyncedAt: new Date(),
+    updatedAt: new Date(),
+  })
     .where(eq(academySocialAccountsTable.academyId, academyId));
   return { instagram, facebook };
 }
