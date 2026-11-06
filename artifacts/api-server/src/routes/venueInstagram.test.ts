@@ -855,6 +855,58 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     await db.delete(venueIgItemsTable).where(inArray(venueIgItemsTable.id, [day.id, hl.id]));
   });
 
+  it("in owner mode offers clips from games filmed without a booking, except inside a refused game or an academy session", async () => {
+    // Set straight on the field (the admin route's history is checked by a later test).
+    const setMode = (mode: string) => db.update(venueSettingsTable)
+      .set({ igConsentMode: mode, igConsentWording: mode === "owner" ? "Games at Galaxy are filmed and may be posted on our Instagram." : null } as never)
+      .where(eq(venueSettingsTable.academyId, venueId));
+    const [before] = await db.select().from(venueSettingsTable).where(eq(venueSettingsTable.academyId, venueId));
+    await setMode("owner");
+    const hourAgo = (h: number) => { const d = new Date(Date.now() - h * 3_600_000); d.setUTCMinutes(0, 0, 0); return ammanLocal(d); };
+    const camera = async (local: string, title: string) => {
+      const v = randomUUID();
+      const [rec] = await db.insert(recordingsTable).values({ fieldId, court: "cam1", date: local.slice(0, 10), timeSlot: local.slice(11), duration: "60:00", videoUrl: `https://vz-test.b-cdn.net/${v}/playlist.m3u8` }).returning();
+      const [clip] = await db.insert(userClipsTable).values({ userId: captainId, videoId: v, title, startTime: "600", endTime: "616" }).returning();
+      return { rec, clip };
+    };
+    // Two games nobody booked in the console, a game whose captain said no, and an academy session.
+    const a = await camera(hourAgo(24 * 12), "Your goal");
+    const b = await camera(hourAgo(24 * 12 + 3), "Your dribble");
+    const refused = await playedBooking({ hoursAgo: 24 * 12 + 6, consent: "no", clip: false });
+    const [refusedClip] = await db.insert(userClipsTable).values({ userId: captainId, videoId: refused.camVideoId, title: "Your goal", startTime: "600", endTime: "616" }).returning();
+    const academyLocal = hourAgo(24 * 12 + 9);
+    const [academyRow] = await db.select({ id: venueSettingsTable.academyId }).from(venueSettingsTable).where(eq(venueSettingsTable.academyId, venueId));
+    await db.insert(footageRequestsTable).values({
+      fieldId, cameraId: "cam1", requestedBy: ownerId, startLocal: academyLocal, endLocal: hourAgo(24 * 12 + 8), requestedSeconds: 3600, status: "ready",
+      videoId: randomUUID(), academyId: academyRow.id,
+    });
+    const session = await camera(academyLocal, "Your goal");
+    const [vs] = await db.insert(venueIgItemsTable).values({
+      academyId: venueId, originKey: `versus:unbooked-${tag}`, kind: "versus", placement: "reel", source: "field",
+      slotAt: new Date(Date.now() + 3 * 3_600_000), status: "skipped", error: "Fewer than two moments to compare this week", pinned: true,
+    }).returning();
+    const ids = async () => ((await request(app).get(`${ig()}/items/${vs.id}/library`).set(auth(ownerId)).expect(200)).body.clips as Array<{ clipId: number }>).map((c) => c.clipId);
+    const offered = await ids();
+    expect(offered).toEqual(expect.arrayContaining([a.clip.id, b.clip.id]));
+    expect(offered).not.toContain(refusedClip.id);
+    expect(offered).not.toContain(session.clip.id);
+    // Picked: no booking behind them, named by their own day, time and pitch.
+    const saved = await request(app).put(`${ig()}/items/${vs.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${a.clip.id}`, `lib:${b.clip.id}`] }).expect(200);
+    expect(saved.body.item.picks.map((n: { key: string }) => n.key)).toEqual([`lib:${a.clip.id}`, `lib:${b.clip.id}`]);
+    const [stored] = (await items()).filter((i) => i.id === vs.id);
+    const picks = stored.picks as Array<{ bookingId: number; unbooked?: boolean; recordingId: number; label: string }>;
+    expect(picks[0]).toMatchObject({ bookingId: 0, unbooked: true, recordingId: a.rec.id });
+    expect(picks[0].label.length).toBeGreaterThan(5);
+    await request(app).put(`${ig()}/items/${vs.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${a.clip.id}`, `lib:${refusedClip.id}`] }).expect(409);
+    await request(app).put(`${ig()}/items/${vs.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${a.clip.id}`, `lib:${session.clip.id}`] }).expect(409);
+    // Back on "Replay asks": a game with no booking has no captain's yes, so it isn't offered or accepted.
+    await setMode("ask");
+    expect(await ids()).not.toContain(a.clip.id);
+    await request(app).put(`${ig()}/items/${vs.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${a.clip.id}`, `lib:${b.clip.id}`] }).expect(409);
+    await db.delete(venueIgItemsTable).where(eq(venueIgItemsTable.id, vs.id));
+    await db.update(venueSettingsTable).set({ igConsentMode: before.igConsentMode, igConsentWording: before.igConsentWording } as never).where(eq(venueSettingsTable.academyId, venueId));
+  });
+
   it("shows only this field's posts on its calendar", async () => {
     const [f] = await db.insert(fieldsTable).values({ name: `Other pitch ${tag}`, cameraId: `other-cam-${tag}` }).returning({ id: fieldsTable.id });
     const other = await createVenue({ name: `Other field ${tag}`, fieldIds: [f.id], ownerUserId: strangerId });
