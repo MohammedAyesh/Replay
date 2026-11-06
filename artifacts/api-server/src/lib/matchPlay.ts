@@ -1883,6 +1883,12 @@ function credit(t: number, touches: Touch[], pitch: PitchSize | null, goalX: num
   const goal: DetectedGoal = { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null, goalX: end };
   const attacking = direction && end !== null ? direction.attacking(end, t) : null;
   if (!direction || attacking === null) return goal;
+  // the side is the one attacking that end, in its own shirt: every chance at
+  // one end of one stretch goes to the same team, whoever touched it last
+  // (live N6E3L7 after d19bd65: 9:00 and 20:30, both the orange bibs into
+  // x = 0, showed as Home and Away because the toucher's own shirt was matched
+  // to the room's colours one by one)
+  const sideKit = (direction.kitsAt?.(t) ?? direction.kits)[attacking];
   const strikerSide = touch ? direction.sideOf(touch.kit, touch.t) : null;
   if (touch && strikerSide !== null && strikerSide !== attacking) {
     // The last touch was the defending side's. Nearly always that is a block,
@@ -1894,12 +1900,12 @@ function credit(t: number, touches: Touch[], pitch: PitchSize | null, goalX: num
     const attacker = touchesBetween(touches, t - GOAL.scorerSeconds, touch.t).reverse()
       .find((c) => c.trackId !== touch.trackId && direction.sideOf(c.kit, c.t) === attacking);
     if (attacker) {
-      return { t, trackId: attacker.trackId, kit: attacker.kit, lead: round1(t - attacker.t), touchF: attacker.f, goalX: end };
+      return { t, trackId: attacker.trackId, kit: sideKit, lead: round1(t - attacker.t), touchF: attacker.f, goalX: end };
     }
-    return { t, trackId: null, kit: (direction.kitsAt?.(t) ?? direction.kits)[attacking], lead: null, touchF: null, goalX: end, ownGoal: true, ownGoalTrackId: touch.trackId };
+    return { t, trackId: null, kit: sideKit, lead: null, touchF: null, goalX: end, ownGoal: true, ownGoalTrackId: touch.trackId };
   }
-  // with nobody credited, the goal still counts for the side attacking that end
-  return touch ? goal : { ...goal, kit: (direction.kitsAt?.(t) ?? direction.kits)[attacking] };
+  // credited or not, the goal counts for the side attacking that end
+  return { ...goal, kit: sideKit };
 }
 
 /** The ball tracker's samples and the touches' ball positions together, by time. */
