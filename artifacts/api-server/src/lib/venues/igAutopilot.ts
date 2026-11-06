@@ -76,6 +76,7 @@ import {
   type IgSlotSettings,
 } from "./igCalendar";
 import { CONSENT_REASON_TEXT, bookingPostable, consentMode, type ConsentRef, type IgConsentMode } from "./igConsent";
+import { unbookedStillPostable } from "./igLibrary";
 import { checkInstagram, deleteInstagramMedia, mediaInsights } from "./igGraph";
 import { bookingFootage, pickBookingClip } from "./igPick";
 import { dayLabel, timeLabel, type Locale } from "./messages";
@@ -550,7 +551,7 @@ async function prepareRenders(venue: Venue, now: Date): Promise<number> {
 /** The bookings an item shows footage from. */
 async function bookingsShown(item: VenueIgItem): Promise<number[]> {
   if (item.kind === "booking_clip") return item.bookingId ? [item.bookingId] : [];
-  const picked = readNominees(item.picks).map((n) => n.bookingId);
+  const picked = readNominees(item.picks).map((n) => n.bookingId).filter((id) => id > 0);
   if (item.kind === "match_highlights") return [...new Set([...(item.bookingId ? [item.bookingId] : []), ...picked])];
   if (item.kind === "award_winner" || item.kind === "award_nominees") {
     const award = await awardOf(item);
@@ -558,7 +559,7 @@ async function bookingsShown(item: VenueIgItem): Promise<number[]> {
     return item.kind === "award_winner" ? nominees.filter((n) => n.key === award?.winnerKey).map((n) => n.bookingId) : nominees.map((n) => n.bookingId);
   }
   const m = (item.moment ?? {}) as { bookingIds?: number[]; choices?: Array<{ bookingId: number }> };
-  return [...new Set([...(m.bookingIds ?? []), ...(m.choices ?? []).map((c) => c.bookingId), ...picked])];
+  return [...new Set([...(m.bookingIds ?? []), ...(m.choices ?? []).map((c) => c.bookingId), ...picked])].filter((id) => id > 0);
 }
 
 /**
@@ -574,6 +575,15 @@ async function consentForItem(venue: Venue, item: VenueIgItem): Promise<{ ok: tr
     const c = await consentNow(venue, b);
     if (!c.ok) return { ok: false, reason: item.kind === "booking_clip" || item.kind === "award_winner" ? CONSENT_REASON_TEXT[c.reason].en : "A booking it shows can't be posted any more" };
     refs.push(c.ref);
+  }
+  // Picked clips from games with no booking: the field's own consent (owner mode), checked again now.
+  const unbooked = readNominees(item.picks).filter((n) => n.unbooked || n.bookingId === 0);
+  if (unbooked.length) {
+    for (const n of unbooked) {
+      if (!(await unbookedStillPostable(venue, n))) return { ok: false, reason: "A clip it shows can't be posted any more" };
+    }
+    const s = igSettings(venue);
+    for (const _ of unbooked) refs.push({ bookingId: 0, mode: "owner", consent: "yes", source: "owner_default", at: null, modeSince: s.since?.toISOString() ?? null, wording: s.wording ?? null });
   }
   const m = (item.moment ?? {}) as { userId?: number; userIds?: number[] };
   const userIds = [...(m.userId ? [m.userId] : []), ...(m.userIds ?? [])];

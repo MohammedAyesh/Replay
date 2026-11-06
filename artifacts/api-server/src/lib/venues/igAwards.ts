@@ -58,6 +58,8 @@ export type Nominee = {
   source: "confirmed_goal" | "dribble" | "shot" | "save" | "fastest" | "saved_clip" | "footage";
   /** saved_clip: the player's clip */
   clipId?: number;
+  /** A game filmed without a console booking (owner mode); bookingId is 0. Checked by unbookedStillPostable. */
+  unbooked?: boolean;
   label: string;
   labelAr: string;
   /** fastest: km/h */
