@@ -117,6 +117,11 @@ const en = {
     pickOneGame: "This post is about one game, so only that game's clips show.",
     pickLibraryNone: "No clips match. Clips come from games your field may post: the ones players cut and the ones Replay made.",
     pickMore: "Show more",
+    pickWhy: {
+      consent_off: "Instagram consent is off for this field, so no game's clips can be posted. Replay sets it: ask us to switch it on.",
+      no_consent: "None of the field's games may be posted yet: no booking has said yes to Instagram. Ask captains at booking (or mark consent on the booking), and their games' clips show here.",
+      no_games: "No played bookings yet: clips show here once a booked game has been filmed.",
+    } as Record<string, string>,
     pickOtherGame: "Game not known",
     pickClipCount: (n: number) => (n === 1 ? "1 clip" : `${n} clips`),
     pickSave: "Use these clips",
@@ -375,6 +380,11 @@ const ar: Strings = {
     pickOneGame: "هالبوست عن ماتش واحد، فبتطلع لقطات هالماتش بس.",
     pickLibraryNone: "ما في لقطات بتطابق. اللقطات بتيجي من الماتشات اللي مسموح ملعبك ينشرها: اللي قصّوها اللاعبين واللي عملتها ريبلاي.",
     pickMore: "شوف أكثر",
+    pickWhy: {
+      consent_off: "موافقة إنستغرام مسكّرة لهالملعب، فما في لقطات من أي ماتش بتقدر تنزل. ريبلاي بتضبطها: احكي معنا نفتحها.",
+      no_consent: "لسا ولا ماتش من ماتشات الملعب مسموح ينزل: ولا حجز وافق على إنستغرام. اسأل الكباتن وقت الحجز (أو علّم الموافقة على الحجز)، ولقطات ماتشاتهم بتطلع هون.",
+      no_games: "لسا ما في حجوزات انلعبت: اللقطات بتطلع هون أول ما ينصوّر ماتش محجوز.",
+    } as Record<string, string>,
     pickOtherGame: "ماتش مش معروف",
     pickClipCount: (n: number) => (n === 1 ? "لقطة وحدة" : n === 2 ? "لقطتين" : `${n} لقطات`),
     pickSave: "استخدم هاي اللقطات",

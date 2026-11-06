@@ -1,13 +1,13 @@
-import { and, desc, eq, isNull, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, or, sql } from "drizzle-orm";
 import { db, footageRequestsTable, recordingTrackingBundlesTable, recordingsTable, userClipsTable, type FootageRequest, type VenueBooking } from "@workspace/db";
 import { clipSpans } from "../creative/clipSpan";
 import { clipOrigin } from "../creative/venueLibrary";
 import { goalVotesFor, reviewedGoalsOf } from "../goalReview";
 import { logger } from "../logger";
-import { recordingsForRoom } from "../matchFeed";
+import { recordingsForRoom, recordingWindow } from "../matchFeed";
 import { detectedShots, pitchSizeOf, shotContext } from "../matchPlay";
 import { loadRecordingPlay } from "../matchPlayLoad";
-import { loadRoomByRequestId } from "../matchRooms";
+import { ammanLocalInstant, loadRoomByRequestId } from "../matchRooms";
 import { SOURCE_SCORE } from "./igCalendar";
 
 /**
@@ -67,6 +67,42 @@ export async function recordingForVideo(videoId: string | null): Promise<{ id: n
   return rec ?? null;
 }
 
+export type BookingRecording = { rec: { id: number; duration: string; fieldId: number }; fromSec: number; toSec: number };
+
+/**
+ * The camera recordings a booking was played in, with the booking's stretch of each (video seconds).
+ * A booking's own footage video is not a Library recording: the Library's matches and their clips
+ * are the camera's recordings at the field, so the link is by time and field (2026-11-06: matching
+ * by the booking's video id found nothing, and the picker was empty).
+ */
+export async function bookingRecordings(booking: Pick<VenueBooking, "startLocal" | "endLocal">, fr: FootageRequest): Promise<BookingRecording[]> {
+  const own = await recordingForVideo(fr.videoId);
+  if (own) return [{ rec: { ...own, fieldId: fr.fieldId }, fromSec: 0, toSec: durationSeconds(own.duration) ?? 0 }];
+  const start = ammanLocalInstant(booking.startLocal);
+  const end = ammanLocalInstant(booking.endLocal);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+  const day = booking.startLocal.slice(0, 10);
+  const days = [-1, 0, 1].map((d) => new Date(Date.parse(`${day}T12:00:00Z`) + d * 86_400_000).toISOString().slice(0, 10));
+  const rows = await db.select({ id: recordingsTable.id, duration: recordingsTable.duration, fieldId: recordingsTable.fieldId, date: recordingsTable.date, timeSlot: recordingsTable.timeSlot })
+    .from(recordingsTable).where(and(eq(recordingsTable.fieldId, fr.fieldId), inArray(recordingsTable.date, days)));
+  const out: BookingRecording[] = [];
+  for (const r of rows) {
+    const w = recordingWindow(r);
+    if (!Number.isFinite(w.fileStartMs) || !Number.isFinite(w.endMs)) continue;
+    const fromSec = Math.max(0, (start - w.fileStartMs) / 1000);
+    const toSec = Math.min((w.endMs - w.fileStartMs) / 1000, (end - w.fileStartMs) / 1000);
+    if (toSec - fromSec < 30) continue;
+    out.push({ rec: { id: r.id, duration: r.duration, fieldId: r.fieldId }, fromSec, toSec });
+  }
+  return out.sort((a, b) => a.rec.id - b.rec.id);
+}
+
+/** Whether a 15 s window (video ms) sits in a booking's stretch of a recording. */
+export const inStretch = (w: { fromMs: number; toMs: number }, br: BookingRecording) => {
+  const mid = (w.fromMs + w.toMs) / 2000;
+  return mid >= br.fromSec && mid <= br.toSec;
+};
+
 /** Players' own clips of a booking's footage, shared ones first, each as a 15 s video window. */
 export async function savedClipsOf(fr: FootageRequest, rec: { id: number; duration: string }, limit = 50): Promise<Array<{ clipId: number; fromMs: number; toMs: number; score: number }>> {
   if (!fr.videoId) return [];
@@ -102,10 +138,10 @@ export async function pickBookingClip(booking: VenueBooking, now = new Date()): 
   const readyAt = fr.readyAt ?? fr.updatedAt;
   const ageH = (now.getTime() - readyAt.getTime()) / 3_600_000;
 
-  // 1. Players' own clips from this match (shared ones first).
-  if (rec) {
-    const [best] = await savedClipsOf(fr, rec, 1);
-    if (best) return { ok: true, pick: { source: "saved_clip", recordingId: rec.id, clipId: best.clipId, fromMs: best.fromMs, toMs: best.toMs, atSeconds: null, score: best.score } };
+  // 1. Players' own clips from this match (shared ones first), on any recording of it.
+  for (const br of await bookingRecordings(booking, fr)) {
+    const best = (await savedClipsOf(fr, br.rec)).find((c) => inStretch(c, br));
+    if (best) return { ok: true, pick: { source: "saved_clip", recordingId: br.rec.id, clipId: best.clipId, fromMs: best.fromMs, toMs: best.toMs, atSeconds: null, score: best.score } };
   }
 
   // 2–3. The analysis: confirmed goals, then shots, then dribbles, inside this booking's share.

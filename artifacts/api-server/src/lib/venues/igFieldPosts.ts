@@ -32,7 +32,7 @@ import {
 } from "./igAwards";
 import { AWARD_ORDER, nowWall, weekStartOf, weeklyTimes, type AwardCategory, type IgSlotSettings } from "./igCalendar";
 import { wallMinutes } from "./core";
-import { bookingFootage, durationSeconds, recordingForVideo, savedClipsOf, windowAround } from "./igPick";
+import { bookingFootage, bookingRecordings, durationSeconds, inStretch, savedClipsOf, windowAround } from "./igPick";
 import { dayLabel, timeLabel, type Locale } from "./messages";
 import { availability, type Venue } from "./store";
 
@@ -574,20 +574,28 @@ export async function itemExtraClips(venue: Venue, item: VenueIgItem, booking: V
   const perGame = Math.max(4, Math.min(12, Math.floor(48 / Math.max(1, games.length))));
   for (const b of games) {
     const fr = await bookingFootage(b);
-    const rec = fr ? await recordingForVideo(fr.videoId) : null;
-    if (!fr || !rec) continue;
+    if (!fr) continue;
     const labels = await labelsFor(b);
-    for (const c of await savedClipsOf(fr, rec, 6)) {
-      saved.push({ key: `${rec.id}:clip:${c.clipId}`, recordingId: rec.id, bookingId: b.id, atSeconds: null, fromMs: c.fromMs, toMs: c.toMs, atMs: c.fromMs + 9_000, source: "saved_clip", clipId: c.clipId, ...labels });
-    }
-    const dur = durationSeconds(rec.duration);
-    if (!dur) continue;
-    for (const sec of footageTimes(dur, Math.min(perGame, Math.max(4, Math.round(dur / 300))))) {
-      const w = windowAround(sec, dur);
-      footage.push({
-        key: `${rec.id}:at:${sec}`, recordingId: rec.id, bookingId: b.id, atSeconds: null, ...w, atMs: sec * 1000, source: "footage",
-        label: `${labels.label} · ${gameMinute(sec)}`, labelAr: `${labels.labelAr} · ${gameMinute(sec)}`,
-      });
+    const stretches = await bookingRecordings(b, fr);
+    const played = stretches.reduce((t, br) => t + (br.toSec - br.fromSec), 0);
+    let gameStart = 0;
+    for (const br of stretches) {
+      for (const c of (await savedClipsOf(fr, br.rec)).filter((w) => inStretch(w, br)).slice(0, 6)) {
+        saved.push({ key: `${br.rec.id}:clip:${c.clipId}`, recordingId: br.rec.id, bookingId: b.id, atSeconds: null, fromMs: c.fromMs, toMs: c.toMs, atMs: c.fromMs + 9_000, source: "saved_clip", clipId: c.clipId, ...labels });
+      }
+      // Moments spread through the game, about one every 5 minutes; the label is the game's own minute.
+      const len = br.toSec - br.fromSec;
+      const count = Math.max(1, Math.round(Math.min(perGame, Math.max(4, Math.round(played / 300))) * (played > 0 ? len / played : 1)));
+      const dur = durationSeconds(br.rec.duration);
+      for (const rel of footageTimes(len, count)) {
+        const sec = Math.round(br.fromSec + rel);
+        const w = windowAround(sec, dur);
+        footage.push({
+          key: `${br.rec.id}:at:${sec}`, recordingId: br.rec.id, bookingId: b.id, atSeconds: null, ...w, atMs: sec * 1000, source: "footage",
+          label: `${labels.label} · ${gameMinute(gameStart + rel)}`, labelAr: `${labels.labelAr} · ${gameMinute(gameStart + rel)}`,
+        });
+      }
+      gameStart += len;
     }
   }
   return { games: games.length, filmed, saved, footage };
