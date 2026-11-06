@@ -1,5 +1,5 @@
 import { ArrowLeft } from "lucide-react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useLocale } from "@/i18n";
 import { useLegalCopy } from "@/i18n/legal-strings";
 import { fillLegalPlaceholders } from "@/legal/fill";
@@ -7,6 +7,41 @@ import { privacy } from "@/legal/privacy";
 import { terms } from "@/legal/terms";
 import type { LegalDoc } from "@/legal/types";
 import { useSupportContact } from "@/lib/client-settings";
+
+const internalLegalLinks = {
+  "{{PRIVACY_POLICY}}": {
+    href: "/privacy",
+    en: "Privacy Policy",
+    ar: "سياسة الخصوصية",
+  },
+  "{{ACCOUNT_DELETION}}": {
+    href: "/delete-account",
+    en: "account deletion page",
+    ar: "صفحة حذف الحساب",
+  },
+} as const;
+
+function renderLegalText(
+  text: string,
+  fill: (value: string) => string,
+  locale: "en" | "ar",
+) {
+  const parts = text.split(/(\{\{PRIVACY_POLICY\}\}|\{\{ACCOUNT_DELETION\}\})/g);
+  return parts.map((part, index) => {
+    const link = internalLegalLinks[part as keyof typeof internalLegalLinks];
+    return link
+      ? (
+        <Link
+          key={index}
+          href={link.href}
+          className="font-medium text-turf underline underline-offset-2 hover:text-floodlight"
+        >
+          {link[locale]}
+        </Link>
+      )
+      : fill(part);
+  });
+}
 
 export function LegalPage({ doc }: { doc: "privacy" | "terms" }) {
   const { locale } = useLocale();
@@ -72,13 +107,13 @@ export function LegalPage({ doc }: { doc: "privacy" | "terms" }) {
               <h2 className="text-lg font-semibold leading-7">{fill(section.heading)}</h2>
               <div className="mt-3 space-y-3 text-sm text-muted-text">
                 {section.paragraphs.map((paragraph, paragraphIndex) => (
-                  <p key={paragraphIndex}>{fill(paragraph)}</p>
+                  <p key={paragraphIndex}>{renderLegalText(paragraph, fill, locale)}</p>
                 ))}
               </div>
               {section.bullets && section.bullets.length > 0 && (
                 <ul className="mt-3 list-disc space-y-2 ps-6 text-sm leading-7 text-muted-text">
                   {section.bullets.map((bullet, bulletIndex) => (
-                    <li key={bulletIndex}>{fill(bullet)}</li>
+                    <li key={bulletIndex}>{renderLegalText(bullet, fill, locale)}</li>
                   ))}
                 </ul>
               )}
@@ -87,7 +122,7 @@ export function LegalPage({ doc }: { doc: "privacy" | "terms" }) {
                   key={paragraphIndex}
                   className="mt-3 text-sm leading-7 text-muted-text"
                 >
-                  {fill(paragraph)}
+                  {renderLegalText(paragraph, fill, locale)}
                 </p>
               ))}
             </section>

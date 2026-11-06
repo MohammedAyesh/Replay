@@ -3,8 +3,8 @@ import type { LegalDoc } from "./types";
 export const terms: { en: LegalDoc; ar: LegalDoc } = {
   en: {
     title: "Terms of Use",
-    lastUpdated: "2026-09-26",
-    draftNotice: "Draft — pending legal review",
+    lastUpdated: "2026-11-06",
+    draftNotice: "",
     sections: [
       {
         heading: "Filming",
@@ -22,6 +22,18 @@ export const terms: { en: LegalDoc; ar: LegalDoc } = {
         heading: "Your content",
         paragraphs: [
           "You own the clips you create. You allow {{COMPANY}} to store them and show them to the audience you choose: only you, your match, your followers or everyone.",
+        ],
+      },
+      {
+        heading: "Fields and academies",
+        paragraphs: [
+          "Field owners and academies who use the Replay console are responsible for the accuracy of their field or academy details, for the team members they give access to, and for having permission to show the people who appear in their posts. For players under 18, Replay only posts publicly when a parent or guardian has given consent, and players in a match can ask for their clip to be taken off Instagram at any time.",
+        ],
+      },
+      {
+        heading: "Facebook and Instagram",
+        paragraphs: [
+          "A field or academy can connect its Facebook Page and Instagram professional account, either with Facebook or by signing in with Instagram. By connecting, the owner lets Replay publish the posts they approve (or that they set to publish automatically), read and answer messages and comments, count award votes from comments, and read post statistics for their reports, only for that connected account. The owner must follow Meta's terms and Instagram's community guidelines; Replay is not part of Meta and is not endorsed by Meta. The owner can disconnect at any time in the console (Instagram & Facebook → Disconnect) or by removing Replay in their Facebook or Instagram settings; Replay then stops posting and deletes the stored access tokens, as described in the {{PRIVACY_POLICY}} and on the {{ACCOUNT_DELETION}}.",
         ],
       },
       {
@@ -66,6 +78,12 @@ export const terms: { en: LegalDoc; ar: LegalDoc } = {
         ],
       },
       {
+        heading: "Changes to these terms",
+        paragraphs: [
+          "We may update these terms. We'll change the date at the top, and tell field owners and academies in the console before a change that affects them takes effect.",
+        ],
+      },
+      {
         heading: "Contact",
         paragraphs: [
           "{{SUPPORT_EMAIL}}",
@@ -75,8 +93,8 @@ export const terms: { en: LegalDoc; ar: LegalDoc } = {
   },
   ar: {
     title: "شروط الاستخدام",
-    lastUpdated: "2026-09-26",
-    draftNotice: "مسودة — قيد المراجعة القانونية",
+    lastUpdated: "2026-11-06",
+    draftNotice: "",
     sections: [
       {
         heading: "التصوير",
@@ -94,6 +112,18 @@ export const terms: { en: LegalDoc; ar: LegalDoc } = {
         heading: "محتواك",
         paragraphs: [
           "أنت تملك المقاطع التي تنشئها. وتسمح لـ {{COMPANY}} بتخزينها وعرضها للجمهور الذي تختاره: لك وحدك، أو لمباراتك، أو لمتابعيك، أو للجميع.",
+        ],
+      },
+      {
+        heading: "الملاعب والأكاديميات",
+        paragraphs: [
+          "يتحمل مالكو الملاعب والأكاديميات الذين يستخدمون لوحة Replay مسؤولية دقة بيانات الملعب أو الأكاديمية، والأعضاء الذين يمنحونهم صلاحية الوصول، والحصول على إذن لعرض الأشخاص الظاهرين في منشوراتهم. لا تنشر Replay مقاطع اللاعبين دون 18 عامًا للعامة إلا بموافقة أحد الوالدين أو الوصي. ويمكن للاعبين في المباراة طلب إزالة مقطعهم من إنستغرام في أي وقت.",
+        ],
+      },
+      {
+        heading: "فيسبوك وإنستغرام",
+        paragraphs: [
+          "يمكن للملعب أو الأكاديمية ربط صفحة فيسبوك وحساب إنستغرام احترافي، إما عبر فيسبوك أو بتسجيل الدخول إلى إنستغرام. وبالربط، يفوّض المالك Replay بنشر المنشورات التي يوافق عليها (أو يحدد نشرها تلقائيًا)، وقراءة الرسائل والتعليقات والرد عليها، واحتساب أصوات الجوائز من التعليقات، وقراءة إحصاءات المنشورات لإعداد تقاريره، وذلك للحساب المتصل فقط. يجب على المالك الالتزام بشروط Meta وإرشادات مجتمع إنستغرام. Replay ليست جزءًا من Meta ولا تحظى بتأييدها. يمكن للمالك قطع الاتصال في أي وقت من لوحة التحكم (إنستغرام وفيسبوك ← قطع الاتصال)، أو بإزالة Replay من إعدادات فيسبوك أو إنستغرام. بعد ذلك، تتوقف Replay عن النشر وتحذف رموز الوصول المخزنة، كما هو موضح في {{PRIVACY_POLICY}} وعلى {{ACCOUNT_DELETION}}.",
         ],
       },
       {
@@ -135,6 +165,12 @@ export const terms: { en: LegalDoc; ar: LegalDoc } = {
         heading: "إنهاء الاستخدام",
         paragraphs: [
           "يمكنك حذف حسابك في أي وقت. ويجوز لنا إغلاق الحسابات التي تخالف هذه الشروط.",
+        ],
+      },
+      {
+        heading: "التغييرات على هذه الشروط",
+        paragraphs: [
+          "قد نحدّث هذه الشروط. سنغيّر التاريخ في الأعلى، ونبلغ مالكي الملاعب والأكاديميات في لوحة التحكم قبل سريان أي تغيير يؤثر عليهم.",
         ],
       },
       {
