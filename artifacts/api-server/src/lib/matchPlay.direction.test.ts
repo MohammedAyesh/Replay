@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrackingManifest } from "@workspace/db";
-import { detectedGoals, directionFromData, pitchDirection, type BallPoint, type BallSidecar, type Lab, type PitchDirection, type Touch } from "./matchPlay";
+import { creditGoalAt, detectedGoals, directionFromData, pitchDirection, playStretches, type BallPoint, type BallSidecar, type Lab, type PitchDirection, type Touch } from "./matchPlay";
 
 // Which end each side attacks, from the minimap, and own goals: a goal whose
 // last touch was by the side defending that end is nobody's goal. Modelled on
@@ -152,5 +152,65 @@ describe("own goals", () => {
     const g = detectedGoals([{ type: "goal", t: 4060 }], [], pitch, { ball: darkShot.ball, direction: stub(40) });
     expect(g).toHaveLength(1);
     expect(g[0]).toMatchObject({ trackId: null, kit: DARK, goalX: 40 });
+  });
+});
+
+// ------------------------------------------------- stretches and own goals (2026-11-06, recording 412)
+
+describe("stretches of play between long breaks", () => {
+  it("joins game phases across short breaks and splits them at long ones", () => {
+    expect(playStretches([
+      { kind: "game", start: 0, end: 3700 }, { kind: "break", start: 3700, end: 4102 },
+      { kind: "game", start: 4102, end: 6339 }, { kind: "break", start: 6339, end: 6772 },
+      { kind: "game", start: 6772, end: 7200 },
+    ])).toEqual([[0, 3700], [4102, 6339], [6772, 7200]]);
+    expect(playStretches([{ kind: "game", start: 0, end: 1000 }, { kind: "game", start: 1100, end: 2000 }])).toEqual([[0, 2000]]);
+    // a short stretch joins the one before it
+    expect(playStretches([{ kind: "game", start: 0, end: 1000 }, { kind: "game", start: 1400, end: 1500 }])).toEqual([[0, 1500]]);
+    expect(playStretches(null)).toEqual([]);
+  });
+
+  it("reads each stretch's own shirts and ends, and keeps a stretch's ends where its windows have no verdict", () => {
+    // game 1 (0-1200 s): white defends x = 0, dark x = 40. A long break, then
+    // game 2 (1600-2800 s) with different shirts, RED defending x = 40.
+    const RED: Lab = [120, 170, 150];
+    const BLUE: Lab = [90, 140, 80];
+    const tracks = [
+      player("w1", 0, 1199, () => 10, 6), player("w2", 0, 1199, () => 9, 14),
+      player("d1", 0, 1199, () => 30, 6), player("d2", 0, 1199, () => 31, 14),
+      player("r1", 1600, 2799, () => 30, 6), player("r2", 1600, 2799, () => 31, 14),
+      player("u1", 1600, 2799, () => 10, 6), player("u2", 1600, 2799, () => 9, 14),
+    ];
+    const p = { ...play(tracks, { w1: WHITE, w2: WHITE, d1: DARK, d2: DARK, r1: RED, r2: RED, u1: BLUE, u2: BLUE }),
+      phases: [{ kind: "game", start: 0, end: 1200 }, { kind: "break", start: 1200, end: 1600 }, { kind: "game", start: 1600, end: 2800 }] };
+    const d = pitchDirection(p)!;
+    expect(d.data?.stretches).toHaveLength(2);
+    expect(d.attacking(40, 500)).toBe(d.sideOf(WHITE, 500));
+    expect(d.attacking(0, 500)).toBe(d.sideOf(DARK, 500));
+    expect(d.attacking(0, 2000)).toBe(d.sideOf(RED, 2000));
+    expect(d.attacking(40, 2000)).toBe(d.sideOf(BLUE, 2000));
+    // survives a JSON round trip (Infinity would become null)
+    const back = directionFromData(JSON.parse(JSON.stringify(d.data)));
+    for (const t of [100, 900, 1400, 2000, 2700, 5000]) {
+      for (const goalX of [0, 40]) expect(back.attacking(goalX, t)).toBe(d.attacking(goalX, t));
+    }
+  });
+});
+
+describe("own goals need no attacker's touch in the build-up", () => {
+  const stretchy = (darkAttacks: 0 | 40): PitchDirection => ({ ...stub(darkAttacks), kitsAt: () => [WHITE, DARK] });
+
+  it("credits the attacker who shot when a defender blocked it last", () => {
+    // dark shoots at x = 40, a white defender touches it 0.4 s later
+    const touches = [...darkShot.touches, at(4050.55, "s6:t9", [38.5, 6], WHITE)];
+    const g = creditGoalAt(4051.0, touches, pitch, 40, stretchy(40));
+    expect(g.ownGoal).toBeFalsy();
+    expect(g).toMatchObject({ trackId: "s6:t1", kit: DARK, goalX: 40 });
+  });
+
+  it("is an own goal only when the defending side alone touched it", () => {
+    const touches = [at(4049.0, "s6:t8", [30, 8], WHITE), at(4050.5, "s6:t9", [37, 8], WHITE)];
+    const g = creditGoalAt(4051.0, touches, pitch, 40, stretchy(40));
+    expect(g).toMatchObject({ ownGoal: true, trackId: null, kit: DARK });
   });
 });

@@ -37,6 +37,7 @@ import {
   PICKABLE,
   bookingClipDesign,
   dayBestDesign,
+  itemExtraClips,
   itemMoments,
   gamesFilmed,
   highlightsDesign,
@@ -470,13 +471,28 @@ export function pickRule(item: Pick<VenueIgItem, "kind" | "status">): { min: num
   return rule && ["planned", "approved", "skipped", "failed"].includes(item.status) ? rule : null;
 }
 
-/** The moments the owner may pick from for this item, best first (every one from a postable booking). */
+/**
+ * What the owner may pick from for this item, every one from a postable booking: players' own
+ * clips first, then the analysis's moments (best first), then moments spread through each game.
+ * `empty` says why there is nothing: no game filmed in its time, or none the field may post.
+ */
+export async function itemPickList(venue: Venue, item: VenueIgItem, now = new Date()): Promise<{ candidates: Nominee[]; empty: "no_games" | "not_allowed" | null }> {
+  const booking = await bookingFor(item.bookingId);
+  const slots = igSettings(venue).slots;
+  const moments = await itemMoments(venue, item, booking, slots, now);
+  const extra = await itemExtraClips(venue, item, booking, slots, now);
+  const out: Nominee[] = [...extra.saved];
+  for (const m of pickSpread(moments, 30, 30)) out.push(await toNominee(m));
+  out.push(...extra.footage);
+  const seen = new Set<string>();
+  const candidates = out.filter((n) => !seen.has(n.key) && seen.add(n.key));
+  const empty = candidates.length ? null : extra.filmed > extra.games ? "not_allowed" : "no_games";
+  return { candidates, empty };
+}
+
+/** The candidates alone (what a pick is checked against). */
 export async function itemCandidates(venue: Venue, item: VenueIgItem, now = new Date()): Promise<Nominee[]> {
-  const moments = await itemMoments(venue, item, await bookingFor(item.bookingId), igSettings(venue).slots, now);
-  const spread = pickSpread(moments, 30, 30);
-  const out: Nominee[] = [];
-  for (const m of spread) out.push(await toNominee(m));
-  return out;
+  return (await itemPickList(venue, item, now)).candidates;
 }
 
 /**
@@ -491,6 +507,7 @@ export async function setItemPicks(venue: Venue, item: VenueIgItem, picks: Nomin
     ...(item.kind === "booking_clip" && picks[0] ? {
       moment: { recordingId: picks[0].recordingId, fromMs: picks[0].fromMs, toMs: picks[0].toMs, atSeconds: picks[0].atSeconds },
       recordingId: picks[0].recordingId,
+      clipId: picks[0].clipId ?? null,
       source: picks[0].source,
     } : {}),
     projectId: null,

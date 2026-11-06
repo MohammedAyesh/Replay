@@ -67,3 +67,30 @@ describe("goal review: anyone confirms", () => {
     expect(r.filter((g) => g.status === "confirmed")).toHaveLength(2);
   });
 });
+
+describe("goal candidates (2026-11-06, N6E3L7)", () => {
+  const manifest = {
+    version: 1, label: "t", width: 3840, height: 1080, frameRate: 20, frameCount: 40000, duration: 2000,
+    matchOffset: 0, videoStartSeconds: 0, segmentCount: 1, segments: [],
+    pitchModel: {
+      calibrationId: "c", fittedAt: "2026-09-01T00:00:00Z", calibratedAspectRatio: 3840 / 1080,
+      pitchWidthMetres: 40, pitchHeightMetres: 20,
+      grid: [[{ x: 0, y: -20 }, { x: 40, y: -20 }], [{ x: 0, y: 20 }, { x: 40, y: 20 }]],
+    },
+  };
+  /** source pixels for (X, Y) metres on the stub pitch model */
+  const px = (X: number, Y: number): [number, number] => [X * 96, (Y + 20) * 27];
+
+  it("drops a goals.py stop when the ball was never seen at a goal (play stopped in midfield)", async () => {
+    const { goalCandidates } = await import("./goalReview");
+    // the ball sits round the centre circle for the whole minute before the stop
+    const ball: Array<[number, number, number]> = [];
+    for (let t = 2210; t <= 2270; t += 0.5) { const [x, y] = px(20 + Math.sin(t) * 3, 10); ball.push([Math.round(t * 20), x, y]); }
+    const play = {
+      manifest, events: [{ type: "goal", t: 2269 }], touches: [], phases: null, inPlay: null, direction: null,
+      segments: null, kits: null, bib: null,
+      sidecars: [{ v: 1 as const, fps: 20, touches: [], ball, kits: {} }],
+    };
+    expect(goalCandidates(play as unknown as Parameters<typeof goalCandidates>[0])).toEqual([]);
+  });
+});

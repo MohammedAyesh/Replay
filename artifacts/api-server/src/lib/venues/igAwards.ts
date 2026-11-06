@@ -54,7 +54,10 @@ export type Nominee = {
   fromMs: number;
   toMs: number;
   atMs: number;
-  source: "confirmed_goal" | "dribble" | "shot" | "save" | "fastest";
+  /** saved_clip: a player's own clip; footage: a moment of the game the owner chose by its frame. */
+  source: "confirmed_goal" | "dribble" | "shot" | "save" | "fastest" | "saved_clip" | "footage";
+  /** saved_clip: the player's clip */
+  clipId?: number;
   label: string;
   labelAr: string;
   /** fastest: km/h */
@@ -67,7 +70,7 @@ export function readNominees(value: unknown): Nominee[] {
 }
 
 /** Bookings of a games week this field may post (consent, not under-18, not an academy's), with their footage. */
-export async function weekBookings(venue: Venue, weekStart: string, until?: Date): Promise<VenueBooking[]> {
+export async function weekBookings(venue: Venue, weekStart: string, until?: Date, opts: { anyConsent?: boolean } = {}): Promise<VenueBooking[]> {
   const from = fromAmmanLocal(`${weekStart} 00:00`);
   const weekEnd = fromAmmanLocal(`${addDays(weekStart, 7)} 00:00`);
   const to = until && weekEnd && until < weekEnd ? until : weekEnd;
@@ -84,7 +87,7 @@ export async function weekBookings(venue: Venue, weekStart: string, until?: Date
     if (!b.footageRequestId) continue;
     const fr = await bookingFootage(b);
     if (!fr || !fr.videoId || (fr.status !== "ready" && fr.status !== "partial")) continue;
-    if (!bookingPostable(mode, { ...b, academyFootage: fr.academyId != null }).ok) continue;
+    if (!opts.anyConsent && !bookingPostable(mode, { ...b, academyFootage: fr.academyId != null }).ok) continue;
     out.push(b);
   }
   return out;
@@ -95,7 +98,7 @@ async function pitchName(pitchId: number): Promise<{ en: string; ar: string }> {
   return { en: p?.name ?? "", ar: p?.nameAr || p?.name || "" };
 }
 
-async function labelsFor(b: VenueBooking) {
+export async function labelsFor(b: VenueBooking) {
   const pitch = await pitchName(b.pitchId);
   const date = b.startLocal.slice(0, 10);
   const time = b.startLocal.slice(11);

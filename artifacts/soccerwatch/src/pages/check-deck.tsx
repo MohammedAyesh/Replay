@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowUp, Check, CircleAlert, Flame, Trophy, X } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, ArrowUp, Check, CircleAlert, Flame, Trophy, X } from "lucide-react";
 import { getGetClaimChainQueryKey, getGetClaimMatchQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { createAnswerQueue, checkDeckKey, deckTally, toastKind, useCheckDeck, type AnswerOutcome, type DeckCard, type DeckResult, type DeckVerdict, type ToastKind } from "@/lib/check-deck";
@@ -65,6 +65,13 @@ export default function CheckDeckPage() {
     });
   }, [queue, queryClient, recordingId]);
 
+  // "I switched teams": from this card on, his side and the other side swap
+  // (a player who changed bibs, or a booking that held two games). Only the
+  // wording changes: a vote is goal / no goal whoever scored.
+  const [switchedAt, setSwitchedAt] = useState<number | null>(null);
+  const toggleSwitch = useCallback((at: number) => {
+    setSwitchedAt((was) => (was !== null && was <= at ? null : at));
+  }, []);
   const current = cards?.[i] ?? null;
   // the card behind starts once the active one shows a frame, or after a short grace
   useEffect(() => {
@@ -207,6 +214,8 @@ export default function CheckDeckPage() {
             videoState={videoState[card.id] ?? "loading"}
             onVideoState={onVideoState}
             onDecide={decide}
+            switched={switchedAt !== null && card.at >= switchedAt}
+            onSwitch={toggleSwitch}
           />
         ))}
         {toast && (
@@ -287,12 +296,13 @@ function Header({ copy, onClose, title, progress, streak }: {
 
 /* ----------------------------------------------------------------- card */
 
-function cardText(card: DeckCard, copy: CheckStrings) {
+function cardText(card: DeckCard, copy: CheckStrings, switched = false) {
   if (card.kind === "goal" && card.goal) {
     const g = card.goal;
+    const side = switched && g.side ? (g.side === "yours" ? "theirs" : "yours") : g.side;
     return {
       kicker: copy.kickerGoal,
-      question: g.side === "yours" ? copy.goalYours : g.side === "theirs" ? copy.goalTheirs : copy.goalUnknown,
+      question: side === "yours" ? copy.goalYours : side === "theirs" ? copy.goalTheirs : copy.goalUnknown,
       reason: g.ownGoal ? copy.ownGoal : g.source === "goal" ? copy.sourceGoal : g.source === "event" ? copy.sourceEvent : copy.sourceShot,
       yes: copy.goal, no: copy.noGoal,
     };
@@ -317,18 +327,20 @@ function toastText(kind: ToastKind, copy: CheckStrings): string {
   }
 }
 
-function CardView({ card, depth, copy, url, srcAspect, active, load, videoState, onVideoState, onDecide }: {
+function CardView({ card, depth, copy, url, srcAspect, active, load, videoState, onVideoState, onDecide, switched, onSwitch }: {
   card: DeckCard; depth: number; copy: CheckStrings & { isRtl: boolean }; url: string; srcAspect: number;
   active: boolean; load: boolean; videoState: DeckVideoState;
   onVideoState: (id: string, state: DeckVideoState) => void;
   onDecide: (verdict: DeckVerdict) => void;
+  switched: boolean;
+  onSwitch: (at: number) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const yesRef = useRef<HTMLDivElement | null>(null);
   const noRef = useRef<HTMLDivElement | null>(null);
   const upRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{ x: number; y: number; id: number } | null>(null);
-  const text = cardText(card, copy);
+  const text = cardText(card, copy, switched);
   const isGoal = card.kind === "goal";
   const ring = isGoal ? FLOOD : TURF;
 
@@ -414,9 +426,24 @@ function CardView({ card, depth, copy, url, srcAspect, active, load, videoState,
       <div className="flex flex-col gap-2 px-[18px] pb-[18px] pt-4">
         <span className={cn("font-display text-[11px] font-bold uppercase tracking-[0.3em] rtl:text-xs rtl:tracking-normal", isGoal ? "text-floodlight" : "text-turf")}>{text.kicker}</span>
         <span className="font-display text-[28px] font-bold leading-[1.05]">{text.question}</span>
-        <span className="inline-flex min-h-7 w-fit items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 text-xs font-semibold text-muted-text">
-          <CircleAlert className="h-3.5 w-3.5" />{text.reason}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex min-h-7 w-fit items-center gap-1.5 rounded-full border border-line bg-raised px-2.5 text-xs font-semibold text-muted-text">
+            <CircleAlert className="h-3.5 w-3.5" />{text.reason}
+          </span>
+          {isGoal && card.goal?.side && active && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onSwitch(card.at)}
+              aria-pressed={switched}
+              data-testid="button-deck-switched-teams"
+              className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs font-semibold active:scale-95",
+                switched ? "border-violet/50 bg-violet/15 text-[#A98CFF]" : "border-line bg-surface/60 text-text")}
+            >
+              <ArrowLeftRight className="h-3.5 w-3.5" />{switched ? copy.switchedUndo : copy.switchedTeams}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

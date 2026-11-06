@@ -22,7 +22,7 @@ import { personalMoments } from "../lib/personalMoments";
 import { clipPartsToMatchWindow, readMatchWindow } from "../lib/matchWindow";
 import { goalVotesFor, reviewedGoalsOf, setGoalVote } from "../lib/goalReview";
 import { goalVoteRights } from "../lib/goalRights";
-import { kitOfParts, seedTeams, sideOfKit, type ClaimedPart } from "../lib/matchPlay";
+import { kitOfParts, seedTeams, sideOfKit, type ClaimedPart, type Lab, type PitchDirection } from "../lib/matchPlay";
 import {
   CHECK,
   applyCuts,
@@ -128,7 +128,7 @@ router.get("/recordings/:id/claim-match/check-deck", async (req, res): Promise<v
     const mayVote = await goalVoteRights(ctx.userId, ctx.recordingId);
     for (const g of goalCardsFor(reviewed.filter((c) => mayVote(c.t)), ctx.userId, answeredKeys)) {
       const from = Math.max(0, g.t - CHECK.goalBefore), to = g.t + CHECK.goalAfter;
-      const side = pick ? sideOfKit(g.kit, pick) : null;
+      const side = sideOfGoalFor(g, parts, play) ?? (pick ? sideOfKit(g.kit, pick) : null);
       cards.push({
         id: `goal:${g.key}`,
         kind: "goal",
@@ -246,3 +246,35 @@ router.post("/recordings/:id/claim-match/check-deck/answer", async (req, res): P
 });
 
 export default router;
+
+
+/**
+ * Whose goal a chance would be, for the claimant: 0 his side's, 1 the other
+ * side's. Read at the chance's own moment, from the shirt of the piece of
+ * him nearest it and the end his side attacks then, so a player who changed
+ * bibs (switched teams) or a booking that held two groups (N6E3L7, 2026-11-06:
+ * "The other side scores?" on his own side's chance) is framed right. Null
+ * when the minimap cannot say: the caller falls back to his whole-claim shirt.
+ */
+export function sideOfGoalFor(
+  g: { t: number; goalX?: number | null },
+  parts: ReadonlyArray<{ trackId: string; fromFrame: number; toFrame: number }>,
+  play: { fps: number; kits: Map<string, Lab>; direction?: PitchDirection | null },
+): 0 | 1 | null {
+  const direction = play.direction;
+  if (!direction || g.goalX === null || g.goalX === undefined || !parts.length) return null;
+  const f = g.t * play.fps;
+  let near: { trackId: string; gap: number } | null = null;
+  for (const p of parts) {
+    const gap = f < p.fromFrame ? p.fromFrame - f : f > p.toFrame ? f - p.toFrame : 0;
+    if (!near || gap < near.gap) near = { trackId: p.trackId, gap };
+  }
+  if (!near || near.gap > SIDE_NEAR_SECONDS * play.fps) return null;
+  const mine = direction.sideOf(play.kits.get(near.trackId), g.t);
+  const attacking = direction.attacking(g.goalX, g.t);
+  if (mine === null || attacking === null) return null;
+  return mine === attacking ? 0 : 1;
+}
+
+/** a piece of him this far from the chance still says which shirt he wore, seconds */
+const SIDE_NEAR_SECONDS = 120;

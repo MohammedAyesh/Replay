@@ -67,7 +67,28 @@ export async function recordingForVideo(videoId: string | null): Promise<{ id: n
   return rec ?? null;
 }
 
-function durationSeconds(label: string | null | undefined): number | null {
+/** Players' own clips of a booking's footage, shared ones first, each as a 15 s video window. */
+export async function savedClipsOf(fr: FootageRequest, rec: { id: number; duration: string }, limit = 50): Promise<Array<{ clipId: number; fromMs: number; toMs: number; score: number }>> {
+  if (!fr.videoId) return [];
+  const rows = await db.select().from(userClipsTable).where(and(
+    or(eq(userClipsTable.footageRequestId, fr.id), eq(sql`lower(${userClipsTable.videoId})`, fr.videoId.toLowerCase()), eq(userClipsTable.sourceRecordingId, rec.id))!,
+    eq(userClipsTable.isHidden, false),
+    isNull(userClipsTable.hiddenReason),
+  )).orderBy(desc(userClipsTable.shareCount), desc(userClipsTable.likeCount), desc(userClipsTable.viewCount), desc(userClipsTable.createdAt)).limit(50);
+  const mine = rows.filter((c) => clipOrigin(c) === "player" && !c.videoId.startsWith("live:"));
+  if (!mine.length) return [];
+  const spans = await clipSpans(mine, () => rec.duration);
+  const out: Array<{ clipId: number; fromMs: number; toMs: number; score: number }> = [];
+  for (const clip of mine) {
+    if (out.length >= limit) break;
+    const span = spans.get(clip.id);
+    if (!span || span.endSec <= span.startSec) continue;
+    out.push({ clipId: clip.id, ...clipWindow(span.startSec, span.endSec), score: SOURCE_SCORE.saved_clip + Math.min(9, clip.shareCount) });
+  }
+  return out;
+}
+
+export function durationSeconds(label: string | null | undefined): number | null {
   const parts = String(label ?? "").split(":").map(Number);
   if (!parts.length || parts.some((n) => !Number.isFinite(n))) return null;
   return parts.reduce((s, n) => s * 60 + n, 0) || null;
@@ -83,21 +104,8 @@ export async function pickBookingClip(booking: VenueBooking, now = new Date()): 
 
   // 1. Players' own clips from this match (shared ones first).
   if (rec) {
-    const rows = await db.select().from(userClipsTable).where(and(
-      or(eq(userClipsTable.footageRequestId, fr.id), eq(sql`lower(${userClipsTable.videoId})`, fr.videoId.toLowerCase()), eq(userClipsTable.sourceRecordingId, rec.id))!,
-      eq(userClipsTable.isHidden, false),
-      isNull(userClipsTable.hiddenReason),
-    )).orderBy(desc(userClipsTable.shareCount), desc(userClipsTable.likeCount), desc(userClipsTable.viewCount), desc(userClipsTable.createdAt)).limit(50);
-    const mine = rows.filter((c) => clipOrigin(c) === "player" && !c.videoId.startsWith("live:"));
-    if (mine.length) {
-      const spans = await clipSpans(mine, () => rec.duration);
-      for (const clip of mine) {
-        const span = spans.get(clip.id);
-        if (!span || span.endSec <= span.startSec) continue;
-        const w = clipWindow(span.startSec, span.endSec);
-        return { ok: true, pick: { source: "saved_clip", recordingId: rec.id, clipId: clip.id, ...w, atSeconds: null, score: SOURCE_SCORE.saved_clip + Math.min(9, clip.shareCount) } };
-      }
-    }
+    const [best] = await savedClipsOf(fr, rec, 1);
+    if (best) return { ok: true, pick: { source: "saved_clip", recordingId: rec.id, clipId: best.clipId, fromMs: best.fromMs, toMs: best.toMs, atSeconds: null, score: best.score } };
   }
 
   // 2–3. The analysis: confirmed goals, then shots, then dribbles, inside this booking's share.

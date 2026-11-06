@@ -30,6 +30,7 @@ import {
   ensureRendered,
   igSettings,
   itemCandidates,
+  itemPickList,
   pickRule,
   setItemPicks,
   itemView,
@@ -407,13 +408,14 @@ router.get(`${base}/items/:itemId/candidates`, async (req, res): Promise<void> =
   const rule = pickRule(item);
   if (!rule) { res.status(409).json({ error: "This post's clips can't be picked", code: "not_pickable" }); return; }
   try {
-    const list = await itemCandidates(a.venue, item);
-    const urls = await videoUrlsFor(list.map((n) => n.recordingId));
+    const { candidates: list, empty } = await itemPickList(a.venue, item);
+    const urls = await videoUrlsFor([...new Set(list.map((n) => n.recordingId))]);
     const picked = readNominees(item.picks).map((n) => n.key);
     res.json({
       min: rule.min,
       max: rule.max,
       picked,
+      empty,
       candidates: list.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: thumb(n.recordingId, urls, n.atMs) })),
     });
   } catch (error) {

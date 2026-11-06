@@ -76,7 +76,7 @@ export type RecordingPlay = {
 };
 
 /** Bumped whenever what is derived here changes, so cached results are rebuilt. */
-const DERIVE_VERSION = 7; // 7: bibs judged by their place on the colour plane (bibCore)
+const DERIVE_VERSION = 8; // 8: shirts and ends read per stretch of play between long breaks; own goals need no attacker touch
 
 // Each entry holds the whole match's tracking: rec 410's 61 MB of segments parse
 // to ~150 MB. Six of them, the bundle cache and two ffmpeg renders could reach the
@@ -315,7 +315,7 @@ export async function loadRecordingPlay(recordingId: number, opts: { keepSegment
   let direction: PitchDirection | null = null;
   if (segments) {
     try {
-      direction = pitchDirection({ manifest, sidecars, segments, kits, bib: bibKit(sidecars), inPlay });
+      direction = pitchDirection({ manifest, sidecars, segments, kits, bib: bibKit(sidecars), inPlay, phases: phasesFromProvenance(manifest.provenance) });
     } catch (error) {
       logger.warn({ recordingId, err: error }, "Could not read the attacking direction");
     }
