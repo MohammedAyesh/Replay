@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrackingManifest } from "@workspace/db";
-import { creditGoalAt, detectedGoals, directionFromData, pitchDirection, playStretches, type BallPoint, type BallSidecar, type Lab, type PitchDirection, type Touch } from "./matchPlay";
+import { creditGoalAt, detectedGoals, directionFromData, pitchDirection, playStretches, stretchesFromInPlay, type BallPoint, type BallSidecar, type Lab, type PitchDirection, type Touch } from "./matchPlay";
 
 // Which end each side attacks, from the minimap, and own goals: a goal whose
 // last touch was by the side defending that end is nobody's goal. Modelled on
@@ -212,5 +212,12 @@ describe("own goals need no attacker's touch in the build-up", () => {
     const touches = [at(4049.0, "s6:t8", [30, 8], WHITE), at(4050.5, "s6:t9", [37, 8], WHITE)];
     const g = creditGoalAt(4051.0, touches, pitch, 40, stretchy(40));
     expect(g).toMatchObject({ ownGoal: true, trackId: null, kit: DARK });
+  });
+});
+
+describe("stretches without phases (bundles uploaded before 2026-11-06)", () => {
+  it("reads breaks off the ball-in-play spans", () => {
+    const inPlay: Array<[number, number]> = [[0, 1500], [1510, 3680], [4106, 5000], [5010, 6337], [6784, 7200]];
+    expect(playStretches(stretchesFromInPlay(inPlay))).toEqual([[0, 3680], [4106, 6337], [6784, 7200]]);
   });
 });
