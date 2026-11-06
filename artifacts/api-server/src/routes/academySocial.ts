@@ -106,8 +106,14 @@ router.get(base, async (req, res): Promise<void> => {
   if (!a) return;
   try {
     const account = await getSocialAccount(a.academyId);
-    const storedInsights = account?.insights && typeof account.insights === "object"
-      ? account.insights as Record<string, unknown>
+    const emptyPendingLogin = account?.status === "pending"
+      && !account.tokenEnc
+      && !account.pageTokenEnc
+      && !account.pageId
+      && !account.igUserId;
+    const visibleAccount = account && !emptyPendingLogin ? account : null;
+    const storedInsights = visibleAccount?.insights && typeof visibleAccount.insights === "object"
+      ? visibleAccount.insights as Record<string, unknown>
       : null;
     const publicInsights = storedInsights
       ? Object.fromEntries(Object.entries(storedInsights).filter(([key]) => key !== "__replayInstagramLogin"))
@@ -120,19 +126,19 @@ router.get(base, async (req, res): Promise<void> => {
         (select count(*)::int from academy_social_comments c where c.academy_id = ${a.academyId} and c.read_at is null and c.deleted_at is null and c.replied_at is null and c.private_replied_at is null and not c.hidden) as "openComments"
     `) as unknown as { rows: Array<{ unreadThreads: number; openComments: number }> }).rows;
     res.json({
-      connection: account ? {
-        status: account.status,
-        pageId: account.pageId,
-        pageName: account.pageName,
-        igUserId: account.igUserId,
-        igUsername: account.igUsername,
-        igPicture: account.igPicture,
-        subscribed: account.subscribed,
-        error: account.error,
-        connectedAt: account.connectedAt,
+      connection: visibleAccount ? {
+        status: visibleAccount.status,
+        pageId: visibleAccount.pageId,
+        pageName: visibleAccount.pageName,
+        igUserId: visibleAccount.igUserId,
+        igUsername: visibleAccount.igUsername,
+        igPicture: visibleAccount.igPicture,
+        subscribed: visibleAccount.subscribed,
+        error: visibleAccount.error,
+        connectedAt: visibleAccount.connectedAt,
         insights: publicInsights,
-        insightsAt: account.insightsAt,
-        postsSyncedAt: account.postsSyncedAt,
+        insightsAt: visibleAccount.insightsAt,
+        postsSyncedAt: visibleAccount.postsSyncedAt,
       } : null,
       app: { appId: config.appId, graphVersion: config.graphVersion, loginConfigId: socialLoginConfigId(), configured: Boolean(config.appSecret) },
       canManage: a.manages,

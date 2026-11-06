@@ -20,6 +20,14 @@ import {
 
 const instagramLoginMock = vi.hoisted(() => ({
   assets: [] as Array<{ id: string; username?: string; profile_picture_url?: string }>,
+  lookupResponses: {} as Record<string, {
+    accounts?: Array<{ id: string; username?: string; profile_picture_url?: string }>;
+    status?: number;
+    error?: { message: string; status: number; code?: number; subcode?: number };
+  }>,
+  lookupCalls: [] as string[],
+  clientBusinessId: "123456789012345",
+  businessLookupError: null as null | { message: string; status: number; code?: number; subcode?: number },
   limitError: null as null | { message: string; status: number; code?: number },
 }));
 
@@ -45,6 +53,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 const stamp = Date.now();
+const TEST_BUSINESS_ID = "123456789012345";
 const PAGE = `7${stamp}`;
 const IG = `17${stamp}`;
 const IGSID = `55${stamp}`;
@@ -56,6 +65,26 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/meta/graph")>();
   return {
     ...actual,
+    graphGetWithStatus: vi.fn(async (path: string) => {
+      instagramLoginMock.lookupCalls.push(path);
+      if (path === "me") {
+        const error = instagramLoginMock.businessLookupError;
+        if (error) throw new actual.MetaGraphError(error.message, error.status, error.code, error.subcode);
+        return { data: { client_business_id: instagramLoginMock.clientBusinessId }, status: 200 };
+      }
+      const configured = instagramLoginMock.lookupResponses[path];
+      if (configured?.error) {
+        const error = configured.error;
+        throw new actual.MetaGraphError(error.message, error.status, error.code, error.subcode);
+      }
+      return {
+        data: {
+          data: configured?.accounts
+            ?? (path === "me/assigned_instagram_accounts" ? instagramLoginMock.assets : []),
+        },
+        status: configured?.status ?? 200,
+      };
+    }),
     graphGet: vi.fn(async (path: string, params: Record<string, string> = {}) => {
       if (path === "me") return { client_business_id: "test-business" };
       if (path === "me/assigned_instagram_accounts") return { data: instagramLoginMock.assets };
@@ -149,6 +178,12 @@ beforeAll(async () => {
 
 beforeEach(() => {
   posts.length = 0;
+  instagramLoginMock.assets = [];
+  instagramLoginMock.lookupResponses = {};
+  instagramLoginMock.lookupCalls.length = 0;
+  instagramLoginMock.clientBusinessId = TEST_BUSINESS_ID;
+  instagramLoginMock.businessLookupError = null;
+  instagramLoginMock.limitError = null;
 });
 
 afterAll(async () => {
@@ -313,6 +348,8 @@ describe("posts", () => {
 describe("Instagram API with Unified Login", () => {
   const instagramId1 = `8${stamp}`;
   const instagramId2 = `9${stamp}`;
+  const instagramId3 = `7${stamp}`;
+  const instagramId4 = `6${stamp}`;
   let unifiedFieldId = 0;
   let unifiedAcademyId = 0;
   beforeAll(async () => {
@@ -332,8 +369,14 @@ describe("Instagram API with Unified Login", () => {
       .set(auth(ownerId)).send({}).expect(200);
     return { url: new URL(res.body.url as string), state: new URL(res.body.url as string).searchParams.get("state")! };
   };
-  const completeLogin = async (state: string, assets: typeof instagramLoginMock.assets) => {
+  const completeLogin = async (
+    state: string,
+    assets: typeof instagramLoginMock.assets,
+    lookupResponses: typeof instagramLoginMock.lookupResponses = {},
+  ) => {
     instagramLoginMock.assets = assets;
+    instagramLoginMock.lookupResponses = lookupResponses;
+    instagramLoginMock.lookupCalls.length = 0;
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(JSON.stringify({ access_token: "test-instagram-system-token" }), { status: 200 }),
     );
@@ -402,11 +445,74 @@ describe("Instagram API with Unified Login", () => {
     expect(saved).toMatchObject({ pageId: null, pageName: null, pageTokenEnc: null, igUserId: instagramId2, igUsername: "second" });
   });
 
+  it("falls back to owned Instagram accounts when the assigned lookup is empty", async () => {
+    const { state } = await startLogin();
+    const response = await completeLogin(state, [], {
+      [`${TEST_BUSINESS_ID}/owned_instagram_accounts`]: {
+        accounts: [{ id: instagramId3, username: "owned.account", profile_picture_url: "https://pic/owned.jpg" }],
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ status: "connected", igUsername: "owned.account", academyId: unifiedAcademyId });
+    expect(instagramLoginMock.lookupCalls).toEqual([
+      "me",
+      "me/assigned_instagram_accounts",
+      `${TEST_BUSINESS_ID}/owned_instagram_accounts`,
+    ]);
+    const [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved).toMatchObject({ status: "connected", igUserId: instagramId3, igUsername: "owned.account" });
+  });
+
+  it("continues to a later account lookup after an earlier lookup errors", async () => {
+    const { state } = await startLogin();
+    const response = await completeLogin(state, [], {
+      "me/assigned_instagram_accounts": {
+        error: { message: "Assigned account lookup denied", status: 403, code: 10, subcode: 123 },
+      },
+      [`${TEST_BUSINESS_ID}/owned_instagram_accounts`]: {
+        accounts: [{ id: instagramId4, username: "later.account" }],
+      },
+    });
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({ status: "connected", igUsername: "later.account", academyId: unifiedAcademyId });
+    expect(instagramLoginMock.lookupCalls).toEqual([
+      "me",
+      "me/assigned_instagram_accounts",
+      `${TEST_BUSINESS_ID}/owned_instagram_accounts`,
+    ]);
+  });
+
   it("explains when Meta returned no Instagram assets", async () => {
     const { state } = await startLogin();
     const response = await completeLogin(state, []);
     expect(response.status).toBe(400);
-    expect(response.body.error).toContain("Pick your Instagram account when Meta asks, then try again");
+    expect(response.body.error).toContain("Pick your Instagram account when Meta asks, then try again. (Ref: no_ig_assets)");
+    expect(instagramLoginMock.lookupCalls).toEqual([
+      "me",
+      "me/assigned_instagram_accounts",
+      `${TEST_BUSINESS_ID}/owned_instagram_accounts`,
+      `${TEST_BUSINESS_ID}/instagram_accounts`,
+      `${TEST_BUSINESS_ID}/client_instagram_accounts`,
+    ]);
+  });
+
+  it("does not show an empty pending login as a connection", async () => {
+    const [field] = await db.insert(fieldsTable).values({ name: `Empty Instagram ${stamp}`, cameraId: `empty-ig-${stamp}` })
+      .returning({ id: fieldsTable.id });
+    const [academy] = await db.insert(academiesTable).values({ name: `Empty Instagram Academy ${stamp}`, fieldId: field.id })
+      .returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: academy.id, userId: ownerId, role: "owner" });
+    try {
+      await startLogin(academy.id);
+      const overview = await request(app).get(`/api/academy/console/academies/${academy.id}/social`)
+        .set(auth(ownerId)).expect(200);
+      expect(overview.body.connection).toBeNull();
+      const [stored] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, academy.id));
+      expect(stored).toMatchObject({ status: "pending", tokenEnc: null, pageTokenEnc: null, pageId: null, igUserId: null });
+    } finally {
+      await db.delete(academiesTable).where(eq(academiesTable.id, academy.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, field.id));
+    }
   });
 
   it("marks permission and expired-token errors for reconnect without treating account type as permission", async () => {
@@ -438,17 +544,31 @@ describe("Instagram API with Unified Login", () => {
   });
 
   it("refuses an Instagram account already connected to another academy", async () => {
-    const [field] = await db.insert(fieldsTable).values({ name: `Other Social ${stamp}`, cameraId: `other-${stamp}` }).returning({ id: fieldsTable.id });
-    const [otherAcademy] = await db.insert(academiesTable).values({ name: `Other Social Academy ${stamp}`, fieldId: field.id }).returning({ id: academiesTable.id });
+    const conflictInstagramId = `5${stamp}`;
+    const [sourceField] = await db.insert(fieldsTable).values({ name: `Source Social ${stamp}`, cameraId: `source-${stamp}` })
+      .returning({ id: fieldsTable.id });
+    const [sourceAcademy] = await db.insert(academiesTable).values({ name: `Source Social Academy ${stamp}`, fieldId: sourceField.id })
+      .returning({ id: academiesTable.id });
+    await db.insert(academySocialAccountsTable).values({
+      academyId: sourceAcademy.id,
+      igUserId: conflictInstagramId,
+      status: "connected",
+    });
+    const [targetField] = await db.insert(fieldsTable).values({ name: `Target Social ${stamp}`, cameraId: `target-${stamp}` })
+      .returning({ id: fieldsTable.id });
+    const [otherAcademy] = await db.insert(academiesTable).values({ name: `Target Social Academy ${stamp}`, fieldId: targetField.id })
+      .returning({ id: academiesTable.id });
     await db.insert(academyMembersTable).values({ academyId: otherAcademy.id, userId: ownerId, role: "owner" });
     try {
       const { state } = await startLogin(otherAcademy.id);
-      const response = await completeLogin(state, [{ id: instagramId2, username: "already.connected" }]);
+      const response = await completeLogin(state, [{ id: conflictInstagramId, username: "already.connected" }]);
       expect(response.status).toBe(409);
       expect(response.body.error).toContain("already connected to another academy");
     } finally {
       await db.delete(academiesTable).where(eq(academiesTable.id, otherAcademy.id));
-      await db.delete(fieldsTable).where(eq(fieldsTable.id, field.id));
+      await db.delete(academiesTable).where(eq(academiesTable.id, sourceAcademy.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, targetField.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, sourceField.id));
     }
   });
 

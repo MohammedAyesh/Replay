@@ -2,7 +2,7 @@ import { createHmac } from "node:crypto";
 import { metaConfig, type MetaConfig } from "./config";
 
 export class MetaGraphError extends Error {
-  constructor(message: string, readonly status: number, readonly code?: number) {
+  constructor(message: string, readonly status: number, readonly code?: number, readonly subcode?: number) {
     super(message);
   }
 }
@@ -17,17 +17,33 @@ function withAuth(params: Record<string, string>, config: MetaConfig, token?: st
 }
 
 async function parse<T>(response: Response): Promise<T> {
-  const data = (await response.json().catch(() => null)) as { error?: { message?: string; code?: number } } | null;
+  const data = (await response.json().catch(() => null)) as {
+    error?: { message?: string; code?: number; error_subcode?: number };
+  } | null;
   if (!response.ok || data?.error) {
-    throw new MetaGraphError(data?.error?.message ?? `Meta returned ${response.status}`, response.status, data?.error?.code);
+    throw new MetaGraphError(
+      data?.error?.message ?? `Meta returned ${response.status}`,
+      response.status,
+      data?.error?.code,
+      data?.error?.error_subcode,
+    );
   }
   return data as T;
 }
 
-export async function graphGet<T>(path: string, params: Record<string, string> = {}, options: { token?: string; config?: MetaConfig } = {}): Promise<T> {
+export async function graphGetWithStatus<T>(
+  path: string,
+  params: Record<string, string> = {},
+  options: { token?: string; config?: MetaConfig } = {},
+): Promise<{ data: T; status: number }> {
   const config = options.config ?? metaConfig();
   const url = `https://graph.facebook.com/${config.graphVersion}/${path.replace(/^\//, "")}?${withAuth(params, config, options.token)}`;
-  return parse<T>(await fetch(url, { signal: AbortSignal.timeout(20_000) }));
+  const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  return { data: await parse<T>(response), status: response.status };
+}
+
+export async function graphGet<T>(path: string, params: Record<string, string> = {}, options: { token?: string; config?: MetaConfig } = {}): Promise<T> {
+  return (await graphGetWithStatus<T>(path, params, options)).data;
 }
 
 export async function graphPost<T>(path: string, params: Record<string, string> = {}, options: { token?: string; config?: MetaConfig } = {}): Promise<T> {
