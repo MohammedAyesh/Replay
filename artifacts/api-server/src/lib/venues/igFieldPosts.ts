@@ -24,6 +24,7 @@ import {
   readNominees,
   toNominee,
   videoOffset,
+  labelsFor,
   weekBookings,
   weekMoments,
   type Nominee,
@@ -31,7 +32,7 @@ import {
 } from "./igAwards";
 import { AWARD_ORDER, nowWall, weekStartOf, weeklyTimes, type AwardCategory, type IgSlotSettings } from "./igCalendar";
 import { wallMinutes } from "./core";
-import { windowAround } from "./igPick";
+import { bookingFootage, durationSeconds, recordingForVideo, savedClipsOf, windowAround } from "./igPick";
 import { dayLabel, timeLabel, type Locale } from "./messages";
 import { availability, type Venue } from "./store";
 
@@ -99,6 +100,8 @@ const SOURCE_LABEL: Record<string, { en: string; ar: string }> = {
   shot: { en: "Shot", ar: "تسديدة" },
   save: { en: "Save", ar: "تصدّي" },
   fastest: { en: "Top speed", ar: "أسرع ركضة" },
+  saved_clip: { en: "Highlight", ar: "لقطة" },
+  footage: { en: "Highlight", ar: "لقطة" },
 };
 export const sourceLabel = (source: string, ar: boolean) => (ar ? SOURCE_LABEL[source]?.ar : SOURCE_LABEL[source]?.en) ?? source;
 
@@ -512,25 +515,81 @@ const momentsOfBooking = async (venue: Venue, booking: VenueBooking): Promise<Ra
   return bestMoments(raw).filter((m) => m.booking.id === booking.id);
 };
 
+/** Which games an item's clips come from: a games week (up to `until`), narrowed to one booking or one day. */
+type ItemScope = { weekStart: string; until?: Date; keep: (b: VenueBooking) => boolean };
+
+function itemScope(item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSettings, now: Date): ItemScope | null {
+  const slotAt = item.slotAt ?? now;
+  switch (item.kind) {
+    case "booking_clip":
+    case "match_highlights":
+      return booking ? { weekStart: weekStartOf(wallMinutes(booking.startLocal)), keep: (b) => b.id === booking.id } : null;
+    case "versus": {
+      const t = weeklyTimes(s, "versus", nowWall(slotAt));
+      return { weekStart: t.gamesWeek, until: fromAmmanLocal(wallString(t.gamesUntil!)) ?? slotAt, keep: () => true };
+    }
+    case "top5": return { weekStart: weeklyTimes(s, "top5", nowWall(slotAt)).gamesWeek, keep: () => true };
+    case "day_best": {
+      const date = item.originKey.slice("day:".length);
+      return { weekStart: weekStartOf(wallMinutes(`${date} 12:00`)), keep: (b) => b.startLocal.slice(0, 10) === date };
+    }
+    default: return null;
+  }
+}
+
 /**
  * The moments an item may show, best first (what the owner picks from): a booking's own for its
  * clip and its highlights; this week's for "which is nicer?"; last week's for the top 5; the
  * day's for the day's best. Every one is from a booking the field may post.
  */
 export async function itemMoments(venue: Venue, item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSettings, now: Date): Promise<RawMoment[]> {
-  const slotAt = item.slotAt ?? now;
-  switch (item.kind) {
-    case "booking_clip":
-    case "match_highlights":
-      return booking ? momentsOfBooking(venue, booking) : [];
-    case "versus": {
-      const t = weeklyTimes(s, "versus", nowWall(slotAt));
-      return bestMoments((await weekMoments(venue, t.gamesWeek, fromAmmanLocal(wallString(t.gamesUntil!)) ?? slotAt)).raw);
+  const scope = itemScope(item, booking, s, now);
+  if (!scope) return [];
+  return bestMoments((await weekMoments(venue, scope.weekStart, scope.until)).raw).filter((m) => scope.keep(m.booking));
+}
+
+/** Frames offered from one game when the owner picks by eye: one every ~5 minutes, 4 to 12. */
+export function footageTimes(durationSec: number, count: number): number[] {
+  if (!(durationSec > 20) || count < 1) return [];
+  return Array.from({ length: count }, (_, i) => Math.round(durationSec * (i + 0.5) / count));
+}
+
+const gameMinute = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
+
+/**
+ * Clips beyond the analysis, so the owner can always pick (Mohammed, 2026-11-06: the picker was
+ * empty whenever the analysis found nothing, which is exactly when the post had skipped):
+ * the players' own clips of each game, then moments spread through each game, chosen by frame.
+ * Same games as itemMoments (consent included). `filmed` counts the scope's filmed games whatever
+ * their consent, so an empty list can say why.
+ */
+export async function itemExtraClips(venue: Venue, item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSettings, now: Date): Promise<{ games: number; filmed: number; saved: Nominee[]; footage: Nominee[] }> {
+  const scope = itemScope(item, booking, s, now);
+  if (!scope) return { games: 0, filmed: 0, saved: [], footage: [] };
+  const games = (await weekBookings(venue, scope.weekStart, scope.until)).filter(scope.keep);
+  const filmed = games.length ? games.length : (await weekBookings(venue, scope.weekStart, scope.until, { anyConsent: true })).filter(scope.keep).length;
+  const saved: Nominee[] = [];
+  const footage: Nominee[] = [];
+  const perGame = Math.max(4, Math.min(12, Math.floor(48 / Math.max(1, games.length))));
+  for (const b of games) {
+    const fr = await bookingFootage(b);
+    const rec = fr ? await recordingForVideo(fr.videoId) : null;
+    if (!fr || !rec) continue;
+    const labels = await labelsFor(b);
+    for (const c of await savedClipsOf(fr, rec, 6)) {
+      saved.push({ key: `${rec.id}:clip:${c.clipId}`, recordingId: rec.id, bookingId: b.id, atSeconds: null, fromMs: c.fromMs, toMs: c.toMs, atMs: c.fromMs + 9_000, source: "saved_clip", clipId: c.clipId, ...labels });
     }
-    case "top5": return bestMoments((await weekMoments(venue, weeklyTimes(s, "top5", nowWall(slotAt)).gamesWeek)).raw);
-    case "day_best": return momentsOfDay(venue, item.originKey.slice("day:".length));
-    default: return [];
+    const dur = durationSeconds(rec.duration);
+    if (!dur) continue;
+    for (const sec of footageTimes(dur, Math.min(perGame, Math.max(4, Math.round(dur / 300))))) {
+      const w = windowAround(sec, dur);
+      footage.push({
+        key: `${rec.id}:at:${sec}`, recordingId: rec.id, bookingId: b.id, atSeconds: null, ...w, atMs: sec * 1000, source: "footage",
+        label: `${labels.label} · ${gameMinute(sec)}`, labelAr: `${labels.labelAr} · ${gameMinute(sec)}`,
+      });
+    }
   }
+  return { games: games.length, filmed, saved, footage };
 }
 
 const montageCustom = (ar: boolean, nominees: Nominee[], meta: (n: Nominee) => string) => {

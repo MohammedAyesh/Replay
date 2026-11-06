@@ -729,12 +729,25 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     expect(hl.slotAt!.getTime()).toBeGreaterThanOrEqual(played.booking.endsAt.getTime() + 119 * 60_000);
     await scheduleFieldPosts(venue, new Date());
     expect((await items()).filter((i) => i.originKey === `highlights:${played.booking.id}`)).toHaveLength(1);
-    // Its moments (none here: no analysis), how many to pick, and a pick that isn't one of them refused.
+    // No analysis here, yet there is still something to pick (2026-11-06: the picker was empty then):
+    // the captain's saved clip first, then moments spread through the game, about one every 5 minutes.
     const cands = await request(app).get(`${ig()}/items/${hl.id}/candidates`).set(auth(ownerId)).expect(200);
-    expect(cands.body).toMatchObject({ min: 2, max: 5, picked: [], candidates: [] });
+    expect(cands.body).toMatchObject({ min: 2, max: 5, picked: [], empty: null });
+    const list = cands.body.candidates as Array<{ key: string; source: string; bookingId: number; label: string }>;
+    expect(list[0]).toMatchObject({ key: expect.stringMatching(new RegExp(`^${played.rec.id}:clip:\\d+$`)), source: "saved_clip", bookingId: played.booking.id });
+    const footage = list.filter((c) => c.source === "footage");
+    expect(footage).toHaveLength(12);
+    expect(footage.every((c) => c.bookingId === played.booking.id && /\d+:\d{2}$/.test(c.label))).toBe(true);
+    expect(new Set(list.map((c) => c.key)).size).toBe(list.length);
+    // How many to pick, and a pick that isn't one of them refused.
     await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: ["1:2.0"] }).expect(400);
     await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: ["1:2.0", "1:9.0"] }).expect(409);
     await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(strangerId)).send({ keys: [] }).expect((r) => expect([403, 404]).toContain(r.status));
+    // The saved clip and a moment of the game, in that order: kept, and the post stays on.
+    const picked = await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: [list[0].key, footage[3].key] }).expect(200);
+    expect(picked.body.item.picks.map((n: { key: string }) => n.key)).toEqual([list[0].key, footage[3].key]);
+    const [withPicks] = (await items()).filter((i) => i.id === hl.id);
+    expect(withPicks.status).not.toBe("skipped");
     // Back to automatic: the design is made again, and with no moments the game is skipped, saying why.
     const cleared = await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: [] }).expect(200);
     expect(cleared.body.item).toMatchObject({ kind: "match_highlights", picks: [] });
@@ -743,6 +756,18 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     // Posts that choose their own clips can't be picked.
     const [slots] = (await items()).filter((i) => i.kind === "open_slots" || i.kind === "thanks");
     if (slots) await request(app).get(`${ig()}/items/${slots.id}/candidates`).set(auth(ownerId)).expect(409);
+  });
+
+  it("offers nothing from a game the field may not post, and says why", async () => {
+    const refused = await playedBooking({ hoursAgo: 7, consent: "no" });
+    const [hl] = await db.insert(venueIgItemsTable).values({
+      academyId: venueId, originKey: `highlights:${refused.booking.id}`, kind: "match_highlights", placement: "reel", source: "field",
+      bookingId: refused.booking.id, slotAt: new Date(Date.now() + 3_600_000), status: "planned", pinned: true,
+    }).returning();
+    const cands = await request(app).get(`${ig()}/items/${hl.id}/candidates`).set(auth(ownerId)).expect(200);
+    expect(cands.body).toMatchObject({ candidates: [], empty: "not_allowed" });
+    await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: [`${refused.rec.id}:at:150`, `${refused.rec.id}:at:450`] }).expect(409);
+    await db.delete(venueIgItemsTable).where(eq(venueIgItemsTable.id, hl.id));
   });
 
   it("shows only this field's posts on its calendar", async () => {
@@ -764,7 +789,9 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     // Three hours before 13:00 is inside the render-ahead window.
     await scheduleFieldPosts(venue, fromAmmanLocal(`${today} 10:00`)!);
     const [day] = (await items()).filter((i) => i.originKey === `day:${addDays(today, -1)}`);
-    expect(day).toMatchObject({ kind: "day_best", placement: "reel", status: "planned" });
+    expect(day).toMatchObject({ kind: "day_best", placement: "reel" });
+    // Made inside its render window: with fewer than two analysed moments it skips, and stays pickable.
+    expect(["planned", "skipped"]).toContain(day.status);
     const cands = await request(app).get(`${ig()}/items/${day.id}/candidates`).set(auth(ownerId)).expect(200);
     expect(cands.body).toMatchObject({ min: 2, max: 5 });
     await db.update(venueSettingsTable).set({ igSlots: {} }).where(eq(venueSettingsTable.academyId, venueId));

@@ -96,7 +96,7 @@ export function PickClipsDialog({ venueId, item, onClose }: { venueId: number; i
         ) : q.isError ? (
           <p className="text-sm text-red-400" role="alert">{(q.error as Error).message}</p>
         ) : !q.data?.candidates.length ? (
-          <p className="py-6 text-sm text-muted-text">{copy.calendar.pickNone}</p>
+          <p className="py-6 text-sm text-muted-text" data-testid="ig-pick-none">{q.data?.empty === "not_allowed" ? copy.calendar.pickNotAllowed : q.data?.empty === "no_games" ? copy.calendar.pickNoGames : copy.calendar.pickNone}</p>
         ) : (
           <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {q.data.candidates.map((c) => {

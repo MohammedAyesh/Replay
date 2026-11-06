@@ -49,7 +49,7 @@ export type IgItem = {
   picks?: Array<{ key: string; source: string; label: string; labelAr: string }>;
 };
 export type IgCandidate = { key: string; source: string; label: string; labelAr: string; bookingId: number; thumbnailUrl: string | null };
-export type IgCandidates = { min: number; max: number; picked: string[]; candidates: IgCandidate[] };
+export type IgCandidates = { min: number; max: number; picked: string[]; candidates: IgCandidate[]; empty?: "no_games" | "not_allowed" | null };
 /** Posts whose clips the owner can pick, and how many (lib/venues/igFieldPosts.ts PICKABLE). */
 export const IG_PICKABLE: Record<string, { min: number; max: number }> = {
   booking_clip: { min: 1, max: 1 }, versus: { min: 2, max: 2 }, top5: { min: 5, max: 5 }, match_highlights: { min: 2, max: 5 }, day_best: { min: 2, max: 5 },
