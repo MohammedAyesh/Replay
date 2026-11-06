@@ -49,6 +49,34 @@ tags:
     description: Social stream controls
 
 paths:
+  /admin/reviewer-sign-in-links:
+    post:
+      operationId: createAdminReviewerSignInLinks
+      tags: [admin]
+      summary: Create one-use reviewer sign-in links for a Replay user
+      security:
+        - clerkSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminReviewerSignInLinksInput"
+      responses:
+        "201":
+          description: Reviewer sign-in URLs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewerSignInLinksResponse"
+        "400":
+          description: Invalid request or excluded target account
+        "403":
+          description: Admin access required
+        "404":
+          description: Replay user not found
+        "502":
+          description: Clerk could not create sign-in tokens
   /friends/player-identification-requests/sent:
     get:
       operationId: listSentPlayerIdentificationRequests
@@ -10202,6 +10230,62 @@ components:
       properties:
         ok:
           type: boolean
+
+    AdminReviewerSignInLinksInput:
+      oneOf:
+        - $ref: "#/components/schemas/AdminReviewerSignInLinksByEmail"
+        - $ref: "#/components/schemas/AdminReviewerSignInLinksById"
+
+    AdminReviewerSignInLinksByEmail:
+      type: object
+      required: [email]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        count:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 3
+        validityDays:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 30
+
+    AdminReviewerSignInLinksById:
+      type: object
+      required: [userId]
+      additionalProperties: false
+      properties:
+        userId:
+          type: integer
+          minimum: 1
+        count:
+          type: integer
+          minimum: 1
+          maximum: 5
+          default: 3
+        validityDays:
+          type: integer
+          minimum: 1
+          maximum: 30
+          default: 30
+
+    ReviewerSignInLinksResponse:
+      type: object
+      required: [urls]
+      properties:
+        urls:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items:
+            type: string
+            format: uri
 
   securitySchemes:
     clerkSession:

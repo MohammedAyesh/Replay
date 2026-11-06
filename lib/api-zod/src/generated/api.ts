@@ -9,6 +9,45 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary Create one-use reviewer sign-in links for a Replay user
+ */
+export const createAdminReviewerSignInLinksBodyOneEmailMax = 254;
+
+export const createAdminReviewerSignInLinksBodyOneCountDefault = 3;
+export const createAdminReviewerSignInLinksBodyOneCountMax = 5;
+
+export const createAdminReviewerSignInLinksBodyOneValidityDaysDefault = 30;
+export const createAdminReviewerSignInLinksBodyOneValidityDaysMax = 30;
+
+
+export const createAdminReviewerSignInLinksBodyTwoCountDefault = 3;
+export const createAdminReviewerSignInLinksBodyTwoCountMax = 5;
+
+export const createAdminReviewerSignInLinksBodyTwoValidityDaysDefault = 30;
+export const createAdminReviewerSignInLinksBodyTwoValidityDaysMax = 30;
+
+
+
+export const CreateAdminReviewerSignInLinksBody = zod.union([zod.object({
+  "email": zod.string().email().max(createAdminReviewerSignInLinksBodyOneEmailMax),
+  "count": zod.number().min(1).max(createAdminReviewerSignInLinksBodyOneCountMax).default(createAdminReviewerSignInLinksBodyOneCountDefault),
+  "validityDays": zod.number().min(1).max(createAdminReviewerSignInLinksBodyOneValidityDaysMax).default(createAdminReviewerSignInLinksBodyOneValidityDaysDefault)
+}),zod.object({
+  "userId": zod.number().min(1),
+  "count": zod.number().min(1).max(createAdminReviewerSignInLinksBodyTwoCountMax).default(createAdminReviewerSignInLinksBodyTwoCountDefault),
+  "validityDays": zod.number().min(1).max(createAdminReviewerSignInLinksBodyTwoValidityDaysMax).default(createAdminReviewerSignInLinksBodyTwoValidityDaysDefault)
+})])
+
+export const createAdminReviewerSignInLinksResponseUrlsMax = 5;
+
+
+
+export const CreateAdminReviewerSignInLinksResponse = zod.object({
+  "urls": zod.array(zod.string().url()).min(1).max(createAdminReviewerSignInLinksResponseUrlsMax)
+})
+
+
+/**
  * @summary List teammate identity suggestions sent by the current player
  */
 export const ListSentPlayerIdentificationRequestsResponseItem = zod.object({
@@ -1290,6 +1329,9 @@ export const GetClaimMatchRosterResponse = zod.object({
 /**
  * @summary List the current player's earned match moments
  */
+export const listClaimMatchClipsResponseClipsItemFollowItemMin = 3;
+export const listClaimMatchClipsResponseClipsItemFollowItemMax = 3;
+
 
 
 export const ListClaimMatchClipsResponseItem = zod.object({
@@ -1303,8 +1345,8 @@ export const ListClaimMatchClipsResponseItem = zod.object({
   "momentSeconds": zod.number(),
   "kind": zod.string(),
   "status": zod.string(),
-  "userClipId": zod.number().optional().describe('The user clip row backing this earned moment, when materialized.')
-  ,"follow": zod.array(zod.tuple([zod.number(), zod.number(), zod.number()])).optional().describe('Player follow points retained for delayed clip framing.')
+  "userClipId": zod.number().optional().describe('The user clip row backing this earned moment, when materialized.'),
+  "follow": zod.array(zod.array(zod.number()).min(listClaimMatchClipsResponseClipsItemFollowItemMin).max(listClaimMatchClipsResponseClipsItemFollowItemMax)).optional().describe('Player follow points retained for delayed clip framing.')
 }))
 })
 export const ListClaimMatchClipsResponse = zod.array(ListClaimMatchClipsResponseItem)

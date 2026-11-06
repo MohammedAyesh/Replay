@@ -3426,6 +3426,12 @@ export interface ClaimEarnedClip {
   status: string;
   /** The user clip row backing this earned moment, when materialized. */
   userClipId?: number;
+  /**
+     * Player follow points retained for delayed clip framing.
+     * @items.minItems 3
+     * @items.maxItems 3
+     */
+  follow?: number[][];
 }
 
 /**
@@ -3984,6 +3990,46 @@ export interface SentPlayerIdentificationRequest {
 
 export interface PlayerIdentificationRequestActionResponse {
   ok: boolean;
+}
+
+export interface AdminReviewerSignInLinksByEmail {
+  /** @maxLength 254 */
+  email: string;
+  /**
+     * @minimum 1
+     * @maximum 5
+     */
+  count?: number;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  validityDays?: number;
+}
+
+export interface AdminReviewerSignInLinksById {
+  /** @minimum 1 */
+  userId: number;
+  /**
+     * @minimum 1
+     * @maximum 5
+     */
+  count?: number;
+  /**
+     * @minimum 1
+     * @maximum 30
+     */
+  validityDays?: number;
+}
+
+export type AdminReviewerSignInLinksInput = AdminReviewerSignInLinksByEmail | AdminReviewerSignInLinksById;
+
+export interface ReviewerSignInLinksResponse {
+  /**
+     * @minItems 1
+     * @maxItems 5
+     */
+  urls: string[];
 }
 
 export type GetWeeklyHighlightCandidatesParams = {

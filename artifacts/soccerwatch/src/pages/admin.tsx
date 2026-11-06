@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
 import { FieldConsolesTab } from "@/components/admin/field-consoles-tab";
+import { ReviewerSignInLinksPanel } from "@/components/admin/ReviewerSignInLinksPanel";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
@@ -1305,6 +1306,7 @@ function AccountsTab() {
 
   return (
     <div className="space-y-4">
+      <ReviewerSignInLinksPanel />
       <div className="flex items-center gap-3">
         <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />

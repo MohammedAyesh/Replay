@@ -35,6 +35,7 @@ const AdminSetup = lazyPage(() => import("@/pages/admin-setup"));
 const Onboarding = lazyPage(() => import("@/pages/onboarding"));
 const NotFound = lazyPage(() => import("@/pages/not-found"));
 const InstagramCallbackPage = lazyPage(() => import("@/pages/instagram-callback"));
+const ReviewerSignInPage = lazyPage(() => import("@/pages/reviewer-sign-in"));
 const Academies = lazyPage(() => import("@/pages/academies"));
 const View = lazyPage(() => import("@/pages/view"));
 const Live = lazyPage(() => import("@/pages/live"));
@@ -490,7 +491,7 @@ function ClerkQueryClientCacheInvalidator() {
 function AuthRedirectGuard() {
   const [location, setLocation] = useLocation();
   const pathname = location.split(/[?#]/)[0];
-  const isPublicLegalRoute = ["/privacy", "/terms", "/delete-account"].includes(pathname);
+  const isPublicLegalRoute = ["/privacy", "/terms", "/delete-account", "/reviewer-sign-in"].includes(pathname);
   const { user, isLoading, isGuest } = useAuth({ skipSignedOutQuery: isPublicLegalRoute });
   const { isSignedIn } = useUser();
 
@@ -548,13 +549,13 @@ function FindQuickRedirect() {
 function AppRouter() {
   const [location] = useLocation();
   const routePath = location.split(/[?#]/)[0];
-  const isPublicLegalRoute = ["/privacy", "/terms", "/delete-account"].includes(routePath);
+  const isPublicLegalRoute = ["/privacy", "/terms", "/delete-account", "/reviewer-sign-in"].includes(routePath);
   const { user, isLoading, isGuest, isSignedIn, refetchLocalUser } = useAuth({ skipSignedOutQuery: isPublicLegalRoute });
   const { signOut } = useClerk();
   const { locale } = useLocale();
   const isPublicJoinRoute = location.split("?")[0].startsWith("/join/") || location.split("?")[0].startsWith("/v/");
   const isPublicFamilyRoute = location.split(/[?#]/)[0].startsWith("/p/") || location.split(/[?#]/)[0].startsWith("/academy/invite/");
-  const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute;
+  const isPublicStandaloneRoute = isPublicJoinRoute || isPublicFamilyRoute || routePath === "/reviewer-sign-in";
   const isFamilyMeRoute = location.split(/[?#]/)[0] === "/academy/me" || location.split(/[?#]/)[0].startsWith("/academy/me/match/");
   // "Is this you?" is a full-screen swipe deck: no app bars around it
   const isDeckRoute = /^\/find\/\d+\/check\/?$/.test(location.split(/[?#]/)[0]);
@@ -606,6 +607,7 @@ function AppRouter() {
       <Suspense fallback={<PageLoading />}>
       <Switch>
         <Route path="/connect/instagram/callback" component={InstagramCallbackPage} />
+        <Route path="/reviewer-sign-in" component={ReviewerSignInPage} />
         <Route path="/join/:code" component={AcademyJoinPage} />
         <Route path="/p/:token"><AcademyFamilyPage source="token" /></Route>
         <Route path="/academy/invite/:token" component={AcademyInvitePage} />
@@ -726,9 +728,14 @@ function AppContent() {
   // /demo is the short page; /demo/full the long one. Both are public, with
   // no sign-in and no app chrome.
   const publicDemo = location === "/demo" || location === "/demo/full";
-  const publicLegalPage = ["/privacy", "/terms", "/delete-account"].includes(location.split(/[?#]/)[0]);
+  const pagePath = location.split(/[?#]/)[0];
+  const publicLegalPage = ["/privacy", "/terms", "/delete-account"].includes(pagePath);
+  const publicReviewerSignInPage = pagePath === "/reviewer-sign-in";
   return (
-    <LocaleProvider publicPage={publicDemo || publicLegalPage} defaultLocale={publicLegalPage ? "en" : undefined}>
+    <LocaleProvider
+      publicPage={publicDemo || publicLegalPage || publicReviewerSignInPage}
+      defaultLocale={publicLegalPage || publicReviewerSignInPage ? "en" : undefined}
+    >
       <FullscreenVideoProvider>
         {publicDemo
           ? <Suspense fallback={<PageLoading />}>{location === "/demo" ? <SimpleDemo /> : <DemoPage />}</Suspense>

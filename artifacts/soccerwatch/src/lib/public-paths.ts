@@ -1,4 +1,4 @@
-const standalonePaths = ["/privacy", "/terms", "/delete-account", "/demo", "/connect/instagram/callback"] as const;
+const standalonePaths = ["/privacy", "/terms", "/delete-account", "/demo", "/connect/instagram/callback", "/reviewer-sign-in"] as const;
 
 export function isPublicStandalonePath(pathname: string): boolean {
   if (pathname.startsWith("/join/")) return true;

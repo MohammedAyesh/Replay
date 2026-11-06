@@ -14,5 +14,10 @@ export interface ClaimEarnedClip {
   status: string;
   /** The user clip row backing this earned moment, when materialized. */
   userClipId?: number;
-  follow?: [number, number, number][];
+  /**
+     * Player follow points retained for delayed clip framing.
+     * @items.minItems 3
+     * @items.maxItems 3
+     */
+  follow?: number[][];
 }

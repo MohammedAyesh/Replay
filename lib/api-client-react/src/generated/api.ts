@@ -102,6 +102,7 @@ import type {
   AdminMatchWindowBody,
   AdminMatchWindowResponse,
   AdminRecordingPlayerMetricsResponse,
+  AdminReviewerSignInLinksInput,
   AdminTrackingBundlePatchBody,
   AdminTrackingBundlePatchResponse,
   AnalysisJobQuote,
@@ -170,6 +171,7 @@ import type {
   RecordingWatchTimeInput,
   ReplaceTrackingBundleBodyTwo,
   ResolveClaimMatchDisputeInput,
+  ReviewerSignInLinksResponse,
   SentPlayerIdentificationRequest,
   ShareLinkResult,
   StreamingStartInput,
@@ -220,6 +222,76 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getCreateAdminReviewerSignInLinksUrl = () => {
+
+
+
+
+  return `/api/admin/reviewer-sign-in-links`
+}
+
+/**
+ * @summary Create one-use reviewer sign-in links for a Replay user
+ */
+export const createAdminReviewerSignInLinks = async (adminReviewerSignInLinksInput: AdminReviewerSignInLinksInput, options?: RequestInit): Promise<ReviewerSignInLinksResponse> => {
+
+  return customFetch<ReviewerSignInLinksResponse>(getCreateAdminReviewerSignInLinksUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(adminReviewerSignInLinksInput)
+  }
+);}
+
+
+
+
+export const getCreateAdminReviewerSignInLinksMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminReviewerSignInLinks>>, TError,{data: BodyType<AdminReviewerSignInLinksInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createAdminReviewerSignInLinks>>, TError,{data: BodyType<AdminReviewerSignInLinksInput>}, TContext> => {
+
+const mutationKey = ['createAdminReviewerSignInLinks'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createAdminReviewerSignInLinks>>, {data: BodyType<AdminReviewerSignInLinksInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  createAdminReviewerSignInLinks(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateAdminReviewerSignInLinksMutationResult = NonNullable<Awaited<ReturnType<typeof createAdminReviewerSignInLinks>>>
+    export type CreateAdminReviewerSignInLinksMutationBody = BodyType<AdminReviewerSignInLinksInput>
+    export type CreateAdminReviewerSignInLinksMutationError = ErrorType<void>
+
+    /**
+ * @summary Create one-use reviewer sign-in links for a Replay user
+ */
+export const useCreateAdminReviewerSignInLinks = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createAdminReviewerSignInLinks>>, TError,{data: BodyType<AdminReviewerSignInLinksInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createAdminReviewerSignInLinks>>,
+        TError,
+        {data: BodyType<AdminReviewerSignInLinksInput>},
+        TContext
+      > => {
+      return useMutation(getCreateAdminReviewerSignInLinksMutationOptions(options));
+    }
 
 export const getListSentPlayerIdentificationRequestsUrl = () => {
 
