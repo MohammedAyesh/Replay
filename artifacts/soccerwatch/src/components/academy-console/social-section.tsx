@@ -135,7 +135,9 @@ function Overview({ academyId, data }: { academyId: number; data: SocialOverview
                   {working || connect.isPending ? <Loader2 className="me-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <Facebook className="me-2 h-4 w-4" aria-hidden="true" />}
                   {working || connect.isPending ? copy.connect.working : copy.connect.button}
                 </Button>
-                {data.canManage && <InstagramUnifiedLogin academyId={academyId} pending={instagramPending} reconnect={c?.status === "error"} />}
+                {data.canManage && data.app.instagramLoginEnabled && (
+                  <InstagramUnifiedLogin enabled={data.app.instagramLoginEnabled} academyId={academyId} pending={instagramPending} reconnect={c?.status === "error"} />
+                )}
               </div>
             )}
         {(error || connect.isError || select.isError) && <p className="mt-3 text-sm text-red-400" role="alert">{error ?? ((connect.error ?? select.error) as Error).message}</p>}

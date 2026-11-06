@@ -8,7 +8,7 @@ const en = {
   tabs: { overview: "Overview", comments: "Comments", posts: "Posts" },
   connect: {
     title: "Connect Instagram and your Facebook Page",
-    body: "Connect a Facebook Page with a linked Instagram account, or use Continue with Instagram if you don't have a Facebook account or Page.",
+    body: "Connect your Facebook Page and the Instagram professional account linked to it.",
     button: "Connect with Facebook",
     working: "Connecting…",
     instagramButton: "Continue with Instagram",
@@ -121,7 +121,7 @@ const ar: Strings = {
   tabs: { overview: "نظرة عامة", comments: "التعليقات", posts: "المنشورات" },
   connect: {
     title: "اربط إنستغرام وصفحة فيسبوك",
-    body: "اربط صفحة فيسبوك عليها حساب إنستغرام احترافي، أو كمّل عن طريق إنستغرام إذا ما عندك حساب أو صفحة فيسبوك.",
+    body: "اربط صفحة فيسبوك وحساب إنستغرام الاحترافي المرتبط فيها.",
     button: "اربط عن طريق فيسبوك",
     working: "عم نربط…",
     instagramButton: "كمّل عن طريق إنستغرام",

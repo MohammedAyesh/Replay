@@ -13,8 +13,9 @@ type InstagramOAuthMessage = {
   errorDescription?: string;
 };
 
-export function InstagramUnifiedLogin({ academyId, pending = false, reconnect = false, disabled = false }: {
+export function InstagramUnifiedLogin({ academyId, enabled, pending = false, reconnect = false, disabled = false }: {
   academyId: number;
+  enabled: boolean;
   pending?: boolean;
   reconnect?: boolean;
   disabled?: boolean;
@@ -27,7 +28,7 @@ export function InstagramUnifiedLogin({ academyId, pending = false, reconnect = 
   const [working, setWorking] = useState(false);
   const [selecting, setSelecting] = useState(pending);
   const [error, setError] = useState<string | null>(null);
-  const assets = usePendingInstagramAssets(academyId, selecting || pending);
+  const assets = usePendingInstagramAssets(academyId, enabled && (selecting || pending));
 
   const refresh = async () => {
     await Promise.all([
@@ -97,6 +98,8 @@ export function InstagramUnifiedLogin({ academyId, pending = false, reconnect = 
       onError: (e) => setError((e as Error).message),
     });
   };
+
+  if (!enabled) return null;
 
   return (
     <div className="space-y-3" data-testid="instagram-unified-login">

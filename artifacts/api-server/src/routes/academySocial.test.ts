@@ -350,9 +350,11 @@ describe("Instagram API with Unified Login", () => {
   const instagramId2 = `9${stamp}`;
   const instagramId3 = `7${stamp}`;
   const instagramId4 = `6${stamp}`;
+  const previousInstagramLoginEnabled = process.env.INSTAGRAM_LOGIN_ENABLED;
   let unifiedFieldId = 0;
   let unifiedAcademyId = 0;
   beforeAll(async () => {
+    process.env.INSTAGRAM_LOGIN_ENABLED = "true";
     const [field] = await db.insert(fieldsTable).values({ name: `Instagram Login ${stamp}`, cameraId: `ig-login-${stamp}` }).returning({ id: fieldsTable.id });
     unifiedFieldId = field.id;
     const [academy] = await db.insert(academiesTable).values({ name: `Instagram Login Academy ${stamp}`, fieldId: field.id }).returning({ id: academiesTable.id });
@@ -360,6 +362,8 @@ describe("Instagram API with Unified Login", () => {
     await db.insert(academyMembersTable).values({ academyId: unifiedAcademyId, userId: ownerId, role: "owner" });
   });
   afterAll(async () => {
+    if (previousInstagramLoginEnabled === undefined) delete process.env.INSTAGRAM_LOGIN_ENABLED;
+    else process.env.INSTAGRAM_LOGIN_ENABLED = previousInstagramLoginEnabled;
     if (unifiedAcademyId) await db.delete(academiesTable).where(eq(academiesTable.id, unifiedAcademyId));
     if (unifiedFieldId) await db.delete(fieldsTable).where(eq(fieldsTable.id, unifiedFieldId));
   });
@@ -387,6 +391,30 @@ describe("Instagram API with Unified Login", () => {
       fetchSpy.mockRestore();
     }
   };
+
+  it("defaults Instagram-only login off when the environment switch is unset", async () => {
+    const enabledSetting = process.env.INSTAGRAM_LOGIN_ENABLED;
+    delete process.env.INSTAGRAM_LOGIN_ENABLED;
+    try {
+      const status = await request(app).get("/api/social/instagram-login/status").expect(200);
+      expect(status.body).toEqual({ enabled: false });
+
+      const overview = await request(app).get(`/api/academy/console/academies/${unifiedAcademyId}/social`)
+        .set(auth(ownerId)).expect(200);
+      expect(overview.body.app.instagramLoginEnabled).toBe(false);
+
+      const start = await request(app).post(`/api/academy/console/academies/${unifiedAcademyId}/social/connect/instagram`)
+        .set(auth(ownerId)).send({}).expect(404);
+      expect(start.body.error).toBe("This sign-in option isn't available right now");
+
+      const finish = await request(app).post("/api/academy/console/social/instagram/callback")
+        .set(auth(ownerId)).send({ state: "ignored-while-disabled", code: "test-auth-code" }).expect(404);
+      expect(finish.body.error).toBe("This sign-in option isn't available right now");
+    } finally {
+      if (enabledSetting === undefined) delete process.env.INSTAGRAM_LOGIN_ENABLED;
+      else process.env.INSTAGRAM_LOGIN_ENABLED = enabledSetting;
+    }
+  });
 
   it("signs and consumes owner/academy state, exchanges one account, and saves it without a Page", async () => {
     const { url, state } = await startLogin();

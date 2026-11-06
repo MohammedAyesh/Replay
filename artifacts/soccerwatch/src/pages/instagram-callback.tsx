@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, Instagram, Loader2 } from "lucide-react";
-import { completeInstagramLogin, type InstagramAssetChoice, type InstagramLoginResult, useSelectInstagramAsset } from "@/lib/academy-social-api";
+import { completeInstagramLogin, getInstagramLoginStatus, type InstagramAssetChoice, type InstagramLoginResult, useSelectInstagramAsset } from "@/lib/academy-social-api";
 import { Button } from "@/components/ui/button";
 
 type CallbackMessage = {
@@ -28,23 +28,39 @@ export default function InstagramCallbackPage() {
     const oauthError = params.get("error") ?? undefined;
     const errorDescription = params.get("error_description") ?? undefined;
     window.history.replaceState(null, "", window.location.pathname);
-    if (!oauthState) {
-      setError("Instagram sign-in did not include a secure state. Start again from Social.");
-      setStatus("Instagram wasn't connected.");
-      return;
-    }
-    const message: CallbackMessage = { type: messageType, code, state: oauthState, error: oauthError, errorDescription };
-    if (window.opener && window.opener !== window) {
-      window.opener.postMessage(message, window.location.origin);
-      setStatus("Instagram sign-in returned. This window will close after Replay confirms it.");
-      return;
-    }
-    void completeInstagramLogin(message).then((result) => applyResult(result)).catch((e: unknown) => {
-      setError((e as Error).message || "Instagram sign-in failed.");
-      setStatus("Instagram wasn't connected.");
+    let cancelled = false;
+    const continueLogin = () => {
+      if (!oauthState) {
+        setError("Instagram sign-in did not include a secure state. Start again from Social.");
+        setStatus("Instagram wasn't connected.");
+        return;
+      }
+      const message: CallbackMessage = { type: messageType, code, state: oauthState, error: oauthError, errorDescription };
+      if (window.opener && window.opener !== window) {
+        window.opener.postMessage(message, window.location.origin);
+        setStatus("Instagram sign-in returned. This window will close after Replay confirms it.");
+        return;
+      }
+      void completeInstagramLogin(message).then((result) => applyResult(result)).catch((e: unknown) => {
+        setError((e as Error).message || "Instagram sign-in failed.");
+        setStatus("Instagram wasn't connected.");
+      });
+    };
+    void getInstagramLoginStatus().then(({ enabled }) => {
+      if (cancelled) return;
+      if (!enabled) {
+        setStatus("This sign-in option isn't available right now");
+        return;
+      }
+      continueLogin();
+    }).catch(() => {
+      // Preserve the existing callback path if the lightweight status check is
+      // temporarily unavailable; the callback endpoint remains authoritative.
+      if (!cancelled) continueLogin();
     });
     // Only process the OAuth response once, on page entry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => { cancelled = true; };
   }, []);
 
   const applyResult = (result: InstagramLoginResult) => {

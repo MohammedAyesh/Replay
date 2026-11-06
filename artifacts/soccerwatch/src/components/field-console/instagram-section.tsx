@@ -25,6 +25,7 @@ import { Card, ErrorText, Pill, SectionHeader, Skeleton, ToggleRow } from "./sha
 import { SuggestionList } from "./instagram-suggestions";
 import { DesignThumb, PickClipsDialog } from "./instagram-design";
 import { apiUrl } from "@/lib/academy-studio-api";
+import { useSocialOverview } from "@/lib/academy-social-api";
 import { InstagramUnifiedLogin } from "@/components/academy-console/instagram-unified-login";
 import { useSocialCopy } from "@/i18n/social-strings";
 
@@ -37,6 +38,7 @@ export function InstagramSection({ venueId }: { venueId: number }) {
   const copy = useInstagramCopy();
   const [days, setDays] = useState<7 | 14>(7);
   const data = useInstagram(venueId, days);
+  const social = useSocialOverview(venueId);
 
   return (
     <div className="space-y-6" data-testid="field-instagram">
@@ -47,18 +49,20 @@ export function InstagramSection({ venueId }: { venueId: number }) {
           ))}
         </div>
       } />
-      {data.isLoading ? <Skeleton rows={4} /> : data.error ? <ErrorText error={data.error} /> : data.data ? <Body venueId={venueId} data={data.data} /> : null}
+      {data.isLoading ? <Skeleton rows={4} /> : data.error ? <ErrorText error={data.error} /> : data.data
+        ? <Body venueId={venueId} data={data.data} instagramLoginEnabled={social.data?.app.instagramLoginEnabled === true} />
+        : null}
     </div>
   );
 }
 
-function Body({ venueId, data }: { venueId: number; data: InstagramData }) {
+function Body({ venueId, data, instagramLoginEnabled }: { venueId: number; data: InstagramData; instagramLoginEnabled: boolean }) {
   const copy = useInstagramCopy();
   return (
     <>
       <div className="grid gap-4 lg:grid-cols-3">
         <ConsentCard data={data} />
-        <AccountCard academyId={venueId} data={data} />
+        <AccountCard academyId={venueId} data={data} instagramLoginEnabled={instagramLoginEnabled} />
         <SettingsCard venueId={venueId} data={data} />
       </div>
       {data.flaggedRemovals.length > 0 && <Removals venueId={venueId} data={data} />}
@@ -124,7 +128,7 @@ function ConsentCard({ data }: { data: InstagramData }) {
   );
 }
 
-function AccountCard({ academyId, data }: { academyId: number; data: InstagramData }) {
+function AccountCard({ academyId, data, instagramLoginEnabled }: { academyId: number; data: InstagramData; instagramLoginEnabled: boolean }) {
   const copy = useInstagramCopy();
   const socialCopy = useSocialCopy();
   const a = data.account;
@@ -135,11 +139,14 @@ function AccountCard({ academyId, data }: { academyId: number; data: InstagramDa
       {a.ok ? <p className="mt-3 font-semibold text-text" dir="ltr">{a.username ? socialCopy.connect.instagramConnected(a.username) : "—"}</p> : (
         <div className="mt-3 space-y-3">
           <p className="rounded-xl border border-[#FF5A3C]/40 bg-[#FF5A3C]/10 p-3 text-sm leading-6 text-[#FF8A73]" role="alert">{a.error}</p>
-          <InstagramUnifiedLogin
-            academyId={academyId}
-            pending={a.code === "instagram_assets_pending"}
-            reconnect={a.code === "reconnect"}
-          />
+          {instagramLoginEnabled && (
+            <InstagramUnifiedLogin
+              enabled={instagramLoginEnabled}
+              academyId={academyId}
+              pending={a.code === "instagram_assets_pending"}
+              reconnect={a.code === "reconnect"}
+            />
+          )}
         </div>
       )}
       <div className="mt-4">

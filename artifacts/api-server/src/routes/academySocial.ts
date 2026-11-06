@@ -50,6 +50,7 @@ import { formatPhoneForDisplay, normalizePhone } from "../lib/whatsapp/phone";
  */
 const router: IRouter = Router();
 const base = "/academy/console/academies/:academyId/social";
+const instagramLoginUnavailableMessage = "This sign-in option isn't available right now";
 
 type Access = { user: AcademyConsoleUser; academyId: number; manages: boolean };
 
@@ -101,6 +102,10 @@ function fail(res: Response, error: unknown, what: string) {
 
 // ─── Connection ─────────────────────────────────────────────────────────────
 
+router.get("/social/instagram-login/status", (_req, res): void => {
+  res.json({ enabled: metaConfig().instagramLoginEnabled });
+});
+
 router.get(base, async (req, res): Promise<void> => {
   const a = await access(req, res);
   if (!a) return;
@@ -140,7 +145,13 @@ router.get(base, async (req, res): Promise<void> => {
         insightsAt: visibleAccount.insightsAt,
         postsSyncedAt: visibleAccount.postsSyncedAt,
       } : null,
-      app: { appId: config.appId, graphVersion: config.graphVersion, loginConfigId: socialLoginConfigId(), configured: Boolean(config.appSecret) },
+      app: {
+        appId: config.appId,
+        graphVersion: config.graphVersion,
+        loginConfigId: socialLoginConfigId(),
+        configured: Boolean(config.appSecret),
+        instagramLoginEnabled: config.instagramLoginEnabled,
+      },
       canManage: a.manages,
       unreadThreads: counts?.unreadThreads ?? 0,
       openComments: counts?.openComments ?? 0,
@@ -151,6 +162,10 @@ router.get(base, async (req, res): Promise<void> => {
 });
 
 router.post(`${base}/connect/instagram`, async (req, res): Promise<void> => {
+  if (!metaConfig().instagramLoginEnabled) {
+    res.status(404).json({ error: instagramLoginUnavailableMessage });
+    return;
+  }
   const a = await access(req, res, true);
   if (!a) return;
   try {
@@ -161,6 +176,10 @@ router.post(`${base}/connect/instagram`, async (req, res): Promise<void> => {
 });
 
 router.post("/academy/console/social/instagram/callback", async (req, res): Promise<void> => {
+  if (!metaConfig().instagramLoginEnabled) {
+    res.status(404).json({ error: instagramLoginUnavailableMessage });
+    return;
+  }
   const state = typeof req.body?.state === "string" ? req.body.state : "";
   if (!state) {
     res.status(400).json({ error: "Instagram sign-in state is missing. Start again." });

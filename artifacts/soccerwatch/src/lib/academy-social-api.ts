@@ -34,7 +34,7 @@ export type SocialOverview = {
     insightsAt: string | null;
     postsSyncedAt: string | null;
   };
-  app: { appId: string; graphVersion: string; loginConfigId: string; configured: boolean };
+  app: { appId: string; graphVersion: string; loginConfigId: string; configured: boolean; instagramLoginEnabled: boolean };
   canManage: boolean;
   unreadThreads: number;
   openComments: number;
@@ -162,6 +162,10 @@ export function useInstagramLoginStart(academyId: number) {
     mutationFn: () => call<{ url: string }>(`${root(academyId)}/connect/instagram`, { method: "POST", body: JSON.stringify({}) }),
     onSuccess: done,
   });
+}
+
+export function getInstagramLoginStatus() {
+  return call<{ enabled: boolean }>("/social/instagram-login/status");
 }
 
 export function completeInstagramLogin(input: { code?: string; state: string; error?: string; errorDescription?: string }) {

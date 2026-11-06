@@ -19,6 +19,7 @@ export type MetaConfig = {
   businessId: string;
   loginConfigId: string | null;
   instagramLoginConfigId: string;
+  instagramLoginEnabled: boolean;
 };
 
 export function metaConfig(env: NodeJS.ProcessEnv = process.env): MetaConfig {
@@ -32,6 +33,7 @@ export function metaConfig(env: NodeJS.ProcessEnv = process.env): MetaConfig {
     businessId: env.META_BUSINESS_ID?.trim() || "3918266301637396",
     loginConfigId: env.META_LOGIN_CONFIG_ID?.trim() || "1127305789840487",
     instagramLoginConfigId: env.META_IG_LOGIN_CONFIG_ID?.trim() || "1126113460026170",
+    instagramLoginEnabled: env.INSTAGRAM_LOGIN_ENABLED?.trim().toLowerCase() === "true",
   };
 }
 
