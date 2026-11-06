@@ -531,6 +531,7 @@ function itemScope(item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSet
     case "top5": return { weekStart: weeklyTimes(s, "top5", nowWall(slotAt)).gamesWeek, keep: () => true };
     case "day_best": {
       const date = item.originKey.slice("day:".length);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
       return { weekStart: weekStartOf(wallMinutes(`${date} 12:00`)), keep: (b) => b.startLocal.slice(0, 10) === date };
     }
     default: return null;

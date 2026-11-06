@@ -46,6 +46,9 @@ import { awardCommentVotes, versusVotes } from "../lib/venues/igVotes";
 import { SUGGEST_KINDS, suggestPosts, suggestionFor, type SuggestKind } from "../lib/venues/igSuggest";
 import { IG_CONSENT_MODES, consentMode } from "../lib/venues/igConsent";
 import { checkInstagram } from "../lib/venues/igGraph";
+import { itemLibraryClips, libraryClipId, libraryNominee } from "../lib/venues/igLibrary";
+import { parseLibraryFilters } from "../lib/creative/library";
+import { CLIP_KINDS, type ClipKind } from "../lib/creative/venueLibrary";
 import { loadVenue, venueBySlug, type Venue } from "../lib/venues/store";
 
 /**
@@ -409,17 +412,42 @@ router.get(`${base}/items/:itemId/candidates`, async (req, res): Promise<void> =
   if (!rule) { res.status(409).json({ error: "This post's clips can't be picked", code: "not_pickable" }); return; }
   try {
     const { candidates: list, empty } = await itemPickList(a.venue, item);
-    const urls = await videoUrlsFor([...new Set(list.map((n) => n.recordingId))]);
-    const picked = readNominees(item.picks).map((n) => n.key);
+    const pickedNominees = readNominees(item.picks);
+    const urls = await videoUrlsFor([...list, ...pickedNominees].map((n) => n.recordingId));
+    const picked = pickedNominees.map((n) => n.key);
     res.json({
       min: rule.min,
       max: rule.max,
       picked,
       empty,
+      pickedItems: pickedNominees.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: thumb(n.recordingId, urls, n.atMs) })),
       candidates: list.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: thumb(n.recordingId, urls, n.atMs) })),
     });
   } catch (error) {
     logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram: reading clip candidates failed");
+    res.status(500).json({ error: "Couldn't read the clips. Try again." });
+  }
+});
+
+/**
+ * The field's clip library for a post: every clip cut from games it may post, any day, filtered
+ * like Library → Clips (from/to = the game's day, origin player/auto, kind goal/dribble/pass/shot/other,
+ * sort newest/match/player). A post about one game gets only that game's clips.
+ */
+router.get(`${base}/items/:itemId/library`, async (req, res): Promise<void> => {
+  const a = await owner(req, res);
+  if (!a) return;
+  const item = await itemOf(a, intParam(req.params.itemId));
+  if (!item) { res.status(404).json({ error: "Not found" }); return; }
+  if (!pickRule(item)) { res.status(409).json({ error: "This post's clips can't be picked", code: "not_pickable" }); return; }
+  const query = req.query as Record<string, unknown>;
+  const origin = query.origin === "auto" || query.origin === "player" ? query.origin : null;
+  const kind = (CLIP_KINDS as readonly string[]).includes(String(query.kind)) ? (query.kind as ClipKind) : null;
+  const sort = query.sort === "match" || query.sort === "player" ? query.sort : "newest";
+  try {
+    res.json(await itemLibraryClips(a.venue, item, { filters: parseLibraryFilters(query, { limit: 48, maxLimit: 96 }), origin, kind, sort }));
+  } catch (error) {
+    logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram: reading the clip library failed");
     res.status(500).json({ error: "Couldn't read the clips. Try again." });
   }
 });
@@ -440,10 +468,13 @@ router.put(`${base}/items/:itemId/picks`, async (req, res): Promise<void> => {
     return;
   }
   try {
-    // Only moments this post may show (the same list the owner was offered).
-    const list = keys.length ? await itemCandidates(a.venue, item) : [];
+    // Only moments this post may show: the suggestions it was offered, or library clips from games it may post.
+    const list = keys.some((k) => libraryClipId(k) === null) ? await itemCandidates(a.venue, item) : [];
     const byKey = new Map(list.map((n) => [n.key, n]));
-    const picks = keys.map((k) => byKey.get(k));
+    const picks = await Promise.all(keys.map(async (k) => {
+      const clipId = libraryClipId(k);
+      return clipId ? (await libraryNominee(a.venue, item, clipId)) ?? undefined : byKey.get(k);
+    }));
     if (picks.some((p) => !p)) { res.status(409).json({ error: "One of those clips can't be used any more", code: "gone" }); return; }
     const row = await setItemPicks(a.venue, item, picks as NonNullable<(typeof picks)[number]>[]);
     const [project] = row.projectId ? await db.select().from(academyCreativeProjectsTable).where(eq(academyCreativeProjectsTable.id, row.projectId)) : [];
