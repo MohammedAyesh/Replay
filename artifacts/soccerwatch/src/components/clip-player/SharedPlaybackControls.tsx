@@ -122,6 +122,7 @@ export function SharedClipTimeline({
   labels,
   className,
   direction = "ltr",
+  testId,
 }: {
   progressSec: number;
   durationSec: number;
@@ -131,6 +132,7 @@ export function SharedClipTimeline({
   labels: Pick<ClipPlayerLabels, "timeline">;
   className?: string;
   direction?: "ltr" | "rtl" | "inherit";
+  testId?: string;
 }) {
   const progress = durationSec > 0
     ? Math.max(0, Math.min(100, (progressSec / durationSec) * 100))
@@ -166,6 +168,7 @@ export function SharedClipTimeline({
           onChange={onChange}
           onMouseUp={onScrubEnd}
           onTouchEnd={onScrubEnd}
+          data-testid={testId}
           className="w-full h-full appearance-none cursor-pointer relative z-10 opacity-0"
           aria-label={labels.timeline}
           disabled={durationSec <= 0}
@@ -190,6 +193,7 @@ export function SharedClipPlayerButtons({
   onToggleMuted,
   className,
   direction = "ltr",
+  testIdPrefix,
 }: {
   isPlaying: boolean;
   isFullscreen: boolean;
@@ -202,6 +206,7 @@ export function SharedClipPlayerButtons({
   onToggleMuted?: () => void;
   className?: string;
   direction?: "ltr" | "rtl" | "inherit";
+  testIdPrefix?: string;
 }) {
   return (
     <div
@@ -216,6 +221,7 @@ export function SharedClipPlayerButtons({
           className="w-11 h-11 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all shrink-0 disabled:opacity-50"
           aria-label={muted ? labels.unmute : labels.mute}
           title={muted ? labels.unmute : labels.mute}
+          data-testid={testIdPrefix ? `${testIdPrefix}-mute` : undefined}
         >
           {muted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
         </button>
@@ -227,6 +233,7 @@ export function SharedClipPlayerButtons({
         className="w-10 h-10 rounded-full bg-white/15 text-white flex items-center justify-center hover:bg-white/25 active:scale-95 transition-all shrink-0 disabled:opacity-50"
         aria-label={isFullscreen ? labels.exitFullscreen : labels.enterFullscreen}
         title={isFullscreen ? labels.exitFullscreen : labels.enterFullscreen}
+        data-testid={testIdPrefix ? `${testIdPrefix}-fullscreen` : undefined}
       >
         {isFullscreen ? <Minimize className="w-5 h-5" /> : <Maximize className="w-5 h-5" />}
       </button>
@@ -237,6 +244,7 @@ export function SharedClipPlayerButtons({
         className="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center active:scale-95 transition-transform shrink-0 disabled:opacity-50"
         aria-label={isPlaying ? labels.pause : playLabel ?? labels.play}
         title={isPlaying ? labels.pause : playLabel ?? labels.play}
+        data-testid={testIdPrefix ? `${testIdPrefix}-toggle` : undefined}
       >
         {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
       </button>

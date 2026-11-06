@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type RefObject } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Play, RefreshCw, X } from "lucide-react";
+import {
+  SharedClipPlayerButtons,
+  SharedClipTimeline,
+  SharedClipVideo,
+  useClipPlayerFullscreen,
+} from "@/components/clip-player/SharedPlaybackControls";
 import { apiBase, matchKey } from "@/lib/match-api";
 import {
   FIRST_FRAME_TIMEOUT_MS, POLL_MS, STALL_TIMEOUT_MS,
@@ -29,9 +35,15 @@ function writePosition(code: string, seconds: number | null): void {
   } catch { /* storage is optional */ }
 }
 
-type Props = { code: string; locale: string; compact?: boolean; previewState?: "early" | "unsupported" | "notAvailable" };
+type Props = {
+  code: string;
+  locale: string;
+  compact?: boolean;
+  previewState?: "early" | "unsupported" | "notAvailable";
+  previewOpen?: boolean;
+};
 
-export function EarlyPlay({ code, locale, compact = false, previewState }: Props) {
+export function EarlyPlay({ code, locale, compact = false, previewState, previewOpen = false }: Props) {
   const ar = locale === "ar";
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<EarlyPlayStatus | null>(null);
@@ -74,9 +86,13 @@ export function EarlyPlay({ code, locale, compact = false, previewState }: Props
 
   useEffect(() => {
     if (previewState) {
-      setStatus({ state: "early", streamUrl: "/fixture.mp4", encodeProgress: 62 });
+      setStatus({
+        state: "early",
+        ...(!previewOpen && { streamUrl: "/fixture.mp4" }),
+        encodeProgress: 62,
+      });
       setSupported(previewState !== "unsupported");
-      setOpen(previewState === "notAvailable");
+      setOpen(previewOpen || previewState === "notAvailable");
       setError(previewState === "notAvailable" ? probeMessage({ kind: "gone" }, locale) : "");
       return;
     }
@@ -84,7 +100,7 @@ export function EarlyPlay({ code, locale, compact = false, previewState }: Props
     void refresh();
     const timer = window.setInterval(() => void refresh(), POLL_MS);
     return () => window.clearInterval(timer);
-  }, [locale, previewState, refresh]);
+  }, [locale, previewOpen, previewState, refresh]);
 
   useEffect(() => {
     const onOffline = () => { setOffline(true); videoRef.current?.pause(); };
@@ -192,24 +208,239 @@ export function EarlyPlay({ code, locale, compact = false, previewState }: Props
           <Play className="h-4 w-4 fill-current" />{ar ? "شوف هلّق — النسخة المبكرة" : "Watch now — early version"}
         </button>
       ) : (
-        <div className="fixed inset-0 z-[100] flex flex-col justify-center bg-black p-3" role="dialog" aria-modal="true" data-testid="early-play-player">
-          <button type="button" onClick={closePlayer} className="mb-2 ms-auto flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white" aria-label={ar ? "سكّر" : "Close"}><X /></button>
-          {!error && <video ref={videoRef} controls playsInline className="max-h-[78vh] w-full bg-black" data-source={source}
-            onError={() => void handleError()}
-            onLoadedMetadata={() => { if (pendingSeek.current > 0 && videoRef.current) { videoRef.current.currentTime = pendingSeek.current; pendingSeek.current = 0; } }}
-            onLoadedData={() => { gotFrame.current = true; window.clearTimeout(firstFrameTimer.current); }}
-            onPlaying={armStall}
-            onTimeUpdate={() => { gotFrame.current = true; writePosition(code, videoRef.current?.currentTime ?? 0); if (!videoRef.current?.paused) armStall(); }}
-            onPause={() => window.clearTimeout(stallTimer.current)}
-            onEnded={() => { clearTimers(); writePosition(code, null); }} />}
-          <p className="mt-3 text-center text-xs leading-5 text-white/75" data-testid="early-play-note">
-            {ar ? `نسخة مبكرة: الجودة كاملة وممكن التحميل يكون أبطأ. المقاطع والإحصائيات والتنزيل بيجوا بعد ما تخلص المعالجة (${current.encodeProgress ?? 0}٪).` : `Early version: full quality, may load slower. Clips, stats and downloads arrive when processing finishes (${current.encodeProgress ?? 0}%).`}
-          </p>
-          {offline && <p className="mt-2 text-center text-sm text-amber-200" role="status" data-testid="early-play-offline">{offlineMessage(locale)}</p>}
-          {error && <div className="mt-3 flex items-center justify-center gap-3 text-sm text-white" role="alert" data-testid="early-play-error">{error}<button type="button" onClick={retry} className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-white/15 px-3"><RefreshCw className="h-4 w-4" />{ar ? "جرّب مرة ثانية" : "Retry"}</button></div>}
-        </div>
+        <EarlyPlayOverlay
+          code={code}
+          locale={locale}
+          current={current}
+          source={source}
+          videoRef={videoRef}
+          error={error}
+          offline={offline}
+          onClose={closePlayer}
+          onRetry={retry}
+          onError={() => void handleError()}
+          onLoadedMetadata={() => {
+            if (pendingSeek.current > 0 && videoRef.current) {
+              videoRef.current.currentTime = pendingSeek.current;
+              pendingSeek.current = 0;
+            }
+          }}
+          onLoadedData={() => {
+            gotFrame.current = true;
+            window.clearTimeout(firstFrameTimer.current);
+          }}
+          onPlaying={armStall}
+          onTimeUpdate={() => {
+            gotFrame.current = true;
+            writePosition(code, videoRef.current?.currentTime ?? 0);
+            if (!videoRef.current?.paused) armStall();
+          }}
+          onPause={() => window.clearTimeout(stallTimer.current)}
+          onEnded={() => {
+            clearTimers();
+            writePosition(code, null);
+          }}
+        />
       ))}
       {pollFailed && !open && <p className="mt-2 text-[11px] text-muted-text" data-testid="early-play-poll-failed">{pollFailedMessage(locale)}</p>}
     </section>
+  );
+}
+
+function EarlyPlayOverlay({
+  code,
+  locale,
+  current,
+  source,
+  videoRef,
+  error,
+  offline,
+  onClose,
+  onRetry,
+  onError,
+  onLoadedMetadata,
+  onLoadedData,
+  onPlaying,
+  onTimeUpdate,
+  onPause,
+  onEnded,
+}: {
+  code: string;
+  locale: string;
+  current: EarlyPlayStatus;
+  source: Source;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  error: string;
+  offline: boolean;
+  onClose: () => void;
+  onRetry: () => void;
+  onError: () => void;
+  onLoadedMetadata: () => void;
+  onLoadedData: () => void;
+  onPlaying: () => void;
+  onTimeUpdate: () => void;
+  onPause: () => void;
+  onEnded: () => void;
+}) {
+  const ar = locale === "ar";
+  const { isFullscreen, toggleFullscreen } = useClipPlayerFullscreen(videoRef);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [progressSec, setProgressSec] = useState(0);
+  const [durationSec, setDurationSec] = useState(0);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const syncPosition = () => {
+      setProgressSec(Number.isFinite(video.currentTime) ? video.currentTime : 0);
+      setDurationSec(Number.isFinite(video.duration) ? video.duration : 0);
+    };
+    const onPlay = () => setIsPlaying(true);
+    const onVideoPause = () => setIsPlaying(false);
+    video.addEventListener("timeupdate", syncPosition);
+    video.addEventListener("durationchange", syncPosition);
+    video.addEventListener("loadedmetadata", syncPosition);
+    video.addEventListener("play", onPlay);
+    video.addEventListener("pause", onVideoPause);
+    video.addEventListener("ended", onVideoPause);
+    return () => {
+      video.removeEventListener("timeupdate", syncPosition);
+      video.removeEventListener("durationchange", syncPosition);
+      video.removeEventListener("loadedmetadata", syncPosition);
+      video.removeEventListener("play", onPlay);
+      video.removeEventListener("pause", onVideoPause);
+      video.removeEventListener("ended", onVideoPause);
+    };
+  }, [videoRef]);
+
+  const togglePlayback = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) void video.play().catch(() => {});
+    else video.pause();
+  };
+  const seek = (event: ChangeEvent<HTMLInputElement>) => {
+    const nextTime = Number(event.currentTarget.value);
+    if (!Number.isFinite(nextTime) || !videoRef.current) return;
+    videoRef.current.currentTime = nextTime;
+    setProgressSec(nextTime);
+  };
+  const toggleMuted = () => {
+    const nextMuted = !muted;
+    if (videoRef.current) videoRef.current.muted = nextMuted;
+    setMuted(nextMuted);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-3 backdrop-blur-sm sm:p-6" role="dialog" aria-modal="true" aria-labelledby="early-play-title" data-testid="early-play-player">
+      <div className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-white/15 bg-void text-text shadow-2xl sm:max-h-[calc(100dvh-3rem)]">
+        <header className="flex shrink-0 items-center gap-3 border-b border-white/10 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <p id="early-play-title" className="truncate text-sm font-bold">
+              {ar ? `نسخة مبكرة · ${code}` : `Early version · ${code}`}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-text">
+              {ar ? "التسجيل متاح أثناء المعالجة" : "Match footage while processing"}
+            </p>
+          </div>
+          <span className="rounded-full bg-turf/15 px-2.5 py-1 text-[10px] font-bold text-turf">
+            {ar ? `${current.encodeProgress ?? 0}٪` : `${current.encodeProgress ?? 0}%`}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-white/15 text-white hover:bg-white/10"
+            aria-label={ar ? "سكّر" : "Close"}
+            data-testid="button-early-play-close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </header>
+
+        <div className="relative flex min-h-0 flex-1 items-center justify-center bg-black">
+          <SharedClipVideo
+            ref={videoRef}
+            controls={false}
+            muted={muted}
+            playsInline
+            className="aspect-video max-h-[58dvh] w-full bg-black object-contain"
+            data-source={source}
+            data-testid="early-play-video"
+            onError={onError}
+            onLoadedMetadata={onLoadedMetadata}
+            onLoadedData={onLoadedData}
+            onPlaying={onPlaying}
+            onTimeUpdate={onTimeUpdate}
+            onPause={onPause}
+            onEnded={onEnded}
+          />
+          {error && (
+            <div className="absolute inset-0 flex min-h-48 w-full flex-col items-center justify-center gap-3 px-6 text-center text-sm text-white" role="alert" data-testid="early-play-error">
+              <p>{error}</p>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="inline-flex min-h-11 items-center gap-2 rounded-full bg-white/15 px-4 font-semibold hover:bg-white/25"
+                data-testid="button-early-play-retry"
+              >
+                <RefreshCw className="h-4 w-4" />
+                {ar ? "جرّب مرة ثانية" : "Retry"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {!error && (
+          <div className="shrink-0 border-t border-white/10 bg-void/95 px-4 pb-3 pt-2">
+            <SharedClipTimeline
+              progressSec={progressSec}
+              durationSec={durationSec}
+              onChange={seek}
+              labels={{ timeline: ar ? "موضع الفيديو" : "Clip position" }}
+              direction="inherit"
+              testId="input-early-play-position"
+            />
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="min-w-0 flex-1 truncate text-[11px] text-muted-text">
+                {ar ? "نسخة مبكرة · الجودة كاملة" : "Early version · full quality"}
+              </span>
+              <SharedClipPlayerButtons
+                isPlaying={isPlaying}
+                isFullscreen={isFullscreen}
+                onTogglePlayback={togglePlayback}
+                onToggleFullscreen={() => toggleFullscreen()}
+                labels={{
+                  play: ar ? "تشغيل" : "Play",
+                  pause: ar ? "إيقاف" : "Pause",
+                  enterFullscreen: ar ? "ملء الشاشة" : "Enter fullscreen",
+                  exitFullscreen: ar ? "إنهاء ملء الشاشة" : "Exit fullscreen",
+                  timeline: ar ? "موضع الفيديو" : "Clip position",
+                  mute: ar ? "كتم الصوت" : "Mute",
+                  unmute: ar ? "تشغيل الصوت" : "Unmute",
+                }}
+                muted={muted}
+                onToggleMuted={toggleMuted}
+                direction="inherit"
+                testIdPrefix="button-early-play"
+              />
+            </div>
+          </div>
+        )}
+
+        <footer className="shrink-0 border-t border-white/10 px-4 py-3">
+          {offline && (
+            <p className="mb-2 text-center text-xs text-amber-200" role="status" data-testid="early-play-offline">
+              {offlineMessage(locale)}
+            </p>
+          )}
+          <p className="text-center text-xs leading-5 text-muted-text" data-testid="early-play-note">
+            {ar
+              ? `نسخة مبكرة: الجودة كاملة وممكن التحميل يكون أبطأ. المقاطع والإحصائيات والتنزيل بيجوا بعد ما تخلص المعالجة (${current.encodeProgress ?? 0}٪).`
+              : `Early version: full quality, may load slower. Clips, stats and downloads arrive when processing finishes (${current.encodeProgress ?? 0}%).`}
+          </p>
+        </footer>
+      </div>
+    </div>
   );
 }
