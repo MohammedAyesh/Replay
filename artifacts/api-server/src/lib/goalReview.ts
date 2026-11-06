@@ -80,6 +80,9 @@ export function goalCandidates(play: Pick<RecordingPlay, "events" | "touches" | 
     // a shot GOAL_REVIEW.shotMergeBefore s before a detected goal is its strike
     if (out.some((c) => c.source === "goal" && s.t >= c.t - GOAL_REVIEW.shotMergeBefore && s.t <= c.t + GOAL_REVIEW.shotMergeAfter)) continue;
     const g = creditGoalAt(s.t + 0.05, play.touches, pitch, null, gctx.direction ?? null);
+    // nobody on the attacking side touched it in the build-up: defenders
+    // passing among themselves or back to the keeper, not a chance (2026-11-06)
+    if (g.ownGoal) continue;
     out.push({ ...g, t: s.t, source: "shot", key: tenths(s.t) });
   }
   const raw = play.events.filter((e) => e.type.toLowerCase() === "goal").map((e) => e.t).sort((a, b) => a - b);
@@ -90,6 +93,11 @@ export function goalCandidates(play: Pick<RecordingPlay, "events" | "touches" | 
     if (near(t, GOAL_REVIEW.eventMergeBefore, GOAL_REVIEW.eventMergeAfter)) continue;
     // goals.py times it when play stopped: the ball's entry before it is the moment
     const entry = mouthEntryBefore(t, play.touches, pitch, gctx);
+    // With a pitch model and no entry, the ball was never seen at a goal: play
+    // just stopped, often in midfield (N6E3L7's 37:49 card asked "The other
+    // side scores?" over the centre circle, 14 s before the real goal). Not a
+    // chance. Without ball positions there is nothing to check against.
+    if (!entry && pitch && gctx.ball?.length) continue;
     const at = entry?.t ?? t;
     const g = creditGoalAt(at, play.touches, pitch, entry?.goalX ?? null, gctx.direction ?? null);
     out.push({ ...g, t: at, source: "event", key: tenths(at) });

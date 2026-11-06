@@ -1088,7 +1088,7 @@ export function dribbleEvents(
     if (!beaten.length) continue;
     // with the direction from the minimap: running back toward his own goal past
     // men who were already behind him is not getting past anyone
-    const side = direction?.sideOf(own) ?? null;
+    const side = direction?.sideOf(own, first.t) ?? null;
     if (direction && side !== null && length > 0) {
       const goal = direction.attacking(0, first.t) === side ? 0 : direction.attacking(length, first.t) === side ? length : null;
       if (goal !== null) {
@@ -1259,17 +1259,51 @@ export const DIRECTION = {
   /** a window without a verdict borrows the nearest one this many windows away */
   maxBorrow: 2,
   stepSeconds: 0.5,
+  /**
+   * A break this long splits the recording into stretches, each with its own
+   * shirts and ends (2026-11-06, N6E3L7 / recording 412: two different groups
+   * played 0-62 and 68-120 min, one in orange bibs and one in neon-yellow
+   * bibs. Read over the whole two hours no bib reached BIB.minShare, the
+   * sides were split light against dark, and game 1's ends flipped at 45 min
+   * while both keepers stayed in their goals). Seconds.
+   */
+  stretchBreakSeconds: 180,
+  /** a stretch shorter than this is joined to its neighbour: too little play to read, seconds */
+  minStretchSeconds: 300,
+  /** the end of the last stretch, seconds (any recording is shorter) */
+  openEndSeconds: 1e7,
+  /**
+   * Inside a stretch of play, a window with no verdict and none near enough to
+   * borrow takes the stretch's own verdict when this share of its windows
+   * agree (and at least minAgreeing do): sides keep their ends between breaks.
+   * Recording 412's game 1: both keepers stayed in their goals for an hour,
+   * and windows 4-9 had no verdict because the two keepers wore neither bib
+   * and pulled the no-bib side's mean to the middle.
+   */
+  stretchAgreeShare: 0.75,
+  minAgreeing: 2,
 } as const;
 
 export type PitchDirection = {
   /** the two sides' shirts: [0] and [1] (with bibs, [0] is the bib side) */
   kits: [Lab, Lab];
-  /** which side a shirt is on */
-  sideOf: (kit: Lab | null | undefined) => 0 | 1 | null;
+  /** which side a shirt is on; with t, by the shirts of the stretch of play at t */
+  sideOf: (kit: Lab | null | undefined, t?: number) => 0 | 1 | null;
+  /** the two sides' shirts in the stretch of play at t */
+  kitsAt?: (t: number) => [Lab, Lab];
   /** which side attacks the goal at goalX at time t; null when the minimap cannot say */
   attacking: (goalX: number, t: number) => 0 | 1 | null;
   /** everything the two functions are built from, as plain data (saved with the play, matchPlayLoad); set on every computed one */
   data?: DirectionData;
+};
+
+/** One stretch of play between long breaks, read on its own: its shirts, its bib, its ends. */
+export type DirectionStretch = {
+  from: number;
+  to: number;
+  kits: [Lab, Lab];
+  bib: BibKit | null;
+  defendsZero: Array<[number, 0 | 1]>;
 };
 
 /** A PitchDirection as plain data: the sides' shirts, the bib when one side wears bibs, and per window the side defending x = 0. */
@@ -1278,7 +1312,30 @@ export type DirectionData = {
   bib: BibKit | null;
   /** [window index (t / DIRECTION.windowSeconds), side defending x = 0] */
   defendsZero: Array<[number, 0 | 1]>;
+  /** with long breaks: each stretch read on its own (the fields above are the first stretch's) */
+  stretches?: DirectionStretch[];
 };
+
+/**
+ * The stretches of play a recording falls into: its game phases joined across
+ * breaks shorter than DIRECTION.stretchBreakSeconds, short stretches joined to
+ * the one before (else after). Empty without phases.
+ */
+export function playStretches(phases: ReadonlyArray<{ kind: string; start: number; end: number }> | null | undefined): Array<[number, number]> {
+  const games = (phases ?? []).filter((p) => p.kind === "game" && p.end > p.start).map((p) => [p.start, p.end] as [number, number]).sort((a, b) => a[0] - b[0]);
+  const out: Array<[number, number]> = [];
+  for (const g of games) {
+    const last = out.at(-1);
+    if (last && g[0] - last[1] < DIRECTION.stretchBreakSeconds) last[1] = Math.max(last[1], g[1]);
+    else out.push([g[0], g[1]]);
+  }
+  for (let i = 0; i < out.length && out.length > 1;) {
+    if (out[i][1] - out[i][0] >= DIRECTION.minStretchSeconds) { i++; continue; }
+    if (i > 0) { out[i - 1][1] = out[i][1]; out.splice(i, 1); }
+    else { out[1][0] = out[0][0]; out.splice(0, 1); }
+  }
+  return out;
+}
 
 const directionCache = new WeakMap<object, PitchDirection | null>();
 
@@ -1295,7 +1352,57 @@ function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirecti
   const { manifest, sidecars, segments, kits } = play;
   const pitch = pitchSizeOf(manifest);
   if (!pitch || !sidecars || !segments || !kits) return null;
-  const bib = play.bib ?? bibKit(sidecars);
+  const stretches = playStretches(play.phases);
+  if (stretches.length < 2) {
+    const one = readDirection(play, sidecars, play.bib ?? bibKit(sidecars), null);
+    return one ? directionFromData({ kits: one.kits, bib: one.bib, defendsZero: [...one.defendsZero] }) : null;
+  }
+  // each stretch on its own: its own shirts (a bib only one group wore), its own ends
+  const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
+  const midOf = new Map<string, number>();
+  for (const segment of segments) {
+    for (const track of segment.tracks) {
+      if (track.boxes.length) midOf.set(track.id, track.boxes[track.boxes.length >> 1].frame / fps);
+    }
+  }
+  const read: DirectionStretch[] = [];
+  stretches.forEach(([from, to], i) => {
+    // the first and last stretch reach the ends of the recording
+    const lo = i === 0 ? -Infinity : from;
+    const hi = i === stretches.length - 1 ? Infinity : stretches[i + 1][0];
+    const own = sidecars.map((sc) => {
+      if (!sc) return null;
+      const kept: BallSidecar["kits"] = {};
+      for (const [id, v] of Object.entries(sc.kits ?? {})) {
+        const t = midOf.get(id);
+        if (t !== undefined && t >= lo && t < hi) kept[id] = v;
+      }
+      return { ...sc, kits: kept };
+    });
+    const one = readDirection(play, own, bibKit(own), [lo, hi]);
+    // finite bounds: the data is saved as JSON, where Infinity becomes null
+    if (one) read.push({ from: i === 0 ? 0 : from, to: Number.isFinite(hi) ? hi : DIRECTION.openEndSeconds, kits: one.kits, bib: one.bib, defendsZero: [...one.defendsZero] });
+  });
+  if (!read.length) return null;
+  const first = read[0];
+  return directionFromData({
+    kits: first.kits,
+    bib: first.bib,
+    defendsZero: read.flatMap((r) => r.defendsZero),
+    stretches: read.length > 1 ? read : undefined,
+  });
+}
+
+/** The two sides' shirts and, per window, the side defending x = 0, over [span] (everything without one). */
+function readDirection(
+  play: Parameters<typeof goalContext>[0],
+  sidecars: Array<BallSidecar | null>,
+  bib: BibKit | null,
+  span: [number, number] | null,
+): { kits: [Lab, Lab]; bib: BibKit | null; defendsZero: Map<number, 0 | 1> } | null {
+  const { manifest, segments, kits } = play;
+  const pitch = pitchSizeOf(manifest);
+  if (!pitch || !segments || !kits) return null;
   let sideKits: [Lab, Lab] | null = null;
   if (bib) {
     const shown = bibObservedKits(sidecars, bib);
@@ -1317,6 +1424,7 @@ function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirecti
       for (const box of track.boxes) {
         if (box.frame % step) continue;
         const t = box.frame / fps;
+        if (span && (t < span[0] || t >= span[1])) continue;
         if (play.inPlay?.length && !inSpans(play.inPlay, t)) continue;
         const p = interpolatePitchPosition(box.x + box.w / 2, box.y + box.h, manifest as TrackingManifest);
         if (!p || p.x < 0 || p.x > pitch.length || p.y < 0 || p.y > pitch.width) continue;
@@ -1339,7 +1447,7 @@ function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirecti
     defendsZero.set(k, m0 < m1 ? 0 : 1);
   }
   if (!defendsZero.size) return null;
-  return directionFromData({ kits: sideKits, bib: bib ?? null, defendsZero: [...defendsZero] });
+  return { kits: sideKits, bib: bib ?? null, defendsZero };
 }
 
 /** Which side a shirt is on: by the bib when one side wears bibs, else the nearer of the two sides' shirts. */
@@ -1351,7 +1459,37 @@ function sideOfShirt(kits: [Lab, Lab], bib: BibKit | null | undefined): PitchDir
 
 /** The PitchDirection its plain data describes; computeDirection builds every one through here. */
 export function directionFromData(data: DirectionData): PitchDirection {
-  const defendsZero = new Map(data.defendsZero);
+  const whole = readStretch({ from: -Infinity, to: Infinity, kits: data.kits, bib: data.bib, defendsZero: data.defendsZero });
+  const parts = (data.stretches ?? []).map((st) => ({ st, read: readStretch(st) }));
+  /** the stretch t falls in, else the nearest one */
+  const at = (t: number) => {
+    if (!parts.length) return whole;
+    let best = parts[0];
+    let bestGap = Infinity;
+    for (const p of parts) {
+      const gap = t < p.st.from ? p.st.from - t : t >= p.st.to ? t - p.st.to : 0;
+      if (gap < bestGap) { best = p; bestGap = gap; }
+    }
+    return best.read;
+  };
+  return {
+    kits: data.kits,
+    sideOf: (kit, t) => (t === undefined ? whole : at(t)).sideOf(kit),
+    kitsAt: (t) => at(t).kits,
+    attacking: (goalX, t) => at(t).attacking(goalX, t),
+    data,
+  };
+}
+
+/** One stretch's side-of-shirt and attacking-end functions. Borrowing never reaches outside its own windows. */
+function readStretch(st: DirectionStretch): { kits: [Lab, Lab]; sideOf: (kit: Lab | null | undefined) => 0 | 1 | null; attacking: (goalX: number, t: number) => 0 | 1 | null } {
+  const defendsZero = new Map(st.defendsZero);
+  // the stretch's own verdict, when its windows agree
+  const votes = [0, 0];
+  for (const [, side] of st.defendsZero) votes[side]++;
+  const lead: 0 | 1 = votes[0] >= votes[1] ? 0 : 1;
+  const whole = st.defendsZero.length >= DIRECTION.minAgreeing && votes[lead] >= DIRECTION.stretchAgreeShare * st.defendsZero.length
+    && Number.isFinite(st.from) ? lead : null;
   const attacking = (goalX: number, t: number): 0 | 1 | null => {
     const k = Math.floor(t / DIRECTION.windowSeconds);
     for (let d = 0; d <= DIRECTION.maxBorrow; d++) {
@@ -1364,9 +1502,11 @@ export function directionFromData(data: DirectionData): PitchDirection {
         return (1 - defending) as 0 | 1;
       }
     }
-    return null;
+    if (whole === null) return null;
+    const defending = goalX === 0 ? whole : (1 - whole) as 0 | 1;
+    return (1 - defending) as 0 | 1;
   };
-  return { kits: data.kits, sideOf: sideOfShirt(data.kits, data.bib), attacking, data };
+  return { kits: st.kits, sideOf: sideOfShirt(st.kits, st.bib), attacking };
 }
 
 /** The shot context of a loaded recording: pitch-mapped ball samples and in-play spans. */
@@ -1743,14 +1883,23 @@ function credit(t: number, touches: Touch[], pitch: PitchSize | null, goalX: num
   const goal: DetectedGoal = { t, trackId: touch?.trackId ?? null, kit: touch?.kit ?? null, lead: touch ? round1(t - touch.t) : null, touchF: touch?.f ?? null, goalX: end };
   const attacking = direction && end !== null ? direction.attacking(end, t) : null;
   if (!direction || attacking === null) return goal;
-  const strikerSide = direction.sideOf(touch?.kit);
+  const strikerSide = touch ? direction.sideOf(touch.kit, touch.t) : null;
   if (touch && strikerSide !== null && strikerSide !== attacking) {
-    // the last touch was the defending side's (a defender or the keeper): an own
-    // goal for the attacking side, never anyone's own "goal"
-    return { t, trackId: null, kit: direction.kits[attacking], lead: null, touchF: null, goalX: end, ownGoal: true, ownGoalTrackId: touch.trackId };
+    // The last touch was the defending side's. Nearly always that is a block,
+    // a save or a clearance after an attacker's shot, not the ball going in
+    // off him: on recording 412 (2026-11-06) 8 of 11 "own goals" had an
+    // attacker's touch 1-6 s before, and the other 3 were defenders passing
+    // among themselves. So the attacker who last had it is credited, and it
+    // is an own goal only when no attacker touched it in GOAL.scorerSeconds.
+    const attacker = touchesBetween(touches, t - GOAL.scorerSeconds, touch.t).reverse()
+      .find((c) => c.trackId !== touch.trackId && direction.sideOf(c.kit, c.t) === attacking);
+    if (attacker) {
+      return { t, trackId: attacker.trackId, kit: attacker.kit, lead: round1(t - attacker.t), touchF: attacker.f, goalX: end };
+    }
+    return { t, trackId: null, kit: (direction.kitsAt?.(t) ?? direction.kits)[attacking], lead: null, touchF: null, goalX: end, ownGoal: true, ownGoalTrackId: touch.trackId };
   }
   // with nobody credited, the goal still counts for the side attacking that end
-  return touch ? goal : { ...goal, kit: direction.kits[attacking] };
+  return touch ? goal : { ...goal, kit: (direction.kitsAt?.(t) ?? direction.kits)[attacking] };
 }
 
 /** The ball tracker's samples and the touches' ball positions together, by time. */
