@@ -21,6 +21,6 @@ describe("reviewer sign-in ticket flow", () => {
 
     await completeReviewerSignIn("single-use-token", createTicketSignIn, activateSession);
     expect(createTicketSignIn).toHaveBeenCalledWith("single-use-token");
-    expect(activateSession).toHaveBeenCalledWith("session-for-test");
+    expect(activateSession).toHaveBeenCalledOnce();
   });
 });

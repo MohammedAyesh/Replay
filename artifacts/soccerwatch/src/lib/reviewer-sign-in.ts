@@ -9,14 +9,14 @@ export type TicketSignInAttempt = {
 export async function completeReviewerSignIn(
   token: string,
   createTicketSignIn: (token: string) => Promise<TicketSignInAttempt>,
-  activateSession: (sessionId: string) => Promise<void>,
+  activateSession: () => Promise<void>,
 ): Promise<void> {
   try {
     const attempt = await createTicketSignIn(token);
     if (attempt.status !== "complete" || !attempt.createdSessionId) {
       throw new Error(REVIEWER_SIGN_IN_ERROR);
     }
-    await activateSession(attempt.createdSessionId);
+    await activateSession();
   } catch {
     throw new Error(REVIEWER_SIGN_IN_ERROR);
   }

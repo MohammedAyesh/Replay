@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useClerk } from "@clerk/react";
-import { useSignIn } from "@clerk/react/legacy";
+import { useSignIn } from "@clerk/react";
 import { useLocation } from "wouter";
 import { completeReviewerSignIn, REVIEWER_SIGN_IN_ERROR } from "@/lib/reviewer-sign-in";
 
@@ -32,19 +31,24 @@ async function getConsoleTarget(): Promise<ConsoleTarget> {
 }
 
 export default function ReviewerSignInPage() {
-  const { isLoaded, signIn } = useSignIn();
-  const { setActive } = useClerk();
+  const { signIn } = useSignIn();
   const [, setLocation] = useLocation();
   const [failed, setFailed] = useState(false);
   const attempted = useRef(false);
 
   useEffect(() => {
-    if (!isLoaded || attempted.current) return;
+    if (attempted.current) return;
     attempted.current = true;
 
-    const token = new URLSearchParams(window.location.search).get("token");
-    window.history.replaceState(null, "", `${window.location.pathname}${window.location.hash}`);
-    if (!token || !signIn || !setActive) {
+    const currentUrl = new URL(window.location.href);
+    const token = currentUrl.searchParams.get("token");
+    currentUrl.searchParams.delete("token");
+    window.history.replaceState(
+      null,
+      "",
+      `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
+    );
+    if (!token || !signIn) {
       setFailed(true);
       return;
     }
@@ -53,9 +57,17 @@ export default function ReviewerSignInPage() {
       try {
         await completeReviewerSignIn(
           token,
-          (ticket) => signIn.create({ strategy: "ticket", ticket }),
-          async (session) => {
-            await setActive({ session });
+          async (ticket) => {
+            const { error } = await signIn.create({ strategy: "ticket", ticket });
+            if (error) throw error;
+            return {
+              status: signIn.status,
+              createdSessionId: signIn.createdSessionId,
+            };
+          },
+          async () => {
+            const { error } = await signIn.finalize();
+            if (error) throw error;
           },
         );
         const target = await getConsoleTarget();
@@ -64,7 +76,7 @@ export default function ReviewerSignInPage() {
         setFailed(true);
       }
     })();
-  }, [isLoaded, signIn, setActive, setLocation]);
+  }, [signIn, setLocation]);
 
   return (
     <main className="min-h-screen bg-void text-text flex items-center justify-center p-6">
