@@ -38,6 +38,7 @@
 - [Shirt-number identity](shirt-number-identity.md) — group tracks by frame-weighted readings, but identify players only by shirt number and kit key.
 - [Export rendition geometry](export-rendition-geometry.md) — select Bunny variants by declared 3840×1080 pixels, never folder labels or adaptive master fallback.
 - [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.
+- [Reviewer sign-in domain](reviewer-sign-in-domain.md) — reviewer links must use `publicBaseUrl()` so they land on the site configured for production Clerk.
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
 - [Public footage access](public-footage-access.md) — explicit per-recording visibility overrides schedules, but hidden fields and hidden recordings remain private.
 - [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.

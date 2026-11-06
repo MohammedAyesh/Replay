@@ -23,6 +23,8 @@ const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 const mockedCreateClerkSignInToken = vi.mocked(createClerkSignInToken);
 const TAG = `reviewer_links_${Date.now()}`;
 const originalDomains = process.env.REPLIT_DOMAINS;
+const originalPublicBaseUrl = process.env.PUBLIC_BASE_URL;
+const originalPublicShareBaseUrl = process.env.PUBLIC_SHARE_BASE_URL;
 let app: Express;
 let insertedIds: number[] = [];
 let adminId: number;
@@ -35,7 +37,9 @@ let targetEmail: string;
 let ticketNumber = 0;
 
 beforeAll(async () => {
-  process.env.REPLIT_DOMAINS = "replayjo.com";
+  process.env.REPLIT_DOMAINS = "replayjo.replit.app";
+  process.env.PUBLIC_BASE_URL = "https://replayjo.com";
+  delete process.env.PUBLIC_SHARE_BASE_URL;
   const { default: reviewerSignInRouter } = await import("./adminReviewerSignIn");
   app = express();
   app.use(express.json());
@@ -61,6 +65,10 @@ afterAll(async () => {
   }
   if (originalDomains === undefined) delete process.env.REPLIT_DOMAINS;
   else process.env.REPLIT_DOMAINS = originalDomains;
+  if (originalPublicBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
+  else process.env.PUBLIC_BASE_URL = originalPublicBaseUrl;
+  if (originalPublicShareBaseUrl === undefined) delete process.env.PUBLIC_SHARE_BASE_URL;
+  else process.env.PUBLIC_SHARE_BASE_URL = originalPublicShareBaseUrl;
 });
 
 beforeEach(() => {
@@ -120,6 +128,13 @@ describe("admin reviewer sign-in links", () => {
     ]);
     expect(mockedCreateClerkSignInToken).toHaveBeenCalledTimes(3);
     expect(mockedCreateClerkSignInToken).toHaveBeenNthCalledWith(1, `clerk_target_${TAG}`, 30 * 24 * 60 * 60);
+  });
+
+  it("builds links from the configured public base URL, not the Replit domain", async () => {
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    const response = await postLinks({ email: targetEmail, count: 1 }).expect(201);
+
+    expect(response.body.urls[0]).toMatch(/^https:\/\/replayjo\.com\/reviewer-sign-in\?token=/);
   });
 
   it("accepts the minimum and maximum supported bounds by user ID", async () => {

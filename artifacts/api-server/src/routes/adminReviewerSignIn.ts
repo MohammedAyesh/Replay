@@ -9,18 +9,14 @@ import {
 import { getLocalUserId } from "../lib/clerkUserBridge";
 import { createClerkSignInToken } from "../lib/clerkSignInTokens";
 import { logger } from "../lib/logger";
+import { publicBaseUrl } from "../lib/whatsapp/waha";
 
 const router: IRouter = Router();
 const SECONDS_PER_DAY = 24 * 60 * 60;
 
 function getReplayOrigin(): string | null {
-  const configuredDomain = process.env.REPLIT_DOMAINS?.split(",")[0]?.trim();
-  if (!configuredDomain) return null;
-
   try {
-    const url = new URL(
-      configuredDomain.includes("://") ? configuredDomain : `https://${configuredDomain}`,
-    );
+    const url = new URL(publicBaseUrl());
     if (
       url.protocol !== "https:"
       || url.username

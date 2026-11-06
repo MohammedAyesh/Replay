@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { useSignIn } from "@clerk/react";
+import { useSignIn, useUser } from "@clerk/react";
 import { useLocation } from "wouter";
-import { completeReviewerSignIn, REVIEWER_SIGN_IN_ERROR } from "@/lib/reviewer-sign-in";
+import {
+  completeReviewerSignIn,
+  reviewerSignInReadiness,
+  REVIEWER_SIGN_IN_ALREADY_AUTHENTICATED,
+  REVIEWER_SIGN_IN_ERROR,
+} from "@/lib/reviewer-sign-in";
 
 type ConsoleTarget = "/academy" | "/field" | "/owner";
 const apiBase = `${(import.meta.env.BASE_URL ?? "/").replace(/\/$/, "")}/api`;
@@ -32,26 +37,40 @@ async function getConsoleTarget(): Promise<ConsoleTarget> {
 
 export default function ReviewerSignInPage() {
   const { signIn } = useSignIn();
+  const { isLoaded, isSignedIn } = useUser();
   const [, setLocation] = useLocation();
   const [failed, setFailed] = useState(false);
+  const [alreadySignedIn, setAlreadySignedIn] = useState(false);
   const attempted = useRef(false);
 
   useEffect(() => {
     if (attempted.current) return;
-    attempted.current = true;
+    const readiness = reviewerSignInReadiness({
+      isLoaded,
+      isSignedIn,
+      hasSignIn: Boolean(signIn),
+    });
+    if (readiness === "waiting") return;
+    if (readiness === "already-signed-in") {
+      attempted.current = true;
+      setAlreadySignedIn(true);
+      return;
+    }
 
     const currentUrl = new URL(window.location.href);
     const token = currentUrl.searchParams.get("token");
+    attempted.current = true;
+    if (!token) {
+      setFailed(true);
+      return;
+    }
+
     currentUrl.searchParams.delete("token");
     window.history.replaceState(
       null,
       "",
       `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`,
     );
-    if (!token || !signIn) {
-      setFailed(true);
-      return;
-    }
 
     void (async () => {
       try {
@@ -76,16 +95,22 @@ export default function ReviewerSignInPage() {
         setFailed(true);
       }
     })();
-  }, [signIn, setLocation]);
+  }, [isLoaded, isSignedIn, signIn, setLocation]);
+
+  const status = alreadySignedIn ? "already-signed-in" : failed ? "error" : "loading";
 
   return (
     <main className="min-h-screen bg-void text-text flex items-center justify-center p-6">
       <p
-        data-testid={failed ? "status-reviewer-sign-in-error" : "status-reviewer-sign-in-loading"}
+        data-testid={`status-reviewer-sign-in-${status}`}
         role={failed ? "alert" : "status"}
         className="max-w-xl text-center text-sm"
       >
-        {failed ? REVIEWER_SIGN_IN_ERROR : "Signing you in…"}
+        {alreadySignedIn
+          ? REVIEWER_SIGN_IN_ALREADY_AUTHENTICATED
+          : failed
+            ? REVIEWER_SIGN_IN_ERROR
+            : "Signing you in…"}
       </p>
     </main>
   );
