@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
-import { and, desc, eq, getTableColumns, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import {
@@ -38,8 +38,29 @@ import {
   listPendingInstagramAssets,
   selectInstagramAsset,
 } from "../lib/social/instagramLogin";
-import { backfillConversations, hideComment, privateReply, replyToComment, replyWindow, sendThreadMessage } from "../lib/social/inbox";
-import { libraryMedia, publishPost, syncSocial, type Format, type Target } from "../lib/social/posts";
+import {
+  backfillConversations,
+  createPostComment,
+  deleteSocialComment,
+  deleteSocialReply,
+  editFacebookComment,
+  editFacebookReply,
+  hideComment,
+  privateReply,
+  replyToComment,
+  replyWindow,
+  sendThreadMessage,
+} from "../lib/social/inbox";
+import {
+  deletePublishedTarget,
+  editFacebookPostMessage,
+  libraryMedia,
+  publishPost,
+  syncSocial,
+  type Format,
+  type Target,
+} from "../lib/social/posts";
+import { MetaGraphError } from "../lib/meta/graph";
 import { upsertContact } from "../lib/whatsapp/contacts";
 import { formatPhoneForDisplay, normalizePhone } from "../lib/whatsapp/phone";
 
@@ -560,15 +581,25 @@ router.get(`${base}/comments`, async (req, res): Promise<void> => {
   if (!a) return;
   try {
     const open = req.query.filter !== "all";
+    const account = await getSocialAccount(a.academyId);
+    const ownIds = [account?.pageId, account?.igUserId].filter((value): value is string => Boolean(value));
     const rows = await db.select().from(academySocialCommentsTable).where(and(
       eq(academySocialCommentsTable.academyId, a.academyId),
       isNull(academySocialCommentsTable.deletedAt),
-      ...(open ? [isNull(academySocialCommentsTable.repliedAt), isNull(academySocialCommentsTable.privateRepliedAt), eq(academySocialCommentsTable.hidden, false)] : []),
+      ...(open ? [
+        isNull(academySocialCommentsTable.repliedAt),
+        isNull(academySocialCommentsTable.privateRepliedAt),
+        eq(academySocialCommentsTable.hidden, false),
+        ...(ownIds.length ? [or(isNull(academySocialCommentsTable.fromId), notInArray(academySocialCommentsTable.fromId, ownIds))] : []),
+      ] : []),
     )).orderBy(desc(academySocialCommentsTable.createdAt)).limit(200);
     const week = 7 * 24 * 60 * 60 * 1000;
     res.json(rows.map((c) => ({
       id: c.id, channel: c.channel, body: c.body, fromName: c.fromName, postPermalink: c.postPermalink, postCaption: c.postCaption,
+      postId: c.postId, parentId: c.parentId,
+      isOwn: Boolean(c.fromId && (c.fromId === account?.pageId || c.fromId === account?.igUserId)),
       hidden: c.hidden, replyBody: c.replyBody, repliedAt: c.repliedAt, privateRepliedAt: c.privateRepliedAt, threadId: c.threadId,
+      replyCommentId: c.replyCommentId,
       read: Boolean(c.readAt), createdAt: c.createdAt,
       canPrivateReply: !c.privateRepliedAt && Date.now() - c.createdAt.getTime() < week,
     })));
@@ -584,7 +615,150 @@ async function commentFor(academyId: number, id: number | null) {
   return row ?? null;
 }
 
+async function postFor(academyId: number, id: number | null) {
+  if (!id) return null;
+  const [row] = await db.select().from(academySocialPostsTable)
+    .where(and(
+      eq(academySocialPostsTable.id, id),
+      eq(academySocialPostsTable.academyId, academyId),
+      isNull(academySocialPostsTable.deletedAt),
+    ));
+  return row ?? null;
+}
+
 const TextBody = z.object({ text: z.string().trim().min(1).max(1000) });
+
+const NewPostCommentBody = z.object({
+  channel: z.enum(["facebook", "instagram"]),
+  text: z.string().trim().min(1).max(1000),
+});
+
+router.post(`${base}/posts/:postId/comments`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  const body = NewPostCommentBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Write a comment first and choose Facebook or Instagram." });
+    return;
+  }
+  try {
+    const post = await postFor(a.academyId, intParam(req.params.postId));
+    if (!post || !["published", "partial"].includes(post.status)) {
+      res.status(404).json({ error: "Published post not found." });
+      return;
+    }
+    const channel = body.data.channel;
+    const externalPostId = channel === "facebook" ? post.fbPostId : post.igMediaId;
+    if (!externalPostId || !(post.targets as Target[]).includes(channel)) {
+      res.status(409).json({ error: `This post isn't published on ${channel === "facebook" ? "Facebook" : "Instagram"}.` });
+      return;
+    }
+    const account = await getSocialAccount(a.academyId);
+    if (!account || account.status !== "connected") {
+      res.status(409).json({ error: "Connect Instagram and Facebook first." });
+      return;
+    }
+    const commentId = await createPostComment(account, channel, externalPostId, body.data.text);
+    const now = new Date();
+    const fromId = channel === "facebook" ? account.pageId : account.igUserId;
+    const fromName = channel === "facebook" ? account.pageName : account.igUsername ? `@${account.igUsername}` : null;
+    await db.insert(academySocialCommentsTable).values({
+      academyId: a.academyId,
+      channel,
+      commentId,
+      postId: externalPostId,
+      postPermalink: channel === "facebook" ? post.fbPermalink : post.igPermalink,
+      postCaption: channel === "facebook" ? (post.facebookCaption ?? post.caption) : post.caption,
+      fromId,
+      fromName,
+      body: body.data.text,
+      readAt: now,
+      createdAt: now,
+    }).onConflictDoUpdate({
+      target: [academySocialCommentsTable.channel, academySocialCommentsTable.commentId],
+      set: {
+        postId: externalPostId,
+        postPermalink: channel === "facebook" ? post.fbPermalink : post.igPermalink,
+        postCaption: channel === "facebook" ? (post.facebookCaption ?? post.caption) : post.caption,
+        fromId,
+        fromName,
+        body: body.data.text,
+        readAt: now,
+        deletedAt: null,
+      },
+    });
+    res.status(201).json({ ok: true, commentId });
+  } catch (error) {
+    const failure = metaMutationFailure(error, body.data.channel, "comment", "create");
+    if (failure.kind === "permission") logMetaPermissionFailure(body.data.channel, "comment", "create", failure);
+    res.status(failure.status).json({ error: failure.error });
+  }
+});
+
+type MetaMutationFailure = {
+  kind: "permission" | "already-deleted" | "limit" | "other";
+  status: number;
+  error: string;
+  metaCode?: number;
+  metaSubcode?: number;
+};
+
+function metaMutationFailure(error: unknown, channel: Target, item: "post" | "comment", action: "create" | "edit" | "delete"): MetaMutationFailure {
+  const meta = error instanceof MetaGraphError ? error : null;
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  const limited = [4, 17, 32, 613].includes(meta?.code ?? -1)
+    || /24.?hours?|time limit|rate limit|limit reached|too many|temporarily blocked|restricted/.test(message);
+  const permission = meta?.code === 10 || meta?.code === 200
+    || /permissions? (?:are |is )?(?:missing|required|denied)|missing permissions?|does not have permissions?|doesn't have permission|not authorized|access denied|insufficient permissions?/.test(message);
+  const platform = channel === "instagram" ? "Instagram" : "Facebook";
+
+  if (limited) {
+    return {
+      kind: "limit",
+      status: 409,
+      error: "Meta rejected this action because of a time or account limit. Check the post or comment in Meta.",
+      metaCode: meta?.code,
+      metaSubcode: meta?.subcode,
+    };
+  }
+  if (permission) {
+    return {
+      kind: "permission",
+      status: 403,
+    error: channel === "instagram" && item === "post" && action === "delete"
+        ? "Replay doesn't have permission to delete Instagram posts yet"
+      : `Replay doesn't have permission to ${action} this ${platform} ${item} yet.`,
+      metaCode: meta?.code,
+      metaSubcode: meta?.subcode,
+    };
+  }
+  if (/already (?:(?:been|be) )?deleted|does not exist|no longer exists|not found|could not be found/.test(message)) {
+    return {
+      kind: "already-deleted",
+      status: 404,
+      error: `This ${platform} ${item} was already deleted or is no longer available.`,
+      metaCode: meta?.code,
+      metaSubcode: meta?.subcode,
+    };
+  }
+  return {
+    kind: "other",
+    status: 502,
+    error: `Meta couldn't ${action} this ${platform} ${item}. Try again later.`,
+    metaCode: meta?.code,
+    metaSubcode: meta?.subcode,
+  };
+}
+
+function logMetaPermissionFailure(channel: Target, item: "post" | "comment", action: "create" | "edit" | "delete", failure: MetaMutationFailure) {
+  logger.warn({
+    channel,
+    item,
+    action,
+    metaCode: failure.metaCode ?? null,
+    metaSubcode: failure.metaSubcode ?? null,
+  }, "Meta permission denied for social content management");
+}
 
 router.post(`${base}/comments/:commentId/reply`, async (req, res): Promise<void> => {
   const a = await access(req, res, true);
@@ -601,13 +775,193 @@ router.post(`${base}/comments/:commentId/reply`, async (req, res): Promise<void>
       res.status(404).json({ error: "Comment not found" });
       return;
     }
-    await replyToComment(account, comment.channel as "instagram" | "facebook", comment.commentId, body.data.text);
-    await db.update(academySocialCommentsTable).set({ replyBody: body.data.text, repliedAt: new Date(), repliedBy: a.user.id, readAt: new Date() })
+    const replyCommentId = await replyToComment(account, comment.channel as "instagram" | "facebook", comment.commentId, body.data.text);
+    await db.update(academySocialCommentsTable).set({
+      replyBody: body.data.text,
+      replyCommentId,
+      repliedAt: new Date(),
+      repliedBy: a.user.id,
+      readAt: new Date(),
+    })
       .where(eq(academySocialCommentsTable.id, comment.id));
     res.json({ ok: true });
   } catch (error) {
     fail(res, error, "Replying to a comment failed");
   }
+});
+
+const EditCommentBody = z.object({ text: z.string().trim().min(1).max(1000) });
+
+router.patch(`${base}/comments/:commentId`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  const body = EditCommentBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Write a comment up to 1,000 characters." });
+    return;
+  }
+  try {
+    const comment = await commentFor(a.academyId, intParam(req.params.commentId));
+    const account = await getSocialAccount(a.academyId);
+    if (!comment || !account || comment.deletedAt || !comment.postId) {
+      res.status(404).json({ error: "Comment not found." });
+      return;
+    }
+    if (comment.channel !== "facebook") {
+      res.status(400).json({ error: "Instagram doesn't allow editing comments through apps." });
+      return;
+    }
+    if (!account.pageId || comment.fromId !== account.pageId) {
+      res.status(403).json({ error: "Only comments written by your Facebook Page can be edited." });
+      return;
+    }
+    await editFacebookComment(account, comment.commentId, body.data.text);
+    await db.update(academySocialCommentsTable).set({ body: body.data.text, readAt: new Date() })
+      .where(eq(academySocialCommentsTable.id, comment.id));
+    res.json({ ok: true, body: body.data.text });
+  } catch (error) {
+    const channel = "facebook";
+    const failure = metaMutationFailure(error, channel, "comment", "edit");
+    if (failure.kind === "permission") logMetaPermissionFailure(channel, "comment", "edit", failure);
+    if (failure.kind === "already-deleted") {
+      const comment = await commentFor(a.academyId, intParam(req.params.commentId));
+      if (comment) await db.update(academySocialCommentsTable).set({ deletedAt: new Date() })
+        .where(eq(academySocialCommentsTable.id, comment.id));
+      res.json({ ok: true, alreadyDeleted: true, message: "This Facebook comment was already deleted and has been removed from Replay." });
+      return;
+    }
+    res.status(failure.status).json({ error: failure.error });
+  }
+});
+
+router.patch(`${base}/comments/:commentId/reply`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  const body = EditCommentBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Write a reply up to 1,000 characters." });
+    return;
+  }
+  const comment = await commentFor(a.academyId, intParam(req.params.commentId));
+  const account = await getSocialAccount(a.academyId);
+  if (!comment || !account || comment.deletedAt || !comment.postId || !comment.replyBody) {
+    res.status(404).json({ error: "Your reply was not found." });
+    return;
+  }
+  if (comment.channel !== "facebook") {
+    res.status(400).json({ error: "Instagram doesn't allow editing comments through apps." });
+    return;
+  }
+  if (!account.pageId) {
+    res.status(409).json({ error: "Connect your Facebook Page first." });
+    return;
+  }
+  try {
+    const replyCommentId = await editFacebookReply(
+      account,
+      comment.commentId,
+      comment.replyCommentId,
+      comment.replyBody,
+      body.data.text,
+    );
+    await db.update(academySocialCommentsTable).set({
+      replyBody: body.data.text,
+      replyCommentId,
+      readAt: new Date(),
+    }).where(eq(academySocialCommentsTable.id, comment.id));
+    res.json({ ok: true, replyBody: body.data.text });
+  } catch (error) {
+    const failure = metaMutationFailure(error, "facebook", "comment", "edit");
+    if (failure.kind === "permission") logMetaPermissionFailure("facebook", "comment", "edit", failure);
+    if (failure.kind === "already-deleted") {
+      await db.update(academySocialCommentsTable).set({
+        replyBody: null,
+        replyCommentId: null,
+        repliedAt: null,
+        repliedBy: null,
+      }).where(eq(academySocialCommentsTable.id, comment.id));
+      res.json({ ok: true, alreadyDeleted: true, message: "This Facebook reply was already deleted and has been removed from Replay." });
+      return;
+    }
+    res.status(failure.status).json({ error: failure.error });
+  }
+});
+
+router.delete(`${base}/comments/:commentId/reply`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  const comment = await commentFor(a.academyId, intParam(req.params.commentId));
+  const account = await getSocialAccount(a.academyId);
+  if (!comment || !account || comment.deletedAt || !comment.postId || !comment.replyBody) {
+    res.status(404).json({ error: "Your reply was not found." });
+    return;
+  }
+  let alreadyDeleted = false;
+  try {
+    await deleteSocialReply(
+      account,
+      comment.channel as "instagram" | "facebook",
+      comment.commentId,
+      comment.replyCommentId,
+      comment.replyBody,
+    );
+  } catch (error) {
+    const channel = comment.channel as Target;
+    const failure = metaMutationFailure(error, channel, "comment", "delete");
+    if (failure.kind === "permission") logMetaPermissionFailure(channel, "comment", "delete", failure);
+    if (failure.kind !== "already-deleted") {
+      res.status(failure.status).json({ error: failure.error });
+      return;
+    }
+    alreadyDeleted = true;
+  }
+  await db.update(academySocialCommentsTable).set({
+    replyBody: null,
+    replyCommentId: null,
+    repliedAt: null,
+    repliedBy: null,
+    readAt: new Date(),
+  }).where(eq(academySocialCommentsTable.id, comment.id));
+  res.json({
+    ok: true,
+    alreadyDeleted,
+    ...(alreadyDeleted ? { message: `This ${comment.channel === "instagram" ? "Instagram" : "Facebook"} reply was already deleted and has been removed from Replay.` } : {}),
+  });
+});
+
+router.delete(`${base}/comments/:commentId`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  const comment = await commentFor(a.academyId, intParam(req.params.commentId));
+  const account = await getSocialAccount(a.academyId);
+  if (!comment || !account || !comment.postId) {
+    res.status(404).json({ error: "Comment not found." });
+    return;
+  }
+  if (comment.deletedAt) {
+    res.json({ ok: true, alreadyDeleted: true, message: "This comment was already deleted from Replay." });
+    return;
+  }
+  let alreadyDeleted = false;
+  try {
+    await deleteSocialComment(account, comment.commentId);
+  } catch (error) {
+    const channel = comment.channel as Target;
+    const failure = metaMutationFailure(error, channel, "comment", "delete");
+    if (failure.kind === "permission") logMetaPermissionFailure(channel, "comment", "delete", failure);
+    if (failure.kind !== "already-deleted") {
+      res.status(failure.status).json({ error: failure.error });
+      return;
+    }
+    alreadyDeleted = true;
+  }
+  await db.update(academySocialCommentsTable).set({ deletedAt: new Date() })
+    .where(eq(academySocialCommentsTable.id, comment.id));
+  res.json({
+    ok: true,
+    alreadyDeleted,
+    ...(alreadyDeleted ? { message: `This ${comment.channel === "instagram" ? "Instagram" : "Facebook"} comment was already deleted and has been removed from Replay.` } : {}),
+  });
 });
 
 router.post(`${base}/comments/:commentId/private-reply`, async (req, res): Promise<void> => {
@@ -681,12 +1035,22 @@ router.get(`${base}/posts`, async (req, res): Promise<void> => {
   const a = await access(req, res);
   if (!a) return;
   try {
-    const rows = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.academyId, a.academyId))
+    const rows = await db.select().from(academySocialPostsTable).where(and(
+      eq(academySocialPostsTable.academyId, a.academyId),
+      isNull(academySocialPostsTable.deletedAt),
+    ))
       .orderBy(sql`coalesce(${academySocialPostsTable.publishedAt}, ${academySocialPostsTable.scheduledFor}, ${academySocialPostsTable.createdAt}) desc`).limit(100);
     res.json(rows.map((p) => {
       const media = (p.media as Array<{ mediaId: number; type: string }>) ?? [];
+      const targets = (p.targets as Target[]) ?? [];
       return {
-        id: p.id, source: p.source, targets: p.targets, format: p.format, caption: p.caption, status: p.status,
+        id: p.id, source: p.source, targets, format: p.format, caption: p.caption,
+        facebookCaption: p.facebookCaption ?? (targets.includes("facebook") ? p.caption : null),
+        commentTargets: [
+          ...(p.fbPostId && targets.includes("facebook") ? ["facebook" as const] : []),
+          ...(p.igMediaId && targets.includes("instagram") ? ["instagram" as const] : []),
+        ],
+        status: p.status,
         scheduledFor: p.scheduledFor, publishedAt: p.publishedAt, igPermalink: p.igPermalink, fbPermalink: p.fbPermalink,
         thumbnail: p.thumbnail ?? (media[0] ? thumbPath(a.academyId, media[0].mediaId) : null),
         error: p.error, insights: p.insights ?? {}, insightsAt: p.insightsAt, mediaCount: media.length,
@@ -749,7 +1113,9 @@ router.post(`${base}/posts`, async (req, res): Promise<void> => {
       return;
     }
     const [post] = await db.insert(academySocialPostsTable).values({
-      academyId: a.academyId, source: "replay", targets: targets as Target[], format: format as Format, caption, media,
+      academyId: a.academyId, source: "replay", targets: targets as Target[], format: format as Format, caption,
+      facebookCaption: targets.includes("facebook") ? caption : null,
+      media,
       status: when ? "scheduled" : "draft", scheduledFor: when, createdBy: a.user.id,
     }).returning();
     const result = when ? post : await publishPost(post.id);
@@ -776,20 +1142,136 @@ router.post(`${base}/posts/:postId/publish`, async (req, res): Promise<void> => 
   }
 });
 
+const FacebookPostEditBody = z.object({ caption: z.string().trim().max(2200) });
+
+router.patch(`${base}/posts/:postId`, async (req, res): Promise<void> => {
+  const a = await access(req, res, true);
+  if (!a) return;
+  const body = FacebookPostEditBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ error: "Write a Facebook message up to 2,200 characters." });
+    return;
+  }
+  const id = intParam(req.params.postId);
+  const [post] = id ? await db.select().from(academySocialPostsTable).where(and(
+    eq(academySocialPostsTable.id, id),
+    eq(academySocialPostsTable.academyId, a.academyId),
+    isNull(academySocialPostsTable.deletedAt),
+  )) : [];
+  if (!post || !post.fbPostId || !(post.targets as Target[]).includes("facebook")
+    || !["published", "partial"].includes(post.status)) {
+    res.status(404).json({ error: "Published Facebook post not found." });
+    return;
+  }
+  try {
+    const account = await getSocialAccount(a.academyId);
+    if (!account || account.status !== "connected") {
+      res.status(409).json({ error: "Connect the Facebook Page first." });
+      return;
+    }
+    await editFacebookPostMessage(account, post.fbPostId, body.data.caption);
+    await db.update(academySocialPostsTable).set({
+      facebookCaption: body.data.caption,
+      updatedAt: new Date(),
+    }).where(eq(academySocialPostsTable.id, post.id));
+    res.json({ ok: true, facebookCaption: body.data.caption });
+  } catch (error) {
+    const failure = metaMutationFailure(error, "facebook", "post", "edit");
+    if (failure.kind === "permission") logMetaPermissionFailure("facebook", "post", "edit", failure);
+    if (failure.kind === "already-deleted") {
+      const targets = (post.targets as Target[]).filter((target) => target !== "facebook");
+      const deletedAt = targets.length ? null : new Date();
+      await db.update(academySocialPostsTable).set({ targets, deletedAt, updatedAt: new Date() })
+        .where(eq(academySocialPostsTable.id, post.id));
+      res.json({ ok: true, alreadyDeleted: true, message: "This Facebook post was already deleted and has been removed from Replay." });
+      return;
+    }
+    res.status(failure.status).json({ error: failure.error });
+  }
+});
+
 router.delete(`${base}/posts/:postId`, async (req, res): Promise<void> => {
   const a = await access(req, res, true);
   if (!a) return;
   const id = intParam(req.params.postId);
-  const deleted = id ? await db.delete(academySocialPostsTable).where(and(
-    eq(academySocialPostsTable.id, id),
-    eq(academySocialPostsTable.academyId, a.academyId),
-    inArray(academySocialPostsTable.status, ["draft", "scheduled", "failed"]),
-  )).returning({ id: academySocialPostsTable.id }) : [];
-  if (deleted.length === 0) {
-    res.status(409).json({ error: "Only drafts, scheduled and failed posts can be removed here. Delete published posts in Instagram or Facebook." });
+  const requestedChannel = req.query.channel;
+  const channel = requestedChannel === "facebook" || requestedChannel === "instagram" ? requestedChannel : null;
+  if (requestedChannel !== undefined && !channel) {
+    res.status(400).json({ error: "Choose Facebook or Instagram." });
     return;
   }
-  res.status(204).end();
+  if (!id) {
+    res.status(404).json({ error: "Post not found." });
+    return;
+  }
+  const [post] = await db.select().from(academySocialPostsTable).where(and(
+    eq(academySocialPostsTable.id, id),
+    eq(academySocialPostsTable.academyId, a.academyId),
+  ));
+  if (!post) {
+    res.status(404).json({ error: "Post not found." });
+    return;
+  }
+  if (!channel) {
+    const deleted = await db.delete(academySocialPostsTable).where(and(
+      eq(academySocialPostsTable.id, id),
+      eq(academySocialPostsTable.academyId, a.academyId),
+      inArray(academySocialPostsTable.status, ["draft", "scheduled", "failed"]),
+    )).returning({ id: academySocialPostsTable.id });
+    if (deleted.length === 0) {
+      res.status(409).json({ error: "Choose Facebook or Instagram to delete a published post." });
+      return;
+    }
+    res.status(204).end();
+    return;
+  }
+
+  const activeTargets = (post.targets as Target[]) ?? [];
+  const externalId = channel === "facebook" ? post.fbPostId : post.igMediaId;
+  if (post.deletedAt || !activeTargets.includes(channel) || !externalId) {
+    res.json({
+      ok: true,
+      alreadyDeleted: true,
+      message: `This post was already deleted from ${channel === "facebook" ? "Facebook" : "Instagram"} in Replay.`,
+    });
+    return;
+  }
+  if (!["published", "partial"].includes(post.status)) {
+    res.status(409).json({ error: "Only published posts can be deleted from Facebook or Instagram." });
+    return;
+  }
+  let alreadyDeleted = false;
+  try {
+    const account = await getSocialAccount(a.academyId);
+    if (!account || account.status !== "connected") {
+      res.status(409).json({ error: "Connect Instagram and Facebook first." });
+      return;
+    }
+    await deletePublishedTarget(account, channel, externalId);
+  } catch (error) {
+    const failure = metaMutationFailure(error, channel, "post", "delete");
+    if (failure.kind === "permission") logMetaPermissionFailure(channel, "post", "delete", failure);
+    if (failure.kind !== "already-deleted") {
+      res.status(failure.status).json({ error: failure.error });
+      return;
+    }
+    alreadyDeleted = true;
+  }
+
+  const remainingTargets = activeTargets.filter((target) => target !== channel);
+  const now = new Date();
+  await db.update(academySocialPostsTable).set({
+    targets: remainingTargets,
+    deletedAt: remainingTargets.length === 0 ? now : null,
+    updatedAt: now,
+  }).where(eq(academySocialPostsTable.id, post.id));
+  res.json({
+    ok: true,
+    alreadyDeleted,
+    message: alreadyDeleted
+      ? `This post was already deleted from ${channel === "facebook" ? "Facebook" : "Instagram"} and has been removed from Replay.`
+      : `This post was deleted from ${channel === "facebook" ? "Facebook" : "Instagram"} and removed from Replay.`,
+  });
 });
 
 // ─── Media library (shared with Ads) ────────────────────────────────────────

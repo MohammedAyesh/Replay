@@ -109,6 +109,7 @@ export const academySocialCommentsTable = pgTable("academy_social_comments", {
   body: text("body").notNull().default(""),
   hidden: boolean("hidden").notNull().default(false),
   replyBody: text("reply_body"),
+  replyCommentId: text("reply_comment_id"),
   repliedAt: timestamp("replied_at", { withTimezone: true }),
   repliedBy: integer("replied_by").references(() => usersTable.id, { onDelete: "set null" }),
   privateRepliedAt: timestamp("private_replied_at", { withTimezone: true }),
@@ -136,6 +137,8 @@ export const academySocialPostsTable = pgTable("academy_social_posts", {
   /** "image", "carousel", "video", "reel", "story" */
   format: text("format").notNull().default("image"),
   caption: text("caption").notNull().default(""),
+  /** Facebook can diverge from the Instagram caption after a Page-only edit. */
+  facebookCaption: text("facebook_caption"),
   /** [{ type: "image" | "video", url, mediaId? }] — public URLs Meta can fetch. */
   media: jsonb("media").notNull().default(sql`'[]'::jsonb`),
   status: text("status").notNull().default("draft"),
@@ -145,6 +148,7 @@ export const academySocialPostsTable = pgTable("academy_social_posts", {
   igPermalink: text("ig_permalink"),
   fbPostId: text("fb_post_id"),
   fbPermalink: text("fb_permalink"),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
   thumbnail: text("thumbnail"),
   error: text("error"),
   /** { instagram: { views, reach, likes, comments, saves, shares, total }, facebook: {...} } */

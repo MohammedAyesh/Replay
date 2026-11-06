@@ -90,12 +90,16 @@ export type SocialThread = Omit<SocialThreadSummary, "lastBody" | "lastDirection
 export type SocialComment = {
   id: number;
   channel: "instagram" | "facebook";
+  postId: string | null;
+  parentId: string | null;
+  isOwn: boolean;
   body: string;
   fromName: string | null;
   postPermalink: string | null;
   postCaption: string | null;
   hidden: boolean;
   replyBody: string | null;
+  replyCommentId: string | null;
   repliedAt: string | null;
   privateRepliedAt: string | null;
   threadId: number | null;
@@ -110,6 +114,8 @@ export type SocialPost = {
   targets: Array<"instagram" | "facebook">;
   format: "image" | "carousel" | "video" | "reel" | "story";
   caption: string;
+  facebookCaption: string | null;
+  commentTargets: Array<"facebook" | "instagram">;
   status: "draft" | "scheduled" | "publishing" | "published" | "partial" | "failed";
   scheduledFor: string | null;
   publishedAt: string | null;
@@ -308,6 +314,64 @@ export function useCommentAction(academyId: number) {
   });
 }
 
+export function useCreatePostComment(academyId: number, postId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: (input: { channel: "facebook" | "instagram"; text: string }) =>
+      call<{ ok: boolean; commentId: string }>(`${root(academyId)}/posts/${postId}/comments`, {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    onSuccess: done,
+  });
+}
+
+export function useEditSocialComment(academyId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: ({ id, text }: { id: number; text: string }) =>
+      call<{ ok: boolean; body: string }>(`${root(academyId)}/comments/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ text }),
+      }),
+    onSuccess: done,
+  });
+}
+
+export function useDeleteSocialComment(academyId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: (id: number) => call<{ ok: boolean; alreadyDeleted?: boolean; message?: string }>(
+      `${root(academyId)}/comments/${id}`,
+      { method: "DELETE" },
+    ),
+    onSuccess: done,
+  });
+}
+
+export function useEditSocialReply(academyId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: ({ id, text }: { id: number; text: string }) =>
+      call<{ ok: boolean; replyBody: string }>(`${root(academyId)}/comments/${id}/reply`, {
+        method: "PATCH",
+        body: JSON.stringify({ text }),
+      }),
+    onSuccess: done,
+  });
+}
+
+export function useDeleteSocialReply(academyId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: (id: number) => call<{ ok: boolean; alreadyDeleted?: boolean; message?: string }>(
+      `${root(academyId)}/comments/${id}/reply`,
+      { method: "DELETE" },
+    ),
+    onSuccess: done,
+  });
+}
+
 // ─── Posts and media ────────────────────────────────────────────────────────
 
 export function useSocialPosts(academyId: number) {
@@ -327,8 +391,23 @@ export function useCreatePost(academyId: number) {
 export function usePostAction(academyId: number) {
   const done = useInvalidate(academyId);
   return useMutation({
-    mutationFn: ({ id, action }: { id: number; action: "publish" | "delete" }) =>
-      action === "delete" ? call(`${root(academyId)}/posts/${id}`, { method: "DELETE" }) : call(`${root(academyId)}/posts/${id}/publish`, { method: "POST" }),
+    mutationFn: ({ id, action, channel }: { id: number; action: "publish" | "delete" | "delete-target"; channel?: "facebook" | "instagram" }) =>
+      action === "delete-target"
+        ? call<{ ok: boolean; alreadyDeleted?: boolean; message?: string }>(`${root(academyId)}/posts/${id}?channel=${channel}`, { method: "DELETE" })
+        : action === "delete"
+          ? call(`${root(academyId)}/posts/${id}`, { method: "DELETE" })
+          : call(`${root(academyId)}/posts/${id}/publish`, { method: "POST" }),
+    onSuccess: done,
+  });
+}
+
+export function useEditFacebookPost(academyId: number, postId: number) {
+  const done = useInvalidate(academyId);
+  return useMutation({
+    mutationFn: (caption: string) => call<{ ok: boolean; facebookCaption: string }>(
+      `${root(academyId)}/posts/${postId}`,
+      { method: "PATCH", body: JSON.stringify({ caption }) },
+    ),
     onSuccess: done,
   });
 }

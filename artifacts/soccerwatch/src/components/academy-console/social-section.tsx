@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from "react";
-import { CalendarClock, Check, EyeOff, Facebook, ImagePlus, Instagram, Loader2, MessageCircle, RefreshCw, Send, Trash2, Upload } from "lucide-react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
+import { CalendarClock, Check, EyeOff, Facebook, ImagePlus, Instagram, Loader2, MessageCircle, Pencil, RefreshCw, Send, Trash2, Upload } from "lucide-react";
 import { useSocialCopy } from "@/i18n/social-strings";
 import { useAcademyInstagramCopy } from "@/i18n/academy-instagram-strings";
 import { AcademyInstagramAutopilot } from "./instagram-autopilot";
@@ -7,7 +7,13 @@ import { InstagramUnifiedLogin } from "./instagram-unified-login";
 import {
   apiUrl,
   useCommentAction,
+  useCreatePostComment,
   useCreatePost,
+  useDeleteSocialComment,
+  useDeleteSocialReply,
+  useEditFacebookPost,
+  useEditSocialComment,
+  useEditSocialReply,
   usePostAction,
   useSelectPage,
   useSocialComments,
@@ -63,7 +69,7 @@ export function AcademySocialSection({ academyId, onOpenChat, initialTab }: { ac
                 </div>
               )}
               {(!connected || tab === "overview") && <Overview academyId={academyId} data={overview.data!} />}
-              {connected && tab === "comments" && <Comments academyId={academyId} onOpenChat={onOpenChat} />}
+              {connected && tab === "comments" && <Comments academyId={academyId} canManage={overview.data!.canManage} onOpenChat={onOpenChat} />}
               {connected && tab === "posts" && <Posts academyId={academyId} canManage={overview.data!.canManage} data={overview.data!} />}
               {connected && tab === "autopilot" && overview.data!.canManage && <AcademyInstagramAutopilot academyId={academyId} />}
             </>
@@ -206,7 +212,7 @@ function Overview({ academyId, data }: { academyId: number; data: SocialOverview
 
 // ─── Comments ───────────────────────────────────────────────────────────────
 
-function Comments({ academyId, onOpenChat }: { academyId: number; onOpenChat?: (threadId: number) => void }) {
+function Comments({ academyId, canManage, onOpenChat }: { academyId: number; canManage: boolean; onOpenChat?: (threadId: number) => void }) {
   const copy = useSocialCopy();
   const [filter, setFilter] = useState<"open" | "all">("open");
   const comments = useSocialComments(academyId, filter);
@@ -219,20 +225,42 @@ function Comments({ academyId, onOpenChat }: { academyId: number; onOpenChat?: (
       </div>
       {comments.isLoading ? <div className="h-40 animate-pulse rounded-2xl bg-raised" />
         : (comments.data ?? []).length === 0 ? <p className="rounded-2xl border border-line bg-surface p-6 text-center text-sm text-muted-text">{copy.comments.empty}</p>
-          : <ul className="space-y-3">{comments.data!.map((c) => <CommentRow key={c.id} academyId={academyId} comment={c} onOpenChat={onOpenChat} />)}</ul>}
+          : <ul className="space-y-3">{comments.data!.map((c) => <CommentRow key={c.id} academyId={academyId} comment={c} canManage={canManage} onOpenChat={onOpenChat} />)}</ul>}
     </div>
   );
 }
 
-function CommentRow({ academyId, comment, onOpenChat }: { academyId: number; comment: SocialComment; onOpenChat?: (threadId: number) => void }) {
+function CommentRow({ academyId, comment, canManage, onOpenChat }: { academyId: number; comment: SocialComment; canManage: boolean; onOpenChat?: (threadId: number) => void }) {
   const copy = useSocialCopy();
   const action = useCommentAction(academyId);
+  const editComment = useEditSocialComment(academyId);
+  const deleteComment = useDeleteSocialComment(academyId);
+  const editReply = useEditSocialReply(academyId);
+  const deleteReply = useDeleteSocialReply(academyId);
   const [mode, setMode] = useState<null | "reply" | "private">(null);
   const [text, setText] = useState("");
+  const [editing, setEditing] = useState<null | "comment" | "reply">(null);
+  const [editText, setEditText] = useState("");
   const Icon = comment.channel === "instagram" ? Instagram : Facebook;
+  const busy = action.isPending || editComment.isPending || deleteComment.isPending || editReply.isPending || deleteReply.isPending;
+  const error = action.error ?? editComment.error ?? deleteComment.error ?? editReply.error ?? deleteReply.error;
   const send = () => {
     if (!text.trim() || !mode) return;
     action.mutate({ id: comment.id, action: mode === "reply" ? "reply" : "private-reply", text: text.trim() }, { onSuccess: () => { setMode(null); setText(""); } });
+  };
+  const saveEdit = () => {
+    if (!editText.trim() || !editing) return;
+    const mutation = editing === "comment" ? editComment : editReply;
+    mutation.mutate({ id: comment.id, text: editText.trim() }, { onSuccess: () => { setEditing(null); setEditText(""); } });
+  };
+  const beginEdit = (kind: "comment" | "reply", value: string) => {
+    setEditing(kind);
+    setEditText(value);
+    setMode(null);
+  };
+  const confirmDelete = (kind: "comment" | "reply") => {
+    if (!window.confirm(kind === "comment" ? copy.comments.confirmDelete : copy.comments.confirmDeleteReply)) return;
+    (kind === "comment" ? deleteComment : deleteReply).mutate(comment.id);
   };
   return (
     <li className="rounded-2xl border border-line bg-surface p-4" data-testid={`social-comment-${comment.id}`}>
@@ -243,30 +271,50 @@ function CommentRow({ academyId, comment, onOpenChat }: { academyId: number; com
           <p className="mt-1 whitespace-pre-wrap text-sm text-text" dir="auto">{comment.body}</p>
           {comment.postCaption && <p className="mt-1 truncate text-xs text-muted-text" dir="auto">↳ {comment.postCaption}</p>}
           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px]">
-            {comment.repliedAt && <span className="rounded-full bg-turf/15 px-2 py-0.5 text-turf">{copy.comments.replied}: <span dir="auto">{comment.replyBody}</span></span>}
+            {comment.repliedAt && comment.replyBody && <span className="rounded-full bg-turf/15 px-2 py-0.5 text-turf">{copy.comments.replied}: <span dir="auto">{comment.replyBody}</span></span>}
             {comment.privateRepliedAt && <span className="rounded-full bg-sky-400/15 px-2 py-0.5 text-sky-300">{copy.comments.sentPrivately}</span>}
             {comment.hidden && <span className="rounded-full bg-raised px-2 py-0.5 text-muted-text">{copy.comments.hidden}</span>}
           </div>
+          {canManage && comment.replyBody && comment.channel === "facebook" && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => beginEdit("reply", comment.replyBody!)}><Pencil className="me-1 h-3.5 w-3.5" aria-hidden="true" />{copy.comments.edit} {copy.comments.replied.toLowerCase()}</Button>
+              <Button type="button" size="sm" variant="ghost" disabled={busy} className="text-red-300" onClick={() => confirmDelete("reply")}><Trash2 className="me-1 h-3.5 w-3.5" aria-hidden="true" />{copy.comments.delete} {copy.comments.replied.toLowerCase()}</Button>
+            </div>
+          )}
+          {comment.channel === "instagram" && (comment.isOwn || comment.replyBody) && (
+            <p className="mt-2 text-xs text-muted-text">{copy.comments.instagramNoEdit}</p>
+          )}
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <Button type="button" size="sm" variant="ghost" className="border border-line" onClick={() => setMode(mode === "reply" ? null : "reply")}><MessageCircle className="me-1.5 h-4 w-4" aria-hidden="true" />{copy.comments.reply}</Button>
-        {comment.canPrivateReply && <Button type="button" size="sm" variant="ghost" className="border border-line" onClick={() => { setMode(mode === "private" ? null : "private"); if (!text) setText(copy.comments.trialTemplate); }}><Send className="me-1.5 h-4 w-4 rtl:-scale-x-100" aria-hidden="true" />{copy.comments.privateReply}</Button>}
+      {canManage && <div className="mt-3 flex flex-wrap gap-2">
+        <Button type="button" size="sm" variant="ghost" className="border border-line" disabled={busy} onClick={() => setMode(mode === "reply" ? null : "reply")}><MessageCircle className="me-1.5 h-4 w-4" aria-hidden="true" />{copy.comments.reply}</Button>
+        {comment.canPrivateReply && <Button type="button" size="sm" variant="ghost" className="border border-line" disabled={busy} onClick={() => { setMode(mode === "private" ? null : "private"); if (!text) setText(copy.comments.trialTemplate); }}><Send className="me-1.5 h-4 w-4 rtl:-scale-x-100" aria-hidden="true" />{copy.comments.privateReply}</Button>}
+        {comment.isOwn && comment.channel === "facebook" && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => beginEdit("comment", comment.body)}><Pencil className="me-1 h-3.5 w-3.5" aria-hidden="true" />{copy.comments.edit}</Button>}
+        <Button type="button" size="sm" variant="ghost" disabled={busy} className="text-red-300" onClick={() => confirmDelete("comment")}><Trash2 className="me-1 h-3.5 w-3.5" aria-hidden="true" />{copy.comments.delete}</Button>
         {comment.threadId && onOpenChat && <Button type="button" size="sm" variant="ghost" onClick={() => onOpenChat(comment.threadId!)}>{copy.comments.openChat}</Button>}
-        <Button type="button" size="sm" variant="ghost" disabled={action.isPending} onClick={() => action.mutate({ id: comment.id, action: "hide", hidden: !comment.hidden })}><EyeOff className="me-1.5 h-4 w-4" aria-hidden="true" />{comment.hidden ? copy.comments.unhide : copy.comments.hide}</Button>
+        <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={() => action.mutate({ id: comment.id, action: "hide", hidden: !comment.hidden })}><EyeOff className="me-1.5 h-4 w-4" aria-hidden="true" />{comment.hidden ? copy.comments.unhide : copy.comments.hide}</Button>
         {comment.postPermalink && <a href={comment.postPermalink} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center px-2 text-xs text-muted-text hover:text-text">{copy.comments.viewPost}</a>}
-        {!comment.read && <Button type="button" size="sm" variant="ghost" className="ms-auto text-muted-text" onClick={() => action.mutate({ id: comment.id, action: "read" })}><Check className="me-1 h-4 w-4" aria-hidden="true" />{copy.comments.markRead}</Button>}
-      </div>
+        {!comment.read && <Button type="button" size="sm" variant="ghost" className="ms-auto text-muted-text" disabled={busy} onClick={() => action.mutate({ id: comment.id, action: "read" })}><Check className="me-1 h-4 w-4" aria-hidden="true" />{copy.comments.markRead}</Button>}
+      </div>}
+      {editing && (
+        <div className="mt-3 space-y-2">
+          <Textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={2} maxLength={1000} dir="auto" />
+          <div className="flex gap-2">
+            <Button type="button" size="sm" disabled={!editText.trim() || busy} onClick={saveEdit} className="bg-floodlight font-bold text-void">{copy.comments.save}</Button>
+            <Button type="button" size="sm" variant="ghost" onClick={() => setEditing(null)}>{copy.comments.cancel}</Button>
+          </div>
+        </div>
+      )}
       {mode && (
         <div className="mt-3 space-y-2">
           <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={mode === "reply" ? copy.comments.replyPlaceholder : copy.comments.privatePlaceholder} rows={2} maxLength={1000} dir="auto" />
           {mode === "private" && <p className="text-xs text-muted-text">{copy.comments.privateHint}</p>}
-          <Button type="button" size="sm" disabled={!text.trim() || action.isPending} onClick={send} className="bg-floodlight font-bold text-void">
-            {action.isPending && <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden="true" />}{mode === "reply" ? copy.comments.sendReply : copy.comments.sendPrivate}
+          <Button type="button" size="sm" disabled={!text.trim() || busy} onClick={send} className="bg-floodlight font-bold text-void">
+            {busy && <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden="true" />}{mode === "reply" ? copy.comments.sendReply : copy.comments.sendPrivate}
           </Button>
         </div>
       )}
-      {action.isError && <p className="mt-2 text-xs text-red-400" role="alert">{(action.error as Error).message}</p>}
+      {error && <p className="mt-2 text-xs text-red-400" role="alert">{error.message}</p>}
     </li>
   );
 }
@@ -289,7 +337,33 @@ function Metrics({ insights, locale }: { insights: Insights | undefined; locale:
 function PostCard({ post, academyId, canManage }: { post: SocialPost; academyId: number; canManage: boolean }) {
   const copy = useSocialCopy();
   const action = usePostAction(academyId);
+  const editFacebook = useEditFacebookPost(academyId, post.id);
+  const createComment = useCreatePostComment(academyId, post.id);
+  const [editingFacebook, setEditingFacebook] = useState(false);
+  const [facebookText, setFacebookText] = useState("");
+  const [commentOpen, setCommentOpen] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [commentChannel, setCommentChannel] = useState<"facebook" | "instagram">("facebook");
+  const commentTargets = post.commentTargets ?? [];
+  const selectedChannel = commentTargets.includes(commentChannel) ? commentChannel : commentTargets[0] ?? "facebook";
   const when = post.publishedAt ?? post.scheduledFor;
+  const splitCaptions = post.targets.includes("facebook") && post.targets.includes("instagram")
+    && (post.facebookCaption ?? post.caption) !== post.caption;
+  const confirmDeletePost = (channel: "facebook" | "instagram") => {
+    const message = channel === "facebook" ? copy.posts.confirmDeleteFacebook : copy.posts.confirmDeleteInstagram;
+    if (window.confirm(message)) action.mutate({ id: post.id, action: "delete-target", channel });
+  };
+  const saveFacebookText = () => {
+    editFacebook.mutate(facebookText.trim(), { onSuccess: () => setEditingFacebook(false) });
+  };
+  const sendTopLevelComment = (event: FormEvent) => {
+    event.preventDefault();
+    if (!commentText.trim() || !commentTargets.length) return;
+    createComment.mutate({ channel: selectedChannel, text: commentText.trim() }, {
+      onSuccess: () => { setCommentText(""); setCommentOpen(false); },
+    });
+  };
+  const mutationError = action.error ?? editFacebook.error ?? createComment.error;
   return (
     <div className="flex gap-3 rounded-2xl border border-line bg-surface p-3" data-testid={`social-post-${post.id}`}>
       <div className="h-24 w-20 shrink-0 overflow-hidden rounded-xl bg-raised">
@@ -305,7 +379,24 @@ function PostCard({ post, academyId, canManage }: { post: SocialPost; academyId:
           </span>
           {when && <span className="text-muted-text">{fmtWhen(copy.locale, when)}</span>}
         </div>
-        {post.caption && <p className="line-clamp-2 text-sm text-text" dir="auto">{post.caption}</p>}
+        {post.caption && (splitCaptions ? (
+          <div className="space-y-1 text-sm text-text">
+            <p className="line-clamp-2" dir="auto"><span className="text-xs text-muted-text">{copy.posts.instagramCaption}: </span>{post.caption}</p>
+            <p className="line-clamp-2" dir="auto"><span className="text-xs text-muted-text">{copy.posts.facebookCaption}: </span>{post.facebookCaption ?? post.caption}</p>
+          </div>
+        ) : <p className="line-clamp-2 text-sm text-text" dir="auto">{post.targets.includes("facebook") && !post.targets.includes("instagram") ? post.facebookCaption ?? post.caption : post.caption}</p>)}
+        {editingFacebook && (
+          <div className="space-y-2">
+            <Textarea value={facebookText} onChange={(e) => setFacebookText(e.target.value)} rows={3} maxLength={2200} dir="auto" aria-label={copy.posts.facebookCaption} />
+            <div className="flex gap-2">
+              <Button type="button" size="sm" disabled={!facebookText.trim() || editFacebook.isPending} onClick={saveFacebookText} className="bg-floodlight font-bold text-void">
+                {editFacebook.isPending && <Loader2 className="me-1 h-4 w-4 animate-spin" aria-hidden="true" />}{copy.posts.saveFacebook}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setEditingFacebook(false)}>{copy.comments.cancel}</Button>
+            </div>
+          </div>
+        )}
+        {post.targets.includes("instagram") && <p className="text-xs text-muted-text">{copy.posts.instagramNoEdit}</p>}
         <Metrics insights={post.insights.instagram} locale={copy.locale} />
         <Metrics insights={post.insights.facebook} locale={copy.locale} />
         {post.error && <p className="text-xs text-red-400">{post.error}</p>}
@@ -318,7 +409,35 @@ function PostCard({ post, academyId, canManage }: { post: SocialPost; academyId:
           {canManage && post.source === "replay" && ["draft", "scheduled", "failed"].includes(post.status) && (
             <button type="button" className="text-muted-text hover:text-red-300" disabled={action.isPending} onClick={() => action.mutate({ id: post.id, action: "delete" })}><Trash2 className="me-0.5 inline h-3.5 w-3.5" aria-hidden="true" />{copy.posts.remove}</button>
           )}
+          {canManage && post.commentTargets.includes("facebook") && ["published", "partial"].includes(post.status) && (
+            <button type="button" className="font-semibold text-sky-300" disabled={editFacebook.isPending || action.isPending} onClick={() => { setFacebookText(post.facebookCaption ?? post.caption); setEditingFacebook((value) => !value); }}>
+              <Pencil className="me-1 inline h-3.5 w-3.5" aria-hidden="true" />{copy.posts.editFacebook}
+            </button>
+          )}
+          {canManage && ["published", "partial"].includes(post.status) && post.commentTargets.includes("facebook") && (
+            <button type="button" className="text-red-300 hover:text-red-200" disabled={action.isPending} onClick={() => confirmDeletePost("facebook")}><Trash2 className="me-1 inline h-3.5 w-3.5" aria-hidden="true" />{copy.posts.deleteFacebook}</button>
+          )}
+          {canManage && ["published", "partial"].includes(post.status) && post.commentTargets.includes("instagram") && (
+            <button type="button" className="text-red-300 hover:text-red-200" disabled={action.isPending} onClick={() => confirmDeletePost("instagram")}><Trash2 className="me-1 inline h-3.5 w-3.5" aria-hidden="true" />{copy.posts.deleteInstagram}</button>
+          )}
+          {canManage && commentTargets.length > 0 && ["published", "partial"].includes(post.status) && (
+            <button type="button" className="font-semibold text-turf" onClick={() => setCommentOpen((value) => !value)}><MessageCircle className="me-1 inline h-3.5 w-3.5" aria-hidden="true" />{copy.posts.commentOnPost}</button>
+          )}
         </div>
+        {commentOpen && (
+          <form className="space-y-2 rounded-xl border border-line bg-void/30 p-3" onSubmit={sendTopLevelComment}>
+            {commentTargets.length > 1 && (
+              <select className="min-h-9 rounded-lg border border-line bg-surface px-3 text-sm text-text" value={selectedChannel} onChange={(e) => setCommentChannel(e.target.value as "facebook" | "instagram")} aria-label={copy.posts.where}>
+                {commentTargets.map((channel) => <option key={channel} value={channel}>{channel === "facebook" ? "Facebook" : "Instagram"}</option>)}
+              </select>
+            )}
+            <Textarea value={commentText} onChange={(e) => setCommentText(e.target.value)} placeholder={copy.posts.commentPlaceholder} rows={2} maxLength={1000} dir="auto" />
+            <Button type="submit" size="sm" disabled={!commentText.trim() || createComment.isPending} className="bg-floodlight font-bold text-void">
+              {createComment.isPending && <Loader2 className="me-1 h-4 w-4 animate-spin" aria-hidden="true" />}{copy.posts.sendComment}
+            </Button>
+          </form>
+        )}
+        {mutationError && <p className="text-xs text-red-400" role="alert">{mutationError.message}</p>}
       </div>
     </div>
   );

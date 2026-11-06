@@ -8,7 +8,7 @@ import {
   type AcademySocialPost,
 } from "@workspace/db";
 import { logger } from "../logger";
-import { graphGet, graphPost, MetaGraphError } from "../meta/graph";
+import { graphDelete, graphGet, graphPost, MetaGraphError } from "../meta/graph";
 import { publicBaseUrl } from "../whatsapp/waha";
 import { getSocialAccount, markSocialReconnect, pageToken, publicMediaUrl } from "./account";
 import { recordComment } from "./inbox";
@@ -160,6 +160,16 @@ export async function publishPost(postId: number): Promise<AcademySocialPost> {
   return row;
 }
 
+/** Edit only the Facebook Page's message; Instagram captions are intentionally separate. */
+export async function editFacebookPostMessage(account: AcademySocialAccount, postId: string, message: string): Promise<void> {
+  await graphPost(postId, { message }, { token: pageToken(account) });
+}
+
+/** Delete a published target with the connected Page/account token. */
+export async function deletePublishedTarget(account: AcademySocialAccount, _channel: Target, externalId: string): Promise<void> {
+  await graphDelete(externalId, { token: pageToken(account) });
+}
+
 /** Scheduled posts whose time has come (run from the minute tick). */
 export async function publishDuePosts(now = new Date()): Promise<number> {
   // A publish that died half-way (a restart) is reported, never retried blindly: it may have posted.
@@ -288,6 +298,7 @@ async function syncFacebook(account: AcademySocialAccount, token: string): Promi
     };
     await db.insert(academySocialPostsTable).values({
       academyId: account.academyId, source: "synced", targets: ["facebook"], format: "image", caption: p.message ?? "",
+      facebookCaption: p.message ?? "",
       status: "published", publishedAt: p.created_time ? new Date(p.created_time) : new Date(), fbPostId: p.id, fbPermalink: p.permalink_url ?? null,
       thumbnail: p.full_picture ?? null, insights: { facebook: insights }, insightsAt: new Date(),
     }).onConflictDoUpdate({
@@ -296,6 +307,7 @@ async function syncFacebook(account: AcademySocialAccount, token: string): Promi
       set: {
         insights: sql`jsonb_set(coalesce(${academySocialPostsTable.insights}, '{}'::jsonb), '{facebook}', ${JSON.stringify(insights)}::jsonb)`,
         insightsAt: new Date(),
+        facebookCaption: p.message ?? "",
         fbPermalink: p.permalink_url ?? null,
         thumbnail: sql`coalesce(${academySocialPostsTable.thumbnail}, ${p.full_picture ?? null})`,
         updatedAt: new Date(),

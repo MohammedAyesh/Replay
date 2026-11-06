@@ -29,6 +29,7 @@ const instagramLoginMock = vi.hoisted(() => ({
   clientBusinessId: "123456789012345",
   businessLookupError: null as null | { message: string; status: number; code?: number; subcode?: number },
   limitError: null as null | { message: string; status: number; code?: number },
+  mutationError: null as null | { message: string; status: number; code?: number; subcode?: number },
 }));
 
 process.env.META_ACCESS_TOKEN = "test-token";
@@ -59,6 +60,7 @@ const IG = `17${stamp}`;
 const IGSID = `55${stamp}`;
 const PSID = `66${stamp}`;
 const posts: Array<{ path: string; params: Record<string, string> }> = [];
+const deletes: string[] = [];
 let seq = 0;
 
 vi.mock("../lib/meta/graph", async (importOriginal) => {
@@ -107,6 +109,10 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
     }),
     graphPost: vi.fn(async (path: string, params: Record<string, string> = {}) => {
       posts.push({ path, params });
+      if (instagramLoginMock.mutationError) {
+        const error = instagramLoginMock.mutationError;
+        throw new actual.MetaGraphError(error.message, error.status, error.code, error.subcode);
+      }
       seq += 1;
       if (path === `${PAGE}/messages`) {
         const recipient = JSON.parse(params.recipient);
@@ -115,7 +121,15 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
       if (path === `${IG}/media`) return { id: `ig-container-${seq}` };
       if (path === `${IG}/media_publish`) return { id: `ig-published-${seq}` };
       if (path === `${PAGE}/photos`) return { id: `photo-${seq}`, post_id: `fb-post-${seq}` };
+      if (path.endsWith("/comments") || path.endsWith("/replies")) return { id: `social-comment-${seq}` };
       return { success: true };
+    }),
+    graphDelete: vi.fn(async (path: string) => {
+      deletes.push(path);
+      if (instagramLoginMock.mutationError) {
+        const error = instagramLoginMock.mutationError;
+        throw new actual.MetaGraphError(error.message, error.status, error.code, error.subcode);
+      }
     }),
   };
 });
@@ -178,12 +192,14 @@ beforeAll(async () => {
 
 beforeEach(() => {
   posts.length = 0;
+  deletes.length = 0;
   instagramLoginMock.assets = [];
   instagramLoginMock.lookupResponses = {};
   instagramLoginMock.lookupCalls.length = 0;
   instagramLoginMock.clientBusinessId = TEST_BUSINESS_ID;
   instagramLoginMock.businessLookupError = null;
   instagramLoginMock.limitError = null;
+  instagramLoginMock.mutationError = null;
 });
 
 afterAll(async () => {
@@ -309,6 +325,92 @@ describe("comments", () => {
     const open = await request(app).get(`${base()}/comments`).set(auth(ownerId)).expect(200);
     expect(open.body).toHaveLength(0);
   });
+
+  it("creates a top-level comment on a selected published channel and records it locally", async () => {
+    const post = await request(app).post(`${base()}/posts`).set(auth(ownerId))
+      .send({ targets: ["facebook", "instagram"], format: "image", caption: "Match day", mediaIds: [mediaId] }).expect(201);
+    const [publishedPost] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, post.body.id));
+    await request(app).post(`${base()}/posts/${post.body.id}/comments`).set(auth(coachId))
+      .send({ channel: "facebook", text: "Welcome to the match!" }).expect(403);
+    const created = await request(app).post(`${base()}/posts/${post.body.id}/comments`).set(auth(ownerId))
+      .send({ channel: "facebook", text: "Welcome to the match!" }).expect(201);
+    const [comment] = await db.select().from(academySocialCommentsTable).where(eq(academySocialCommentsTable.commentId, created.body.commentId));
+    expect(posts.at(-1)).toMatchObject({ path: `${publishedPost.fbPostId}/comments`, params: { message: "Welcome to the match!" } });
+    expect(comment).toMatchObject({
+      academyId,
+      channel: "facebook",
+      postId: publishedPost.fbPostId,
+      fromId: PAGE,
+      body: "Welcome to the match!",
+    });
+  });
+
+  it("edits Facebook-authored comments and replies, rejects Instagram edits, and deletes any comment", async () => {
+    const [ownFacebook] = await db.insert(academySocialCommentsTable).values({
+      academyId,
+      channel: "facebook",
+      commentId: `fb-own-${stamp}`,
+      postId: `fb-post-${stamp}`,
+      fromId: PAGE,
+      body: "Old Page comment",
+      replyBody: "Old Page reply",
+      replyCommentId: `fb-reply-${stamp}`,
+    }).returning();
+    const [otherFacebook] = await db.insert(academySocialCommentsTable).values({
+      academyId,
+      channel: "facebook",
+      commentId: `fb-other-${stamp}`,
+      postId: `fb-post-${stamp}`,
+      fromId: PSID,
+      body: "A visitor comment",
+    }).returning();
+    const [instagram] = await db.insert(academySocialCommentsTable).values({
+      academyId,
+      channel: "instagram",
+      commentId: `ig-own-${stamp}`,
+      postId: `ig-post-${stamp}`,
+      fromId: IG,
+      body: "Instagram comment",
+    }).returning();
+
+    await request(app).patch(`${base()}/comments/${ownFacebook.id}`).set(auth(coachId))
+      .send({ text: "Edited by manager" }).expect(403);
+    await request(app).patch(`${base()}/comments/${ownFacebook.id}`).set(auth(ownerId))
+      .send({ text: "Edited by manager" }).expect(200);
+    expect(posts.at(-1)).toMatchObject({ path: ownFacebook.commentId, params: { message: "Edited by manager" } });
+    await request(app).patch(`${base()}/comments/${ownFacebook.id}/reply`).set(auth(ownerId))
+      .send({ text: "Edited Page reply" }).expect(200);
+    expect(posts.at(-1)).toMatchObject({ path: ownFacebook.replyCommentId, params: { message: "Edited Page reply" } });
+    await request(app).delete(`${base()}/comments/${ownFacebook.id}/reply`).set(auth(ownerId)).expect(200);
+    expect(deletes).toContain(ownFacebook.replyCommentId);
+    await request(app).patch(`${base()}/comments/${instagram.id}`).set(auth(ownerId))
+      .send({ text: "Not allowed" }).expect(400);
+    await request(app).delete(`${base()}/comments/${otherFacebook.id}`).set(auth(ownerId)).expect(200);
+    expect(deletes).toContain(otherFacebook.commentId);
+    const [deleted] = await db.select().from(academySocialCommentsTable).where(eq(academySocialCommentsTable.id, otherFacebook.id));
+    expect(deleted.deletedAt).not.toBeNull();
+  });
+
+  it("returns clear permission and time-limit errors without changing local text", async () => {
+    const [comment] = await db.insert(academySocialCommentsTable).values({
+      academyId,
+      channel: "facebook",
+      commentId: `fb-limit-${stamp}`,
+      postId: `fb-post-${stamp}`,
+      fromId: PAGE,
+      body: "Original",
+    }).returning();
+    instagramLoginMock.mutationError = { message: "Permission denied", status: 400, code: 200 };
+    const denied = await request(app).patch(`${base()}/comments/${comment.id}`).set(auth(ownerId))
+      .send({ text: "Not saved" }).expect(403);
+    expect(denied.body.error).toMatch(/permission/i);
+    instagramLoginMock.mutationError = { message: "The 24-hour action limit has passed", status: 400, code: 4 };
+    const limited = await request(app).patch(`${base()}/comments/${comment.id}`).set(auth(ownerId))
+      .send({ text: "Still not saved" }).expect(409);
+    expect(limited.body.error).toMatch(/time or account limit/i);
+    const [unchanged] = await db.select().from(academySocialCommentsTable).where(eq(academySocialCommentsTable.id, comment.id));
+    expect(unchanged.body).toBe("Original");
+  });
 });
 
 describe("posts", () => {
@@ -336,6 +438,50 @@ describe("posts", () => {
     await maybeRunSocial(Number.MAX_SAFE_INTEGER);
     const [row] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, res.body.id));
     expect(row.status).toBe("published");
+  });
+
+  it("edits only Facebook copy and deletes each published target without erasing Replay history", async () => {
+    const created = await request(app).post(`${base()}/posts`).set(auth(ownerId))
+      .send({ targets: ["instagram", "facebook"], format: "image", caption: "Both captions", mediaIds: [mediaId] }).expect(201);
+    const [original] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, created.body.id));
+    await request(app).patch(`${base()}/posts/${original.id}`).set(auth(coachId))
+      .send({ caption: "Coach can't edit" }).expect(403);
+    await request(app).patch(`${base()}/posts/${original.id}`).set(auth(ownerId))
+      .send({ caption: "Facebook-only update" }).expect(200);
+    expect(posts.at(-1)).toMatchObject({ path: original.fbPostId, params: { message: "Facebook-only update" } });
+    const [edited] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, original.id));
+    expect(edited.caption).toBe("Both captions");
+    expect(edited.facebookCaption).toBe("Facebook-only update");
+
+    await request(app).delete(`${base()}/posts/${original.id}?channel=facebook`).set(auth(ownerId)).expect(200);
+    expect(deletes).toContain(original.fbPostId);
+    const [afterFacebookDelete] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, original.id));
+    expect(afterFacebookDelete.targets).toEqual(["instagram"]);
+    expect(afterFacebookDelete.deletedAt).toBeNull();
+    expect((await request(app).get(`${base()}/posts`).set(auth(ownerId)).expect(200)).body.some((p: { id: number }) => p.id === original.id)).toBe(true);
+
+    await request(app).delete(`${base()}/posts/${original.id}?channel=instagram`).set(auth(ownerId)).expect(200);
+    const [afterInstagramDelete] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, original.id));
+    expect(afterInstagramDelete.deletedAt).not.toBeNull();
+    expect((await request(app).get(`${base()}/posts`).set(auth(ownerId)).expect(200)).body.some((p: { id: number }) => p.id === original.id)).toBe(false);
+  });
+
+  it("reports missing Meta permissions and treats already-deleted posts as successful", async () => {
+    const created = await request(app).post(`${base()}/posts`).set(auth(ownerId))
+      .send({ targets: ["facebook"], format: "image", caption: "Page post", mediaIds: [mediaId] }).expect(201);
+    const [post] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, created.body.id));
+    instagramLoginMock.mutationError = { message: "Missing permissions to delete this post", status: 400, code: 200 };
+    const denied = await request(app).delete(`${base()}/posts/${post.id}?channel=facebook`).set(auth(ownerId)).expect(403);
+    expect(denied.body.error).toMatch(/permission/i);
+    const [stillPublished] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, post.id));
+    expect(stillPublished.deletedAt).toBeNull();
+    expect(stillPublished.targets).toEqual(["facebook"]);
+
+    instagramLoginMock.mutationError = { message: "Object was already deleted", status: 400, code: 100 };
+    const gone = await request(app).delete(`${base()}/posts/${post.id}?channel=facebook`).set(auth(ownerId)).expect(200);
+    expect(gone.body.message).toMatch(/already deleted|removed from Replay/i);
+    const [marked] = await db.select().from(academySocialPostsTable).where(eq(academySocialPostsTable.id, post.id));
+    expect(marked.deletedAt).not.toBeNull();
   });
 
   it("serves media to Meta only on a signed link", async () => {

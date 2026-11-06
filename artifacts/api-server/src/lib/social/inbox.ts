@@ -10,7 +10,7 @@ import {
 } from "@workspace/db";
 import { logger } from "../logger";
 import { metaConfig } from "../meta/config";
-import { graphGet, graphPost, MetaGraphError } from "../meta/graph";
+import { graphDelete, graphGet, graphPost, MetaGraphError } from "../meta/graph";
 import { accountByInstagram, accountByPage, markSocialReconnect, pageToken } from "./account";
 
 /**
@@ -306,15 +306,80 @@ export async function sendThreadMessage(account: AcademySocialAccount, thread: A
 }
 
 /** Reply under the comment, publicly. */
-export async function replyToComment(account: AcademySocialAccount, channel: "instagram" | "facebook", commentId: string, text: string): Promise<void> {
+export async function replyToComment(account: AcademySocialAccount, channel: "instagram" | "facebook", commentId: string, text: string): Promise<string | null> {
   const token = pageToken(account);
   try {
-    if (channel === "instagram") await graphPost(`${commentId}/replies`, { message: text }, { token });
-    else await graphPost(`${commentId}/comments`, { message: text }, { token });
+    const result = channel === "instagram"
+      ? await graphPost<{ id?: string }>(`${commentId}/replies`, { message: text }, { token })
+      : await graphPost<{ id?: string }>(`${commentId}/comments`, { message: text }, { token });
+    return result.id ?? null;
   } catch (error) {
     await markSocialReconnect(account.academyId, error).catch(() => false);
     throw error;
   }
+}
+
+export async function createPostComment(
+  account: AcademySocialAccount,
+  _channel: "instagram" | "facebook",
+  postId: string,
+  text: string,
+): Promise<string> {
+  const result = await graphPost<{ id?: string }>(`${postId}/comments`, { message: text }, { token: pageToken(account) });
+  if (!result.id) throw new MetaGraphError("Meta did not return the new comment ID", 502);
+  return result.id;
+}
+
+export async function editFacebookComment(account: AcademySocialAccount, commentId: string, text: string): Promise<void> {
+  await graphPost(commentId, { message: text }, { token: pageToken(account) });
+}
+
+export async function deleteSocialComment(account: AcademySocialAccount, commentId: string): Promise<void> {
+  await graphDelete(commentId, { token: pageToken(account) });
+}
+
+async function resolveOwnReplyId(
+  account: AcademySocialAccount,
+  channel: "instagram" | "facebook",
+  parentCommentId: string,
+  existingBody: string,
+): Promise<string | null> {
+  const ownId = channel === "facebook" ? account.pageId : account.igUserId;
+  if (!ownId) return null;
+  const edge = channel === "instagram" ? `${parentCommentId}/replies` : `${parentCommentId}/comments`;
+  const fields = channel === "instagram" ? "id,text,from" : "id,message,from";
+  const result = await graphGet<{
+    data?: Array<{ id: string; message?: string; text?: string; from?: { id?: string } }>;
+  }>(edge, { fields, limit: "100" }, { token: pageToken(account) });
+  return result.data?.find((reply) =>
+    reply.from?.id === ownId && (reply.message ?? reply.text ?? "") === existingBody,
+  )?.id ?? null;
+}
+
+export async function editFacebookReply(
+  account: AcademySocialAccount,
+  parentCommentId: string,
+  replyCommentId: string | null,
+  existingBody: string,
+  text: string,
+): Promise<string> {
+  const id = replyCommentId ?? await resolveOwnReplyId(account, "facebook", parentCommentId, existingBody);
+  if (!id) throw new MetaGraphError("The Facebook reply could not be found; it may already be deleted", 404, 100);
+  await graphPost(id, { message: text }, { token: pageToken(account) });
+  return id;
+}
+
+export async function deleteSocialReply(
+  account: AcademySocialAccount,
+  channel: "instagram" | "facebook",
+  parentCommentId: string,
+  replyCommentId: string | null,
+  existingBody: string,
+): Promise<string> {
+  const id = replyCommentId ?? await resolveOwnReplyId(account, channel, parentCommentId, existingBody);
+  if (!id) throw new MetaGraphError("The reply could not be found; it may already be deleted", 404, 100);
+  await graphDelete(id, { token: pageToken(account) });
+  return id;
 }
 
 export async function hideComment(account: AcademySocialAccount, channel: "instagram" | "facebook", commentId: string, hidden: boolean): Promise<void> {
