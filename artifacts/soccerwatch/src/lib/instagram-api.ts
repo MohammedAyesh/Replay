@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { LibraryClip } from "./creative-hub-library-api";
 import { venueCall } from "./venue-api";
 
 /** Instagram autopilot client: routes/venueInstagram.ts. */
@@ -49,7 +50,16 @@ export type IgItem = {
   picks?: Array<{ key: string; source: string; label: string; labelAr: string }>;
 };
 export type IgCandidate = { key: string; source: string; label: string; labelAr: string; bookingId: number; thumbnailUrl: string | null };
-export type IgCandidates = { min: number; max: number; picked: string[]; candidates: IgCandidate[]; empty?: "no_games" | "not_allowed" | null };
+export type IgCandidates = { min: number; max: number; picked: string[]; pickedItems?: IgCandidate[]; candidates: IgCandidate[]; empty?: "no_games" | "not_allowed" | null };
+export type IgClipKind = "goal" | "dribble" | "pass" | "shot" | "other";
+export type IgLibraryClip = LibraryClip & { kind?: IgClipKind; match?: LibraryClip["match"] };
+export type IgLibraryFilter = { from: string; to: string; origin: "player" | "auto" | null; kind: IgClipKind | null; sort: "newest" | "match" | "player" };
+type IgLibraryPage = {
+  clips: IgLibraryClip[]; total: number; nextOffset: number | null; oneGame: boolean;
+  counts: { all: number; player: number; auto: number }; kindCounts: Record<IgClipKind, number>; groupSizes: Record<string, number>;
+};
+/** A Library clip picked for a post (routes/venueInstagram.ts: lib:<clipId>). */
+export const libraryPickKey = (clipId: number) => `lib:${clipId}`;
 /** Posts whose clips the owner can pick, and how many (lib/venues/igFieldPosts.ts PICKABLE). */
 export const IG_PICKABLE: Record<string, { min: number; max: number }> = {
   booking_clip: { min: 1, max: 1 }, versus: { min: 2, max: 2 }, top5: { min: 5, max: 5 }, match_highlights: { min: 2, max: 5 }, day_best: { min: 2, max: 5 },
@@ -127,6 +137,26 @@ export function useItemCandidates(venueId: number, itemId: number | null) {
     enabled: itemId !== null,
     staleTime: 5 * 60_000,
   });
+}
+
+/** The field's clip library for a post: any day, games it may post only (one game for a game's own posts). */
+export function useItemLibrary(venueId: number, itemId: number, f: IgLibraryFilter) {
+  const q = useInfiniteQuery({
+    queryKey: ["venue", venueId, "instagram", "library", itemId, f],
+    initialPageParam: 0,
+    staleTime: 60_000,
+    queryFn: ({ pageParam }) => {
+      const p = new URLSearchParams({ offset: String(pageParam), limit: "48", sort: f.sort });
+      if (f.from) p.set("from", f.from);
+      if (f.to) p.set("to", f.to);
+      if (f.origin) p.set("origin", f.origin);
+      if (f.kind) p.set("kind", f.kind);
+      return venueCall<IgLibraryPage>(`${ig(venueId)}/items/${itemId}/library?${p}`);
+    },
+    getNextPageParam: (last) => last.nextOffset ?? undefined,
+  });
+  const first = q.data?.pages[0];
+  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [], counts: first?.counts ?? null, kindCounts: first?.kindCounts ?? null, groupSizes: first?.groupSizes ?? {}, oneGame: first?.oneGame ?? false };
 }
 
 /** Save the picked clips: the post is edited again from them and rendered now. */

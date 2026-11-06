@@ -66,7 +66,7 @@ export async function isVenue(academyId: number): Promise<boolean> {
   return row?.kind === "venue";
 }
 
-type VenueRecording = { id: number; fieldId: number; court: string; date: string; timeSlot: string; duration: string; videoUrl: string; createdAt: Date };
+export type VenueRecording = { id: number; fieldId: number; court: string; date: string; timeSlot: string; duration: string; videoUrl: string; createdAt: Date };
 
 async function venueRecordings(fieldIds: number[]): Promise<VenueRecording[]> {
   if (!fieldIds.length) return [];
@@ -323,8 +323,33 @@ async function pitchNames(academyId: number): Promise<Map<number, string>> {
   return new Map(rows.map((r) => [r.fieldId!, r.name]));
 }
 
-export async function venueLibraryClips(academyId: number, fieldIds: number[], f: LibraryFilters, origin: ClipOrigin | null, sort: ClipSort = "newest") {
-  const [{ rows, scope }, pitches] = await Promise.all([venueClipRows(fieldIds, { from: f.from, until: f.until }), pitchNames(academyId)]);
+/** What a clip shows, read from its title: Replay's own titles ("Your goal", "Your dribble", "Pass found", "Your shot on target") and players' own words. */
+export type ClipKind = "goal" | "dribble" | "pass" | "shot" | "other";
+export const CLIP_KINDS: readonly ClipKind[] = ["goal", "dribble", "pass", "shot", "other"];
+export function clipKind(title: string): ClipKind {
+  const t = title.toLowerCase();
+  if (/goal|جول|هدف|قول/.test(t)) return "goal";
+  if (/dribbl|skill|nutmeg|مراوغ|مهار/.test(t)) return "dribble";
+  if (/pass|assist|تمرير|باص/.test(t)) return "pass";
+  if (/shot|shoot|تسديد|شوت/.test(t)) return "shot";
+  return "other";
+}
+
+export type VenueClipOptions = {
+  /** Only these clips (e.g. the ones a field may post on Instagram); counts follow. */
+  keep?: (clip: UserClipRow, recording: VenueRecording | null) => boolean;
+  /** Narrow to one kind, after counting. */
+  kind?: ClipKind | null;
+  /** from/until filter the game's day (Amman), not the day the clip was cut. */
+  byMatchDate?: boolean;
+};
+
+export async function venueLibraryClips(academyId: number, fieldIds: number[], f: LibraryFilters, origin: ClipOrigin | null, sort: ClipSort = "newest", opts: VenueClipOptions = {}) {
+  const [{ rows: allRows, scope }, pitches] = await Promise.all([
+    venueClipRows(fieldIds, opts.byMatchDate ? {} : { from: f.from, until: f.until }),
+    pitchNames(academyId),
+  ]);
+  const rows = opts.keep ? allRows.filter((r) => opts.keep!(r.clip, r.recording)) : allRows;
   const matchOf = (clip: UserClipRow, recording: VenueRecording | null): ClipMatch | null => {
     if (recording) {
       const at = recordingStart(recording);
@@ -337,13 +362,23 @@ export async function venueLibraryClips(academyId: number, fieldIds: number[], f
   };
   const clips = [];
   const counts = { all: 0, auto: 0, player: 0 };
-  const spans = await clipSpans(rows.map((r) => r.clip), (c) => rows.find((r) => r.clip.id === c.id)?.recording?.duration);
+  const kindCounts: Record<ClipKind, number> = { goal: 0, dribble: 0, pass: 0, shot: 0, other: 0 };
+  const recDuration = new Map(rows.map((r) => [r.clip.id, r.recording?.duration]));
+  const spans = await clipSpans(rows.map((r) => r.clip), (c) => recDuration.get(c.id));
   for (const { clip, creatorName, recording, origin: o } of rows) {
     const status = academyClipStatus(clip);
     if (status === "expired") continue;
+    const game = matchOf(clip, recording);
+    if (opts.byMatchDate) {
+      const at = game ? new Date(game.startsAt) : clip.createdAt;
+      if ((f.from && at < f.from) || (f.until && at >= f.until)) continue;
+    }
     counts.all++;
     counts[o]++;
     if (origin && o !== origin) continue;
+    const kind = clipKind(clip.title);
+    kindCounts[kind]++;
+    if (opts.kind && kind !== opts.kind) continue;
     const isLive = clip.videoId.startsWith("live:");
     const span = spans.get(clip.id) ?? null;
     const start = span?.startSec ?? 0;
@@ -369,7 +404,8 @@ export async function venueLibraryClips(academyId: number, fieldIds: number[], f
       madeBy: o === "auto" ? null : name,
       /** Whose clip it is: who cut it, or who Replay made it for when he claimed the game. */
       player: { key: `u:${clip.userId}`, name },
-      match: matchOf(clip, recording),
+      match: game,
+      kind,
       /** Where in the match (seconds into the video), for ordering clips inside a game. */
       atSec: start,
     });
@@ -389,5 +425,5 @@ export async function venueLibraryClips(academyId: number, fieldIds: number[], f
     groupSizes[key] = (groupSizes[key] ?? 0) + 1;
   }
   const page = pageOf(clips, f);
-  return { clips: page.items, total: page.total, nextOffset: page.nextOffset, counts, sort, groupSizes };
+  return { clips: page.items, total: page.total, nextOffset: page.nextOffset, counts, kindCounts, sort, groupSizes };
 }

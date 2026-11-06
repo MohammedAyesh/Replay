@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import {
   academyCreativeProjectsTable,
   academySocialAccountsTable,
@@ -768,6 +768,61 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     expect(cands.body).toMatchObject({ candidates: [], empty: "not_allowed" });
     await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: [`${refused.rec.id}:at:150`, `${refused.rec.id}:at:450`] }).expect(409);
     await db.delete(venueIgItemsTable).where(eq(venueIgItemsTable.id, hl.id));
+  });
+
+  it("offers the field's whole clip library, any day, by kind, maker and game day, and only from games it may post", async () => {
+    // A game nine days ago (allowed) and one yesterday (no consent).
+    const old = await playedBooking({ hoursAgo: 24 * 9, consent: "yes" });
+    const refused = await playedBooking({ hoursAgo: 30, consent: "no" });
+    // Replay's own clip of the old game (no source link: found by its video), next to the captain's "My goal".
+    const [auto] = await db.insert(userClipsTable).values({ userId: captainId, videoId: old.fr.videoId!, title: "Your dribble · 8 m · 12:00", startTime: "720", endTime: "736" }).returning();
+    const [mine] = await db.select().from(userClipsTable).where(and(eq(userClipsTable.footageRequestId, old.fr.id), eq(userClipsTable.title, "My goal")));
+    const [refusedClip] = await db.select().from(userClipsTable).where(eq(userClipsTable.footageRequestId, refused.fr.id));
+    const [day] = await db.insert(venueIgItemsTable).values({
+      academyId: venueId, originKey: `day:${old.booking.startLocal.slice(0, 10)}`, kind: "day_best", placement: "reel", source: "field",
+      slotAt: new Date(Date.now() + 3 * 3_600_000), status: "skipped", error: "Fewer than two moments that day", pinned: true,
+    }).returning();
+    const lib = (query = "") => request(app).get(`${ig()}/items/${day.id}/library${query}`).set(auth(ownerId)).expect(200).then((r) => r.body);
+    const all = await lib();
+    const ids = (all.clips as Array<{ clipId: number }>).map((c) => c.clipId);
+    expect(ids).toEqual(expect.arrayContaining([mine.id, auto.id]));
+    expect(ids).not.toContain(refusedClip.id);
+    expect(all.oneGame).toBe(false);
+    const got = (all.clips as Array<{ clipId: number; kind: string; origin: string; match: { date: string } | null }>);
+    expect(got.find((c) => c.clipId === mine.id)).toMatchObject({ kind: "goal", origin: "player", match: { date: old.booking.startLocal.slice(0, 10) } });
+    expect(got.find((c) => c.clipId === auto.id)).toMatchObject({ kind: "dribble", origin: "auto" });
+    expect(all.kindCounts.goal).toBeGreaterThanOrEqual(1);
+    // By kind, by maker, by the game's day.
+    expect(((await lib("?kind=dribble")).clips as Array<{ clipId: number }>).map((c) => c.clipId)).toContain(auto.id);
+    expect(((await lib("?kind=dribble")).clips as Array<{ clipId: number }>).map((c) => c.clipId)).not.toContain(mine.id);
+    expect(((await lib("?origin=auto")).clips as Array<{ clipId: number }>).map((c) => c.clipId)).not.toContain(mine.id);
+    const oldDay = old.booking.startLocal.slice(0, 10);
+    expect(((await lib(`?from=${oldDay}&to=${oldDay}`)).clips as Array<{ clipId: number }>).map((c) => c.clipId)).toEqual(expect.arrayContaining([mine.id, auto.id]));
+    expect(((await lib(`?from=${addDays(oldDay, 1)}`)).clips as Array<{ clipId: number }>).map((c) => c.clipId)).not.toContain(mine.id);
+    // Picked in play order: kept, and the skipped post comes back.
+    const saved = await request(app).put(`${ig()}/items/${day.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${auto.id}`, `lib:${mine.id}`] }).expect(200);
+    expect(saved.body.item.picks.map((n: { key: string }) => n.key)).toEqual([`lib:${auto.id}`, `lib:${mine.id}`]);
+    const [after] = (await items()).filter((i) => i.id === day.id);
+    expect(after.status).not.toBe("skipped");
+    const picks = after.picks as Array<{ recordingId: number; bookingId: number; fromMs: number; toMs: number }>;
+    expect(picks.every((n) => n.recordingId === old.rec.id && n.bookingId === old.booking.id && n.toMs > n.fromMs)).toBe(true);
+    // The picker shows them as picked, with their labels.
+    const cands = await request(app).get(`${ig()}/items/${day.id}/candidates`).set(auth(ownerId)).expect(200);
+    expect(cands.body.picked).toEqual([`lib:${auto.id}`, `lib:${mine.id}`]);
+    expect(cands.body.pickedItems).toHaveLength(2);
+    // A clip from a game the field may not post is refused, and so is one that isn't the field's.
+    await request(app).put(`${ig()}/items/${day.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${auto.id}`, `lib:${refusedClip.id}`] }).expect(409);
+    await request(app).put(`${ig()}/items/${day.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${auto.id}`, "lib:999999999"] }).expect(409);
+    // A post about one game only takes that game's clips.
+    const [hl] = await db.insert(venueIgItemsTable).values({
+      academyId: venueId, originKey: `highlights:lib-${tag}`, kind: "match_highlights", placement: "reel", source: "field",
+      bookingId: refused.booking.id, slotAt: new Date(Date.now() + 3_600_000), status: "planned", pinned: true,
+    }).returning();
+    const one = await request(app).get(`${ig()}/items/${hl.id}/library`).set(auth(ownerId)).expect(200);
+    expect(one.body).toMatchObject({ oneGame: true, clips: [] });
+    await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${auto.id}`, `lib:${mine.id}`] }).expect(409);
+    await request(app).get(`${ig()}/items/${day.id}/library`).set(auth(strangerId)).expect((r) => expect([403, 404]).toContain(r.status));
+    await db.delete(venueIgItemsTable).where(inArray(venueIgItemsTable.id, [day.id, hl.id]));
   });
 
   it("shows only this field's posts on its calendar", async () => {
