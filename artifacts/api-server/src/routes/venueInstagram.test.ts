@@ -156,13 +156,16 @@ async function playedBooking(opts: { hoursAgo: number; consent?: "yes" | "no" | 
   const startLocal = ammanLocal(start);
   const end = new Date(start.getTime() + 3_600_000);
   const endLocal = ammanLocal(end);
+  // As in production: the booking's footage is its own video, and the camera's recording at the
+  // field (what the Library and its clips are on) is a different one.
   const videoId = randomUUID();
+  const camVideoId = randomUUID();
   const [fr] = await db.insert(footageRequestsTable).values({
     fieldId, cameraId: "cam1", requestedBy: ownerId, startLocal, endLocal, requestedSeconds: 3600, status: "ready", videoId,
     readyAt: new Date(end.getTime() + 20 * 60_000), academyId: null,
   }).returning();
   const [rec] = await db.insert(recordingsTable).values({
-    fieldId, court: "cam1", date: startLocal.slice(0, 10), timeSlot: startLocal.slice(11), duration: "60:00", videoUrl: `https://vz-test.b-cdn.net/${videoId}/playlist.m3u8`,
+    fieldId, court: "cam1", date: startLocal.slice(0, 10), timeSlot: startLocal.slice(11), duration: "60:00", videoUrl: `https://vz-test.b-cdn.net/${camVideoId}/playlist.m3u8`,
   }).returning();
   const code = `IG${randomBytes(4).toString("hex").toUpperCase()}`.slice(0, 10);
   const [room] = await db.insert(matchRoomsTable).values({ footageRequestId: fr.id, fieldId, code, captainToken: randomBytes(8).toString("hex"), captainUserId: captainId }).returning();
@@ -176,12 +179,12 @@ async function playedBooking(opts: { hoursAgo: number; consent?: "yes" | "no" | 
     await db.update(footageRequestsTable).set({ academyId: academy.id }).where(eq(footageRequestsTable.id, fr.id));
   }
   if (opts.clip !== false) {
-    await db.insert(userClipsTable).values({ userId: captainId, videoId, title: "My goal", startTime: "600", endTime: "614", footageRequestId: fr.id, sourceRecordingId: rec.id, shareCount: 2 });
+    await db.insert(userClipsTable).values({ userId: captainId, videoId: camVideoId, title: "My goal", startTime: "600", endTime: "614", sourceRecordingId: rec.id, shareCount: 2 });
   }
   if (opts.bundle) {
     await db.insert(recordingTrackingBundlesTable).values({ recordingId: rec.id, manifest: { version: 1, duration: 3600, videoStartSeconds: 1.48, fps: 20, segments: [] } as never });
   }
-  return { booking, fr, rec, room, code };
+  return { booking, fr, rec, room, code, camVideoId };
 }
 
 beforeAll(async () => {
@@ -734,7 +737,7 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     const cands = await request(app).get(`${ig()}/items/${hl.id}/candidates`).set(auth(ownerId)).expect(200);
     expect(cands.body).toMatchObject({ min: 2, max: 5, picked: [], empty: null });
     const list = cands.body.candidates as Array<{ key: string; source: string; bookingId: number; label: string }>;
-    expect(list[0]).toMatchObject({ key: expect.stringMatching(new RegExp(`^${played.rec.id}:clip:\\d+$`)), source: "saved_clip", bookingId: played.booking.id });
+    expect(list[0]).toMatchObject({ key: expect.stringMatching(/^\d+:clip:\d+$/), source: "saved_clip", bookingId: played.booking.id });
     const footage = list.filter((c) => c.source === "footage");
     expect(footage).toHaveLength(12);
     expect(footage.every((c) => c.bookingId === played.booking.id && /\d+:\d{2}$/.test(c.label))).toBe(true);
@@ -775,9 +778,13 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     const old = await playedBooking({ hoursAgo: 24 * 9, consent: "yes" });
     const refused = await playedBooking({ hoursAgo: 30, consent: "no" });
     // Replay's own clip of the old game (no source link: found by its video), next to the captain's "My goal".
-    const [auto] = await db.insert(userClipsTable).values({ userId: captainId, videoId: old.fr.videoId!, title: "Your dribble · 8 m · 12:00", startTime: "720", endTime: "736" }).returning();
-    const [mine] = await db.select().from(userClipsTable).where(and(eq(userClipsTable.footageRequestId, old.fr.id), eq(userClipsTable.title, "My goal")));
-    const [refusedClip] = await db.select().from(userClipsTable).where(eq(userClipsTable.footageRequestId, refused.fr.id));
+    const [auto] = await db.insert(userClipsTable).values({ userId: captainId, videoId: old.camVideoId, title: "Your dribble · 8 m · 12:00", startTime: "720", endTime: "736" }).returning();
+    const [mine] = await db.select().from(userClipsTable).where(and(eq(userClipsTable.sourceRecordingId, old.rec.id), eq(userClipsTable.title, "My goal")));
+    const [refusedClip] = await db.select().from(userClipsTable).where(eq(userClipsTable.sourceRecordingId, refused.rec.id));
+    // Cut from the booking's own share link: placed on the camera's recording by time.
+    const [shared] = await db.insert(userClipsTable).values({ userId: captainId, videoId: old.fr.videoId!, title: "Nice pass", startTime: "1200", endTime: "1212", footageRequestId: old.fr.id }).returning();
+    // The same camera, outside the booking's hour (the next group): never this booking's.
+    const [after] = await db.insert(userClipsTable).values({ userId: captainId, videoId: old.camVideoId, title: "Later goal", startTime: "3700", endTime: "3712", sourceRecordingId: old.rec.id }).returning();
     const [day] = await db.insert(venueIgItemsTable).values({
       academyId: venueId, originKey: `day:${old.booking.startLocal.slice(0, 10)}`, kind: "day_best", placement: "reel", source: "field",
       slotAt: new Date(Date.now() + 3 * 3_600_000), status: "skipped", error: "Fewer than two moments that day", pinned: true,
@@ -785,8 +792,9 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     const lib = (query = "") => request(app).get(`${ig()}/items/${day.id}/library${query}`).set(auth(ownerId)).expect(200).then((r) => r.body);
     const all = await lib();
     const ids = (all.clips as Array<{ clipId: number }>).map((c) => c.clipId);
-    expect(ids).toEqual(expect.arrayContaining([mine.id, auto.id]));
+    expect(ids).toEqual(expect.arrayContaining([mine.id, auto.id, shared.id]));
     expect(ids).not.toContain(refusedClip.id);
+    expect(ids).not.toContain(after.id);
     expect(all.oneGame).toBe(false);
     const got = (all.clips as Array<{ clipId: number; kind: string; origin: string; match: { date: string } | null }>);
     expect(got.find((c) => c.clipId === mine.id)).toMatchObject({ kind: "goal", origin: "player", match: { date: old.booking.startLocal.slice(0, 10) } });
@@ -799,13 +807,35 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     const oldDay = old.booking.startLocal.slice(0, 10);
     expect(((await lib(`?from=${oldDay}&to=${oldDay}`)).clips as Array<{ clipId: number }>).map((c) => c.clipId)).toEqual(expect.arrayContaining([mine.id, auto.id]));
     expect(((await lib(`?from=${addDays(oldDay, 1)}`)).clips as Array<{ clipId: number }>).map((c) => c.clipId)).not.toContain(mine.id);
+    // A booking with no footage request is still filmed by the camera: its clips count.
+    const plainStart = new Date(Date.now() - 24 * 11 * 3_600_000);
+    plainStart.setUTCMinutes(0, 0, 0);
+    const plainLocal = ammanLocal(plainStart);
+    await db.insert(venueBookingsTable).values({
+      academyId: venueId, pitchId, startsAt: plainStart, endsAt: new Date(plainStart.getTime() + 3_600_000), startLocal: plainLocal,
+      endLocal: ammanLocal(new Date(plainStart.getTime() + 3_600_000)), status: "completed", reference: `GL-${randomBytes(3).toString("hex").toUpperCase()}`,
+      igConsent: "yes", igConsentSource: "captain_web", igConsentAt: new Date(), customerName: "Walk-in",
+    });
+    const plainVideo = randomUUID();
+    const [plainRec] = await db.insert(recordingsTable).values({
+      fieldId, court: "cam1", date: plainLocal.slice(0, 10), timeSlot: plainLocal.slice(11), duration: "60:00", videoUrl: `https://vz-test.b-cdn.net/${plainVideo}/playlist.m3u8`,
+    }).returning();
+    const [plainClip] = await db.insert(userClipsTable).values({ userId: captainId, videoId: plainVideo, title: "Your goal", startTime: "300", endTime: "316" }).returning();
+    expect(((await lib()).clips as Array<{ clipId: number }>).map((c) => c.clipId)).toContain(plainClip.id);
+    expect(plainRec.id).toBeGreaterThan(0);
     // Picked in play order: kept, and the skipped post comes back.
     const saved = await request(app).put(`${ig()}/items/${day.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${auto.id}`, `lib:${mine.id}`] }).expect(200);
     expect(saved.body.item.picks.map((n: { key: string }) => n.key)).toEqual([`lib:${auto.id}`, `lib:${mine.id}`]);
-    const [after] = (await items()).filter((i) => i.id === day.id);
-    expect(after.status).not.toBe("skipped");
-    const picks = after.picks as Array<{ recordingId: number; bookingId: number; fromMs: number; toMs: number }>;
+    const [saved2] = (await items()).filter((i) => i.id === day.id);
+    expect(saved2.status).not.toBe("skipped");
+    const picks = saved2.picks as Array<{ recordingId: number; bookingId: number; fromMs: number; toMs: number }>;
     expect(picks.every((n) => n.recordingId === old.rec.id && n.bookingId === old.booking.id && n.toMs > n.fromMs)).toBe(true);
+    // The share-link clip lands on the camera recording at the same moment: 20 min into the booking.
+    const withShared = await request(app).put(`${ig()}/items/${day.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${shared.id}`, `lib:${mine.id}`] }).expect(200);
+    expect(withShared.body.item.picks[0]).toMatchObject({ recordingId: old.rec.id });
+    const [stored] = (await items()).filter((i) => i.id === day.id);
+    expect((stored.picks as Array<Record<string, number>>)[0]).toMatchObject({ recordingId: old.rec.id, fromMs: 1_200_000, bookingId: old.booking.id });
+    await request(app).put(`${ig()}/items/${day.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${auto.id}`, `lib:${mine.id}`] }).expect(200);
     // The picker shows them as picked, with their labels.
     const cands = await request(app).get(`${ig()}/items/${day.id}/candidates`).set(auth(ownerId)).expect(200);
     expect(cands.body.picked).toEqual([`lib:${auto.id}`, `lib:${mine.id}`]);
@@ -819,7 +849,7 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
       bookingId: refused.booking.id, slotAt: new Date(Date.now() + 3_600_000), status: "planned", pinned: true,
     }).returning();
     const one = await request(app).get(`${ig()}/items/${hl.id}/library`).set(auth(ownerId)).expect(200);
-    expect(one.body).toMatchObject({ oneGame: true, clips: [] });
+    expect(one.body).toMatchObject({ oneGame: true, clips: [], why: "no_consent" });
     await request(app).put(`${ig()}/items/${hl.id}/picks`).set(auth(ownerId)).send({ keys: [`lib:${auto.id}`, `lib:${mine.id}`] }).expect(409);
     await request(app).get(`${ig()}/items/${day.id}/library`).set(auth(strangerId)).expect((r) => expect([403, 404]).toContain(r.status));
     await db.delete(venueIgItemsTable).where(inArray(venueIgItemsTable.id, [day.id, hl.id]));

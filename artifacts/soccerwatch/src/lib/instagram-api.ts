@@ -57,6 +57,8 @@ export type IgLibraryFilter = { from: string; to: string; origin: "player" | "au
 type IgLibraryPage = {
   clips: IgLibraryClip[]; total: number; nextOffset: number | null; oneGame: boolean;
   counts: { all: number; player: number; auto: number }; kindCounts: Record<IgClipKind, number>; groupSizes: Record<string, number>;
+  /** why nothing is offered: consent is off, no booking may be posted, or nothing was filmed */
+  why?: "consent_off" | "no_consent" | "no_games" | null;
 };
 /** A Library clip picked for a post (routes/venueInstagram.ts: lib:<clipId>). */
 export const libraryPickKey = (clipId: number) => `lib:${clipId}`;
@@ -156,7 +158,7 @@ export function useItemLibrary(venueId: number, itemId: number, f: IgLibraryFilt
     getNextPageParam: (last) => last.nextOffset ?? undefined,
   });
   const first = q.data?.pages[0];
-  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [], counts: first?.counts ?? null, kindCounts: first?.kindCounts ?? null, groupSizes: first?.groupSizes ?? {}, oneGame: first?.oneGame ?? false };
+  return { ...q, items: q.data?.pages.flatMap((p) => p.clips) ?? [], counts: first?.counts ?? null, kindCounts: first?.kindCounts ?? null, groupSizes: first?.groupSizes ?? {}, oneGame: first?.oneGame ?? false, why: first?.why ?? null };
 }
 
 /** Save the picked clips: the post is edited again from them and rendered now. */

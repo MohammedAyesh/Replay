@@ -229,7 +229,7 @@ export function LibraryPane({ venueId, item, orderOf, single, onToggle }: {
       ) : lib.isError ? (
         <p className="text-sm text-red-400" role="alert">{(lib.error as Error).message}</p>
       ) : !lib.items.length ? (
-        <p className="py-6 text-sm text-muted-text" data-testid="ig-pick-library-none">{c.pickLibraryNone}</p>
+        <p className="py-6 text-sm text-muted-text" data-testid="ig-pick-library-none">{(lib.why && c.pickWhy[lib.why]) || c.pickLibraryNone}</p>
       ) : (
         <div className="flex flex-col gap-4">
           {groups.map((g, gi) => (
