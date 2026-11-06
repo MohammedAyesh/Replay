@@ -1316,6 +1316,18 @@ export type DirectionData = {
   stretches?: DirectionStretch[];
 };
 
+/** Game phases read off ball-in-play spans: a gap of DIRECTION.stretchBreakSeconds or more is a break. */
+export function stretchesFromInPlay(inPlay: ReadonlyArray<readonly [number, number]>): Array<{ kind: string; start: number; end: number }> {
+  const spans = [...inPlay].filter(([a, b]) => b > a).sort((p, q) => p[0] - q[0]);
+  const out: Array<{ kind: string; start: number; end: number }> = [];
+  for (const [a, b] of spans) {
+    const last = out.at(-1);
+    if (last && a - last.end < DIRECTION.stretchBreakSeconds) last.end = Math.max(last.end, b);
+    else out.push({ kind: "game", start: a, end: b });
+  }
+  return out;
+}
+
 /**
  * The stretches of play a recording falls into: its game phases joined across
  * breaks shorter than DIRECTION.stretchBreakSeconds, short stretches joined to
@@ -1352,7 +1364,12 @@ function computeDirection(play: Parameters<typeof goalContext>[0]): PitchDirecti
   const { manifest, sidecars, segments, kits } = play;
   const pitch = pitchSizeOf(manifest);
   if (!pitch || !sidecars || !segments || !kits) return null;
-  const stretches = playStretches(play.phases);
+  // Without phases (every bundle uploaded before 2026-11-06 lost them: the
+  // upload kept only flat provenance values), the stretches come from the
+  // ball-in-play spans, which every bundle carries: a gap in play as long as a
+  // break is one.
+  let stretches = playStretches(play.phases);
+  if (!stretches.length && play.inPlay?.length) stretches = playStretches(stretchesFromInPlay(play.inPlay));
   if (stretches.length < 2) {
     const one = readDirection(play, sidecars, play.bib ?? bibKit(sidecars), null);
     return one ? directionFromData({ kits: one.kits, bib: one.bib, defendsZero: [...one.defendsZero] }) : null;

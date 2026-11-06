@@ -246,3 +246,28 @@ describe("bookingShareOfRecording", () => {
     expect(bookingShareOfRecording(7000, 7000 + MIN_BOOKING_SHARE_SECONDS - 1, recording403)).toBeNull();
   });
 });
+
+describe("uploaded phases (2026-11-06)", () => {
+  it("keeps phases.py's block in a fixed shape instead of dropping it as a nested object", () => {
+    const out = sanitizeUploadedProvenance({
+      linker: "x",
+      phases: {
+        version: 1,
+        phases: [{ kind: "game", start: 0, end: 3700 }, { kind: "break", start: 3700, end: 4102 }, { kind: "game", start: 4102, end: 7200, junk: 1 }, { kind: "game", start: 9, end: 3 }],
+        gameSpans: [[0, 3700], [4102, 7200], ["a", 1]],
+        sessions: [{ start: 0, end: 3700, spans: [[0, 3700]], players: 14 }, { start: 4102, end: 7200, spans: [[4102, 7200]] }],
+        params: { LEAD_K: 2.1 },
+        inPlay: new Array(7200).fill(1),
+      },
+    });
+    expect(out).toEqual({
+      linker: "x",
+      phases: {
+        version: 1,
+        phases: [{ kind: "game", start: 0, end: 3700 }, { kind: "break", start: 3700, end: 4102 }, { kind: "game", start: 4102, end: 7200 }],
+        gameSpans: [[0, 3700], [4102, 7200]],
+        sessions: [{ start: 0, end: 3700, spans: [[0, 3700]], players: 14 }, { start: 4102, end: 7200, spans: [[4102, 7200]] }],
+      },
+    });
+  });
+});

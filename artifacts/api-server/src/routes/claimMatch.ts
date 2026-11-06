@@ -274,6 +274,16 @@ export function sanitizeUploadedProvenance(value: unknown): Record<string, unkno
       }
       continue;
     }
+    if (key === "phases") {
+      // The other structured value: phases.py's game / break phases and the
+      // games sessions.py found (make_appbundle.py). Read off it by
+      // matchFlow.phasesFromProvenance and the attacking direction's
+      // stretches; until 2026-11-06 it was dropped here as a nested object, so
+      // no bundle had phases on the server. Parsed to a fixed, bounded shape.
+      const phases = sanitizeUploadedPhases(entry);
+      if (phases) out.phases = phases;
+      continue;
+    }
     if (typeof entry === "string") {
       out[key] = entry.slice(0, PROVENANCE_MAX_VALUE_CHARS);
     } else if (typeof entry === "number" && Number.isFinite(entry)) {
@@ -285,6 +295,44 @@ export function sanitizeUploadedProvenance(value: unknown): Record<string, unkno
     // is a record of how the bundle was made, not a place to park structures.
   }
   return Object.keys(out).length ? out : undefined;
+}
+
+const PHASES_MAX = 60;
+const SESSIONS_MAX = 12;
+
+/** phases.py's block, kept to {version, phases, gameSpans, sessions} with finite numbers and bounded lengths. */
+export function sanitizeUploadedPhases(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e7 ? v : null);
+  const span = (v: unknown): [number, number] | null => {
+    if (!Array.isArray(v) || v.length < 2) return null;
+    const a = num(v[0]), b = num(v[1]);
+    return a !== null && b !== null && b > a ? [a, b] : null;
+  };
+  const phases: Array<{ kind: string; start: number; end: number }> = [];
+  for (const p of Array.isArray(raw.phases) ? raw.phases.slice(0, PHASES_MAX) : []) {
+    if (!p || typeof p !== "object") continue;
+    const { kind, start, end } = p as Record<string, unknown>;
+    const a = num(start), b = num(end);
+    if (typeof kind !== "string" || a === null || b === null || b <= a) continue;
+    phases.push({ kind: kind.slice(0, 12), start: a, end: b });
+  }
+  if (!phases.length) return undefined;
+  const gameSpans = (Array.isArray(raw.gameSpans) ? raw.gameSpans.slice(0, PHASES_MAX) : [])
+    .map(span).filter((x): x is [number, number] => x !== null);
+  const sessions: Array<{ start: number; end: number; spans: Array<[number, number]>; players?: number }> = [];
+  for (const g of Array.isArray(raw.sessions) ? raw.sessions.slice(0, SESSIONS_MAX) : []) {
+    if (!g || typeof g !== "object") continue;
+    const r = g as Record<string, unknown>;
+    const a = num(r.start), b = num(r.end);
+    if (a === null || b === null || b <= a) continue;
+    const spans = (Array.isArray(r.spans) ? r.spans.slice(0, 20) : []).map(span).filter((x): x is [number, number] => x !== null);
+    const players = num(r.players);
+    sessions.push({ start: a, end: b, spans, ...(players !== null ? { players: Math.round(players) } : {}) });
+  }
+  const version = num(raw.version);
+  return { ...(version !== null ? { version } : {}), phases, gameSpans, ...(sessions.length ? { sessions } : {}) };
 }
 
 /**
