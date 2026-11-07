@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { academyMetaConnectionsTable, db, type AcademyMetaConnection } from "@workspace/db";
 import { logger } from "../logger";
@@ -145,68 +146,136 @@ export async function checkSharedPage(academyId: number, input: string): Promise
 export type OwnAssets = {
   adAccounts: Array<{ id: string; name: string; currency: string; status: number }>;
   pages: Array<{ id: string; name: string; whatsappNumber: string | null }>;
+  issues: OwnAssetIssue[];
 };
 
-async function ownAssets(token: string): Promise<OwnAssets & { pageTokens: Map<string, PageInfo> }> {
-  const [accounts, pages] = await Promise.all([
-    graphGet<{ data: Array<{ id: string; name: string; currency: string; account_status: number }> }>("me/adaccounts", { fields: "id,name,currency,account_status", limit: "100" }, { token }),
-    graphGet<{ data: PageInfo[] }>("me/accounts", { fields: "id,name,access_token,whatsapp_number", limit: "100" }, { token }),
+export type OwnAssetIssue = {
+  step: "ad_accounts" | "pages";
+  reason: "not_shared" | "unavailable";
+  referenceCode?: string;
+};
+
+type OwnConnectionStep = "token_exchange" | "identity" | "permissions" | "ad_accounts" | "pages";
+
+export class OwnBusinessConnectError extends Error {
+  constructor(readonly status: number, readonly referenceCode: string) {
+    super("Facebook refused the connection");
+  }
+}
+
+type StepResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+function shortReferenceCode(): string {
+  return randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+}
+
+function logOwnConnectionStepFailure(step: OwnConnectionStep, referenceCode: string, error: unknown): void {
+  if (error instanceof MetaGraphError) {
+    logger.error({
+      referenceCode,
+      step,
+      metaError: {
+        code: error.code ?? null,
+        error_subcode: error.subcode ?? null,
+        type: error.type ?? null,
+        message: error.message,
+        fbtrace_id: error.fbtraceId ?? null,
+      },
+    }, "Connecting an academy's own Meta business failed");
+    return;
+  }
+  logger.error({
+    referenceCode,
+    step,
+    failureKind: error instanceof Error ? error.name : "UnknownError",
+  }, "Connecting an academy's own Meta business failed");
+}
+
+async function captureOwnConnectionStep<T>(
+  step: OwnConnectionStep,
+  referenceCode: string,
+  run: () => Promise<T>,
+): Promise<StepResult<T>> {
+  try {
+    return { ok: true, value: await run() };
+  } catch (error) {
+    logOwnConnectionStepFailure(step, referenceCode, error);
+    return { ok: false, error };
+  }
+}
+
+function permissionError(error: unknown): boolean {
+  return error instanceof MetaGraphError && (error.code === 10 || error.code === 200);
+}
+
+async function ownAssets(token: string, referenceCode = shortReferenceCode()): Promise<OwnAssets & {
+  pageTokens: Map<string, PageInfo>;
+  adAccountCount: number | null;
+  pageCount: number | null;
+}> {
+  const [accountsResult, pagesResult] = await Promise.all([
+    captureOwnConnectionStep("ad_accounts", referenceCode, () =>
+      graphGet<{ data?: Array<{ id: string; name: string; currency: string; account_status: number }> }>(
+        "me/adaccounts", { fields: "id,name,currency,account_status", limit: "100" }, { token },
+      )),
+    captureOwnConnectionStep("pages", referenceCode, () =>
+      graphGet<{ data?: PageInfo[] }>(
+        "me/accounts", { fields: "id,name,access_token,whatsapp_number", limit: "100" }, { token },
+      )),
   ]);
+
+  const accountRows = accountsResult.ok && Array.isArray(accountsResult.value.data) ? accountsResult.value.data : [];
+  const pageRows = pagesResult.ok && Array.isArray(pagesResult.value.data) ? pagesResult.value.data : [];
+  const issues: OwnAssetIssue[] = [];
+
+  if (!accountsResult.ok) {
+    issues.push({
+      step: "ad_accounts",
+      reason: permissionError(accountsResult.error) ? "not_shared" : "unavailable",
+      referenceCode,
+    });
+  } else if (accountRows.length === 0) {
+    issues.push({ step: "ad_accounts", reason: "not_shared" });
+  }
+
+  if (!pagesResult.ok) {
+    issues.push({
+      step: "pages",
+      reason: permissionError(pagesResult.error) ? "not_shared" : "unavailable",
+      referenceCode,
+    });
+  } else if (pageRows.length === 0) {
+    issues.push({ step: "pages", reason: "not_shared" });
+  }
+
   return {
-    adAccounts: accounts.data.map((a) => ({ id: a.id, name: a.name, currency: a.currency, status: a.account_status })),
-    pages: pages.data.map((p) => ({ id: p.id, name: p.name, whatsappNumber: p.whatsapp_number ?? null })),
-    pageTokens: new Map(pages.data.map((p) => [p.id, p])),
+    adAccounts: accountRows.map((a) => ({ id: a.id, name: a.name, currency: a.currency, status: a.account_status })),
+    pages: pageRows.map((p) => ({ id: p.id, name: p.name, whatsappNumber: p.whatsapp_number ?? null })),
+    issues,
+    pageTokens: new Map(pageRows.map((p) => [p.id, p])),
+    adAccountCount: accountsResult.ok ? accountRows.length : null,
+    pageCount: pagesResult.ok ? pageRows.length : null,
   };
 }
 
-/**
- * Option 2: the code from Facebook Login for Business → a business integration system user
- * token for the owner's business. Saved encrypted; returns what he shared so he can pick.
- */
-export async function connectOwnBusiness(academyId: number, code: string): Promise<OwnAssets> {
-  const config = metaConfig();
-  if (!config.appSecret) throw new MetaGraphError("Meta is not set up on the server (META_APP_SECRET)", 503);
-  const exchange = await fetch(`https://graph.facebook.com/${config.graphVersion}/oauth/access_token?${new URLSearchParams({
-    client_id: config.appId,
-    client_secret: config.appSecret,
-    code,
-  })}`, { signal: AbortSignal.timeout(20_000) });
-  const body = (await exchange.json().catch(() => null)) as { access_token?: string; error?: { message?: string } } | null;
-  if (!exchange.ok || !body?.access_token) throw new MetaGraphError(body?.error?.message ?? "Meta refused the sign-in", exchange.status || 400);
-  const token = body.access_token;
-  const me = await graphGet<{ id: string; client_business_id?: string }>("me", { fields: "id,client_business_id" }, { token }).catch(() => ({ id: "", client_business_id: undefined }));
-  const assets = await ownAssets(token);
-  await saveConnection(academyId, {
-    mode: "own",
-    tokenEnc: encryptToken(token),
-    clientBusinessId: me.client_business_id ?? null,
-    status: "pending",
-    error: null,
-  });
-  // One of each: pick them straight away.
-  if (assets.adAccounts.length === 1 && assets.pages.length === 1) {
-    await selectOwnAssets(academyId, assets.adAccounts[0].id, assets.pages[0].id);
-  }
-  return { adAccounts: assets.adAccounts, pages: assets.pages };
+async function grantedPermissions(token: string, referenceCode: string): Promise<string[] | null> {
+  const result = await captureOwnConnectionStep("permissions", referenceCode, () =>
+    graphGet<{ data?: Array<{ permission?: string; status?: string }> }>("me/permissions", {}, { token }));
+  if (!result.ok || !Array.isArray(result.value.data)) return null;
+  return result.value.data
+    .filter((item) => item.status === "granted" && typeof item.permission === "string")
+    .map((item) => item.permission!)
+    .sort();
 }
 
-export async function listOwnAssets(academyId: number): Promise<OwnAssets | null> {
-  const connection = await getConnection(academyId);
-  if (connection?.mode !== "own" || !connection.tokenEnc) return null;
-  const { adAccounts, pages } = await ownAssets(decryptToken(connection.tokenEnc));
-  return { adAccounts, pages };
-}
-
-export async function selectOwnAssets(academyId: number, adAccountId: string, pageId: string): Promise<AcademyMetaConnection> {
-  const connection = await getConnection(academyId);
-  if (connection?.mode !== "own" || !connection.tokenEnc) throw new MetaGraphError("Connect Facebook first", 409);
-  const token = decryptToken(connection.tokenEnc);
-  const assets = await ownAssets(token);
-  const account = assets.adAccounts.find((a) => a.id === adAccountId);
-  const page = assets.pageTokens.get(pageId);
-  if (!account || !page) throw new MetaGraphError("That ad account or Page wasn't shared with Replay", 404);
+async function saveOwnSelection(
+  academyId: number,
+  account: OwnAssets["adAccounts"][number],
+  page: PageInfo,
+): Promise<AcademyMetaConnection> {
   const leadsSubscribed = await subscribeLeads(page);
   return saveConnection(academyId, {
+    mode: "own",
     adAccountId: account.id,
     adAccountName: account.name,
     currency: account.currency,
@@ -218,6 +287,101 @@ export async function selectOwnAssets(academyId: number, adAccountId: string, pa
     error: null,
     connectedAt: new Date(),
   });
+}
+
+/**
+ * Option 2: the code from Facebook Login for Business → a business integration system user
+ * token for the owner's business. Saved encrypted; returns what he shared so he can pick.
+ */
+export async function connectOwnBusiness(academyId: number, code: string): Promise<OwnAssets> {
+  const referenceCode = shortReferenceCode();
+  const config = metaConfig();
+  if (!config.appSecret) {
+    const error = new MetaGraphError("Meta app secret is not configured", 503);
+    logOwnConnectionStepFailure("token_exchange", referenceCode, error);
+    throw new OwnBusinessConnectError(503, referenceCode);
+  }
+  let exchange: Response;
+  try {
+    exchange = await fetch(`https://graph.facebook.com/${config.graphVersion}/oauth/access_token?${new URLSearchParams({
+      client_id: config.appId,
+      client_secret: config.appSecret,
+      code,
+    })}`, { signal: AbortSignal.timeout(20_000) });
+  } catch (error) {
+    logOwnConnectionStepFailure("token_exchange", referenceCode, error);
+    throw new OwnBusinessConnectError(502, referenceCode);
+  }
+  const body = (await exchange.json().catch(() => null)) as {
+    access_token?: string;
+    error?: { message?: string; code?: number; error_subcode?: number; type?: string; fbtrace_id?: string };
+  } | null;
+  if (!exchange.ok || !body?.access_token) {
+    const error = new MetaGraphError(
+      body?.error?.message ?? "Meta refused the sign-in",
+      exchange.status || 400,
+      body?.error?.code,
+      body?.error?.error_subcode,
+      body?.error?.type,
+      body?.error?.fbtrace_id,
+    );
+    logOwnConnectionStepFailure("token_exchange", referenceCode, error);
+    throw new OwnBusinessConnectError(exchange.status >= 400 && exchange.status < 500 ? exchange.status : 502, referenceCode);
+  }
+  const token = body.access_token;
+  const [meResult, permissions, assets] = await Promise.all([
+    captureOwnConnectionStep("identity", referenceCode, () =>
+      graphGet<{ id?: string; client_business_id?: string }>("me", { fields: "id,client_business_id" }, { token })),
+    grantedPermissions(token, referenceCode),
+    ownAssets(token, referenceCode),
+  ]);
+  const me = meResult.ok ? meResult.value : null;
+  logger.info({
+    referenceCode,
+    grantedPermissions: permissions,
+    permissionsAvailable: permissions !== null,
+    adAccountCount: assets.adAccountCount,
+    pageCount: assets.pageCount,
+  }, "Meta own-business sign-in assets checked");
+
+  await saveConnection(academyId, {
+    mode: "own",
+    tokenEnc: encryptToken(token),
+    clientBusinessId: me?.client_business_id ?? null,
+    adAccountId: null,
+    adAccountName: null,
+    currency: null,
+    pageId: null,
+    pageName: null,
+    whatsappNumber: null,
+    leadsSubscribed: false,
+    status: "pending",
+    error: null,
+    connectedAt: null,
+  });
+  if (assets.issues.length === 0 && assets.adAccounts.length === 1 && assets.pages.length === 1) {
+    const page = assets.pageTokens.get(assets.pages[0].id);
+    if (page) await saveOwnSelection(academyId, assets.adAccounts[0], page);
+  }
+  return { adAccounts: assets.adAccounts, pages: assets.pages, issues: assets.issues };
+}
+
+export async function listOwnAssets(academyId: number): Promise<OwnAssets | null> {
+  const connection = await getConnection(academyId);
+  if (connection?.mode !== "own" || !connection.tokenEnc) return null;
+  const { adAccounts, pages, issues } = await ownAssets(decryptToken(connection.tokenEnc));
+  return { adAccounts, pages, issues };
+}
+
+export async function selectOwnAssets(academyId: number, adAccountId: string, pageId: string): Promise<AcademyMetaConnection> {
+  const connection = await getConnection(academyId);
+  if (connection?.mode !== "own" || !connection.tokenEnc) throw new MetaGraphError("Connect Facebook first", 409);
+  const token = decryptToken(connection.tokenEnc);
+  const assets = await ownAssets(token);
+  const account = assets.adAccounts.find((a) => a.id === adAccountId);
+  const page = assets.pageTokens.get(pageId);
+  if (!account || !page) throw new MetaGraphError("That ad account or Page wasn't shared with Replay", 404);
+  return saveOwnSelection(academyId, account, page);
 }
 
 export async function disconnect(academyId: number): Promise<void> {

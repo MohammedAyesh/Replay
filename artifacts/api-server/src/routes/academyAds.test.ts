@@ -13,6 +13,14 @@ import {
   usersTable,
 } from "@workspace/db";
 
+const loggerMock = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+  fatal: vi.fn(),
+}));
+
 process.env.META_ACCESS_TOKEN = "replay-token";
 process.env.META_AD_ACCOUNT_ID = "111";
 process.env.META_APP_SECRET = "test-app-secret";
@@ -34,10 +42,17 @@ vi.mock("../lib/clerkUserBridge", () => ({
   }),
 }));
 
+vi.mock("../lib/logger", () => ({ logger: loggerMock }));
+
 const tag = Date.now();
 const SHARED_PAGE = `5${tag}`;
 const OWN_PAGE = `6${tag}`;
 let failCreative = false;
+let ownAdAccountsFailure: Error | null = null;
+let ownPagesFailure: Error | null = null;
+let ownAdAccountsData: Array<{ id: string; name: string; currency: string; account_status: number }> = [];
+let ownPagesData: Array<{ id: string; name: string; access_token?: string; whatsapp_number?: string }> = [];
+let ownPermissionsData: Array<{ permission: string; status: string }> = [];
 const posts: Array<{ path: string; params: Record<string, string>; token?: string }> = [];
 const deletes: string[] = [];
 
@@ -54,8 +69,15 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
       if (path === "notshared") return { id: "777", name: "Someone Else" };
       if (path === "999/client_pages") return { data: [] };
       if (path === "me" && opts.token === "own-token") return { id: "bisu", client_business_id: "cb-1" };
-      if (path === "me/adaccounts") return { data: [{ id: "act_222", name: "Owner Ads", currency: "JOD", account_status: 1 }] };
-      if (path === "me/accounts") return { data: [{ id: OWN_PAGE, name: "Owner Page", access_token: "own-page-token" }] };
+      if (path === "me/permissions" && opts.token === "own-token") return { data: ownPermissionsData };
+      if (path === "me/adaccounts" && opts.token === "own-token") {
+        if (ownAdAccountsFailure) throw ownAdAccountsFailure;
+        return { data: ownAdAccountsData };
+      }
+      if (path === "me/accounts" && opts.token === "own-token") {
+        if (ownPagesFailure) throw ownPagesFailure;
+        return { data: ownPagesData };
+      }
       if (path === OWN_PAGE) return { access_token: "own-page-token" };
       throw new actual.MetaGraphError(`unexpected GET ${path}`, 404);
     }),
@@ -121,10 +143,23 @@ beforeAll(async () => {
   ]);
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  if (ownAcademyId) {
+    await db.delete(academyMetaConnectionsTable).where(eq(academyMetaConnectionsTable.academyId, ownAcademyId));
+  }
   posts.length = 0;
   deletes.length = 0;
   failCreative = false;
+  ownAdAccountsFailure = null;
+  ownPagesFailure = null;
+  ownAdAccountsData = [{ id: "act_222", name: "Owner Ads", currency: "JOD", account_status: 1 }];
+  ownPagesData = [{ id: OWN_PAGE, name: "Owner Page", access_token: "own-page-token" }];
+  ownPermissionsData = [
+    { permission: "ads_management", status: "granted" },
+    { permission: "pages_show_list", status: "granted" },
+    { permission: "business_management", status: "declined" },
+  ];
+  vi.clearAllMocks();
 });
 
 afterAll(async () => {
@@ -189,6 +224,102 @@ describe("connecting Meta", () => {
     expect(row.tokenEnc).toBeTruthy();
     expect(row.tokenEnc).not.toContain("own-token");
     expect(decryptToken(row.tokenEnc!)).toBe("own-token");
+    expect(loggerMock.info).toHaveBeenCalledWith(expect.objectContaining({
+      grantedPermissions: ["ads_management", "pages_show_list"],
+      permissionsAvailable: true,
+      adAccountCount: 1,
+      pageCount: 1,
+    }), "Meta own-business sign-in assets checked");
+    const emittedLogs = JSON.stringify([...loggerMock.info.mock.calls, ...loggerMock.error.mock.calls]);
+    expect(emittedLogs).not.toContain("own-token");
+    expect(emittedLogs).not.toContain('"abc"');
+  });
+
+  it("keeps a pending connection and Pages when the ad-account permission is missing", async () => {
+    ownAdAccountsFailure = new (await import("../lib/meta/graph")).MetaGraphError(
+      "(#200) Missing Permissions", 403, 200, 181, "OAuthException", "trace-adaccounts",
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "own-token" }), { status: 200 }));
+    const res = await request(app).post(`${base(ownAcademyId)}/connection/own`).set(auth(ownerId)).send({ code: "abc" }).expect(200);
+    fetchSpy.mockRestore();
+
+    expect(res.body.assets.adAccounts).toEqual([]);
+    expect(res.body.assets.pages).toHaveLength(1);
+    expect(res.body.assets.issues).toMatchObject([{ step: "ad_accounts", reason: "not_shared", referenceCode: expect.any(String) }]);
+    expect(res.body.connection).toMatchObject({ mode: "own", status: "pending", adAccountId: null, pageId: null });
+    expect(loggerMock.error).toHaveBeenCalledWith(expect.objectContaining({
+      referenceCode: expect.any(String),
+      step: "ad_accounts",
+      metaError: {
+        code: 200,
+        error_subcode: 181,
+        type: "OAuthException",
+        message: "(#200) Missing Permissions",
+        fbtrace_id: "trace-adaccounts",
+      },
+    }), "Connecting an academy's own Meta business failed");
+    const emittedLogs = JSON.stringify([...loggerMock.info.mock.calls, ...loggerMock.error.mock.calls]);
+    expect(emittedLogs).not.toContain("own-token");
+    expect(emittedLogs).not.toContain('"abc"');
+  });
+
+  it("keeps a pending connection and ad accounts when the Page list fails", async () => {
+    ownPagesFailure = new (await import("../lib/meta/graph")).MetaGraphError(
+      "(#200) Missing Permissions", 403, 200, 182, "OAuthException", "trace-pages",
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "own-token" }), { status: 200 }));
+    const res = await request(app).post(`${base(ownAcademyId)}/connection/own`).set(auth(ownerId)).send({ code: "abc" }).expect(200);
+    fetchSpy.mockRestore();
+
+    expect(res.body.assets.adAccounts).toHaveLength(1);
+    expect(res.body.assets.pages).toEqual([]);
+    expect(res.body.assets.issues).toMatchObject([{ step: "pages", reason: "not_shared", referenceCode: expect.any(String) }]);
+    expect(res.body.connection).toMatchObject({ mode: "own", status: "pending", adAccountId: null, pageId: null });
+  });
+
+  it("reports an empty ad-account list as not shared rather than returning an empty picker", async () => {
+    ownAdAccountsData = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "own-token" }), { status: 200 }));
+    const res = await request(app).post(`${base(ownAcademyId)}/connection/own`).set(auth(ownerId)).send({ code: "abc" }).expect(200);
+    fetchSpy.mockRestore();
+
+    expect(res.body.assets.issues).toContainEqual({ step: "ad_accounts", reason: "not_shared" });
+    expect(res.body.connection.status).toBe("pending");
+  });
+
+  it("returns a friendly reference error and logs complete Meta fields for token-exchange failures", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({
+      error: {
+        message: "(#200) Missing Permissions",
+        type: "OAuthException",
+        code: 200,
+        error_subcode: 183,
+        fbtrace_id: "trace-token-exchange",
+      },
+    }), { status: 400 }));
+    const res = await request(app).post(`${base(ownAcademyId)}/connection/own`).set(auth(ownerId)).send({ code: "sensitive-oauth-code" }).expect(400);
+    fetchSpy.mockRestore();
+
+    expect(res.body).toMatchObject({
+      error: "facebook_connection_failed",
+      code: "facebook_connection_failed",
+      referenceCode: expect.stringMatching(/^[A-F0-9]{8}$/),
+    });
+    expect(JSON.stringify(res.body)).not.toContain("(#200)");
+    expect(loggerMock.error).toHaveBeenCalledWith(expect.objectContaining({
+      referenceCode: res.body.referenceCode,
+      step: "token_exchange",
+      metaError: {
+        code: 200,
+        error_subcode: 183,
+        type: "OAuthException",
+        message: "(#200) Missing Permissions",
+        fbtrace_id: "trace-token-exchange",
+      },
+    }), "Connecting an academy's own Meta business failed");
+    const emittedLogs = JSON.stringify(loggerMock.error.mock.calls);
+    expect(emittedLogs).not.toContain("own-token");
+    expect(emittedLogs).not.toContain("sensitive-oauth-code");
   });
 });
 
@@ -236,6 +367,10 @@ describe("building ads", () => {
   });
 
   it("launches an own-account ad straight away in his account, with his token and currency", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "own-token" }), { status: 200 }));
+    await request(app).post(`${base(ownAcademyId)}/connection/own`).set(auth(ownerId)).send({ code: "abc" }).expect(200);
+    fetchSpy.mockRestore();
+
     const created = await request(app).post(`${base(ownAcademyId)}/requests`).set(auth(ownerId)).send(ad({ dailyBudget: 5 })).expect(201);
     expect(created.body).toMatchObject({ mode: "own", currency: "JOD" });
     const res = await request(app).post(`${base(ownAcademyId)}/requests/${created.body.id}/submit`).set(auth(ownerId)).expect(200);

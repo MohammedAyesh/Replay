@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, Copy, Facebook, Link2, Loader2, ShieldCheck, Wallet } from "lucide-react";
 import { useAdsWizardCopy } from "@/i18n/ads-wizard-strings";
 import {
+  AdsApiError,
   useAdsConnection,
   useConnectOwn,
   useDisconnectMeta,
@@ -119,9 +120,11 @@ function OwnOption({ academyId, info, copy, onDone }: { academyId: number; info:
   const [page, setPage] = useState("");
   const [sdkError, setSdkError] = useState(false);
   const ready = Boolean(info.own.loginConfigId);
+  const issues = list?.issues ?? [];
 
   const start = async () => {
     setSdkError(false);
+    connect.reset();
     try {
       const code = await facebookBusinessLogin(info.own.appId, info.own.graphVersion, info.own.loginConfigId!);
       if (code) connect.mutate(code, { onSuccess: (res) => { if (res.connection.status === "connected") onDone(); } });
@@ -143,8 +146,33 @@ function OwnOption({ academyId, info, copy, onDone }: { academyId: number; info:
         </>
       )}
       {sdkError && <p className="mt-2 text-sm text-red-400">{copy.connect.sdkFailed}</p>}
-      {connect.isError && <p className="mt-2 text-sm text-red-400" role="alert">{(connect.error as Error).message}</p>}
-      {list && (list.adAccounts.length > 1 || list.pages.length > 1 || pending) && (
+      {connect.isError && (
+        <p className="mt-2 text-sm text-red-400" role="alert">
+          {copy.connect.connectionFailed(
+            connect.error instanceof AdsApiError && typeof connect.error.data?.referenceCode === "string"
+              ? connect.error.data.referenceCode
+              : "",
+          )}
+        </p>
+      )}
+      {issues.map((issue) => (
+        <p key={`${issue.step}-${issue.reason}`} className="mt-2 text-sm text-red-400" role="alert">
+          {issue.reason === "not_shared"
+            ? issue.step === "ad_accounts" ? copy.connect.noAdAccount : copy.connect.noPage
+            : copy.connect.connectionFailed(issue.referenceCode ?? "")}
+        </p>
+      ))}
+      {assets.isError && (
+        <p className="mt-2 text-sm text-red-400" role="alert">
+          {copy.connect.connectionFailed(
+            assets.error instanceof AdsApiError && typeof assets.error.data?.referenceCode === "string"
+              ? assets.error.data.referenceCode
+              : "",
+          )}
+        </p>
+      )}
+      {list && list.adAccounts.length > 0 && list.pages.length > 0
+        && (list.adAccounts.length > 1 || list.pages.length > 1 || pending) && (
         <div className="mt-4 space-y-2 rounded-xl bg-raised/60 p-3">
           <p className="text-sm font-semibold text-text">{copy.connect.pickTitle}</p>
           <label className="block text-xs text-muted-text">{copy.connect.adAccount}
@@ -161,7 +189,15 @@ function OwnOption({ academyId, info, copy, onDone }: { academyId: number; info:
           </label>
           <Button type="button" size="sm" disabled={!account || !page || select.isPending} className="bg-turf font-bold text-void"
             onClick={() => select.mutate({ adAccountId: account, pageId: page }, { onSuccess: onDone })}>{copy.connect.use}</Button>
-          {select.isError && <p className="text-sm text-red-400" role="alert">{(select.error as Error).message}</p>}
+          {select.isError && (
+            <p className="text-sm text-red-400" role="alert">
+              {copy.connect.connectionFailed(
+                select.error instanceof AdsApiError && typeof select.error.data?.referenceCode === "string"
+                  ? select.error.data.referenceCode
+                  : "",
+              )}
+            </p>
+          )}
         </div>
       )}
     </div>

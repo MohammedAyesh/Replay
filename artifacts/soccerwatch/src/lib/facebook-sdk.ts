@@ -1,5 +1,9 @@
 /** Loads Meta's JavaScript SDK once and runs Facebook Login for Business with a configuration. */
-type FBLoginResponse = { authResponse?: { code?: string } | null; status?: string };
+type FBLoginResponse = {
+  authResponse?: { code?: string } | null;
+  status?: string;
+  error?: { code?: number; message?: string; type?: string } | null;
+};
 type FBStatic = {
   init: (options: { appId: string; version: string; xfbml?: boolean; cookie?: boolean }) => void;
   login: (cb: (response: FBLoginResponse) => void, options: Record<string, unknown>) => void;
@@ -39,8 +43,14 @@ export function loadFacebookSdk(appId: string, version: string): Promise<FBStati
 /** Resolves with the code to exchange on the server, or null if the owner cancelled. */
 export async function facebookBusinessLogin(appId: string, version: string, configId: string): Promise<string | null> {
   const FB = await loadFacebookSdk(appId, version);
-  return new Promise((resolve) => {
-    FB.login((response) => resolve(response.authResponse?.code ?? null), {
+  return new Promise((resolve, reject) => {
+    FB.login((response) => {
+      if (response.error) {
+        reject(new Error("facebook_login_failed"));
+        return;
+      }
+      resolve(response.authResponse?.code ?? null);
+    }, {
       config_id: configId,
       response_type: "code",
       override_default_response_type: true,

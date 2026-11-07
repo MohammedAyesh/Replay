@@ -134,6 +134,11 @@ export type ShareCheck =
 export type OwnAssets = {
   adAccounts: Array<{ id: string; name: string; currency: string; status: number }>;
   pages: Array<{ id: string; name: string; whatsappNumber: string | null }>;
+  issues: Array<{
+    step: "ad_accounts" | "pages";
+    reason: "not_shared" | "unavailable";
+    referenceCode?: string;
+  }>;
 };
 
 export type AdGoal = "whatsapp" | "lead_form";

@@ -2,7 +2,14 @@ import { createHmac } from "node:crypto";
 import { metaConfig, type MetaConfig } from "./config";
 
 export class MetaGraphError extends Error {
-  constructor(message: string, readonly status: number, readonly code?: number, readonly subcode?: number) {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code?: number,
+    readonly subcode?: number,
+    readonly type?: string,
+    readonly fbtraceId?: string,
+  ) {
     super(message);
   }
 }
@@ -18,7 +25,13 @@ function withAuth(params: Record<string, string>, config: MetaConfig, token?: st
 
 async function parse<T>(response: Response): Promise<T> {
   const data = (await response.json().catch(() => null)) as {
-    error?: { message?: string; code?: number; error_subcode?: number };
+    error?: {
+      message?: string;
+      code?: number;
+      error_subcode?: number;
+      type?: string;
+      fbtrace_id?: string;
+    };
   } | null;
   if (!response.ok || data?.error) {
     throw new MetaGraphError(
@@ -26,6 +39,8 @@ async function parse<T>(response: Response): Promise<T> {
       response.status,
       data?.error?.code,
       data?.error?.error_subcode,
+      data?.error?.type,
+      data?.error?.fbtrace_id,
     );
   }
   return data as T;

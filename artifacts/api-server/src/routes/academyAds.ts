@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
@@ -13,6 +14,7 @@ import {
   disconnect,
   getConnection,
   listOwnAssets,
+  OwnBusinessConnectError,
   selectOwnAssets,
 } from "../lib/meta/connections";
 import { graphGet } from "../lib/meta/graph";
@@ -25,6 +27,20 @@ import { currencyOffset, launchAdRequest, launchContext, requestQuestions, reque
  */
 const router: IRouter = Router();
 const fail = sendFailure;
+
+function ownConnectionFailure(req: Request, res: Response, step: string, error: unknown): void {
+  const referenceCode = randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  req.log.error({
+    referenceCode,
+    step,
+    failureKind: error instanceof Error ? error.name : "UnknownError",
+  }, "Connecting an academy's own Meta business failed");
+  res.status(500).json({
+    error: "facebook_connection_failed",
+    code: "facebook_connection_failed",
+    referenceCode,
+  });
+}
 
 function connectionView(connection: AcademyMetaConnection | null) {
   if (!connection) return null;
@@ -84,7 +100,15 @@ router.post(`${base}/connection/own`, async (req, res): Promise<void> => {
     const assets = await connectOwnBusiness(access.academyId, code);
     res.json({ assets, connection: connectionView(await getConnection(access.academyId)) });
   } catch (error) {
-    fail(res, error, "Connecting an academy's own Meta business failed");
+    if (error instanceof OwnBusinessConnectError) {
+      res.status(error.status).json({
+        error: "facebook_connection_failed",
+        code: "facebook_connection_failed",
+        referenceCode: error.referenceCode,
+      });
+      return;
+    }
+    ownConnectionFailure(req, res, "save_connection", error);
   }
 });
 
@@ -94,7 +118,7 @@ router.get(`${base}/connection/own/assets`, async (req, res): Promise<void> => {
   try {
     res.json(await listOwnAssets(access.academyId));
   } catch (error) {
-    fail(res, error, "Listing an academy's Meta assets failed");
+    ownConnectionFailure(req, res, "load_pending_assets", error);
   }
 });
 
@@ -110,7 +134,7 @@ router.put(`${base}/connection/own`, async (req, res): Promise<void> => {
   try {
     res.json({ connection: connectionView(await selectOwnAssets(access.academyId, adAccountId, pageId)) });
   } catch (error) {
-    fail(res, error, "Choosing an academy's Meta assets failed");
+    ownConnectionFailure(req, res, "select_assets", error);
   }
 });
 
