@@ -14,3 +14,9 @@ Direct comparison can also surface legacy columns that are still present in the 
 **Why:** The push tool treats an undeclared legacy column as a destructive drop, even when that column still contains rows.
 
 **How to apply:** When a push pauses on a legacy-column deletion, preserve it as nullable compatibility schema, then rerun the approved push so the intended additive tables/indexes can be applied safely.
+
+Publishing compares the live development database with the live production database; it does not diff either database against the Drizzle source. If both databases lack the same code-required columns, the publish diff can be empty.
+
+**Why:** An empty development-to-production diff only means those databases match each other, not that either matches the application schema.
+
+**How to apply:** Check the source schema and both databases when runtime errors report missing columns. Apply the approved additive change to development first, then re-check the diff and publish.

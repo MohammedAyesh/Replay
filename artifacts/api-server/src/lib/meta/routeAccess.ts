@@ -42,8 +42,12 @@ export function sendFailure(res: Response, error: unknown, what: string) {
     return;
   }
   const cause = (error as { cause?: { code?: string } })?.cause;
-  if (cause?.code === "42P01" || cause?.code === "42703") {
-    res.status(500).json({ error: "The ads tables are missing from this database. Publish again so they're created." });
+  if (cause?.code === "42P01") {
+    res.status(500).json({ error: "A required database table is missing. Apply the schema update, then publish again." });
+    return;
+  }
+  if (cause?.code === "42703") {
+    res.status(500).json({ error: "A required database column is missing. Apply the schema update, then publish again." });
     return;
   }
   logger.error({ error: (error as Error)?.message }, what);
