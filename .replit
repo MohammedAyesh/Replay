@@ -53,6 +53,7 @@ channel = "stable-25_05"
 OSS_REGION = "oss-me-central-2"
 OSS_BUCKET = "cam9"
 BUNNY_STORAGE_HOSTNAME = "storage.bunnycdn.com"
+INSTAGRAM_LOGIN_ENABLED = "true"
 
 [objectStorage]
 defaultBucketID = "replit-objstore-2c134a01-f9f8-464d-94bb-e95a0528ae27"
