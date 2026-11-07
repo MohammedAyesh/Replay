@@ -1,7 +1,8 @@
-import { and, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
 import {
   academyAdMediaTable,
   academySocialAccountsTable,
+  academySocialCommentsTable,
   academySocialPostsTable,
   db,
   type AcademySocialAccount,
@@ -209,6 +210,19 @@ type IgMedia = {
   comments?: { data?: Array<{ id: string; text?: string; username?: string; timestamp?: string; from?: { id?: string; username?: string } }> };
 };
 
+async function moveCommentsToCurrentOwner(
+  academyId: number,
+  channel: "instagram" | "facebook",
+  postIds: string[],
+): Promise<void> {
+  if (postIds.length === 0) return;
+  await db.update(academySocialCommentsTable).set({ academyId }).where(and(
+    eq(academySocialCommentsTable.channel, channel),
+    inArray(academySocialCommentsTable.postId, postIds),
+    ne(academySocialCommentsTable.academyId, academyId),
+  ));
+}
+
 async function igMediaInsights(id: string, product: string | undefined, token: string, academyId: number): Promise<Insights> {
   const metrics = product === "STORY" ? ["views", "reach", "replies", "shares", "total_interactions"]
     : ["views", "reach", "saved", "shares", "total_interactions"];
@@ -230,6 +244,7 @@ async function syncInstagram(account: AcademySocialAccount, token: string): Prom
     limit: "25",
   }, { token });
   let n = 0;
+  const syncedPostIds: string[] = [];
   for (const m of res.data ?? []) {
     const insights: Insights = { likes: m.like_count ?? null, comments: m.comments_count ?? null, ...(await igMediaInsights(m.id, m.media_product_type, token, account.academyId)) };
     const thumb = m.thumbnail_url ?? (m.media_type === "VIDEO" ? null : m.media_url ?? null);
@@ -242,6 +257,7 @@ async function syncInstagram(account: AcademySocialAccount, token: string): Prom
       target: academySocialPostsTable.igMediaId,
       targetWhere: isNotNull(academySocialPostsTable.igMediaId),
       set: {
+        academyId: account.academyId,
         insights: sql`jsonb_set(coalesce(${academySocialPostsTable.insights}, '{}'::jsonb), '{instagram}', ${JSON.stringify(insights)}::jsonb)`,
         insightsAt: new Date(),
         igPermalink: m.permalink ?? null,
@@ -255,8 +271,10 @@ async function syncInstagram(account: AcademySocialAccount, token: string): Prom
         body: c.text ?? "", createdAt: c.timestamp ? new Date(c.timestamp) : undefined,
       });
     }
+    syncedPostIds.push(m.id);
     n += 1;
   }
+  await moveCommentsToCurrentOwner(account.academyId, "instagram", syncedPostIds);
   return n;
 }
 
@@ -289,6 +307,7 @@ async function syncFacebook(account: AcademySocialAccount, token: string): Promi
     limit: "25",
   }, { token });
   let n = 0;
+  const syncedPostIds: string[] = [];
   for (const p of res.data ?? []) {
     const insights: Insights = {
       reactions: p.reactions?.summary?.total_count ?? null,
@@ -305,6 +324,7 @@ async function syncFacebook(account: AcademySocialAccount, token: string): Promi
       target: academySocialPostsTable.fbPostId,
       targetWhere: isNotNull(academySocialPostsTable.fbPostId),
       set: {
+        academyId: account.academyId,
         insights: sql`jsonb_set(coalesce(${academySocialPostsTable.insights}, '{}'::jsonb), '{facebook}', ${JSON.stringify(insights)}::jsonb)`,
         insightsAt: new Date(),
         facebookCaption: p.message ?? "",
@@ -319,8 +339,10 @@ async function syncFacebook(account: AcademySocialAccount, token: string): Promi
         body: c.message ?? "", createdAt: c.created_time ? new Date(c.created_time) : undefined,
       });
     }
+    syncedPostIds.push(p.id);
     n += 1;
   }
+  await moveCommentsToCurrentOwner(account.academyId, "facebook", syncedPostIds);
   return n;
 }
 

@@ -32,6 +32,11 @@ const instagramLoginMock = vi.hoisted(() => ({
   mutationError: null as null | { message: string; status: number; code?: number; subcode?: number },
 }));
 
+const socialSyncMock = vi.hoisted(() => ({
+  instagramMedia: [] as Array<Record<string, unknown>>,
+  facebookPosts: [] as Array<Record<string, unknown>>,
+}));
+
 process.env.META_ACCESS_TOKEN = "test-token";
 process.env.META_AD_ACCOUNT_ID = "123456";
 process.env.META_APP_SECRET = "test-app-secret";
@@ -90,6 +95,8 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
     graphGet: vi.fn(async (path: string, params: Record<string, string> = {}) => {
       if (path === "me") return { client_business_id: "test-business" };
       if (path === "me/assigned_instagram_accounts") return { data: instagramLoginMock.assets };
+      if (path === `${IG}/media`) return { data: socialSyncMock.instagramMedia };
+      if (path === `${PAGE}/published_posts`) return { data: socialSyncMock.facebookPosts };
       if (path.endsWith("/content_publishing_limit")) {
         if (instagramLoginMock.limitError) {
           const e = instagramLoginMock.limitError;
@@ -99,6 +106,9 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
       }
       if (path === IGSID) return { name: "Sami Haddad", username: "sami.h", profile_pic: "https://pic/x.jpg" };
       if (path === PSID) return { first_name: "Abu", last_name: "Kareem" };
+      if (path === IG && params.fields?.includes("followers_count")) return { followers_count: 12, media_count: 34 };
+      if (path === PAGE && params.fields?.includes("followers_count")) return { followers_count: 56, fan_count: 78 };
+      if (path.endsWith("/insights")) return { data: [] };
       if (path.startsWith("ig-media-")) return { permalink: `https://instagram.com/p/${path}`, caption: "Training day" };
       if (path.startsWith("ig-container-")) return { status_code: "FINISHED" };
       if (path.startsWith("ig-published-")) return { permalink: "https://instagram.com/p/new" };
@@ -149,7 +159,8 @@ let fieldId: number;
 let academyId: number;
 let mediaId: number;
 const auth = (id: number) => ({ "x-test-user": String(id) });
-const base = () => `/api/academy/console/academies/${academyId}/social`;
+const baseFor = (id: number) => `/api/academy/console/academies/${id}/social`;
+const base = () => baseFor(academyId);
 const JPEG = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q==";
 
 async function hook(body: unknown) {
@@ -200,6 +211,8 @@ beforeEach(() => {
   instagramLoginMock.businessLookupError = null;
   instagramLoginMock.limitError = null;
   instagramLoginMock.mutationError = null;
+  socialSyncMock.instagramMedia = [];
+  socialSyncMock.facebookPosts = [];
 });
 
 afterAll(async () => {
@@ -214,6 +227,199 @@ describe("permissions", () => {
     expect(sectionForPath("/academy/console/academies/3/social/threads-hidden")).toEqual({ academyId: 3, section: "chats" });
     expect(sectionForPath("/academy/console/academies/3/social/comments")).toEqual({ academyId: 3, section: "social" });
     expect(sectionForPath("/academy/console/academies/3/social")).toEqual({ academyId: 3, section: "social" });
+  });
+});
+
+describe("social post sync ownership", () => {
+  it("moves an existing post and its comment thread to the academy now connected to the same Instagram account", async () => {
+    const [destination] = await db.insert(academiesTable)
+      .values({ name: `Reconnected academy ${stamp}`, fieldId })
+      .returning({ id: academiesTable.id });
+    const postId = `ig-media-transfer-${stamp}`;
+    const facebookPostId = `fb-post-transfer-${stamp}`;
+    const deletedPostId = `ig-media-deleted-${stamp}`;
+    const commentId = `ig-comment-transfer-${stamp}`;
+    const facebookCommentId = `fb-comment-transfer-${stamp}`;
+    const replyId = `ig-reply-transfer-${stamp}`;
+    const facebookReplyId = `fb-reply-transfer-${stamp}`;
+    const deletedAt = new Date("2026-09-10T12:00:00.000Z");
+    let unpublishedDraftId: number | null = null;
+
+    try {
+      await db.insert(academyMembersTable).values({ academyId: destination.id, userId: ownerId, role: "owner" });
+      const [deletedReplayPost] = await db.insert(academySocialPostsTable).values({
+        academyId,
+        source: "replay",
+        targets: ["instagram"],
+        format: "carousel",
+        caption: "Deleted Replay post",
+        status: "published",
+        publishedAt: new Date("2026-09-03T11:00:00.000Z"),
+        igMediaId: deletedPostId,
+        deletedAt,
+      }).returning({ id: academySocialPostsTable.id });
+      const [unpublishedReplayPost] = await db.insert(academySocialPostsTable).values({
+        academyId,
+        source: "replay",
+        targets: ["instagram"],
+        format: "image",
+        caption: "Unpublished Replay draft",
+        status: "draft",
+      }).returning({ id: academySocialPostsTable.id });
+      unpublishedDraftId = unpublishedReplayPost.id;
+
+      socialSyncMock.instagramMedia = [
+        {
+          id: postId,
+          caption: "September carousel",
+          media_type: "CAROUSEL_ALBUM",
+          media_product_type: "FEED",
+          permalink: `https://instagram.com/p/${postId}`,
+          timestamp: "2026-09-03T12:00:00.000Z",
+          like_count: 21,
+          comments_count: 1,
+          comments: {
+            data: [{
+              id: commentId,
+              text: "Is registration open?",
+              username: "player",
+              timestamp: "2026-09-03T12:30:00.000Z",
+              from: { id: `viewer-${stamp}`, username: "player" },
+            }],
+          },
+        },
+        {
+          id: deletedPostId,
+          caption: "Deleted Replay post",
+          media_type: "CAROUSEL_ALBUM",
+          media_product_type: "FEED",
+          permalink: `https://instagram.com/p/${deletedPostId}`,
+          timestamp: "2026-09-03T11:00:00.000Z",
+          like_count: 2,
+          comments_count: 0,
+        },
+      ];
+      socialSyncMock.facebookPosts = [{
+        id: facebookPostId,
+        message: "Facebook September post",
+        permalink_url: `https://facebook.com/${facebookPostId}`,
+        created_time: "2026-09-03T13:00:00.000Z",
+        shares: { count: 3 },
+        reactions: { summary: { total_count: 9 } },
+        comments: {
+          summary: { total_count: 1 },
+          data: [{
+            id: facebookCommentId,
+            message: "Where is the academy?",
+            created_time: "2026-09-03T13:30:00.000Z",
+            from: { id: `fb-viewer-${stamp}`, name: "Facebook viewer" },
+          }],
+        },
+      }];
+
+      await request(app).post(`${base()}/sync`).set(auth(ownerId)).expect(200);
+      const [originalPost] = await db.select().from(academySocialPostsTable)
+        .where(eq(academySocialPostsTable.igMediaId, postId));
+      const [originalFacebookPost] = await db.select().from(academySocialPostsTable)
+        .where(eq(academySocialPostsTable.fbPostId, facebookPostId));
+      const [originalComment] = await db.select().from(academySocialCommentsTable)
+        .where(eq(academySocialCommentsTable.commentId, commentId));
+      await db.insert(academySocialCommentsTable).values({
+        academyId,
+        channel: "instagram",
+        commentId: replyId,
+        parentId: commentId,
+        postId,
+        fromId: `reply-author-${stamp}`,
+        fromName: "@replyauthor",
+        body: "Here is the reply",
+      });
+      await db.insert(academySocialCommentsTable).values({
+        academyId,
+        channel: "facebook",
+        commentId: facebookReplyId,
+        parentId: facebookCommentId,
+        postId: facebookPostId,
+        fromId: `fb-reply-author-${stamp}`,
+        fromName: "Reply author",
+        body: "A Facebook reply",
+      });
+      expect(originalPost.academyId).toBe(academyId);
+      expect(originalFacebookPost.academyId).toBe(academyId);
+      expect(originalComment.academyId).toBe(academyId);
+
+      await request(app).delete(base()).set(auth(ownerId)).expect(204);
+      await db.insert(academySocialAccountsTable).values({
+        academyId: destination.id,
+        tokenEnc: encryptToken("destination-system-token"),
+        pageId: PAGE,
+        pageName: "Galaxy Academy",
+        pageTokenEnc: encryptToken("destination-page-token"),
+        igUserId: IG,
+        igUsername: "galaxy.academy",
+        subscribed: true,
+        status: "connected",
+        connectedAt: new Date(),
+      });
+      await request(app).post(`${baseFor(destination.id)}/sync`).set(auth(ownerId)).expect(200);
+
+      const destinationPosts = await request(app).get(`${baseFor(destination.id)}/posts`).set(auth(ownerId)).expect(200);
+      expect(destinationPosts.body.map((post: { caption: string }) => post.caption)).toContain("September carousel");
+      expect(destinationPosts.body.map((post: { caption: string }) => post.caption)).toContain("Facebook September post");
+      expect(destinationPosts.body.map((post: { caption: string }) => post.caption)).not.toContain("Deleted Replay post");
+      const formerPosts = await request(app).get(`${base()}/posts`).set(auth(ownerId)).expect(200);
+      expect(formerPosts.body.map((post: { caption: string }) => post.caption)).not.toContain("September carousel");
+      expect(formerPosts.body.map((post: { caption: string }) => post.caption)).not.toContain("Facebook September post");
+      expect(formerPosts.body.map((post: { caption: string }) => post.caption)).toContain("Unpublished Replay draft");
+
+      const destinationComments = await request(app).get(`${baseFor(destination.id)}/comments`).set(auth(ownerId)).expect(200);
+      expect(destinationComments.body.map((comment: { body: string }) => comment.body))
+        .toEqual(expect.arrayContaining(["Is registration open?", "Here is the reply", "Where is the academy?", "A Facebook reply"]));
+      const formerComments = await request(app).get(`${base()}/comments`).set(auth(ownerId)).expect(200);
+      expect(formerComments.body).toHaveLength(0);
+
+      const [movedPost] = await db.select().from(academySocialPostsTable)
+        .where(eq(academySocialPostsTable.igMediaId, postId));
+      expect(movedPost).toMatchObject({ academyId: destination.id, source: "synced", deletedAt: null });
+      const [movedDeletedPost] = await db.select().from(academySocialPostsTable)
+        .where(eq(academySocialPostsTable.id, deletedReplayPost.id));
+      expect(movedDeletedPost).toMatchObject({ academyId: destination.id, source: "replay", deletedAt });
+      const [unmovedDraft] = await db.select().from(academySocialPostsTable)
+        .where(eq(academySocialPostsTable.id, unpublishedReplayPost.id));
+      expect(unmovedDraft.academyId).toBe(academyId);
+      const movedComments = await db.select().from(academySocialCommentsTable)
+        .where(eq(academySocialCommentsTable.postId, postId));
+      expect(movedComments).toHaveLength(2);
+      expect(movedComments.every((comment) => comment.academyId === destination.id)).toBe(true);
+      const movedFacebookComments = await db.select().from(academySocialCommentsTable)
+        .where(eq(academySocialCommentsTable.postId, facebookPostId));
+      expect(movedFacebookComments).toHaveLength(2);
+      expect(movedFacebookComments.every((comment) => comment.academyId === destination.id)).toBe(true);
+    } finally {
+      if (unpublishedDraftId) {
+        await db.delete(academySocialPostsTable).where(eq(academySocialPostsTable.id, unpublishedDraftId));
+      }
+      await db.delete(academySocialCommentsTable).where(eq(academySocialCommentsTable.postId, postId));
+      await db.delete(academySocialCommentsTable).where(eq(academySocialCommentsTable.postId, facebookPostId));
+      await db.delete(academySocialPostsTable).where(eq(academySocialPostsTable.igMediaId, postId));
+      await db.delete(academySocialPostsTable).where(eq(academySocialPostsTable.igMediaId, deletedPostId));
+      await db.delete(academySocialPostsTable).where(eq(academySocialPostsTable.fbPostId, facebookPostId));
+      await db.delete(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, destination.id));
+      await db.delete(academiesTable).where(eq(academiesTable.id, destination.id));
+      await db.delete(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, academyId));
+      await db.insert(academySocialAccountsTable).values({
+        academyId,
+        tokenEnc: encryptToken("sys-token"),
+        pageId: PAGE,
+        pageName: "Galaxy Academy",
+        pageTokenEnc: encryptToken("page-token"),
+        igUserId: IG,
+        igUsername: "galaxy.academy",
+        subscribed: true,
+        status: "connected",
+        connectedAt: new Date(),
+      });
+    }
   });
 });
 

@@ -203,7 +203,10 @@ export async function recordComment(account: AcademySocialAccount, channel: "ins
     fromName: c.fromName ?? null,
     body: c.body ?? "",
     createdAt: c.createdAt ?? new Date(),
-  }).onConflictDoNothing().returning({ id: academySocialCommentsTable.id });
+  }).onConflictDoUpdate({
+    target: [academySocialCommentsTable.channel, academySocialCommentsTable.commentId],
+    set: { academyId: account.academyId },
+  }).returning({ id: academySocialCommentsTable.id });
   return rows.length > 0;
 }
 
