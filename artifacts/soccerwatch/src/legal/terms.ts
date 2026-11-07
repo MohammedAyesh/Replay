@@ -3,7 +3,7 @@ import type { LegalDoc } from "./types";
 export const terms: { en: LegalDoc; ar: LegalDoc } = {
   en: {
     title: "Terms of Use",
-    lastUpdated: "2026-11-06",
+    lastUpdated: "2026-11-07",
     draftNotice: "",
     sections: [
       {
@@ -93,7 +93,7 @@ export const terms: { en: LegalDoc; ar: LegalDoc } = {
   },
   ar: {
     title: "شروط الاستخدام",
-    lastUpdated: "2026-11-06",
+    lastUpdated: "2026-11-07",
     draftNotice: "",
     sections: [
       {

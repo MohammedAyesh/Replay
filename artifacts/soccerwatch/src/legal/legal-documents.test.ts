@@ -59,7 +59,7 @@ describe("legal documents", () => {
     };
 
     for (const locale of ["en", "ar"] as const) {
-      expect(terms[locale].lastUpdated).toBe("2026-11-06");
+      expect(terms[locale].lastUpdated).toBe("2026-11-07");
       expect(terms[locale].draftNotice).toBe("");
       expect(terms[locale].sections.map((section) => section.heading)).toEqual(expectedHeadings[locale]);
     }
