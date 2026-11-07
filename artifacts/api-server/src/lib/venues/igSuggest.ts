@@ -11,31 +11,39 @@ import { IG_LEAD_MINUTES, WEEKLY_KINDS, boardTimes, weeklyTimes, type IgSlotSett
  * The key a suggestion is added under is the same one the autopilot uses for that post
  * (scheduleFieldPosts), so adding one never makes the same post twice.
  */
-export const SUGGEST_KINDS = [...WEEKLY_KINDS, "open_slots", "leaderboard", "day_best"] as const;
+export const SUGGEST_KINDS = [...WEEKLY_KINDS, "open_slots", "leaderboard", "day_best", "moment_day", "same_hour"] as const;
 export type SuggestKind = (typeof SUGGEST_KINDS)[number];
 export type IgSuggestion = { kind: SuggestKind; placement: "story" | "reel"; at: number; originKey: string };
 
 const PLACEMENT: Record<SuggestKind, "story" | "reel"> = {
   thanks: "reel", top5: "reel", match_week: "reel", player_week: "reel", versus: "reel", open_slots: "story", leaderboard: "story", day_best: "reel",
+  so_close: "reel", pass_week: "reel", skill_week: "reel", best_goals: "reel", moment_day: "reel", same_hour: "story",
+};
+
+/** The daily posts: the time of day each goes out and its key on that day (the moment and the best of the day are about the day before). */
+const DAILY: Partial<Record<SuggestKind, { time: (s: IgSlotSettings) => string; key: (date: string) => string }>> = {
+  open_slots: { time: (s) => s.openSlotsTime, key: (d) => `slots:${d}` },
+  day_best: { time: (s) => s.dayBestTime, key: (d) => `day:${addDays(d, -1)}` },
+  moment_day: { time: (s) => s.dayBestTime, key: (d) => `moment:${d}` },
+  same_hour: { time: (s) => s.sameHourTime, key: (d) => `samehour:${d}` },
+};
+
+/** The moment of the day takes the best of the day's 13:00 slot while it is on. */
+export const dailyOff = (s: IgSlotSettings): Set<string> => {
+  const off = new Set<string>(s.off);
+  if (!off.has("moment_day")) off.add("day_best");
+  return off;
 };
 
 /** The next time this kind of post goes out at or after `from`, and the key it goes out under. */
 export function nextOccurrence(s: IgSlotSettings, kind: SuggestKind, from: number): { at: number; originKey: string } {
-  if (kind === "open_slots") {
+  const daily = DAILY[kind];
+  if (daily) {
     const today = wallString(from).slice(0, 10);
     for (let d = 0; d < 3; d += 1) {
       const date = addDays(today, d);
-      const at = wallMinutes(`${date} ${s.openSlotsTime}`);
-      if (at >= from) return { at, originKey: `slots:${date}` };
-    }
-  }
-  if (kind === "day_best") {
-    // Yesterday's games, posted at dayBestTime: the key is the games' day.
-    const today = wallString(from).slice(0, 10);
-    for (let d = 0; d < 3; d += 1) {
-      const date = addDays(today, d);
-      const at = wallMinutes(`${date} ${s.dayBestTime}`);
-      if (at >= from) return { at, originKey: `day:${addDays(date, -1)}` };
+      const at = wallMinutes(`${date} ${daily.time(s)}`);
+      if (at >= from) return { at, originKey: daily.key(date) };
     }
   }
   if (kind === "leaderboard") {
@@ -57,7 +65,7 @@ export function suggestPosts(input: { s: IgSlotSettings; now: number; days: numb
   const { s, now, days, taken } = input;
   const from = now + IG_LEAD_MINUTES;
   const until = now + days * 1440;
-  const off = new Set<string>(s.off);
+  const off = dailyOff(s);
   const out: IgSuggestion[] = [];
   const add = (kind: SuggestKind, o: { at: number; originKey: string }) => {
     if (o.at > until || taken.has(o.originKey) || out.some((x) => x.originKey === o.originKey)) return;

@@ -7,6 +7,7 @@ export {
   FIELD_STYLE, FIELD_TEMPLATE_KEYS, FIELD_TIMING, buildFieldScene, countData, fieldCountSteps, fieldSampleData, fieldTemplateFormats,
   fieldTemplateTitle, formatNumber, isFieldTemplate, type FieldTemplateKey,
   MONTAGE, buildFieldMontage, isMontageTemplate,
+  MATCH_REEL, MATCH_REEL_ROWS, matchReelBars, matchReelChapters, matchReelStats, siteLine, type ReelChapter,
 } from "./creativeTemplates/fieldPack";
 import { FIELD_TEMPLATE_DEFS, buildFieldScene, fieldSampleData, isFieldTemplate } from "./creativeTemplates/fieldPack";
 import { CLUB_TEMPLATE_DEFS, buildClubScene, clubSampleData, isClubTemplate } from "./creativeTemplates/clubPack";

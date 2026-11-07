@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { FIELD_STYLE, buildFieldMontage, buildTemplateScene, resolveSource, type CreativeBrand, type Scene, type SceneLayer } from "@workspace/api-zod";
+import { FIELD_STYLE, buildFieldMontage, buildTemplateScene, isMontageTemplate, resolveSource, type CreativeBrand, type Scene, type SceneLayer } from "@workspace/api-zod";
 import { SceneCanvas } from "@/components/creative-hub/scene-canvas";
 import { startingData } from "@/components/creative-hub/templates/data";
 import { useInstagramCopy } from "@/i18n/instagram-strings";
@@ -24,13 +24,19 @@ export const KIND_TEMPLATE: Record<string, string> = {
   versus: "field-versus",
   top5: "field-top5",
   thanks: "field-thanks",
-  match_week: "field-match-week",
+  match_week: "field-match-week-reel",
   player_week: "field-potw",
   milestone: "field-milestone",
   open_slots: "field-open-slots",
   leaderboard: "field-leaderboard",
   match_highlights: "field-match-highlights",
   day_best: "field-day-best",
+  moment_day: "field-day-moment",
+  so_close: "field-so-close",
+  pass_week: "field-pass-week",
+  skill_week: "field-skill-week",
+  best_goals: "field-best-goals",
+  same_hour: "field-same-hour",
 };
 
 const FALLBACK: CreativeBrand = { primary: "#D4FF4F", accent: "#7B5CFF", ink: "#0B0F1A", paper: "#FFFFFF", muted: "#8A93A6", nameEn: "", nameAr: null };
@@ -49,8 +55,8 @@ export function DesignThumb({ venueId, item, width }: { venueId: number; item: P
     if (!key) return null;
     const format = item.placement === "carousel" ? "post" : "story";
     const clips = item.picks?.length ?? 0;
-    return (key === "field-match-highlights" || key === "field-day-best") && clips >= 2
-      ? buildFieldMontage(key, clips, format, locale)
+    return isMontageTemplate(key) && key !== "club-highlights" && clips >= 2
+      ? buildFieldMontage(key as Parameters<typeof buildFieldMontage>[0], clips, format, locale)
       : buildTemplateScene(key, FIELD_STYLE, format, locale);
   }, [key, item.placement, item.picks?.length, locale]);
   const data = useMemo(() => key ? startingData({

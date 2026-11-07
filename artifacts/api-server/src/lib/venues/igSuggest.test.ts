@@ -17,8 +17,19 @@ describe("Instagram suggestions", () => {
     expect(out.map((x) => x.at)).toEqual([...out.map((x) => x.at)].sort((a, b) => a - b));
     for (const x of out) expect(x.at).toBeGreaterThanOrEqual(now + 20);
     // Within three days the dashboard still gets the free pitches even with every weekly post switched off.
-    const bare = suggestPosts({ s: { ...s, off: ["thanks", "top5", "match_week", "player_week", "versus", "leaderboard", "day_best"] }, now, days: 3, taken: new Set() });
+    const bare = suggestPosts({ s: { ...s, off: ["thanks", "top5", "match_week", "player_week", "versus", "so_close", "pass_week", "skill_week", "best_goals", "leaderboard", "day_best", "moment_day", "same_hour"] }, now, days: 3, taken: new Set() });
     expect(bare.map((x) => x.kind)).toEqual(["open_slots", "open_slots"]);
+  });
+
+  it("the moment of the day takes the best of the day's slot, and same hour goes out as a story", () => {
+    const now = at("2026-11-05 09:00");
+    const kinds = (off: typeof s.off) => suggestPosts({ s: { ...s, off }, now, days: 2, taken: new Set() });
+    const on = kinds([]);
+    expect(on.some((x) => x.kind === "day_best")).toBe(false);
+    expect(on.find((x) => x.kind === "moment_day")).toMatchObject({ originKey: "moment:2026-11-05", placement: "reel", at: at("2026-11-05 13:00") });
+    expect(on.find((x) => x.kind === "same_hour")).toMatchObject({ originKey: "samehour:2026-11-05", placement: "story", at: at("2026-11-05 11:00") });
+    // Switched off, the best of the day is back at the same time.
+    expect(kinds(["moment_day"]).find((x) => x.kind === "day_best")).toMatchObject({ originKey: "day:2026-11-04", at: at("2026-11-05 13:00") });
   });
 
   it("skips what's on the calendar, and the scorers board rolls on to the 1st of next month", () => {

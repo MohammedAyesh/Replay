@@ -43,7 +43,16 @@ export type FieldTemplateKey =
   | "field-open-slots"
   | "field-leaderboard"
   | "field-match-highlights"
-  | "field-day-best";
+  | "field-day-best"
+  | "field-day-moment"
+  | "field-so-close"
+  | "field-pass-week"
+  | "field-skill-week"
+  | "field-same-hour"
+  | "field-best-goals"
+  | "field-best-goals-month"
+  | "field-match-week-reel"
+  | "field-rebook";
 
 type FieldDef = {
   key: FieldTemplateKey;
@@ -137,6 +146,9 @@ const C = (path: string) => `{{custom.${path}}}`;
 const when = (path: string) => [{ path: `custom.${path}` }];
 /** A player's own photo (data.player.photo), and its absence. */
 const PHOTO = [{ path: "player.photo" }];
+/** The line under every post's booking line: "Get your clips and stats at replayjo.com" (Mohammed, 2026-11-07). */
+const SITE = [{ path: "custom.siteLine" }];
+const NO_SITE = [{ path: "custom.siteLine", not: true }];
 const NO_PHOTO = [{ path: "player.photo", not: true }];
 
 /** The dark background, with two quiet diagonal bands of the main colour across the lower corner. */
@@ -183,11 +195,19 @@ function header(c: Ctx, id: string, t: Timing, o: { crestSize?: number } = {}) {
   });
 }
 
-/** The booking band near the bottom (inside Instagram's safe area). */
+/**
+ * The booking band near the bottom (inside Instagram's safe area). With custom.siteLine it grows
+ * upwards by a line: the booking line and phone, a rule, then the site line.
+ */
 function bookingBand(c: Ctx, id: string, t: Timing) {
   const h = c.pick(104, 96, 112);
-  const y = c.B - h;
-  rect(c, `${id}-band`, { x: c.M, y, w: c.CW, h }, { ...t, fill: skin.hi, radius: 28 });
+  c.only(NO_SITE, () => bandAt(c, id, t, h, 0));
+  c.only(SITE, () => bandAt(c, `${id}-s`, t, h, c.pick(62, 58, 70)));
+}
+
+function bandAt(c: Ctx, id: string, t: Timing, h: number, extra: number) {
+  const y = c.B - h - extra;
+  rect(c, `${id}-band`, { x: c.M, y, w: c.CW, h: h + extra }, { ...t, fill: skin.hi, radius: 28 });
   // A skin's wider faces (Montserrat) need a gap between the line and the phone.
   text(c, `${id}-line`, C("bookLine"), { x: c.M + 34, y: y + h * 0.22, w: c.CW * 0.58 - (skin.family ? 56 : 0), h: h * 0.56 }, {
     ...t, size: c.pick(34, 32, 36), weight: 900, color: skin.onHi, fit: true,
@@ -195,6 +215,12 @@ function bookingBand(c: Ctx, id: string, t: Timing) {
   text(c, `${id}-phone`, "{{academy.phone}}", { x: c.M + c.CW * 0.58, y: y + h * 0.18, w: c.CW * 0.42 - 34, h: h * 0.64 }, {
     ...t, size: c.pick(48, 44, 52), weight: 800, font: "condensed", color: skin.onHi, align: "end", num: true, fit: true,
   });
+  if (extra) {
+    rect(c, `${id}-rule`, { x: c.M + 34, y: y + h - 4, w: c.CW - 68, h: 2 }, { ...t, fill: skin.onHi, opacity: 0.25 });
+    text(c, `${id}-site`, C("siteLine"), { x: c.M + 34, y: y + h + 4, w: c.CW - 68, h: extra - 16 }, {
+      ...t, size: c.pick(28, 26, 30), weight: 700, color: skin.onHi, fit: true,
+    });
+  }
 }
 
 /** A number that counts up: frames custom.<key>_1… then custom.<key>, from `from` to `to` ms. */
@@ -276,6 +302,10 @@ function endCard(c: Ctx, id: string, at: number, end: number) {
   text(c, `${id}-small`, C("endSmall"), { x: c.M, y: top + s + c.pick(342, 312, 384), w: c.CW, h: c.pick(52, 48, 58) }, {
     startMs: at + 650, endMs: end, size: c.pick(32, 30, 36), weight: 600, color: PAPER, align: "center", opacity: 0.85,
   });
+  c.only(SITE, () => text(c, `${id}-site`, C("siteLine"), { x: c.M + 30, y: c.B - c.pick(150, 140, 176), w: c.CW - 60, h: c.pick(70, 64, 80) }, {
+    startMs: at + 750, endMs: end, enter: "fade", size: c.pick(32, 30, 36), weight: 800, color: skin.onPill, align: "center", fit: true,
+    bg: { color: skin.pill, padding: 18, radius: 22 },
+  }));
   text(c, `${id}-mark`, "FILMED BY REPLAY", { x: c.M, y: c.B - c.pick(60, 56, 70), w: c.CW, h: c.pick(48, 44, 54) }, {
     startMs: at + 700, endMs: end, size: c.pick(26, 24, 30), weight: 700, font: "condensed", color: PAPER, align: "center", ls: 8, num: true, opacity: 0.7,
   });
@@ -408,23 +438,30 @@ function matchWeek(c: Ctx) {
 
 /** Top 5: the opening list, then five clips counting down, each behind its number, then the end card. */
 function top5(c: Ctx) {
+  return countdown(c, 5);
+}
+
+/**
+ * A countdown of `n` clips (3 or 5): the opening list, then the clips from #n to #1, each behind
+ * its number, then the end card. #1 (the best) is data.media; #2 … #n are more.0 … more.(n-2).
+ */
+function countdown(c: Ctx, n: 3 | 5) {
   const intro = 2600;
   const per = 3200;
-  const D = intro + per * 5 + FIELD_TIMING.end;
+  const D = intro + per * n + FIELD_TIMING.end;
   const endAt = D - FIELD_TIMING.end;
-  // Clips, last one (the best) is data.media; 5 → 2 are more.3 … more.0.
-  const paths = ["more.3", "more.2", "more.1", "more.0", "media"];
+  const paths = [...Array.from({ length: n - 1 }, (_, i) => `more.${n - 2 - i}`), "media"];
   paths.forEach((path, i) => {
     const s = intro + i * per;
-    const last = i === 4;
+    const last = i === n - 1;
     footage(c, `video-${i + 1}`, { startMs: s, endMs: last ? D : s + per, path, blurFrom: last ? endAt : undefined, muted: true });
   });
   paths.forEach((_, i) => {
     const s = intro + i * per;
-    const n = 5 - i;
-    onClip(c, `clip-${n}`, { startMs: s + 250, endMs: i === 4 ? endAt : s + per }, { tag: C("kicker"), headline: C(`l${n}`), meta: C(`m${n}`), still: i > 0 });
+    const k = n - i;
+    onClip(c, `clip-${k}`, { startMs: s + 250, endMs: i === n - 1 ? endAt : s + per }, { tag: C("kicker"), headline: C(`l${k}`), meta: C(`m${k}`), still: i > 0 });
     // The big number, on its own for a moment as the clip comes in.
-    text(c, `num-${n}`, String(n), { x: c.M, y: c.H / 2 - 260, w: c.CW, h: 520 }, {
+    text(c, `num-${k}`, String(k), { x: c.M, y: c.H / 2 - 260, w: c.CW, h: 520 }, {
       startMs: s, endMs: s + 900, enter: "pop", size: 520, weight: 800, font: "condensed", color: skin.accent, align: "center", num: true,
       shadow: { color: "#000000AA", blur: 40, x: 0, y: 8 },
     });
@@ -437,16 +474,16 @@ function top5(c: Ctx) {
   text(c, "open-title", C("title"), { x: c.M, y: top + c.pick(290, 270, 300), w: c.CW, h: c.pick(140, 120, 160) }, { startMs: 400, endMs: intro, enter: "slide-up", size: c.pick(120, 104, 140), weight: 900, font: "condensed", color: PAPER, align: "center", fit: true });
   const rowsTop = top + c.pick(470, 430, 520);
   const rowH = c.pick(118, 96, 150);
-  for (let n = 5; n >= 1; n--) {
-    const y = rowsTop + (5 - n) * (rowH + 14);
+  for (let k: number = n; k >= 1; k--) {
+    const y = rowsTop + (n - k) * (rowH + 14);
     // The rows build one by one (no slide: fifteen moving layers would slow the render a lot).
-    const at = 600 + (5 - n) * 140;
-    rect(c, `open-row-${n}`, { x: c.M, y, w: c.CW, h: rowH }, { startMs: at, endMs: intro, fill: n === 1 ? skin.hi : "#FFFFFF14", radius: 24 });
-    text(c, `open-row-${n}-n`, String(n), { x: c.M + 24, y: y + rowH * 0.12, w: 80, h: rowH * 0.76 }, { startMs: at, endMs: intro, size: rowH * 0.66, weight: 800, font: "condensed", color: n === 1 ? skin.onHi : skin.accent, align: "center", num: true, mirror: true });
-    text(c, `open-row-${n}-l`, C(`l${n}`), { x: c.M + 130, y: y + rowH * 0.22, w: c.CW - 160, h: rowH * 0.56 }, { startMs: at, endMs: intro, size: rowH * 0.36, weight: 800, color: n === 1 ? skin.onHi : PAPER, fit: true });
+    const at = 600 + (n - k) * 140;
+    rect(c, `open-row-${k}`, { x: c.M, y, w: c.CW, h: rowH }, { startMs: at, endMs: intro, fill: k === 1 ? skin.hi : "#FFFFFF14", radius: 24 });
+    text(c, `open-row-${k}-n`, String(k), { x: c.M + 24, y: y + rowH * 0.12, w: 80, h: rowH * 0.76 }, { startMs: at, endMs: intro, size: rowH * 0.66, weight: 800, font: "condensed", color: k === 1 ? skin.onHi : skin.accent, align: "center", num: true, mirror: true });
+    text(c, `open-row-${k}-l`, C(`l${k}`), { x: c.M + 130, y: y + rowH * 0.22, w: c.CW - 160, h: rowH * 0.56 }, { startMs: at, endMs: intro, size: rowH * 0.36, weight: 800, color: k === 1 ? skin.onHi : PAPER, fit: true });
   }
   wipe(c, "wipe", intro);
-  for (let i = 1; i < 5; i++) wipe(c, `wipe-${i}`, intro + i * per, { edge: false });
+  for (let i = 1; i < n; i++) wipe(c, `wipe-${i}`, intro + i * per, { edge: false });
   endCard(c, "end", endAt, D);
   return D;
 }
@@ -497,6 +534,149 @@ function montage(c: Ctx, n: number = MONTAGE.default) {
   for (let i = 1; i < count; i++) wipe(c, `wipe-${i}`, intro + i * per, { edge: false });
   endCard(c, "end", endAt, D);
   return D;
+}
+
+/** The match-of-the-week Reel: chapters (2–5 clips), the stats page, the end card (ms). */
+export const MATCH_REEL = { min: 2, max: 5, default: 5, per: 4400, intro: 2600, stats: 5600, rows: 4, steps: 4 } as const;
+
+/**
+ * Match of the week as a showcase of the stats (Mohammed, 2026-11-07; canvas "Field template
+ * pack", row G): the opening card with one headline number counting up (dribbles or shots, never
+ * the goals: custom.head + headLabel), then the game's moments as chapters (goal, dribble, save,
+ * pass, so close: "1/5 · Goal" on each), then the match stats (possession, shots on target,
+ * dribbles, passes completed) as two bars per row that grow, then the end card.
+ *
+ * The bars' lengths are geometry, so they are laid out from the real numbers (`bars`: side A's
+ * share of each row, 0–1) when the post is made; a row without a label (custom.st<i>l) stays
+ * hidden, and with no stats at all (`bars` empty) the stats page is left out.
+ */
+function matchReel(c: Ctx, clips: number = MATCH_REEL.default, bars: number[] = [0.54, 0.58, 0.6, 0.53]) {
+  const n = Math.max(MATCH_REEL.min, Math.min(MATCH_REEL.max, Math.round(clips)));
+  const intro = MATCH_REEL.intro;
+  const per = MATCH_REEL.per;
+  const statsAt = intro + per * n;
+  const withStats = bars.length > 0;
+  const endAt = statsAt + (withStats ? MATCH_REEL.stats : 0);
+  const D = endAt + FIELD_TIMING.end;
+  const paths = ["media", ...Array.from({ length: n - 1 }, (_, i) => `more.${i}`)];
+  paths.forEach((path, i) => {
+    const s = intro + i * per;
+    const last = i === n - 1;
+    // Without a stats page the last clip runs on under the end card; with one it stops there.
+    footage(c, `video-${i + 1}`, { startMs: s, endMs: last && !withStats ? D : s + per, path, blurFrom: last && !withStats ? endAt : undefined, muted: !last });
+  });
+  paths.forEach((_, i) => {
+    const s = intro + i * per;
+    const k = i + 1;
+    onClip(c, `clip-${k}`, { startMs: s + 250, endMs: i === n - 1 && !withStats ? endAt : s + per }, { tag: C(`l${k}`), headline: C(`h${k}`), meta: C(`m${k}`), still: i > 0 });
+  });
+  // The opening card: crest, kicker, the title, the headline number and the facts.
+  const t = { startMs: 0, endMs: intro };
+  backdrop(c, "open-bg", t);
+  const s = c.pick(180, 150, 210);
+  const top = Math.round(c.T + Math.max(0, (c.B - c.T - c.pick(900, 800, 1040)) / 2));
+  crest(c, "open-crest", { x: (c.W - s) / 2, y: top, w: s, h: s }, { startMs: 80, endMs: intro, enter: "pop", mirror: false });
+  pill(c, "open-kicker", C("kicker"), top + s + c.pick(40, 34, 56), { startMs: 300, endMs: intro, enter: "slide-up" });
+  const ty = top + s + c.pick(140, 124, 176);
+  text(c, "open-title", C("title"), { x: c.M, y: ty, w: c.CW, h: c.pick(150, 132, 176) }, {
+    startMs: 450, endMs: intro, enter: "slide-up", size: c.pick(112, 98, 132), weight: 900, font: "condensed", color: PAPER, align: "center", fit: true,
+  });
+  const hy = ty + c.pick(170, 150, 200);
+  c.only(when("head"), () => countUp(c, "open-head", "head", { x: c.M, y: hy, w: c.CW, h: c.pick(190, 160, 220) }, {
+    from: 800, to: 1800, endMs: intro, size: c.pick(190, 160, 220), weight: 800, font: "condensed", color: skin.accent, align: "center", num: true, fit: true,
+  }));
+  c.only(when("headLabel"), () => text(c, "open-head-label", C("headLabel"), { x: c.M, y: hy + c.pick(196, 166, 226), w: c.CW, h: c.pick(56, 50, 64) }, {
+    startMs: 1000, endMs: intro, enter: "fade", size: c.pick(40, 36, 46), weight: 800, color: PAPER, align: "center",
+  }));
+  c.only(when("meta"), () => text(c, "open-meta", C("meta"), { x: c.M + 40, y: hy + c.pick(280, 240, 320), w: c.CW - 80, h: c.pick(70, 64, 78) }, {
+    startMs: 1300, endMs: intro, enter: "fade", size: c.pick(32, 30, 36), weight: 600, color: PAPER, align: "center", bg: { color: "#FFFFFF1F", padding: 18, radius: 999 },
+  }));
+  wipe(c, "wipe", intro);
+  for (let i = 1; i < n; i++) wipe(c, `wipe-${i}`, intro + i * per, { edge: false });
+  if (withStats) {
+    wipe(c, "wipe-stats", statsAt);
+    statsPage(c, "stats", statsAt, endAt, bars);
+  }
+  endCard(c, "end", endAt, D);
+  return D;
+}
+
+/**
+ * The stats page: header, title, the two sides' names, then up to four rows (label, side A's
+ * number at the start, side B's at the end, and a bar each from its own end). Rows come in one
+ * after another; their numbers count up and their bars grow in steps (plain layers: a moving
+ * layer is a whole overlay in the MP4 render, a step is not).
+ */
+function statsPage(c: Ctx, id: string, from: number, to: number, bars: number[]) {
+  const t = { startMs: from, endMs: to };
+  backdrop(c, `${id}-bg`, t);
+  header(c, `${id}-head`, t);
+  const top = c.T + c.pick(150, 140, 200);
+  text(c, `${id}-meta`, C("statsMeta"), { x: c.M, y: top, w: c.CW, h: c.pick(52, 48, 60) }, { ...t, size: c.pick(32, 30, 36), weight: 700, color: skin.accent, fit: true });
+  text(c, `${id}-title`, C("statsTitle"), { x: c.M, y: top + c.pick(56, 52, 66), w: c.CW, h: c.pick(130, 116, 150) }, { ...t, size: c.pick(104, 92, 124), weight: 900, font: "condensed", color: PAPER, fit: true });
+  const sideY = top + c.pick(210, 190, 240);
+  const half = c.CW / 2 - 10;
+  text(c, `${id}-a`, C("teamA"), { x: c.M, y: sideY, w: half, h: c.pick(56, 52, 64) }, { ...t, size: c.pick(36, 34, 40), weight: 900, color: PAPER, fit: true });
+  text(c, `${id}-b`, C("teamB"), { x: c.M + c.CW - half, y: sideY, w: half, h: c.pick(56, 52, 64) }, { ...t, size: c.pick(36, 34, 40), weight: 900, color: PAPER, align: "end", fit: true });
+  const panelY = sideY + c.pick(80, 74, 96);
+  const rowH = c.pick(150, 132, 180);
+  const rows = Math.min(MATCH_REEL.rows, bars.length);
+  rect(c, `${id}-panel`, { x: c.M - 20, y: panelY - 24, w: c.CW + 40, h: rows * rowH + 48 }, { ...t, fill: "#FFFFFF0F", radius: 36 });
+  const steps = MATCH_REEL.steps;
+  for (let i = 1; i <= rows; i++) {
+    const share = Math.max(0.05, Math.min(0.95, bars[i - 1] ?? 0.5));
+    const at = from + 500 + (i - 1) * 380;
+    const y = panelY + (i - 1) * rowH;
+    const r = { startMs: at, endMs: to };
+    c.only(when(`st${i}l`), () => {
+      text(c, `${id}-${i}-l`, C(`st${i}l`), { x: c.M + c.CW * 0.25, y: y + rowH * 0.12, w: c.CW * 0.5, h: rowH * 0.36 }, { ...r, size: c.pick(32, 30, 36), weight: 700, color: PAPER, align: "center", opacity: 0.9, fit: true });
+      countUp(c, `${id}-${i}-av`, `st${i}a`, { x: c.M, y: y, w: c.CW * 0.25, h: rowH * 0.56 }, { from: at, to: at + 900, endMs: to, size: c.pick(70, 62, 80), weight: 800, font: "condensed", color: PAPER, num: true, fit: true });
+      countUp(c, `${id}-${i}-bv`, `st${i}b`, { x: c.M + c.CW * 0.75, y: y, w: c.CW * 0.25, h: rowH * 0.56 }, { from: at, to: at + 900, endMs: to, size: c.pick(70, 62, 80), weight: 800, font: "condensed", color: PAPER, align: "end", num: true, fit: true });
+      const by = y + rowH * 0.66;
+      const bh = c.pick(18, 16, 22);
+      rect(c, `${id}-${i}-track`, { x: c.M, y: by, w: c.CW, h: bh }, { ...r, fill: "#FFFFFF14", radius: bh / 2 });
+      const gap = 10;
+      const aw = (c.CW - gap) * share;
+      const bw = (c.CW - gap) * (1 - share);
+      for (let k = 1; k <= steps; k++) {
+        const g = k / steps;
+        const st = { startMs: at + Math.round((k - 1) * 900 / steps), endMs: k === steps ? to : at + Math.round(k * 900 / steps) };
+        rect(c, `${id}-${i}-a${k}`, { x: c.M, y: by, w: Math.max(bh, aw * g), h: bh }, { ...st, fill: skin.hi, radius: bh / 2 });
+        rect(c, `${id}-${i}-b${k}`, { x: c.M + c.CW - Math.max(bh, bw * g), y: by, w: Math.max(bh, bw * g), h: bh }, { ...st, fill: PAPER, radius: bh / 2 });
+      }
+    });
+  }
+  c.only(when("statsNote"), () => text(c, `${id}-note`, C("statsNote"), { x: c.M, y: panelY + rows * rowH + 40, w: c.CW, h: 50 }, { ...t, size: c.pick(26, 24, 30), weight: 600, color: PAPER, align: "center", opacity: 0.75, fit: true }));
+}
+
+/**
+ * The rebook card (a 4:5 still, sent with "video ready" or posted): the game was filmed, the
+ * same time next week, its date, time and pitch, and how to book it.
+ */
+function rebook(c: Ctx) {
+  backdrop(c, "bg");
+  header(c, "head", {});
+  const top = c.T + c.pick(150, 140, 220);
+  text(c, "kicker", C("kicker"), { x: c.M, y: top, w: c.CW, h: c.pick(52, 48, 60) }, { size: c.pick(34, 32, 38), weight: 700, color: skin.accent, fit: true });
+  text(c, "title", C("title"), { x: c.M, y: top + c.pick(60, 56, 70), w: c.CW, h: c.pick(220, 196, 260) }, { size: c.pick(96, 86, 112), weight: 900, font: "condensed", color: PAPER, fit: true });
+  const ty = top + c.pick(310, 280, 360);
+  const th = c.pick(220, 196, 250);
+  const tile = c.pick(200, 180, 230);
+  rect(c, "ticket", { x: c.M, y: ty, w: c.CW, h: th }, { fill: "#FFFFFF14", radius: 30 });
+  rect(c, "tile", { x: c.M, y: ty, w: tile, h: th }, { fill: skin.hi, radius: 30 });
+  text(c, "tile-day", C("rbDay"), { x: c.M, y: ty + 18, w: tile, h: th * 0.2 }, { size: c.pick(32, 30, 36), weight: 900, color: skin.onHi, align: "center", fit: true });
+  text(c, "tile-num", C("rbNum"), { x: c.M, y: ty + th * 0.26, w: tile, h: th * 0.46 }, { size: th * 0.42, weight: 800, font: "condensed", color: skin.onHi, align: "center", num: true, fit: true });
+  text(c, "tile-month", C("rbMonth"), { x: c.M, y: ty + th * 0.74, w: tile, h: th * 0.2 }, { size: c.pick(26, 24, 30), weight: 700, color: skin.onHi, align: "center", fit: true });
+  const tx = c.M + tile + 30;
+  const tw = c.CW - tile - 50;
+  text(c, "time", C("rbTime"), { x: tx, y: ty + th * 0.12, w: tw, h: th * 0.34 }, { size: c.pick(64, 58, 72), weight: 900, color: PAPER, fit: true });
+  text(c, "place", C("rbPlace"), { x: tx, y: ty + th * 0.48, w: tw, h: th * 0.2 }, { size: c.pick(32, 30, 36), weight: 600, color: PAPER, opacity: 0.85, fit: true });
+  text(c, "note", C("rbNote"), { x: tx, y: ty + th * 0.7, w: tw, h: th * 0.2 }, { size: c.pick(30, 28, 34), weight: 700, color: skin.accent, fit: true });
+  bookingBand(c, "band", {});
+  text(c, "cta", C("cta"), { x: c.M, y: ty + th + c.pick(40, 34, 60), w: c.CW, h: c.pick(90, 84, 100) }, {
+    size: c.pick(44, 40, 50), weight: 900, color: skin.onPill, align: "center", bg: { color: skin.pill, padding: 22, radius: 999 },
+  });
+  return undefined;
 }
 
 /** Which is nicer: A on top, B below; A fills the screen; B pushes up over it; both again; the vote. */
@@ -584,7 +764,9 @@ function nomineesCover(c: Ctx) {
       text(c, `row-${i}-l`, C(`n${i}`), { x: c.M + rowH + 10, y: y + rowH * 0.25, w: c.CW - rowH - 40, h: rowH * 0.5 }, { size: rowH * 0.3, weight: 800, color: PAPER, fit: true });
     });
   }
-  text(c, "cta", C("cta"), { x: c.M, y: rowsTop + 4 * (rowH + 16) + c.pick(24, 20, 40), w: c.CW, h: 90 }, { size: c.pick(44, 40, 50), weight: 900, color: skin.onPill, align: "center", bg: { color: skin.pill, padding: 22, radius: 999 } });
+  const ctaY = rowsTop + 4 * (rowH + 16) + c.pick(24, 20, 40);
+  text(c, "cta", C("cta"), { x: c.M, y: ctaY, w: c.CW, h: 90 }, { size: c.pick(44, 40, 50), weight: 900, color: skin.onPill, align: "center", bg: { color: skin.pill, padding: 22, radius: 999 } });
+  c.only(SITE, () => text(c, "site", C("siteLine"), { x: c.M, y: Math.min(ctaY + 120, c.B - 50), w: c.CW, h: 50 }, { size: c.pick(28, 26, 32), weight: 700, color: PAPER, align: "center", opacity: 0.85, fit: true }));
   return undefined;
 }
 
@@ -629,7 +811,7 @@ function thanks(c: Ctx, milestone: boolean) {
   return D;
 }
 
-/** Tonight's free slots (a still): up to four rows, each "free". */
+/** Tonight's free slots (a still): up to three rows, each "free" (a fourth sat under the taller booking band). */
 function openSlots(c: Ctx) {
   backdrop(c, "bg");
   header(c, "head", {});
@@ -639,7 +821,7 @@ function openSlots(c: Ctx) {
   c.only(when("sub"), () => text(c, "sub", C("sub"), { x: c.M, y: top + c.pick(250, 230, 300), w: c.CW, h: 60 }, { size: c.pick(34, 32, 38), weight: 600, color: PAPER, opacity: 0.9 }));
   const rowsTop = top + c.pick(350, 320, 420);
   const rowH = c.pick(140, 116, 170);
-  for (let i = 1; i <= 4; i++) {
+  for (let i = 1; i <= 3; i++) {
     c.only(when(`t${i}`), () => {
       const y = rowsTop + (i - 1) * (rowH + 18);
       rect(c, `row-${i}`, { x: c.M, y, w: c.CW, h: rowH }, { fill: "#FFFFFF14", radius: 28 });
@@ -679,6 +861,8 @@ function leaderboard(c: Ctx) {
 // ── Catalogue ───────────────────────────────────────────────────────────────
 
 const art = (key: string): MediaSource => ({ type: "artwork", key: `sample/${key}` });
+/** The line every field post ends on. */
+export const siteLine = (ar: boolean) => (ar ? "خذ كليباتك وأرقامك من replayjo.com" : "Get your clips and stats at replayjo.com");
 /** Labels for a montage's clips: l1 … ln and m1 … mn. */
 const montageLabels = (ar: boolean, n: number) => {
   const kinds = ar ? ["جول", "مراوغة", "تسديدة", "تصدّي", "جول"] : ["Goal", "Dribble", "Shot", "Save", "Goal"];
@@ -698,6 +882,7 @@ const endBits = (ar: boolean, ref?: string) => ({
   endBig: ref ?? "07 9920 4098",
   endSmall: ar ? "كل ماتش إله فيديو" : "Every game gets its video",
   bookLine: ar ? "احجز ملعبك · كل ماتش متصوّر" : "Book a pitch · every game filmed",
+  siteLine: siteLine(ar),
   field: fieldName(ar),
 });
 
@@ -838,8 +1023,136 @@ FIELD_DEFS.push(
   },
 );
 
+
+/** An end card that lists today's free kick-offs instead of the phone number (the day's posts). */
+const slotsEnd = (ar: boolean, times = "8:00 · 10:00 · 11:00", today = false) => ({
+  endLine: ar ? (today ? "فاضي اليوم، الساعة" : "فاضي الليلة، الساعة") : (today ? "Free today at" : "Free tonight at"),
+  endBig: times,
+  endSmall: ar ? "احجز: ⁦07 9920 4098⁩" : "Book: 07 9920 4098",
+});
+
+/** One award-style moment (opening card, the clip, the end card) with its own words. */
+const momentDef = (key: FieldTemplateKey, title: { en: string; ar: string }, words: (ar: boolean) => Record<string, string>): FieldDef => ({
+  key, title, formats: STORY,
+  build: award,
+  sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), custom: { ...endBits(ar), ...words(ar) } }),
+});
+
+FIELD_DEFS.push(
+  momentDef("field-day-moment", { en: "Moment of the day", ar: "لقطة اليوم" }, (ar) => ({
+    kicker: ar ? "أحلى جول مبارح" : "Yesterday's best goal", title: ar ? "جول اليوم" : "Goal of the day",
+    meta: ar ? "الجمعة 9:30 م · ملعب 1" : "Fri 9:30 PM · Pitch 1", ...slotsEnd(ar),
+  })),
+  momentDef("field-so-close", { en: "So close of the week", ar: "كانت رح تفوت" }, (ar) => ({
+    kicker: ar ? "أقرب فرصة هالأسبوع" : "This week's closest call", title: ar ? "كانت رح تفوت!" : "So close!",
+    meta: ar ? "الاثنين 9:00 م · ملعب 1" : "Mon 9:00 PM · Pitch 1",
+  })),
+  momentDef("field-pass-week", { en: "Pass of the week", ar: "تمريرة الأسبوع" }, (ar) => ({
+    kicker: ar ? "لقاها زميله من بعيد" : "Found from far away", title: ar ? "تمريرة الأسبوع" : "Pass of the week",
+    meta: ar ? "الثلاثاء 8:00 م · ملعب 2" : "Tue 8:00 PM · Pitch 2",
+  })),
+  momentDef("field-skill-week", { en: "Skill of the week", ar: "حركة الأسبوع" }, (ar) => ({
+    kicker: ar ? "فايز هالأسبوع" : "This week's winner", title: ar ? "حركة الأسبوع" : "Skill of the week",
+    meta: ar ? "الأربعاء 10:30 م · ملعب 2" : "Wed 10:30 PM · Pitch 2",
+  })),
+  momentDef("field-same-hour", { en: "Same hour, free today", ar: "نفس الساعة، فاضية اليوم" }, (ar) => ({
+    kicker: ar ? "الأحد الماضي · 4:00 م" : "Last Sunday · 4:00 PM", title: ar ? "نفس الساعة، فاضية اليوم" : "Same hour, free today",
+    meta: ar ? "اليوم 4:00 م · ملعب 2" : "Today 4:00 PM · Pitch 2", ...slotsEnd(ar, "4:00 · 5:00 · 6:00", true),
+  })),
+  {
+    key: "field-best-goals", title: { en: "Best goals of the week (top 3)", ar: "أحلى 3 أجوال بالأسبوع" }, formats: STORY,
+    build: (c) => countdown(c, 3),
+    sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), more: [art("goal-clip"), art("goal-clip")], custom: {
+      ...endBits(ar), kicker: ar ? "هالأسبوع على أرضنا" : "This week on our pitches", title: ar ? "أحلى 3 أجوال" : "Top 3 goals",
+      l3: ar ? "جول من زاوية صعبة" : "From a tight angle", m3: ar ? "الأحد 9:00 م · ملعب 2" : "Sun 9:00 PM · Pitch 2",
+      l2: ar ? "جول بعد تمريرتين" : "After two passes", m2: ar ? "الثلاثاء 10:30 م · ملعب 1" : "Tue 10:30 PM · Pitch 1",
+      l1: ar ? "جول الأسبوع" : "Goal of the week", m1: ar ? "الخميس 9:30 م · ملعب 1" : "Thu 9:30 PM · Pitch 1",
+    } }),
+  },
+  {
+    key: "field-best-goals-month", title: { en: "Best goals of the month (top 5)", ar: "أحلى 5 أجوال بالشهر" }, formats: STORY,
+    build: (c) => countdown(c, 5),
+    sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), more: [art("goal-clip"), art("goal-clip"), art("goal-clip"), art("goal-clip")], custom: {
+      ...endBits(ar), kicker: ar ? "شهر تشرين الأول على أرضنا" : "October on our pitches", title: ar ? "أحلى 5 أجوال" : "Top 5 goals",
+      l5: ar ? "جول من بعيد" : "From distance", m5: ar ? "4 تشرين الأول · ملعب 3" : "4 Oct · Pitch 3",
+      l4: ar ? "جول بالكعب" : "Back-heel", m4: ar ? "9 تشرين الأول · ملعب 2" : "9 Oct · Pitch 2",
+      l3: ar ? "جول على الطاير" : "Volley", m3: ar ? "15 تشرين الأول · ملعب 1" : "15 Oct · Pitch 1",
+      l2: ar ? "جول بعد مراوغة" : "After a dribble", m2: ar ? "22 تشرين الأول · ملعب 1" : "22 Oct · Pitch 1",
+      l1: ar ? "جول الشهر" : "Goal of the month", m1: ar ? "30 تشرين الأول · ملعب 2" : "30 Oct · Pitch 2",
+    } }),
+  },
+  {
+    key: "field-match-week-reel", title: { en: "Match of the week (moments and stats)", ar: "ماتش الأسبوع (لقطات وأرقام)" }, formats: STORY,
+    build: (c) => matchReel(c),
+    sample: (ar) => ({ ...sampleCommon(ar), media: art("goal-clip"), more: [art("goal-clip"), art("goal-clip"), art("goal-clip"), art("goal-clip")], custom: {
+      ...endBits(ar), ...slotsEnd(ar),
+      kicker: ar ? "ماتش الأسبوع" : "Match of the week", title: ar ? "أحلى ماتش على أرضنا" : "Best game on our pitches",
+      ...countData("head", 15), headLabel: ar ? "مراوغة ناجحة بالماتش" : "dribbles won in the game", meta: ar ? "الخميس 9:30 م · ملعب 1" : "Thu 9:30 PM · Pitch 1",
+      ...matchReelChapters(ar, ["goal", "dribble", "save", "pass", "close"], [23, 31, 38, 44, 52]),
+      statsMeta: ar ? "الخميس 9:30 م · ملعب 1" : "Thu 9:30 PM · Pitch 1", statsTitle: ar ? "أرقام الماتش" : "Match stats",
+      teamA: ar ? "البرتقالي" : "Orange", teamB: ar ? "الأبيض" : "White",
+      ...matchReelStats(ar, [[54, 46], [7, 5], [9, 6], [112, 98]]),
+      statsNote: ar ? "عدّها Replay من الفيديو · بدون أسماء" : "Counted by Replay from the video · no names",
+    } }),
+  },
+  {
+    key: "field-rebook", title: { en: "Same time next week? (rebook card)", ar: "نفس الوقت الأسبوع الجاي؟" }, formats: ["post", "story"],
+    build: rebook,
+    sample: (ar) => ({ ...sampleCommon(ar), custom: {
+      ...endBits(ar), kicker: ar ? "ماتشكم انصوّر والفيديو جاهز" : "Your game was filmed, the video is ready",
+      title: ar ? "نفس الوقت الأسبوع الجاي؟" : "Same time next week?",
+      rbDay: ar ? "الخميس" : "Thu", rbNum: "12", rbMonth: ar ? "تشرين الثاني" : "Nov", rbTime: ar ? "9:30 م · ساعة" : "9:30 PM · 1 hour",
+      rbPlace: ar ? "ملعب 1 · خماسي" : "Pitch 1 · 5-a-side", rbNote: ar ? "لسا فاضي" : "Still free",
+      cta: ar ? "احجزه من الرابط بالرسالة" : "Book it from the link in the message",
+    } }),
+  },
+);
+
+/** The Reel's chapter words: "1/5 · Goal", its headline and the game minute. */
+export type ReelChapter = "goal" | "dribble" | "save" | "pass" | "close";
+const CHAPTER_WORDS: Record<ReelChapter, { en: [string, string]; ar: [string, string] }> = {
+  goal: { en: ["Goal", "Goal!"], ar: ["الجول", "جووول!"] },
+  dribble: { en: ["Dribble", "What a move!"], ar: ["المراوغة", "شو هالحركة!"] },
+  save: { en: ["Save", "Kept out!"], ar: ["التصدّي", "صدّها!"] },
+  pass: { en: ["Pass", "Found him!"], ar: ["التمريرة", "لقاه من بعيد"] },
+  close: { en: ["So close", "Almost!"], ar: ["كانت رح تفوت", "قرّبت!"] },
+};
+export function matchReelChapters(ar: boolean, kinds: ReelChapter[], minutes: Array<number | null>): Record<string, string> {
+  const out: Record<string, string> = {};
+  kinds.forEach((k, i) => {
+    const [name, head] = ar ? CHAPTER_WORDS[k].ar : CHAPTER_WORDS[k].en;
+    out[`l${i + 1}`] = `${i + 1}/${kinds.length} · ${name}`;
+    out[`h${i + 1}`] = head;
+    const m = minutes[i];
+    out[`m${i + 1}`] = m === null || m === undefined ? "" : ar ? `الدقيقة ${m}` : `Minute ${m}`;
+  });
+  return out;
+}
+
+/** The stats rows: possession, shots on target, dribbles won, passes completed (side A, side B). */
+export const MATCH_REEL_ROWS = [
+  { en: "Possession (%)", ar: "الاستحواذ (%)" },
+  { en: "Shots on target", ar: "تسديدات على المرمى" },
+  { en: "Dribbles won", ar: "مراوغات ناجحة" },
+  { en: "Passes completed", ar: "تمريرات وصلت" },
+] as const;
+export function matchReelStats(ar: boolean, rows: Array<[number, number] | null>): Record<string, string> {
+  const out: Record<string, string> = {};
+  let i = 0;
+  rows.forEach((r, row) => {
+    if (!r) return;
+    i += 1;
+    out[`st${i}l`] = ar ? MATCH_REEL_ROWS[row].ar : MATCH_REEL_ROWS[row].en;
+    Object.assign(out, countData(`st${i}a`, r[0]), countData(`st${i}b`, r[1]));
+  });
+  return out;
+}
+/** Side A's share of each row present (the bars' geometry). */
+export const matchReelBars = (rows: Array<[number, number] | null>): number[] =>
+  rows.flatMap((r) => (r ? [r[0] + r[1] > 0 ? r[0] / (r[0] + r[1]) : 0.5] : []));
+
 /** Montage templates: their clip count can be 2 to 5 (buildFieldMontage). */
-export const isMontageTemplate = (key: string) => key === "field-match-highlights" || key === "field-day-best" || key === "club-highlights";
+export const isMontageTemplate = (key: string) => key === "field-match-highlights" || key === "field-day-best" || key === "club-highlights" || key === "field-match-week-reel";
 
 export const FIELD_TEMPLATE_KEYS = FIELD_DEFS.map((d) => d.key);
 export const isFieldTemplate = (key: string): key is FieldTemplateKey => FIELD_DEFS.some((d) => d.key === key);
@@ -869,12 +1182,15 @@ export function buildFieldScene(key: FieldTemplateKey, format: CreativeFormat, l
   } as Scene;
 }
 
-/** A montage template laid out for `clips` clips (2–5): shorter or longer, the same look. */
-export function buildFieldMontage(key: FieldTemplateKey, clips: number, format: CreativeFormat, locale: Locale): Scene {
+/**
+ * A montage template laid out for `clips` clips (2–5): shorter or longer, the same look. The match
+ * Reel also takes its stats bars (side A's share per row; empty: no stats page).
+ */
+export function buildFieldMontage(key: FieldTemplateKey, clips: number, format: CreativeFormat, locale: Locale, opts: { bars?: number[] } = {}): Scene {
   const def = FIELD_DEFS.find((d) => d.key === key)!;
   const f = def.formats.includes(format) ? format : def.formats[0];
   const c = new Canvas(f, locale);
-  const durationMs = montage(c, clips);
+  const durationMs = key === "field-match-week-reel" ? matchReel(c, clips, opts.bars) : montage(c, clips);
   return { v: 1, format: f, durationMs, background: INK, layers: [...c.layers], template: { key, style: FIELD_STYLE }, locale } as Scene;
 }
 
@@ -890,5 +1206,5 @@ export function fieldSampleData(key: string, locale: Locale): CreativeData {
 export const FIELD_KIT = {
   PAPER, INK, MAIN, ON_MAIN, C, when, text, withSkin,
   backdrop, pill, badge, header, bookingBand, countUp, wipe, footage, footShade, onClip, endCard, openingCard, clipSequence, statsRow,
-  layouts: { bookingClip, award, playerCard, top5, versus, nomineeSlide, nomineesCover, thanks, openSlots, leaderboard, montage },
+  layouts: { bookingClip, award, playerCard, top5, countdown, versus, nomineeSlide, nomineesCover, thanks, openSlots, leaderboard, montage, matchReel, rebook },
 };

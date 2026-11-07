@@ -219,7 +219,18 @@ function SettingsCard({ venueId, data }: { venueId: number; data: InstagramData 
                   </>}
                   {on && k === "open_slots" && timeInput(slots.openSlotsTime, (v) => set("openSlotsTime", v), copy.settings.kinds[k])}
                   {on && k === "leaderboard" && timeInput(slots.boardTime, (v) => set("boardTime", v), copy.settings.kinds[k])}
-                  {on && k === "day_best" && timeInput(slots.dayBestTime ?? "13:00", (v) => set("dayBestTime", v), copy.settings.kinds[k])}
+                  {on && k === "day_best" && (slots.off.includes("moment_day")
+                    ? timeInput(slots.dayBestTime ?? "13:00", (v) => set("dayBestTime", v), copy.settings.kinds[k])
+                    : <span className="text-xs text-muted-text">{copy.settings.dayBestReplaced}</span>)}
+                  {on && k === "moment_day" && timeInput(slots.dayBestTime ?? "13:00", (v) => set("dayBestTime", v), copy.settings.kinds[k])}
+                  {on && k === "same_hour" && timeInput(slots.sameHourTime ?? "11:00", (v) => set("sameHourTime", v), copy.settings.kinds[k])}
+                  {on && k === "match_week" && (
+                    <select value={slots.matchWeekHeadline ?? "dribbles"} onChange={(e) => set("matchWeekHeadline", e.target.value === "shots" ? "shots" : "dribbles")}
+                      aria-label={copy.settings.matchWeekHeadline} className="min-h-9 rounded-lg border border-input bg-raised px-2 text-xs" data-testid="ig-match-week-headline">
+                      <option value="dribbles">{copy.settings.headlineDribbles}</option>
+                      <option value="shots">{copy.settings.headlineShots}</option>
+                    </select>
+                  )}
                   {on && k === "match_highlights" && (
                     <label className="flex items-center gap-1.5 text-xs text-muted-text">
                       <Input type="number" min={1} max={10} value={slots.highlightsPerDay ?? 3} aria-label={copy.settings.kinds[k]}
@@ -521,6 +532,7 @@ function Awards({ venueId, data }: { venueId: number; data: InstagramData }) {
               <li key={n.id} className="flex flex-wrap items-center gap-3 rounded-xl bg-raised p-2">
                 <div className="h-12 w-20 shrink-0 overflow-hidden rounded bg-void">{n.thumbnailUrl && <img src={n.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />}</div>
                 <span className="min-w-0 flex-1 text-xs text-text">
+                  <span className="me-1 rounded-full bg-void px-1.5 py-0.5 font-bold text-floodlight">{n.category === "skill" ? copy.awards.skillNom : copy.awards.saveNom}</span>
                   {n.source === "player" ? copy.awards.fromPlayer : copy.awards.fromShot}
                   {n.reference ? ` · ${copy.calendar.booking(n.reference)}` : ""} · {copy.match.at(Math.floor(n.atSeconds / 60) + 1)}
                 </span>

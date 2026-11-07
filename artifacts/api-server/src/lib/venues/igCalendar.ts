@@ -10,7 +10,10 @@
  *              `votingEndTime`, winners on `winnerDay` from `winnerTime`, `winnerGapMinutes` apart;
  *   weekly     the thank-you (last week's numbers), top 5, match and player of the week on their
  *              weekday and time (`weekly`), and "which is nicer?" from this week's games so far;
- *   daily      open slots tonight, as a story at `openSlotsTime`, when anything is free;
+ *   daily      open slots tonight, as a story at `openSlotsTime`, when anything is free; the moment
+ *              of the day at `dayBestTime` (a goal, dribble, skill or save by weekday, ending on
+ *              tonight's free kick-offs); a quiet hour still free, with a moment from that hour,
+ *              at `sameHourTime`;
  *   monthly    the scorers of last month on the 1st at `boardTime`;
  *   night      nothing ever goes out between `quietFrom` and `quietTo`.
  *
@@ -44,15 +47,19 @@ export type IgSlotSettings = {
   dayBestTime: string;
   /** Match highlights: at most this many games a day (the ones with the best moments). */
   highlightsPerDay: number;
+  /** "Same hour, free today": a story at this time about an afternoon kick-off still free. */
+  sameHourTime: string;
+  /** Match of the week opens on this number: dribbles won or shots on target (never the goals). */
+  matchWeekHeadline: "dribbles" | "shots";
   /** Kinds the owner switched off. */
   off: OptionalKind[];
 };
 
-/** Weekly posts. `versus` is this week's games so far; the rest are last week's. */
-export const WEEKLY_KINDS = ["thanks", "top5", "match_week", "player_week", "versus"] as const;
+/** Weekly posts. `versus` and `best_goals` are this week's games so far; the rest are last week's. */
+export const WEEKLY_KINDS = ["thanks", "top5", "match_week", "player_week", "versus", "so_close", "pass_week", "skill_week", "best_goals"] as const;
 export type WeeklyKind = (typeof WEEKLY_KINDS)[number];
 /** What the owner can switch off (booking clips and awards have their own switches). */
-export const OPTIONAL_KINDS = [...WEEKLY_KINDS, "milestone", "open_slots", "leaderboard", "match_highlights", "day_best"] as const;
+export const OPTIONAL_KINDS = [...WEEKLY_KINDS, "milestone", "open_slots", "leaderboard", "match_highlights", "day_best", "moment_day", "same_hour"] as const;
 export type OptionalKind = (typeof OPTIONAL_KINDS)[number];
 
 export const DEFAULT_IG_SLOTS: IgSlotSettings = {
@@ -75,11 +82,17 @@ export const DEFAULT_IG_SLOTS: IgSlotSettings = {
     player_week: { day: 1, time: "14:00" },
     match_week: { day: 2, time: "21:00" },
     versus: { day: 4, time: "21:00" },
+    so_close: { day: 2, time: "14:00" },
+    pass_week: { day: 4, time: "14:00" },
+    skill_week: { day: 5, time: "14:00" },
+    best_goals: { day: 6, time: "21:00" },
   },
   openSlotsTime: "17:00",
   boardTime: "14:00",
   dayBestTime: "13:00",
   highlightsPerDay: 3,
+  sameHourTime: "11:00",
+  matchWeekHeadline: "dribbles",
   off: [],
 };
 
@@ -131,6 +144,8 @@ export function normaliseIgSlots(raw: unknown): IgSlotSettings {
     boardTime: time(r.boardTime, d.boardTime),
     dayBestTime: time(r.dayBestTime, d.dayBestTime),
     highlightsPerDay: clampInt(r.highlightsPerDay, 1, 10, d.highlightsPerDay),
+    sameHourTime: time(r.sameHourTime, d.sameHourTime),
+    matchWeekHeadline: r.matchWeekHeadline === "shots" ? "shots" : "dribbles",
     off: Array.isArray(r.off) ? [...new Set(r.off.filter((k): k is OptionalKind => (OPTIONAL_KINDS as readonly unknown[]).includes(k)))] : [],
   };
 }
@@ -313,14 +328,18 @@ export function nowWall(date = new Date()): number {
 
 /**
  * When a weekly post of the week holding `minute` goes out, and which games week it covers:
- * "which is nicer?" covers this week so far (Sunday up to its post); the others last week.
+ * "which is nicer?" and the best goals cover this week so far (Sunday up to its post); the others last week.
  */
 export function weeklyTimes(s: IgSlotSettings, kind: WeeklyKind, minute: number): { at: number; gamesWeek: string; gamesUntil: number | null } {
   const week = weekStartOf(minute);
   const w = s.weekly[kind];
   const at = atWeekday(week, w.day, w.time);
-  return kind === "versus" ? { at, gamesWeek: week, gamesUntil: at - 3 * 60 } : { at, gamesWeek: addDays(week, -7), gamesUntil: null };
+  return kind === "versus" || kind === "best_goals" ? { at, gamesWeek: week, gamesUntil: at - 3 * 60 } : { at, gamesWeek: addDays(week, -7), gamesUntil: null };
 }
+
+/** The moment of the day by weekday (0 = Sunday): goal, dribble, skill, goal, save, goal, dribble. */
+export const DAY_MOMENT_ROTATION = ["goal", "dribble", "skill", "goal", "save", "goal", "dribble"] as const;
+export type DayMomentKind = (typeof DAY_MOMENT_ROTATION)[number];
 
 /** Milestones of games filmed: 50, 100, 250, 500, 1,000, 2,500, 5,000, 10,000 … */
 export function milestoneCrossed(before: number, now: number): number | null {

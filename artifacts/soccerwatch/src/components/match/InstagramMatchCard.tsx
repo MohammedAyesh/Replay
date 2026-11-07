@@ -6,8 +6,8 @@ import { useMatchInstagram, useMatchInstagramActions } from "@/lib/instagram-api
 
 /**
  * The match page's Instagram card (field autopilot): whether this match is (or will be) on the
- * field's Instagram, "Remove from Instagram" for anyone who played, save nominations for Save of
- * the week, and the way to this week's awards vote. Shows nothing when the field doesn't post.
+ * field's Instagram, "Remove from Instagram" for anyone who played, save and skill nominations
+ * (Save of the week, Skill of the week), and the way to this week's awards vote. Shows nothing when the field doesn't post.
  */
 export function InstagramMatchCard({ code }: { code: string }) {
   const copy = useInstagramCopy();
@@ -21,7 +21,8 @@ export function InstagramMatchCard({ code }: { code: string }) {
   const posts = d.posts ?? [];
   const live = posts.filter((p) => p.status !== "removed");
   const saves = d.saveCandidates ?? [];
-  if (!live.length && !d.canRemove && !saves.length && !d.awardsUrl && !d.optedOut) return null;
+  const skills = d.skillCandidates ?? [];
+  if (!live.length && !d.canRemove && !saves.length && !skills.length && !d.awardsUrl && !d.optedOut) return null;
 
   const remove = () => actions.remove.mutate(undefined, {
     onSuccess: (r) => { setConfirming(false); setResult(r.outcomes.some((o) => o.outcome === "flagged") ? "flagged" : "removed"); },
@@ -56,24 +57,24 @@ export function InstagramMatchCard({ code }: { code: string }) {
           </>
         )}
       {actions.remove.error && <p className="mt-2 text-xs text-red-400">{actions.remove.error.message}</p>}
-      {saves.length > 0 && !d.optedOut && !result && (
-        <details className="mt-4 rounded-xl border border-line bg-raised/40 p-3">
-          <summary className="cursor-pointer text-sm font-semibold">{copy.match.saves}</summary>
-          <p className="mt-1 text-xs text-muted-text">{copy.match.savesHint}</p>
+      {!d.optedOut && !result && ([["save", saves, copy.match.saves, copy.match.savesHint], ["skill", skills, copy.match.skills, copy.match.skillsHint]] as const).map(([category, list, title, hint]) => list.length > 0 && (
+        <details key={category} className="mt-4 rounded-xl border border-line bg-raised/40 p-3" data-testid={`match-nominate-${category}`}>
+          <summary className="cursor-pointer text-sm font-semibold">{title}</summary>
+          <p className="mt-1 text-xs text-muted-text">{hint}</p>
           <ul className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {saves.map((s) => (
+            {list.map((s) => (
               <li key={`${s.recordingId}:${s.atSeconds}`} className="overflow-hidden rounded-lg border border-line bg-void">
                 <div className="aspect-video bg-void">{s.thumbnailUrl && <img src={s.thumbnailUrl} alt="" className="h-full w-full object-cover" loading="lazy" />}</div>
                 <div className="flex items-center justify-between gap-1 p-1.5 text-xs">
                   <span className="tabular-nums text-muted-text">{copy.match.at(Math.floor(s.atSeconds / 60) + 1)}</span>
                   {s.nominated ? <span className="font-semibold text-turf">{copy.match.nominated}</span>
-                    : <button type="button" disabled={actions.nominate.isPending} onClick={() => actions.nominate.mutate({ recordingId: s.recordingId, atSeconds: s.atSeconds })} className="rounded-full bg-floodlight px-2 py-0.5 font-bold text-void">{copy.match.nominate}</button>}
+                    : <button type="button" disabled={actions.nominate.isPending} onClick={() => actions.nominate.mutate({ recordingId: s.recordingId, atSeconds: s.atSeconds, category })} className="rounded-full bg-floodlight px-2 py-0.5 font-bold text-void">{copy.match.nominate}</button>}
                 </div>
               </li>
             ))}
           </ul>
         </details>
-      )}
+      ))}
       {d.awardsUrl && <Link href={d.awardsUrl} className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-floodlight"><Trophy className="h-3.5 w-3.5" />{copy.match.vote}</Link>}
     </section>
   );

@@ -210,10 +210,18 @@ export function expiredMessage(f: BookingFacts, locale: Locale): string {
     : `We didn't receive payment for ${when(f, locale)}, so the slot is open again.\nMessage us if you still want it and we'll check it's free.`;
 }
 
-export function videoReadyMessage(f: BookingFacts, locale: Locale): string {
-  return locale === "ar"
+/**
+ * The match video is ready. `rebook`: the same kick-off next week on the same pitch, still free,
+ * and the booking site (Mohammed, 2026-11-07: "same time next week?" after every filmed game).
+ */
+export function videoReadyMessage(f: BookingFacts, locale: Locale, rebook: { day: string; time: string; link: string } | null = null): string {
+  const base = locale === "ar"
     ? `فيديو مباراتكم بـ${f.venue} جاهز 🎥\n${f.link}\nشاركوه مع الشباب وقصّوا أحلى لقطاتكم!`
     : `Your match video from ${f.venue} is ready 🎥\n${f.link}\nShare it with the team and clip your best moments!`;
+  if (!rebook) return base;
+  return locale === "ar"
+    ? `${base}\n\nنفس الوقت الأسبوع الجاي؟ ${rebook.day} الساعة ${rebook.time} لسا فاضي. احجزوه من هون:\n${rebook.link}`
+    : `${base}\n\nSame time next week? ${rebook.day} at ${rebook.time} is still free. Book it here:\n${rebook.link}`;
 }
 
 export function receiptReceivedMessage(locale: Locale): string {

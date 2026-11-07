@@ -748,8 +748,11 @@ const WIDENED_CHECKS: Array<{ table: string; name: string; mustContain: string; 
   // 0065_creative_wide_format.sql: 16:9 clip videos.
   { table: "academy_creative_projects", name: "academy_creative_projects_format_check", mustContain: "'wide'", definition: `CHECK ("format" in ('post', 'square', 'story', 'wide'))` },
   // 0071_field_instagram_templates.sql: more autopilot kinds, nominees as a carousel.
-  // 0075: match highlights and the day's best.
-  { table: "venue_ig_items", name: "venue_ig_items_kind_check", mustContain: "'day_best'", definition: `CHECK ("kind" in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard', 'match_highlights', 'day_best'))` },
+  // 0075: match highlights and the day's best. 0077: the moment of the day, so close, pass, skill and
+  // best goals of the week, same hour (the 2026-11-07 field templates).
+  { table: "venue_ig_items", name: "venue_ig_items_kind_check", mustContain: "'same_hour'", definition: `CHECK ("kind" in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard', 'match_highlights', 'day_best', 'moment_day', 'so_close', 'pass_week', 'skill_week', 'best_goals', 'same_hour'))` },
+  // 0077: players nominate skills as well as saves.
+  { table: "venue_ig_nominations", name: "venue_ig_nominations_category_check", mustContain: "'skill'", definition: `CHECK ("category" in ('save', 'skill'))` },
   { table: "venue_ig_items", name: "venue_ig_items_placement_check", mustContain: "'carousel'", definition: `CHECK ("placement" in ('story', 'reel', 'carousel'))` },
 ];
 
