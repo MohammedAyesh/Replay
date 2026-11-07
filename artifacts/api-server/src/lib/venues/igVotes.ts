@@ -53,7 +53,7 @@ export async function pullComments(academyId: number, igMediaId: string, force =
     }
   } catch (error) {
     const { markSocialReconnect } = await import("../social/account");
-    await markSocialReconnect(academyId, error).catch(() => false);
+    await markSocialReconnect(academyId, error, "instagram.autopilot.pull_comments", { optionalRead: true }).catch(() => false);
     logger.warn({ academyId, igMediaId, error: (error as Error).message }, "Instagram: reading a post's comments failed");
   }
   return added;

@@ -3,7 +3,7 @@ import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { academyCreativeProjectsTable, academyIgAutopilotTable, academyIgItemsTable, db, type AcademyCreativeProject, type AcademyIgItem } from "@workspace/db";
 import { requireAcademyOwner } from "../lib/academyOwner";
-import { getSocialAccount } from "../lib/social/account";
+import { getSocialAccount, refreshSocialAccountHealth } from "../lib/social/account";
 import { ammanLocal, fromAmmanLocal } from "../lib/venues/core";
 import {
   ACADEMY_IG_BACKFILL_DAYS,
@@ -91,7 +91,10 @@ router.get(base, async (req, res): Promise<void> => {
   if (!access) return;
   const now = new Date();
   const s = await academyIgSettings(access.academyId);
-  const account = await getSocialAccount(access.academyId);
+  let account = await getSocialAccount(access.academyId);
+  if (account?.status === "error") {
+    account = await refreshSocialAccountHealth(account, "academy_instagram.overview");
+  }
   const items = await itemsWithProjects(and(
     eq(academyIgItemsTable.academyId, access.academyId),
     or(isNull(academyIgItemsTable.slotAt), gte(academyIgItemsTable.slotAt, new Date(now.getTime() - 7 * 86_400_000)))!,
@@ -109,7 +112,10 @@ router.get(`${base}/today`, async (req, res): Promise<void> => {
   if (!access) return;
   const now = new Date();
   const s = await academyIgSettings(access.academyId);
-  const account = await getSocialAccount(access.academyId);
+  let account = await getSocialAccount(access.academyId);
+  if (account?.status === "error") {
+    account = await refreshSocialAccountHealth(account, "academy_instagram.today");
+  }
   const from = fromAmmanLocal(`${ammanLocal(now).slice(0, 10)} 00:00`) ?? now;
   const items = await itemsWithProjects(and(
     eq(academyIgItemsTable.academyId, access.academyId),

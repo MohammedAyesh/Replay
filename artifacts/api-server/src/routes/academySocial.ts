@@ -28,6 +28,7 @@ import {
   listPages,
   markSocialReconnect,
   mediaSignature,
+  refreshSocialAccountHealth,
   selectPage,
   socialLoginConfigId,
 } from "../lib/social/account";
@@ -131,7 +132,10 @@ router.get(base, async (req, res): Promise<void> => {
   const a = await access(req, res);
   if (!a) return;
   try {
-    const account = await getSocialAccount(a.academyId);
+    let account = await getSocialAccount(a.academyId);
+    if (a.manages && account?.status === "error") {
+      account = await refreshSocialAccountHealth(account, "academy_social.overview");
+    }
     const emptyPendingLogin = account?.status === "pending"
       && !account.tokenEnc
       && !account.pageTokenEnc
@@ -310,7 +314,7 @@ router.post(`${base}/sync`, async (req, res): Promise<void> => {
   try {
     res.json(await syncSocial(a.academyId));
   } catch (error) {
-    await markSocialReconnect(a.academyId, error).catch(() => false);
+    await markSocialReconnect(a.academyId, error, "academy_social.manual_sync").catch(() => false);
     fail(res, error, "Syncing posts failed");
   }
 });

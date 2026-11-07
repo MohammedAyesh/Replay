@@ -28,7 +28,7 @@ import { ensureCreativeMedia, renderIsDone } from "../creative/publishMedia";
 import { queueVideoRender, renderStillNow } from "../creative/renderJobs";
 import { deleteOutput } from "../creative/renderStore";
 import { logger } from "../logger";
-import { getSocialAccount } from "../social/account";
+import { getSocialAccount, refreshSocialAccountHealth } from "../social/account";
 import { getWhatsappSettings } from "../whatsapp/queue";
 import { publicBaseUrl } from "../whatsapp/waha";
 import { addDays, ammanLocal, fromAmmanLocal, normaliseHours, wallMinutes, wallString } from "./core";
@@ -648,7 +648,10 @@ export async function publishItem(venue: Venue, item: VenueIgItem, now = new Dat
   const fresh = await reread();
   const consent = await consentForItem(venue, fresh);
   if (!consent.ok) return set({ status: "skipped", error: consent.reason });
-  const account = await getSocialAccount(venue.id);
+  let account = await getSocialAccount(venue.id);
+  if (account?.status === "error") {
+    account = await refreshSocialAccountHealth(account, "instagram.autopilot.insights");
+  }
   const check = await checkInstagram(account);
   if (!check.ok) return set({ ...(check.code === "reconnect" ? { status: "failed" as const } : {}), error: check.error });
   const room = pacing(check.limit?.used ?? (await usedToday(venue.id, now)), check.limit?.total);
@@ -947,7 +950,7 @@ async function refreshInsights(venue: Venue, now: Date): Promise<number> {
     let reconnectRequired = false;
     const fresh = await mediaInsights(item.igMediaId!, item.placement as "story" | "reel", token).catch(async (error) => {
       const { markSocialReconnect } = await import("../social/account");
-      reconnectRequired = await markSocialReconnect(venue.id, error).catch(() => false);
+      reconnectRequired = await markSocialReconnect(venue.id, error, "instagram.autopilot.media_insights", { optionalRead: true }).catch(() => false);
       return {};
     });
     if (reconnectRequired) return 0;

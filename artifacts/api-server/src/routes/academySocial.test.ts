@@ -28,13 +28,15 @@ const instagramLoginMock = vi.hoisted(() => ({
   lookupCalls: [] as string[],
   clientBusinessId: "123456789012345",
   businessLookupError: null as null | { message: string; status: number; code?: number; subcode?: number },
-  limitError: null as null | { message: string; status: number; code?: number },
+  limitError: null as null | { message: string; status: number; code?: number; subcode?: number; type?: string; fbtraceId?: string },
+  insightsError: null as null | { message: string; status: number; code?: number; subcode?: number; type?: string; fbtraceId?: string },
   mutationError: null as null | { message: string; status: number; code?: number; subcode?: number },
 }));
 
 const socialSyncMock = vi.hoisted(() => ({
   instagramMedia: [] as Array<Record<string, unknown>>,
   facebookPosts: [] as Array<Record<string, unknown>>,
+  permissions: ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_content_publish"],
 }));
 
 process.env.META_ACCESS_TOKEN = "test-token";
@@ -66,6 +68,7 @@ const IGSID = `55${stamp}`;
 const PSID = `66${stamp}`;
 const posts: Array<{ path: string; params: Record<string, string> }> = [];
 const deletes: string[] = [];
+const graphGets: Array<{ path: string; params: Record<string, string> }> = [];
 let seq = 0;
 
 vi.mock("../lib/meta/graph", async (importOriginal) => {
@@ -93,22 +96,34 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
       };
     }),
     graphGet: vi.fn(async (path: string, params: Record<string, string> = {}) => {
+      graphGets.push({ path, params });
       if (path === "me") return { client_business_id: "test-business" };
+      if (path === "me/permissions") return {
+        data: socialSyncMock.permissions.map((permission) => ({ permission, status: "granted" })),
+      };
       if (path === "me/assigned_instagram_accounts") return { data: instagramLoginMock.assets };
       if (path === `${IG}/media`) return { data: socialSyncMock.instagramMedia };
       if (path === `${PAGE}/published_posts`) return { data: socialSyncMock.facebookPosts };
       if (path.endsWith("/content_publishing_limit")) {
         if (instagramLoginMock.limitError) {
           const e = instagramLoginMock.limitError;
-          throw new actual.MetaGraphError(e.message, e.status, e.code);
+          throw new actual.MetaGraphError(e.message, e.status, e.code, e.subcode, e.type, e.fbtraceId);
         }
         return { data: [{ quota_usage: 3, config: { quota_total: 100 } }] };
       }
+      if (params.fields === "id,name") return { id: path, name: "Galaxy Academy" };
+      if (params.fields === "id,username") return { id: path, username: "galaxy.academy" };
       if (path === IGSID) return { name: "Sami Haddad", username: "sami.h", profile_pic: "https://pic/x.jpg" };
       if (path === PSID) return { first_name: "Abu", last_name: "Kareem" };
-      if (path === IG && params.fields?.includes("followers_count")) return { followers_count: 12, media_count: 34 };
-      if (path === PAGE && params.fields?.includes("followers_count")) return { followers_count: 56, fan_count: 78 };
-      if (path.endsWith("/insights")) return { data: [] };
+      if (params.fields?.includes("media_count")) return { followers_count: 12, media_count: 34 };
+      if (params.fields?.includes("fan_count")) return { followers_count: 56, fan_count: 78 };
+      if (path.endsWith("/insights")) {
+        if (instagramLoginMock.insightsError) {
+          const e = instagramLoginMock.insightsError;
+          throw new actual.MetaGraphError(e.message, e.status, e.code, e.subcode, e.type, e.fbtraceId);
+        }
+        return { data: [] };
+      }
       if (path.startsWith("ig-media-")) return { permalink: `https://instagram.com/p/${path}`, caption: "Training day" };
       if (path.startsWith("ig-container-")) return { status_code: "FINISHED" };
       if (path.startsWith("ig-published-")) return { permalink: "https://instagram.com/p/new" };
@@ -146,9 +161,10 @@ vi.mock("../lib/meta/graph", async (importOriginal) => {
 
 import { encryptToken } from "../lib/meta/crypto";
 import { mediaSignature } from "../lib/social/account";
-import { maybeRunSocial } from "../lib/social/posts";
+import { maybeRunSocial, syncSocial } from "../lib/social/posts";
 import { checkInstagram } from "../lib/venues/igGraph";
 import { sectionForPath } from "../lib/academyPermissions";
+import academyInstagramRouter from "./academyInstagram";
 import metaRouter from "./metaAds";
 import socialRouter from "./academySocial";
 
@@ -179,6 +195,7 @@ beforeAll(async () => {
   app.use("/api/meta/webhook", express.raw({ type: "*/*" }));
   app.use(express.json({ limit: "10mb" }));
   app.use("/api", metaRouter);
+  app.use("/api", academyInstagramRouter);
   app.use("/api", socialRouter);
   const users = await db.insert(usersTable).values([
     { name: `Owner ${stamp}`, email: `so-owner-${stamp}@test.local` },
@@ -204,15 +221,18 @@ beforeAll(async () => {
 beforeEach(() => {
   posts.length = 0;
   deletes.length = 0;
+  graphGets.length = 0;
   instagramLoginMock.assets = [];
   instagramLoginMock.lookupResponses = {};
   instagramLoginMock.lookupCalls.length = 0;
   instagramLoginMock.clientBusinessId = TEST_BUSINESS_ID;
   instagramLoginMock.businessLookupError = null;
   instagramLoginMock.limitError = null;
+  instagramLoginMock.insightsError = null;
   instagramLoginMock.mutationError = null;
   socialSyncMock.instagramMedia = [];
   socialSyncMock.facebookPosts = [];
+  socialSyncMock.permissions = ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_content_publish"];
 });
 
 afterAll(async () => {
@@ -620,6 +640,37 @@ describe("comments", () => {
 });
 
 describe("posts", () => {
+  it("keeps the connection healthy when optional Instagram insights report not enough viewers", async () => {
+    const postId = `ig-media-no-viewers-${stamp}`;
+    socialSyncMock.instagramMedia = [{
+      id: postId,
+      caption: "Small account post",
+      media_type: "IMAGE",
+      media_product_type: "FEED",
+      permalink: `https://instagram.com/p/${postId}`,
+      timestamp: new Date().toISOString(),
+      like_count: 1,
+      comments_count: 0,
+    }];
+    instagramLoginMock.insightsError = {
+      message: "(#10) Not enough viewers for the media to show insights",
+      status: 400,
+      code: 10,
+      type: "OAuthException",
+      fbtraceId: "trace-no-viewers",
+    };
+
+    await syncSocial(academyId);
+
+    const [account] = await db.select().from(academySocialAccountsTable)
+      .where(eq(academySocialAccountsTable.academyId, academyId));
+    expect(account.status).toBe("connected");
+    expect(graphGets.some((call) => call.path === "me/permissions")).toBe(false);
+    const [post] = await db.select().from(academySocialPostsTable)
+      .where(eq(academySocialPostsTable.igMediaId, postId));
+    expect(post.insights).toMatchObject({ instagram: { likes: 1, comments: 0 } });
+  });
+
   it("publishes a photo to Instagram and Facebook from the media library", async () => {
     const res = await request(app).post(`${base()}/posts`).set(auth(ownerId))
       .send({ targets: ["instagram", "facebook"], format: "image", caption: "Match day 🔥", mediaIds: [mediaId] }).expect(201);
@@ -895,32 +946,84 @@ describe("Instagram API with Unified Login", () => {
     }
   });
 
-  it("marks permission and expired-token errors for reconnect without treating account type as permission", async () => {
-    const [account] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
-    instagramLoginMock.limitError = { message: "Permissions error", status: 403, code: 200 };
-    const permission = await checkInstagram(account);
-    expect(permission).toMatchObject({
-      ok: false,
-      code: "reconnect",
-      error: "Replay doesn't have permission for this Instagram account yet. Connect again and allow every permission.",
-    });
-    let [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
-    expect(saved.status).toBe("error");
+  it("uses health checks for code 200, flags confirmed missing scopes and trusts code 190", async () => {
+    await db.update(academySocialAccountsTable).set({
+      status: "connected", error: null, tokenEnc: encryptToken(`healthy-scope-token-${stamp}`),
+    }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    let [account] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    instagramLoginMock.limitError = { message: "Optional publishing-limit read denied", status: 403, code: 200 };
 
-    await db.update(academySocialAccountsTable).set({ status: "connected", error: null }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
-    instagramLoginMock.limitError = { message: "Error validating access token", status: 400, code: 190 };
-    const [active] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
-    expect(await checkInstagram(active)).toMatchObject({ ok: false, code: "reconnect" });
+    const healthyLimit = await checkInstagram(account);
+    expect(healthyLimit).toMatchObject({ ok: true, username: account.igUsername, limit: null, limitError: "Optional publishing-limit read denied" });
+    let [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved.status).toBe("connected");
+    expect(graphGets.filter((call) => call.path === "me/permissions")).toHaveLength(1);
+    await checkInstagram(account);
+    expect(graphGets.filter((call) => call.path === "me/permissions")).toHaveLength(1);
+
+    socialSyncMock.permissions = ["instagram_basic"];
+    await db.update(academySocialAccountsTable).set({
+      status: "connected", error: null, tokenEnc: encryptToken(`missing-scope-token-${stamp}`),
+    }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    [account] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    const missingScope = await checkInstagram(account);
+    expect(missingScope).toMatchObject({ ok: false, code: "reconnect" });
+    [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(saved.status).toBe("error");
+    expect(saved.error).toMatch(/doesn't have permission/i);
+
+    socialSyncMock.permissions = ["pages_show_list", "pages_read_engagement", "instagram_basic", "instagram_content_publish"];
+    await db.update(academySocialAccountsTable).set({
+      status: "connected", error: null, tokenEnc: encryptToken(`expired-token-${stamp}`),
+    }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    instagramLoginMock.limitError = {
+      message: "Error validating access token",
+      status: 400,
+      code: 190,
+      subcode: 463,
+      type: "OAuthException",
+      fbtraceId: "trace-expired-token",
+    };
+    [account] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(await checkInstagram(account)).toMatchObject({ ok: false, code: "reconnect" });
     [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
     expect(saved.status).toBe("error");
 
-    await db.update(academySocialAccountsTable).set({ status: "connected", error: null }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    await db.update(academySocialAccountsTable).set({
+      status: "connected", error: null, tokenEnc: encryptToken(`account-type-token-${stamp}`),
+    }).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
     instagramLoginMock.limitError = { message: "Instagram account type is not supported for publishing", status: 400, code: 100 };
-    const [current] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
-    expect(await checkInstagram(current)).toMatchObject({ ok: false, code: "not_business" });
+    [account] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
+    expect(await checkInstagram(account)).toMatchObject({ ok: false, code: "not_business" });
     [saved] = await db.select().from(academySocialAccountsTable).where(eq(academySocialAccountsTable.academyId, unifiedAcademyId));
     expect(saved.status).toBe("connected");
     instagramLoginMock.limitError = null;
+  });
+
+  it("restores a flagged account from the social page, autopilot, and hourly sync using one health check", async () => {
+    const flag = async (label: string) => {
+      await db.update(academySocialAccountsTable).set({
+        status: "error", error: "Reconnect Instagram. Meta authorization expired or the Instagram permissions changed.",
+        tokenEnc: encryptToken(`${label}-${stamp}`),
+      }).where(eq(academySocialAccountsTable.academyId, academyId));
+    };
+
+    await flag("overview-recovery");
+    const socialOverview = await request(app).get(base()).set(auth(ownerId)).expect(200);
+    expect(socialOverview.body.connection).toMatchObject({ status: "connected", igUsername: "galaxy.academy" });
+
+    await flag("autopilot-recovery");
+    const autopilotOverview = await request(app)
+      .get(`/api/academy/console/academies/${academyId}/instagram`).set(auth(ownerId)).expect(200);
+    expect(autopilotOverview.body.instagram).toMatchObject({ connected: true, username: "galaxy.academy" });
+
+    await flag("hourly-recovery");
+    const result = await maybeRunSocial(0);
+    expect(result).toMatchObject({ synced: expect.any(Number) });
+    const [saved] = await db.select().from(academySocialAccountsTable)
+      .where(eq(academySocialAccountsTable.academyId, academyId));
+    expect(saved).toMatchObject({ status: "connected", error: null });
+    expect(graphGets.filter((call) => call.path === "me/permissions").length).toBeGreaterThanOrEqual(3);
   });
 
   it("refuses an Instagram account already connected to another academy", async () => {

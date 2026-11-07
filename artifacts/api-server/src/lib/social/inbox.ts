@@ -56,7 +56,7 @@ async function profileOf(channel: Channel, userId: string, token: string, academ
     const name = [p.first_name, p.last_name].filter(Boolean).join(" ") || p.name || null;
     return { name, username: null, picture: p.profile_pic ?? null };
   } catch (error) {
-    await markSocialReconnect(academyId, error).catch(() => false);
+    await markSocialReconnect(academyId, error, "social.inbox.person_profile", { optionalRead: true }).catch(() => false);
     logger.info({ channel, error: (error as Error).message }, "Reading a social profile failed");
     return { name: null, username: null, picture: null };
   }
@@ -176,7 +176,7 @@ async function postInfo(channel: "instagram" | "facebook", postId: string, token
       info = { permalink: p.permalink_url ?? null, caption: p.message ?? null };
     }
   } catch (error) {
-    await markSocialReconnect(academyId, error).catch(() => false);
+    await markSocialReconnect(academyId, error, "social.inbox.post_info", { optionalRead: true }).catch(() => false);
     logger.info({ postId, error: (error as Error).message }, "Reading a post for a comment failed");
   }
   postCache.set(postId, info);
@@ -290,7 +290,7 @@ export async function sendThreadMessage(account: AcademySocialAccount, thread: A
     const res = await graphPost<{ message_id?: string }>(`${senderId}/messages`, params, { token: pageToken(account) });
     externalId = res.message_id ?? null;
   } catch (e) {
-    await markSocialReconnect(account.academyId, e).catch(() => false);
+    await markSocialReconnect(account.academyId, e, "social.inbox.send_message").catch(() => false);
     error = (e as Error).message;
   }
   const now = new Date();
@@ -317,7 +317,7 @@ export async function replyToComment(account: AcademySocialAccount, channel: "in
       : await graphPost<{ id?: string }>(`${commentId}/comments`, { message: text }, { token });
     return result.id ?? null;
   } catch (error) {
-    await markSocialReconnect(account.academyId, error).catch(() => false);
+    await markSocialReconnect(account.academyId, error, `social.inbox.${channel}_comment_reply`).catch(() => false);
     throw error;
   }
 }
@@ -328,17 +328,32 @@ export async function createPostComment(
   postId: string,
   text: string,
 ): Promise<string> {
-  const result = await graphPost<{ id?: string }>(`${postId}/comments`, { message: text }, { token: pageToken(account) });
-  if (!result.id) throw new MetaGraphError("Meta did not return the new comment ID", 502);
-  return result.id;
+  try {
+    const result = await graphPost<{ id?: string }>(`${postId}/comments`, { message: text }, { token: pageToken(account) });
+    if (!result.id) throw new MetaGraphError("Meta did not return the new comment ID", 502);
+    return result.id;
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error, `social.inbox.${_channel}_create_comment`).catch(() => false);
+    throw error;
+  }
 }
 
 export async function editFacebookComment(account: AcademySocialAccount, commentId: string, text: string): Promise<void> {
-  await graphPost(commentId, { message: text }, { token: pageToken(account) });
+  try {
+    await graphPost(commentId, { message: text }, { token: pageToken(account) });
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error, "social.inbox.facebook_comment_edit").catch(() => false);
+    throw error;
+  }
 }
 
 export async function deleteSocialComment(account: AcademySocialAccount, commentId: string): Promise<void> {
-  await graphDelete(commentId, { token: pageToken(account) });
+  try {
+    await graphDelete(commentId, { token: pageToken(account) });
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error, "social.inbox.comment_delete").catch(() => false);
+    throw error;
+  }
 }
 
 async function resolveOwnReplyId(
@@ -351,12 +366,17 @@ async function resolveOwnReplyId(
   if (!ownId) return null;
   const edge = channel === "instagram" ? `${parentCommentId}/replies` : `${parentCommentId}/comments`;
   const fields = channel === "instagram" ? "id,text,from" : "id,message,from";
-  const result = await graphGet<{
-    data?: Array<{ id: string; message?: string; text?: string; from?: { id?: string } }>;
-  }>(edge, { fields, limit: "100" }, { token: pageToken(account) });
-  return result.data?.find((reply) =>
-    reply.from?.id === ownId && (reply.message ?? reply.text ?? "") === existingBody,
-  )?.id ?? null;
+  try {
+    const result = await graphGet<{
+      data?: Array<{ id: string; message?: string; text?: string; from?: { id?: string } }>;
+    }>(edge, { fields, limit: "100" }, { token: pageToken(account) });
+    return result.data?.find((reply) =>
+      reply.from?.id === ownId && (reply.message ?? reply.text ?? "") === existingBody,
+    )?.id ?? null;
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error, `social.inbox.${channel}_reply_lookup`, { optionalRead: true }).catch(() => false);
+    throw error;
+  }
 }
 
 export async function editFacebookReply(
@@ -368,7 +388,12 @@ export async function editFacebookReply(
 ): Promise<string> {
   const id = replyCommentId ?? await resolveOwnReplyId(account, "facebook", parentCommentId, existingBody);
   if (!id) throw new MetaGraphError("The Facebook reply could not be found; it may already be deleted", 404, 100);
-  await graphPost(id, { message: text }, { token: pageToken(account) });
+  try {
+    await graphPost(id, { message: text }, { token: pageToken(account) });
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error, "social.inbox.facebook_reply_edit").catch(() => false);
+    throw error;
+  }
   return id;
 }
 
@@ -381,8 +406,13 @@ export async function deleteSocialReply(
 ): Promise<string> {
   const id = replyCommentId ?? await resolveOwnReplyId(account, channel, parentCommentId, existingBody);
   if (!id) throw new MetaGraphError("The reply could not be found; it may already be deleted", 404, 100);
-  await graphDelete(id, { token: pageToken(account) });
-  return id;
+  try {
+    await graphDelete(id, { token: pageToken(account) });
+    return id;
+  } catch (error) {
+    await markSocialReconnect(account.academyId, error, `social.inbox.${channel}_reply_delete`).catch(() => false);
+    throw error;
+  }
 }
 
 export async function hideComment(account: AcademySocialAccount, channel: "instagram" | "facebook", commentId: string, hidden: boolean): Promise<void> {
@@ -391,7 +421,7 @@ export async function hideComment(account: AcademySocialAccount, channel: "insta
     if (channel === "instagram") await graphPost(commentId, { hide: hidden ? "true" : "false" }, { token });
     else await graphPost(commentId, { is_hidden: hidden ? "true" : "false" }, { token });
   } catch (error) {
-    await markSocialReconnect(account.academyId, error).catch(() => false);
+    await markSocialReconnect(account.academyId, error, `social.inbox.${channel}_comment_moderation`).catch(() => false);
     throw error;
   }
 }
@@ -407,7 +437,7 @@ export async function privateReply(account: AcademySocialAccount, channel: "inst
       message: JSON.stringify({ text }),
     }, { token: pageToken(account) });
   } catch (error) {
-    await markSocialReconnect(account.academyId, error).catch(() => false);
+    await markSocialReconnect(account.academyId, error, `social.inbox.${channel}_private_reply`).catch(() => false);
     throw error;
   }
   const recipient = res.recipient_id ?? fromId;
@@ -449,7 +479,7 @@ export async function backfillConversations(account: AcademySocialAccount): Prom
         limit: "25",
       }, { token })).data ?? [];
     } catch (error) {
-      await markSocialReconnect(account.academyId, error).catch(() => false);
+      await markSocialReconnect(account.academyId, error, `social.inbox.${platform}_conversation_backfill`, { optionalRead: true }).catch(() => false);
       logger.info({ platform, error: (error as Error).message }, "Backfilling conversations failed");
       continue;
     }
