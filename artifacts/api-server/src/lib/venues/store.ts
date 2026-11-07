@@ -36,6 +36,7 @@ import { dispatchMessageNow, getWhatsappSettings, senderSessionFor } from "../wh
 import { publicBaseUrl } from "../whatsapp/waha";
 import {
   DEFAULT_OPENING_HOURS,
+  addDays,
   ammanLocal,
   bookingReference,
   checkRequest,
@@ -791,6 +792,26 @@ export function manageLinkFor(venue: Venue, reference: string): string | null {
   return s.slug ? `${publicBaseUrl()}/v/${s.slug}?manage=${ref}#manage` : null;
 }
 
+/** The booking site (its own domain once that is live). */
+export function siteLinkFor(venue: Venue): string | null {
+  const s = venue.settings as { slug?: string | null; customDomain?: string | null; domainStatus?: string | null };
+  if (s.customDomain && s.domainStatus === "live") return `https://${s.customDomain}/`;
+  return s.slug ? `${publicBaseUrl()}/v/${s.slug}` : null;
+}
+
+/** The same kick-off a week later on the same pitch, for the same length, when it is still free. */
+export async function sameSlotNextWeek(venue: Venue, booking: VenueBooking, locale: Locale): Promise<{ day: string; time: string; link: string } | null> {
+  const link = siteLinkFor(venue);
+  if (!link) return null;
+  const date = addDays(booking.startLocal.slice(0, 10), 7);
+  const start = `${date} ${booking.startLocal.slice(11, 16)}`;
+  const minutes = Math.round((booking.endsAt.getTime() - booking.startsAt.getTime()) / 60_000);
+  const [pitch] = await availability(venue, date, booking.pitchId);
+  const slot = pitch?.slots.find((x) => x.startLocal === start);
+  if (!slot?.available || !slot.options.some((o) => o.available && o.minutes === minutes)) return null;
+  return { day: dayLabel(date, locale), time: timeLabel(start.slice(11), locale), link };
+}
+
 /** "Thursday 5 Nov, 3:00 pm" / "الخميس 5/11 الساعة 3:00 م" for an instant. */
 function deadlineLabel(at: Date, locale: Locale): string {
   const local = ammanLocal(at);
@@ -843,7 +864,7 @@ export async function notify(venue: Venue, bookingId: number, kind: NotifyKind):
       : kind === "expired" ? expiredMessage(f, locale)
       : kind === "reminder" ? reminderMessage(f, locale)
       : kind === "changed" ? changedMessage(f, locale)
-      : f.link ? videoReadyMessage(f, locale) : null;
+      : f.link ? videoReadyMessage(f, locale, await sameSlotNextWeek(venue, booking, locale).catch(() => null)) : null;
     if (!body) return;
     const dedupe = kind === "held" || kind === "changed" ? `v${venue.id}:b${booking.id}:${kind}:${booking.updatedAt.getTime()}` : `v${venue.id}:b${booking.id}:${kind}${kind === "reminder" ? `:${booking.startLocal}` : ""}`;
     await sendVenueMessage(venue.id, booking.customerPhone, `booking_${kind}`, body, dedupe);

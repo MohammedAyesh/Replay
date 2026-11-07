@@ -25,7 +25,7 @@ import { recordingsForRoom, type LinkedRecording } from "../lib/matchFeed";
 import { loadRoomByCode } from "../lib/matchRooms";
 import { getSocialAccount } from "../lib/social/account";
 import { ammanLocal, fromAmmanLocal, normaliseHours, wallMinutes } from "../lib/venues/core";
-import { readNominees, saveCandidates, awardVotes } from "../lib/venues/igAwards";
+import { readNominees, saveCandidates, skillCandidates, awardVotes } from "../lib/venues/igAwards";
 import {
   ensureRendered,
   igSettings,
@@ -224,7 +224,7 @@ router.get(base, async (req, res): Promise<void> => {
       notPosted: await notPosted(a.venue, now),
       awards: awards.map((x) => awardView(x, votes, awardUrls)),
       nominations: nominations.map((r) => ({
-        id: r.n.id, source: r.n.source, recordingId: r.n.recordingId, bookingId: r.n.bookingId, atSeconds: r.n.atSeconds,
+        id: r.n.id, category: r.n.category, source: r.n.source, recordingId: r.n.recordingId, bookingId: r.n.bookingId, atSeconds: r.n.atSeconds,
         reference: r.booking, startLocal: r.startLocal, createdAt: r.n.createdAt.toISOString(),
         thumbnailUrl: thumb(r.n.recordingId, nomUrls, r.n.atSeconds * 1000),
       })),
@@ -548,7 +548,8 @@ router.post(`${base}/nominations/:nominationId`, async (req, res): Promise<void>
   const [row] = await db.update(venueIgNominationsTable).set({ status: body.data.status, reviewedBy: a.user.id, reviewedAt: new Date() })
     .where(and(eq(venueIgNominationsTable.id, intParam(req.params.nominationId) ?? 0), eq(venueIgNominationsTable.academyId, a.venue.id))).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
-  if (body.data.status === "approved") await addApprovedSave(a.venue, row.id);
+  // An approved skill is read by Skill of the week when it renders; a save joins its award.
+  if (body.data.status === "approved" && row.category === "save") await addApprovedSave(a.venue, row.id);
   res.json({ nomination: { id: row.id, status: row.status } });
 });
 
@@ -697,20 +698,25 @@ router.get("/m/:code/instagram", async (req, res): Promise<void> => {
   const inMatch = user && !user.isGuest ? await mayConfirmGoalsInRoom(user, m.ctx.room) : false;
   const items = await db.select().from(venueIgItemsTable).where(and(eq(venueIgItemsTable.academyId, m.venue.id), eq(venueIgItemsTable.bookingId, m.booking.id), ne(venueIgItemsTable.status, "skipped")));
   const s = igSettings(m.venue);
-  let saveCands: Array<{ recordingId: number; atSeconds: number; thumbnailUrl: string | null; nominated: boolean }> = [];
+  type Cand = { recordingId: number; atSeconds: number; thumbnailUrl: string | null; nominated: boolean };
+  let saveCands: Cand[] = [];
+  let skillCands: Cand[] = [];
   if (inMatch && s.autopilot) {
     const links = await recordingsForRoom(m.ctx).catch(() => []);
     const urls = await videoUrlsFor(links.map((l) => l.recordingId));
-    const mine = user ? await db.select({ recordingId: venueIgNominationsTable.recordingId, atSeconds: venueIgNominationsTable.atSeconds }).from(venueIgNominationsTable)
+    const mine = user ? await db.select({ category: venueIgNominationsTable.category, recordingId: venueIgNominationsTable.recordingId, atSeconds: venueIgNominationsTable.atSeconds }).from(venueIgNominationsTable)
       .where(and(eq(venueIgNominationsTable.academyId, m.venue.id), eq(venueIgNominationsTable.bookingId, m.booking.id))) : [];
+    const cand = (category: string, link: LinkedRecording, t: number): Cand => {
+      const at = Math.round(t);
+      return { recordingId: link.recordingId, atSeconds: at, thumbnailUrl: thumb(link.recordingId, urls, (t + (link.manifest.videoStartSeconds ?? 0)) * 1000), nominated: mine.some((n) => n.category === category && n.recordingId === link.recordingId && n.atSeconds === at) };
+    };
     for (const link of links) {
-      const offset = link.manifest.videoStartSeconds ?? 0;
-      for (const t of await saveCandidates(link)) {
-        const at = Math.round(t);
-        saveCands.push({ recordingId: link.recordingId, atSeconds: at, thumbnailUrl: thumb(link.recordingId, urls, (t + offset) * 1000), nominated: mine.some((n) => n.recordingId === link.recordingId && n.atSeconds === at) });
-      }
+      for (const t of await saveCandidates(link)) saveCands.push(cand("save", link, t));
+      // Skill of the week: no detection, so the game's dribbles are offered (Mohammed, 2026-11-07).
+      for (const t of await skillCandidates(link)) skillCands.push(cand("skill", link, t));
     }
     saveCands = saveCands.slice(0, 12);
+    skillCands = skillCands.slice(0, 12);
   }
   const live = items.filter((i) => i.status !== "removed");
   res.json({
@@ -722,6 +728,7 @@ router.get("/m/:code/instagram", async (req, res): Promise<void> => {
     optedOut: m.booking.igConsent === "no",
     canRemove: Boolean(inMatch) && !(m.booking.igConsent === "no" && m.booking.igConsentSource === "removal"),
     saveCandidates: saveCands,
+    skillCandidates: skillCands,
     awardsUrl: s.autopilot ? `/awards/${m.venue.settings.slug}` : null,
   });
 });
@@ -744,13 +751,13 @@ router.post("/m/:code/instagram/nominate-save", async (req, res): Promise<void> 
   if (!user) { unauthenticatedResponse(res, req); return; }
   if (user.isGuest || !(await mayConfirmGoalsInRoom(user, m.ctx.room))) { res.status(403).json({ error: "Only players in this match can nominate" }); return; }
   if (!m.booking || !m.venue) { res.status(404).json({ error: "This match isn't a field booking" }); return; }
-  const body = z.object({ recordingId: z.number().int().positive(), atSeconds: z.number().min(0), note: z.string().trim().max(200).optional() }).safeParse(req.body ?? {});
+  const body = z.object({ recordingId: z.number().int().positive(), atSeconds: z.number().min(0), note: z.string().trim().max(200).optional(), category: z.enum(["save", "skill"]).default("save") }).safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ error: "Pick a moment" }); return; }
   const links = await recordingsForRoom(m.ctx).catch((): LinkedRecording[] => []);
   const link = links.find((l) => l.recordingId === body.data.recordingId);
   if (!link || body.data.atSeconds < link.fromSeconds || body.data.atSeconds > link.toSeconds) { res.status(404).json({ error: "That moment isn't in this match" }); return; }
   const [row] = await db.insert(venueIgNominationsTable).values({
-    academyId: m.venue.id, recordingId: link.recordingId, bookingId: m.booking.id, atSeconds: Math.round(body.data.atSeconds), source: "player",
+    academyId: m.venue.id, category: body.data.category, recordingId: link.recordingId, bookingId: m.booking.id, atSeconds: Math.round(body.data.atSeconds), source: "player",
     nominatedBy: user.id, note: body.data.note ?? null,
   }).onConflictDoNothing().returning();
   res.status(row ? 201 : 200).json({ nominated: true, id: row?.id ?? null });

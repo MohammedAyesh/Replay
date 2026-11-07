@@ -94,7 +94,7 @@ export const venueIgNominationsTable = pgTable("venue_ig_nominations", {
 }, (table) => [
   unique("venue_ig_nominations_moment_unique").on(table.academyId, table.category, table.recordingId, table.atSeconds),
   index("venue_ig_nominations_academy_idx").on(table.academyId, table.status),
-  check("venue_ig_nominations_category_check", sql`${table.category} in ('save')`),
+  check("venue_ig_nominations_category_check", sql`${table.category} in ('save', 'skill')`),
   check("venue_ig_nominations_source_check", sql`${table.source} in ('player', 'shot')`),
   check("venue_ig_nominations_status_check", sql`${table.status} in ('pending', 'approved', 'rejected')`),
 ]);
@@ -155,7 +155,7 @@ export const venueIgItemsTable = pgTable("venue_ig_items", {
   unique("venue_ig_items_origin_unique").on(table.academyId, table.originKey),
   index("venue_ig_items_slot_idx").on(table.academyId, table.slotAt),
   index("venue_ig_items_status_idx").on(table.status, table.slotAt),
-  check("venue_ig_items_kind_check", sql`${table.kind} in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard', 'match_highlights', 'day_best')`),
+  check("venue_ig_items_kind_check", sql`${table.kind} in ('booking_clip', 'award_nominees', 'award_winner', 'versus', 'top5', 'thanks', 'match_week', 'player_week', 'milestone', 'open_slots', 'leaderboard', 'match_highlights', 'day_best', 'moment_day', 'so_close', 'pass_week', 'skill_week', 'best_goals', 'same_hour')`),
   check("venue_ig_items_placement_check", sql`${table.placement} in ('story', 'reel', 'carousel')`),
   check("venue_ig_items_status_check", sql`${table.status} in ('planned', 'approved', 'rendering', 'ready', 'publishing', 'published', 'skipped', 'failed', 'removed', 'removal_flagged')`),
 ]);

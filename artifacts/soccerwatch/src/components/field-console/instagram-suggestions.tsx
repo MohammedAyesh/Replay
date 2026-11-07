@@ -9,6 +9,7 @@ import { ErrorText } from "./shared";
 
 const ICON: Record<IgSuggestKind, typeof Film> = {
   thanks: Sparkles, top5: Film, match_week: Trophy, player_week: Users, versus: Film, open_slots: CalendarDays, leaderboard: Trophy,
+  so_close: Film, pass_week: Film, skill_week: Sparkles, best_goals: Trophy, day_best: Film, moment_day: Film, same_hour: CalendarDays,
 };
 
 /**

@@ -55,7 +55,7 @@ export type Nominee = {
   toMs: number;
   atMs: number;
   /** saved_clip: a player's own clip; footage: a moment of the game the owner chose by its frame. */
-  source: "confirmed_goal" | "dribble" | "shot" | "save" | "fastest" | "saved_clip" | "footage";
+  source: "confirmed_goal" | "dribble" | "shot" | "save" | "skill" | "fastest" | "saved_clip" | "footage";
   /** saved_clip: the player's clip */
   clipId?: number;
   /** A game filmed without a console booking (owner mode); bookingId is 0. Checked by unbookedStillPostable. */
@@ -185,11 +185,13 @@ export async function bookingLinks(booking: VenueBooking): Promise<{ ctx: NonNul
 
 /**
  * Every moment in a games week's postable bookings (up to `until`, for this week so far): confirmed
- * goals, shots that weren't goals, dribbles won, approved saves, claimed players' top speeds.
+ * goals, shots that weren't goals, dribbles won, approved saves, claimed players' top speeds, and
+ * (beside the awards) approved skills: players nominate them, the owner approves.
  */
-export async function weekMoments(venue: Venue, weekStart: string, until?: Date): Promise<{ bookings: VenueBooking[]; raw: Record<AwardCategory, RawMoment[]> }> {
+export async function weekMoments(venue: Venue, weekStart: string, until?: Date): Promise<{ bookings: VenueBooking[]; raw: Record<AwardCategory, RawMoment[]>; skills: RawMoment[] }> {
   const bookings = await weekBookings(venue, weekStart, until);
   const raw: Record<AwardCategory, Raw[]> = { goal: [], dribble: [], shot: [], save: [], fastest: [] };
+  const skills: Raw[] = [];
   const bookingIds = bookings.map((b) => b.id);
   const approved = bookingIds.length ? await db.select().from(venueIgNominationsTable).where(and(
     eq(venueIgNominationsTable.academyId, venue.id),
@@ -217,7 +219,8 @@ export async function weekMoments(venue: Venue, weekStart: string, until?: Date)
         }
       }
       for (const n of approved.filter((x) => x.bookingId === booking.id && x.recordingId === link.recordingId)) {
-        raw.save.push({ booking, link, t: n.atSeconds, start: n.atSeconds, rank: n.source === "player" ? 1 : 0, source: "save", nominationId: n.id });
+        const m: Raw = { booking, link, t: n.atSeconds, start: n.atSeconds, rank: n.source === "player" ? 1 : 0, source: n.category === "skill" ? "skill" : "save", nominationId: n.id };
+        (n.category === "skill" ? skills : raw.save).push(m);
       }
     }
     // Fastest: the claimed players' top speeds, level games only, believable speeds only.
@@ -235,7 +238,7 @@ export async function weekMoments(venue: Venue, weekStart: string, until?: Date)
       raw.fastest.push({ booking, link, t, start: t, rank: Math.round(kmh * 10), source: "fastest", value: Math.round(kmh * 10) / 10, keyExtra: `speed:${row.userId}` });
     }
   }
-  return { bookings, raw };
+  return { bookings, raw, skills };
 }
 
 /** Shots that weren't goals in a recording's booking share: the save candidates the owner can approve. */
@@ -247,6 +250,19 @@ export async function saveCandidates(link: LinkedRecording): Promise<number[]> {
   return detectedShots(play.events, play.touches, pitchSizeOf(play.manifest), shotContext(play))
     .map((s) => s.t)
     .filter((t) => t >= link.fromSeconds && t <= link.toSeconds && !goals.some((g) => Math.abs(g.t - t) <= 3));
+}
+
+/**
+ * Moments a player can nominate as a skill (there is no skill detection): the dribbles the
+ * analysis saw in the recording's booking share, won ones first, each from its start.
+ */
+export async function skillCandidates(link: LinkedRecording): Promise<number[]> {
+  const play = await loadRecordingPlay(link.recordingId).catch(() => null);
+  if (!play?.hasBall) return [];
+  return play.dribbles
+    .filter((d) => d.t0 >= link.fromSeconds && d.t0 <= link.toSeconds)
+    .sort((a, b) => Number(b.outcome === "won") - Number(a.outcome === "won") || b.beaten - a.beaten || a.t0 - b.t0)
+    .map((d) => d.t0);
 }
 
 export async function awardVotes(awardIds: number[]) {

@@ -13,11 +13,14 @@ export type IgSlots = {
   nomineesDay: number; nomineesTime: string; votingEndDay: number; votingEndTime: string;
   winnerDay: number; winnerTime: string; winnerGapMinutes: number; minVotes: number;
   weekly: Record<IgWeeklyKind, { day: number; time: string }>;
-  openSlotsTime: string; boardTime: string; dayBestTime: string; highlightsPerDay: number; off: IgOptionalKind[];
+  openSlotsTime: string; boardTime: string; dayBestTime: string; highlightsPerDay: number;
+  /** "Same hour, free today" story time; what Match of the week opens on. */
+  sameHourTime: string; matchWeekHeadline: "dribbles" | "shots";
+  off: IgOptionalKind[];
 };
-export const IG_WEEKLY_KINDS = ["thanks", "top5", "player_week", "match_week", "versus"] as const;
+export const IG_WEEKLY_KINDS = ["thanks", "top5", "player_week", "match_week", "versus", "so_close", "pass_week", "skill_week", "best_goals"] as const;
 export type IgWeeklyKind = (typeof IG_WEEKLY_KINDS)[number];
-export const IG_OPTIONAL_KINDS = [...IG_WEEKLY_KINDS, "match_highlights", "day_best", "open_slots", "leaderboard", "milestone"] as const;
+export const IG_OPTIONAL_KINDS = [...IG_WEEKLY_KINDS, "match_highlights", "moment_day", "day_best", "same_hour", "open_slots", "leaderboard", "milestone"] as const;
 export type IgOptionalKind = (typeof IG_OPTIONAL_KINDS)[number];
 export type ConsentEvent = { id: number; oldMode: ConsentMode | null; newMode: ConsentMode; wording: string | null; by: string | null; at: string };
 export type IgItem = {
@@ -65,6 +68,8 @@ export const libraryPickKey = (clipId: number) => `lib:${clipId}`;
 /** Posts whose clips the owner can pick, and how many (lib/venues/igFieldPosts.ts PICKABLE). */
 export const IG_PICKABLE: Record<string, { min: number; max: number }> = {
   booking_clip: { min: 1, max: 1 }, versus: { min: 2, max: 2 }, top5: { min: 5, max: 5 }, match_highlights: { min: 2, max: 5 }, day_best: { min: 2, max: 5 },
+  moment_day: { min: 1, max: 1 }, so_close: { min: 1, max: 1 }, pass_week: { min: 1, max: 1 }, skill_week: { min: 1, max: 1 }, same_hour: { min: 1, max: 1 },
+  best_goals: { min: 3, max: 3 }, match_week: { min: 2, max: 5 },
 };
 export type IgNominee = { key: string; label: string; labelAr: string; source: string; value: number | null; bookingId: number; votes: number | null; thumbnailUrl: string | null };
 export type IgAward = {
@@ -82,13 +87,13 @@ export type InstagramData = {
   slots: Array<{ at: string; kind: "story" | "reel"; capacity: number }>;
   notPosted: Array<{ bookingId: number; reference: string; startLocal: string; reason: string; reasonAr: string }>;
   awards: IgAward[];
-  nominations: Array<{ id: number; source: "player" | "shot"; recordingId: number; bookingId: number | null; atSeconds: number; reference: string | null; startLocal: string | null; createdAt: string; thumbnailUrl: string | null }>;
+  nominations: Array<{ id: number; category?: "save" | "skill"; source: "player" | "shot"; recordingId: number; bookingId: number | null; atSeconds: number; reference: string | null; startLocal: string | null; createdAt: string; thumbnailUrl: string | null }>;
   flaggedRemovals: Array<{ id: number; itemId: number | null; bookingId: number | null; error: string | null; at: string }>;
   /** What the autopilot posts next that isn't on the calendar yet: there is always something. */
   suggestions: IgSuggestion[];
   days: number;
 };
-export type IgSuggestKind = IgWeeklyKind | "open_slots" | "leaderboard";
+export type IgSuggestKind = IgWeeklyKind | "open_slots" | "leaderboard" | "day_best" | "moment_day" | "same_hour";
 /** `at` is Amman local "YYYY-MM-DD HH:MM". */
 export type IgSuggestion = { kind: IgSuggestKind; placement: "story" | "reel"; at: string; originKey: string };
 export type IgToday = { autopilot: boolean; consentMode: ConsentMode; publishMode: "approve" | "auto"; items: IgItem[]; suggestions: IgSuggestion[] };
@@ -208,6 +213,8 @@ export type MatchInstagram = {
   optedOut?: boolean;
   canRemove?: boolean;
   saveCandidates?: Array<{ recordingId: number; atSeconds: number; thumbnailUrl: string | null; nominated: boolean }>;
+  /** Skill of the week: the game's dribbles, to nominate one as a skill. */
+  skillCandidates?: Array<{ recordingId: number; atSeconds: number; thumbnailUrl: string | null; nominated: boolean }>;
   awardsUrl?: string | null;
 };
 
@@ -220,7 +227,7 @@ export function useMatchInstagramActions(code: string) {
   const refresh = () => qc.invalidateQueries({ queryKey: ["match-instagram", code] });
   return {
     remove: useMutation({ mutationFn: () => venueCall<{ outcomes: Array<{ outcome: "deleted" | "flagged" | "withdrawn"; error: string | null }> }>(`/m/${encodeURIComponent(code)}/instagram/remove`, { method: "POST" }), onSuccess: refresh }),
-    nominate: useMutation({ mutationFn: (body: { recordingId: number; atSeconds: number }) => venueCall(`/m/${encodeURIComponent(code)}/instagram/nominate-save`, { method: "POST", ...json(body) }), onSuccess: refresh }),
+    nominate: useMutation({ mutationFn: (body: { recordingId: number; atSeconds: number; category?: "save" | "skill" }) => venueCall(`/m/${encodeURIComponent(code)}/instagram/nominate-save`, { method: "POST", ...json(body) }), onSuccess: refresh }),
   };
 }
 

@@ -10,13 +10,15 @@ import {
   type VenueIgAward,
   type VenueIgItem,
 } from "@workspace/db";
-import { awardTitle, countData, type CreativeData } from "@workspace/api-zod";
+import { awardTitle, countData, matchReelBars, matchReelChapters, matchReelStats, siteLine, type CreativeData, type ReelChapter } from "@workspace/api-zod";
 import { readClaimSegment } from "../claimMatchStorage";
 import { goalVotesFor, reviewedGoalsOf } from "../goalReview";
 import { logger } from "../logger";
 import { loadRecordingPlay } from "../matchPlayLoad";
 import { buildPlayerMetrics } from "../playerMetrics";
-import { addDays, ammanLocal, fromAmmanLocal, wallString } from "./core";
+import { labToHex } from "../demoShowcase";
+import { matchStats } from "../matchFeed";
+import { addDays, ammanLocal, fromAmmanLocal, wallString, weekday } from "./core";
 import {
   AWARDS,
   bookingLinks,
@@ -30,7 +32,7 @@ import {
   type Nominee,
   type RawMoment,
 } from "./igAwards";
-import { AWARD_ORDER, nowWall, weekStartOf, weeklyTimes, type AwardCategory, type IgSlotSettings } from "./igCalendar";
+import { AWARD_ORDER, DAY_MOMENT_ROTATION, nowWall, weekStartOf, weeklyTimes, type AwardCategory, type DayMomentKind, type IgSlotSettings } from "./igCalendar";
 import { wallMinutes } from "./core";
 import { bookingFootage, bookingRecordings, durationSeconds, inStretch, savedClipsOf, windowAround } from "./igPick";
 import { dayLabel, timeLabel, type Locale } from "./messages";
@@ -57,8 +59,8 @@ import { availability, type Venue } from "./store";
  */
 
 export type Window = { recordingId: number; fromMs: number; toMs: number };
-/** One design of a post. `clips`: a montage laid out for that many clips (2–5). */
-export type FieldPart = { templateKey: string; format: "story" | "post"; title: string; data: CreativeData; windows: Window[]; clips?: number };
+/** One design of a post. `clips`: a montage laid out for that many clips (2–5); `bars`: the Reel's stats bars (side A's share). */
+export type FieldPart = { templateKey: string; format: "story" | "post"; title: string; data: CreativeData; windows: Window[]; clips?: number; bars?: number[] };
 /** parts to render; skip: nothing to post (and why); wait: not ready yet (try again later). */
 export type FieldDesign = { parts: FieldPart[]; moment?: Record<string, unknown> } | { skip: string } | { wait: string };
 
@@ -90,6 +92,8 @@ export function fieldBits(venue: Venue, academy: Pick<Academy, "whatsappPhone" |
       endLine: reference ? (ar ? "حجز" : "Booking") : (ar ? "احجز ملعبك، وماتشك بيتصوّر" : "Book a pitch, your game gets filmed"),
       endBig: reference ?? phone,
       endSmall: ar ? "كل ماتش إله فيديو" : "Every game gets its video",
+      // Every post ends on it (Mohammed, 2026-11-07): the band and the end card.
+      siteLine: siteLine(ar),
     },
   };
 }
@@ -449,45 +453,170 @@ export async function thanksDesign(venue: Venue, academy: Academy, s: IgSlotSett
 
 // ─── Match of the week ───────────────────────────────────────────────────────
 
-export async function matchWeekDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale): Promise<FieldDesign> {
+/** A shirt colour's plain name (the web app's kitColourKey, read off the side's Lab colour). */
+const KIT_NAMES: Record<string, [string, string]> = {
+  red: ["Red", "الأحمر"], orange: ["Orange", "البرتقالي"], yellow: ["Yellow", "الأصفر"], green: ["Green", "الأخضر"], teal: ["Teal", "الفيروزي"],
+  sky: ["Sky blue", "السماوي"], blue: ["Blue", "الأزرق"], purple: ["Purple", "البنفسجي"], pink: ["Pink", "الزهري"], maroon: ["Maroon", "الخمري"],
+  dark: ["Black", "الأسود"], light: ["White", "الأبيض"],
+};
+export function kitColourKey(hex: string): string {
+  const match = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
+  if (!match) return "dark";
+  const [r, g, b] = [match[1], match[2], match[3]].map((x) => parseInt(x, 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  const delta = max - min;
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+  if (lightness < 0.2) return "dark";
+  if (saturation < 0.18) return lightness > 0.6 ? "light" : "dark";
+  let hue = max === r ? 60 * (((g - b) / delta) % 6) : max === g ? 60 * ((b - r) / delta + 2) : 60 * ((r - g) / delta + 4);
+  if (hue < 0) hue += 360;
+  if (hue < 15 || hue >= 345) return lightness < 0.33 ? "maroon" : "red";
+  if (hue < 42) return "orange";
+  if (hue < 68) return "yellow";
+  if (hue < 160) return "green";
+  if (hue < 190) return "teal";
+  if (hue < 205) return "sky";
+  if (hue < 255) return "blue";
+  if (hue < 290) return "purple";
+  return lightness < 0.33 ? "maroon" : "pink";
+}
+
+type StatRows = Array<[number, number] | null>;
+const MATCH_CHAPTERS_MAX = 5;
+
+/**
+ * A booking's team numbers as the Reel's rows (possession %, shots on target, dribbles won, passes
+ * completed), each row only when it is believable: two measured sides, possession adding up to
+ * about 100 and neither side under 15 %, counts a 5-a-side hour can reach. The sides' fix
+ * (per-game sides) isn't everywhere yet, so a row that fails is left off rather than shown wrong.
+ */
+export function plausibleStatRows(team: { sides: string[]; measured: boolean[]; possessionPercent: number[]; shots: number[]; dribblesWon: number[]; passesCompleted: number[] } | null): StatRows {
+  if (!team || team.sides.length !== 2 || !team.measured.every(Boolean)) return [null, null, null, null];
+  const pair = (v: number[] | undefined): [number, number] | null => (v && v.length === 2 && v.every((x) => Number.isFinite(x) && x >= 0) ? [Math.round(v[0]), Math.round(v[1])] : null);
+  const pos = pair(team.possessionPercent);
+  const possession = pos && Math.abs(pos[0] + pos[1] - 100) <= 3 && Math.min(...pos) >= 15 ? pos : null;
+  const counts = (v: number[], max: number, minTotal = 1) => {
+    const p = pair(v);
+    return p && p[0] + p[1] >= minTotal && Math.max(...p) <= max ? p : null;
+  };
+  return [possession, counts(team.shots, 30), counts(team.dribblesWon, 60), counts(team.passesCompleted, 400, 10)];
+}
+
+const CHAPTER_OF: Partial<Record<Nominee["source"], ReelChapter>> = { confirmed_goal: "goal", dribble: "dribble", save: "save", shot: "close", skill: "dribble" };
+
+/**
+ * Match of the week as a showcase of the stats (Mohammed, 2026-11-07): last week's game with the
+ * most moments (at least three), opening on its dribbles won or shots on target (the owner's
+ * choice, never the goals), then its moments in the order they happened (a goal, a dribble, a
+ * save, so close …, up to five), then the match stats when they are believable, then the end card.
+ */
+export async function matchWeekDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
   const t = weeklyTimes(s, "match_week", nowWall(slotAt));
-  const { raw } = await weekMoments(venue, t.gamesWeek);
+  const { raw, skills } = await weekMoments(venue, t.gamesWeek);
+  const all = [...bestMoments(raw), ...skills.map((m) => ({ ...m, rank: m.rank + 1800 }))];
   const byBooking = new Map<number, RawMoment[]>();
-  for (const g of raw.goal) byBooking.set(g.booking.id, [...(byBooking.get(g.booking.id) ?? []), g]);
-  const ranked = [...byBooking.values()].sort((a, b) => b.length - a.length || a[0].booking.startsAt.getTime() - b[0].booking.startsAt.getTime());
-  const goals = ranked[0];
-  if (!goals || goals.length < 3) return { skip: "No game last week had three confirmed goals" };
-  const ar = locale === "ar";
-  const booking = goals[0].booking;
-  const bits = fieldBits(venue, academy, locale, booking.reference);
-  const [best] = pickSpread(goals, 1, 1);
-  const n = await toNominee(best);
-  const w = { recordingId: n.recordingId, fromMs: n.fromMs, toMs: n.toMs };
-  const minutes = Math.round((booking.endsAt.getTime() - booking.startsAt.getTime()) / 60_000);
-  const span = ar ? (minutes === 60 ? "بساعة وحدة" : `بـ${minutes} دقيقة`) : (minutes === 60 ? "in one hour" : `in ${minutes} minutes`);
+  for (const m of all) byBooking.set(m.booking.id, [...(byBooking.get(m.booking.id) ?? []), m]);
+  const goalsOf = (list: RawMoment[]) => list.filter((m) => m.source === "confirmed_goal").length;
+  let booking: VenueBooking;
+  let nominees: Nominee[];
+  let moments: RawMoment[];
+  if (picks.length >= 2) {
+    // The owner's clips, from one game: that game's numbers.
+    nominees = picks.slice(0, MATCH_CHAPTERS_MAX);
+    const [b] = await db.select().from(venueBookingsTable).where(eq(venueBookingsTable.id, nominees[0].bookingId));
+    if (!b) return { skip: "The picked game's booking is gone" };
+    booking = b;
+    moments = byBooking.get(b.id) ?? [];
+  } else {
+    const ranked = [...byBooking.values()].sort((a, b) => b.length - a.length || goalsOf(b) - goalsOf(a) || a[0].booking.startsAt.getTime() - b[0].booking.startsAt.getTime());
+    moments = ranked[0] ?? [];
+    if (moments.length < 3) return { skip: "No game last week had three moments" };
+    booking = moments[0].booking;
+    // One of each kind first (goal, dribble, save, so close), then the next best, at most five.
+    const chosen: RawMoment[] = [];
+    const take = (m: RawMoment | undefined) => {
+      if (m && chosen.length < MATCH_CHAPTERS_MAX && !chosen.some((c) => c.link.recordingId === m.link.recordingId && Math.abs(c.t - m.t) < 6)) chosen.push(m);
+    };
+    const sorted = [...moments].sort((a, b) => b.rank - a.rank);
+    for (const src of ["confirmed_goal", "dribble", "save", "shot", "skill"] as const) take(sorted.find((m) => m.source === src));
+    for (const m of sorted) take(m);
+    nominees = await Promise.all(chosen.sort((a, b) => a.t - b.t).map((m) => toNominee(m)));
+    if (nominees.length < 2) return { skip: "No game last week had two separate moments" };
+  }
+  const a = isAr(locale);
+  const found = await bookingLinks(booking);
+  // The game minute of each moment (booking seconds: the recording's tracking time plus its offset).
+  const offsets = new Map((found?.links ?? []).map((l) => [l.recordingId, l.recordingOffsetSec]));
+  const minutes = nominees.map((n) => (n.atSeconds != null && offsets.has(n.recordingId) ? Math.floor((n.atSeconds + offsets.get(n.recordingId)!) / 60) + 1 : null));
+  const chapters = nominees.map((n) => CHAPTER_OF[n.source] ?? (n.clipId ? "pass" : "goal"));
+  // The stats, only rows that hold up.
+  let team: Awaited<ReturnType<typeof matchStats>>["team"] = null;
+  if (found) {
+    try {
+      team = (await matchStats(found.ctx, false)).team;
+    } catch (error) {
+      logger.warn({ bookingId: booking.id, error: (error as Error).message }, "Match of the week: reading the match stats failed");
+    }
+  }
+  const rows = plausibleStatRows(team);
+  const bars = matchReelBars(rows);
+  // The opening number: dribbles won or shots on target (from the stats when believable, else the moments found).
+  const counted = {
+    dribbles: rows[2] ? rows[2][0] + rows[2][1] : moments.filter((m) => m.source === "dribble").length,
+    shots: rows[1] ? rows[1][0] + rows[1][1] : moments.filter((m) => m.source === "shot" || m.source === "confirmed_goal").length,
+  };
+  const headKind = counted[s.matchWeekHeadline] > 0 ? s.matchWeekHeadline : counted.dribbles > 0 ? "dribbles" : counted.shots > 0 ? "shots" : null;
+  const head = headKind ? {
+    ...countData("head", counted[headKind]),
+    headLabel: headKind === "dribbles" ? (a ? "مراوغة ناجحة بالماتش" : "dribbles won in the game") : (a ? "تسديدة على المرمى بالماتش" : "shots on target in the game"),
+  } : {};
+  const kit = (i: number) => {
+    const lab = team?.colours?.[i];
+    const name = lab ? KIT_NAMES[kitColourKey(labToHex(lab))] : null;
+    return name ? name[a ? 1 : 0] : null;
+  };
+  let [teamA, teamB] = [kit(0), kit(1)];
+  if (!teamA || !teamB || teamA === teamB) [teamA, teamB] = a ? ["الفريق أ", "الفريق ب"] : ["Side A", "Side B"];
+  const facts = (await labelsFor(booking));
+  const where = a ? facts.labelAr : facts.label;
+  const bits = fieldBits(venue, academy, locale);
+  const tonight = await freeTimes(venue, ammanLocal(slotAt).slice(0, 10), slotAt, locale);
+  const windows = nominees.map((n) => nomineeWindow(n, 2.6, 4_400));
   return {
-    moment: { bookingIds: [booking.id] },
+    moment: { bookingIds: [booking.id], stats: rows },
     parts: [{
-      templateKey: "field-match-week",
+      templateKey: "field-match-week-reel",
       format: "story",
-      title: ar ? `ماتش الأسبوع · ${booking.reference}` : `Match of the week · ${booking.reference}`,
-      windows: [w],
+      clips: windows.length,
+      bars,
+      title: a ? `ماتش الأسبوع · ${booking.reference}` : `Match of the week · ${booking.reference}`,
+      windows,
       data: {
         academy: bits.academy,
-        media: recording(w),
+        media: recording(windows[0]),
+        more: windows.slice(1).map(recording),
         custom: {
           ...bits.custom,
-          kicker: ar ? "ماتش الأسبوع" : "Match of the week",
-          ...countData("goals", goals.length),
-          goalsLabel: ar ? `جول ${span}` : `goals ${span}`,
-          headline: ar ? `${goals.length} جول بماتش واحد` : `${goals.length} goals, one game`,
-          meta: ar ? n.labelAr : n.label,
+          ...slotsEnd(tonight, venuePhone(academy), a),
+          kicker: a ? "ماتش الأسبوع" : "Match of the week",
+          title: a ? "أحلى ماتش على أرضنا" : "Best game on our pitches",
+          ...head,
+          meta: where,
+          ...matchReelChapters(a, chapters, minutes),
+          ...(bars.length ? {
+            statsMeta: where,
+            statsTitle: a ? "أرقام الماتش" : "Match stats",
+            teamA, teamB,
+            ...matchReelStats(a, rows),
+            statsNote: a ? "عدّها Replay من الفيديو · بدون أسماء" : "Counted by Replay from the video · no names",
+          } : {}),
         },
       },
     }],
   };
 }
-
 // ─── Picked clips, match highlights and the day's best ───────────────────────
 
 /** A window on a nominee's moment: `leadSec` before it (a dribble or a sprint from its own start). */
@@ -503,6 +632,13 @@ export const PICKABLE: Record<string, { min: number; max: number }> = {
   top5: { min: 5, max: 5 },
   match_highlights: { min: 2, max: 5 },
   day_best: { min: 2, max: 5 },
+  moment_day: { min: 1, max: 1 },
+  so_close: { min: 1, max: 1 },
+  pass_week: { min: 1, max: 1 },
+  skill_week: { min: 1, max: 1 },
+  same_hour: { min: 1, max: 1 },
+  best_goals: { min: 3, max: 3 },
+  match_week: { min: 2, max: 5 },
 };
 
 const momentsOfDay = async (venue: Venue, date: string): Promise<RawMoment[]> => {
@@ -534,6 +670,29 @@ function itemScope(item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSet
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
       return { weekStart: weekStartOf(wallMinutes(`${date} 12:00`)), keep: (b) => b.startLocal.slice(0, 10) === date };
     }
+    case "moment_day": {
+      // Posted on `moment:<date>` about the day before.
+      const date = item.originKey.slice("moment:".length);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      const games = addDays(date, -1);
+      return { weekStart: weekStartOf(wallMinutes(`${games} 12:00`)), keep: (b) => b.startLocal.slice(0, 10) === games };
+    }
+    case "same_hour": {
+      // The last seven days' games (the week holding the day before; earlier days of that week too).
+      const date = item.originKey.slice("samehour:".length);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+      const from = addDays(date, -7);
+      return { weekStart: weekStartOf(wallMinutes(`${addDays(date, -1)} 12:00`)), keep: (b) => b.startLocal.slice(0, 10) >= from && b.startLocal.slice(0, 10) < date };
+    }
+    case "so_close":
+    case "pass_week":
+    case "skill_week":
+    case "match_week":
+      return { weekStart: weeklyTimes(s, item.kind, nowWall(slotAt)).gamesWeek, keep: () => true };
+    case "best_goals": {
+      const t = weeklyTimes(s, "best_goals", nowWall(slotAt));
+      return { weekStart: t.gamesWeek, until: fromAmmanLocal(wallString(t.gamesUntil!)) ?? slotAt, keep: () => true };
+    }
     default: return null;
   }
 }
@@ -546,7 +705,11 @@ function itemScope(item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSet
 export async function itemMoments(venue: Venue, item: VenueIgItem, booking: VenueBooking | null, s: IgSlotSettings, now: Date): Promise<RawMoment[]> {
   const scope = itemScope(item, booking, s, now);
   if (!scope) return [];
-  return bestMoments((await weekMoments(venue, scope.weekStart, scope.until)).raw).filter((m) => scope.keep(m.booking));
+  const { raw, skills } = await weekMoments(venue, scope.weekStart, scope.until);
+  // A post about one kind offers that kind; the rest offer every kind, skills too.
+  const list = item.kind === "skill_week" ? skills : item.kind === "so_close" ? raw.shot : item.kind === "best_goals" ? raw.goal
+    : [...bestMoments(raw), ...skills.map((m) => ({ ...m, rank: m.rank + 1800 }))].sort((a, b) => b.rank - a.rank);
+  return list.filter((m) => scope.keep(m.booking));
 }
 
 /** Frames offered from one game when the owner picks by eye: one every ~5 minutes, 4 to 12. */
@@ -856,27 +1019,56 @@ export async function milestoneDesign(venue: Venue, academy: Academy, count: num
   };
 }
 
-/** Tonight's free kick-offs: the earliest four, across pitches, from now to closing. */
-export async function openSlotsDesign(venue: Venue, academy: Academy, date: string, now: Date, locale: Locale): Promise<FieldDesign> {
+type FreeTime = { start: string; pitch: string; minutes: number };
+
+/**
+ * A day's free kick-offs from now to closing: one per time (the first free pitch), on the hour or
+ * half hour, earliest first. `from` ("HH:MM") and `before` narrow it to part of the day.
+ */
+async function freeTimes(venue: Venue, date: string, now: Date, locale: Locale, opts: { from?: string; before?: string; limit?: number } = {}): Promise<FreeTime[]> {
   const ar = locale === "ar";
   const pitches = await availability(venue, date);
   const nowLocal = ammanLocal(now);
-  const free: Array<{ start: string; pitch: string; minutes: number }> = [];
+  const free: FreeTime[] = [];
   for (const p of pitches) {
     for (const slot of p.slots) {
       if (!slot.available || slot.startLocal <= nowLocal) continue;
+      const hm = slot.startLocal.slice(11, 16);
+      if ((opts.from && hm < opts.from) || (opts.before && hm >= opts.before)) continue;
       const option = slot.options.find((o) => o.available);
       if (!option) continue;
       free.push({ start: slot.startLocal, pitch: (ar ? p.nameAr || p.name : p.name) ?? "", minutes: option.minutes });
     }
   }
-  // One row per kick-off time (the first free pitch), on the hour or half hour.
-  const rows: typeof free = [];
+  const rows: FreeTime[] = [];
   for (const f of free.sort((a, b) => a.start.localeCompare(b.start) || a.pitch.localeCompare(b.pitch))) {
-    if (rows.length >= 4) break;
+    if (rows.length >= (opts.limit ?? 3)) break;
     if (!/:(00|30)$/.test(f.start) || rows.some((r) => r.start === f.start)) continue;
     rows.push(f);
   }
+  return rows;
+}
+
+/** "8:00 · 10:00 · 11:00": kick-offs on an end card, the hour only (the line says tonight or today). */
+const clockOnly = (start: string) => {
+  const [h, m] = start.slice(11, 16).split(":").map(Number);
+  return `${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")}`;
+};
+
+/** The end card listing free kick-offs instead of the phone number (the phone goes under them). */
+function slotsEnd(rows: FreeTime[], phone: string, ar: boolean, today = false): Record<string, string> {
+  if (!rows.length) return {};
+  return {
+    endLine: ar ? (today ? "فاضي اليوم، الساعة" : "فاضي الليلة، الساعة") : (today ? "Free today at" : "Free tonight at"),
+    endBig: rows.map((r) => clockOnly(r.start)).join(" · "),
+    endSmall: phone ? (ar ? `احجز: \u2066${phone}\u2069` : `Book: ${phone}`) : (ar ? "احجز من الرابط" : "Book from the link"),
+  };
+}
+
+/** Tonight's free kick-offs: the earliest three, across pitches, from now to closing. */
+export async function openSlotsDesign(venue: Venue, academy: Academy, date: string, now: Date, locale: Locale): Promise<FieldDesign> {
+  const ar = locale === "ar";
+  const rows = await freeTimes(venue, date, now, locale);
   if (!rows.length) return { skip: "Nothing free tonight" };
   const bits = fieldBits(venue, academy, locale);
   const custom: Record<string, string> = {
@@ -893,6 +1085,206 @@ export async function openSlotsDesign(venue: Venue, academy: Academy, date: stri
   return {
     moment: { date, starts: rows.map((r) => r.start) },
     parts: [{ templateKey: "field-open-slots", format: "story", title: `${ar ? "ملاعب فاضية" : "Free tonight"} · ${dayLabel(date, locale)}`, windows: [], data: { academy: bits.academy, custom } }],
+  };
+}
+
+// ─── One moment: of the day, so close, pass, skill, same hour ────────────────
+
+const nomineeWin = (n: Nominee): Window => ({ recordingId: n.recordingId, fromMs: n.fromMs, toMs: n.toMs });
+const label = (n: Nominee, ar: boolean) => (ar ? n.labelAr : n.label);
+
+/** One moment on the award-style template (opening card, the clip, the end card). */
+function momentPart(venue: Venue, academy: Academy, locale: Locale, templateKey: string, title: string, n: Nominee, words: Record<string, string>): FieldDesign {
+  const bits = fieldBits(venue, academy, locale);
+  const w = nomineeWin(n);
+  return {
+    moment: { bookingIds: n.bookingId ? [n.bookingId] : [], key: n.key },
+    parts: [{
+      templateKey,
+      format: "story",
+      title,
+      windows: [w],
+      data: { academy: bits.academy, media: recording(w), custom: { ...bits.custom, meta: label(n, isAr(locale)), ...words } },
+    }],
+  };
+}
+const isAr = (locale: Locale) => locale === "ar";
+
+const DAY_WORDS: Record<DayMomentKind | "shot", { kicker: [string, string]; title: [string, string] }> = {
+  goal: { kicker: ["Yesterday's best goal", "أحلى جول مبارح"], title: ["Goal of the day", "جول اليوم"] },
+  dribble: { kicker: ["Yesterday's best dribble", "أحلى مراوغة مبارح"], title: ["Dribble of the day", "مراوغة اليوم"] },
+  skill: { kicker: ["Yesterday's best skill", "أحلى حركة مبارح"], title: ["Skill of the day", "حركة اليوم"] },
+  save: { kicker: ["Yesterday's best save", "أحلى تصدّي مبارح"], title: ["Save of the day", "تصدّي اليوم"] },
+  shot: { kicker: ["Yesterday's best shot", "أحلى تسديدة مبارح"], title: ["Shot of the day", "تسديدة اليوم"] },
+};
+const kindOfSource = (source: Nominee["source"]): DayMomentKind | "shot" =>
+  source === "confirmed_goal" ? "goal" : source === "dribble" ? "dribble" : source === "skill" ? "skill" : source === "save" ? "save" : "shot";
+
+/** A day's moments by kind: confirmed goals, dribbles won, approved saves and skills, shots on target. */
+async function dayMoments(venue: Venue, gamesDay: string): Promise<Record<DayMomentKind | "shot", RawMoment[]>> {
+  const { raw, skills } = await weekMoments(venue, weekStartOf(wallMinutes(`${gamesDay} 12:00`)));
+  const on = (list: RawMoment[]) => list.filter((m) => m.booking.startLocal.slice(0, 10) === gamesDay);
+  return { goal: on(raw.goal), dribble: on(raw.dribble), save: on(raw.save), skill: on(skills), shot: on(raw.shot) };
+}
+
+/**
+ * The moment of the day (Mohammed, 2026-11-07): yesterday's best of one kind, by the post's
+ * weekday (goal, dribble, skill, goal, save, goal, dribble from Sunday); when that kind has none,
+ * a goal, a dribble, a save, a skill, a shot. The end card lists tonight's free kick-offs.
+ */
+export async function momentDayDesign(venue: Venue, academy: Academy, date: string, now: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
+  const gamesDay = addDays(date, -1);
+  const want = DAY_MOMENT_ROTATION[weekday(date)];
+  let n: Nominee | null = picks[0] ?? null;
+  let kind: DayMomentKind | "shot" = n ? kindOfSource(n.source) : want;
+  if (!n) {
+    const byKind = await dayMoments(venue, gamesDay);
+    const order = [...new Set<DayMomentKind | "shot">([want, "goal", "dribble", "save", "skill", "shot"])];
+    const found = order.find((k) => byKind[k].length > 0);
+    if (!found) return { skip: "No moments yesterday" };
+    kind = found;
+    n = await toNominee(pickSpread(byKind[found], 1, 1)[0]);
+  }
+  const a = isAr(locale);
+  const w = DAY_WORDS[kind];
+  const tonight = await freeTimes(venue, date, now, locale, { from: "17:00" });
+  const design = momentPart(venue, academy, locale, "field-day-moment", `${a ? w.title[1] : w.title[0]} · ${gamesDay}`, n, {
+    kicker: a ? w.kicker[1] : w.kicker[0],
+    title: a ? w.title[1] : w.title[0],
+    ...slotsEnd(tonight, venuePhone(academy), a),
+  });
+  if ("parts" in design) design.moment = { ...design.moment, kind, gamesDay };
+  return design;
+}
+
+/** So close of the week: last week's shot on target that wasn't a goal (the owner can pick another). */
+export async function soCloseDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
+  const t = weeklyTimes(s, "so_close", nowWall(slotAt));
+  let n = picks[0] ?? null;
+  if (!n) {
+    const { raw } = await weekMoments(venue, t.gamesWeek);
+    const [best] = pickSpread(raw.shot, 1, 1);
+    if (!best) return { skip: "No shot on target that wasn't a goal last week" };
+    n = await toNominee(best);
+  }
+  const a = isAr(locale);
+  return momentPart(venue, academy, locale, "field-so-close", `${a ? "كانت رح تفوت" : "So close"} · ${t.gamesWeek}`, n, {
+    kicker: a ? "أقرب فرصة الأسبوع الماضي" : "Last week's closest call",
+    title: a ? "كانت رح تفوت!" : "So close!",
+  });
+}
+
+/**
+ * Pass of the week: the analysis doesn't pick passes out, so it is a clip someone cut as a pass
+ * (the library's "pass" clips, last week's games: `nominee`) or the owner's pick.
+ */
+export function passWeekDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale, picks: Nominee[] = [], nominee: Nominee | null = null): FieldDesign {
+  const t = weeklyTimes(s, "pass_week", nowWall(slotAt));
+  const n = picks[0] ?? nominee;
+  if (!n) return { skip: "No pass clip from last week's games: pick one" };
+  const a = isAr(locale);
+  return momentPart(venue, academy, locale, "field-pass-week", `${a ? "تمريرة الأسبوع" : "Pass of the week"} · ${t.gamesWeek}`, n, {
+    kicker: a ? "لقاها زميله من بعيد" : "Found from far away",
+    title: a ? "تمريرة الأسبوع" : "Pass of the week",
+  });
+}
+
+/** Skill of the week: last week's approved skill nominations (players nominate, the owner approves). */
+export async function skillWeekDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
+  const t = weeklyTimes(s, "skill_week", nowWall(slotAt));
+  let n = picks[0] ?? null;
+  if (!n) {
+    const { skills } = await weekMoments(venue, t.gamesWeek);
+    const [best] = pickSpread(skills, 1, 1);
+    if (!best) return { skip: "No skill was nominated and approved last week" };
+    n = await toNominee(best);
+  }
+  const a = isAr(locale);
+  return momentPart(venue, academy, locale, "field-skill-week", `${a ? "حركة الأسبوع" : "Skill of the week"} · ${t.gamesWeek}`, n, {
+    kicker: a ? "أحلى حركة الأسبوع الماضي" : "Last week's best skill",
+    title: a ? "حركة الأسبوع" : "Skill of the week",
+  });
+}
+
+/**
+ * Same hour, free today: an afternoon kick-off still free today, over a moment from a game played
+ * around that hour in the last seven days (within an hour of it). The end card lists today's free
+ * afternoon times.
+ */
+export async function sameHourDesign(venue: Venue, academy: Academy, date: string, now: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
+  const a = isAr(locale);
+  const free = await freeTimes(venue, date, now, locale, { from: "12:00", before: "18:00", limit: 6 });
+  if (!free.length) return { skip: "Nothing free this afternoon" };
+  const minuteOf = (local: string) => Number(local.slice(11, 13)) * 60 + Number(local.slice(14, 16));
+  let slot = free[0];
+  let n: Nominee | null = picks[0] ?? null;
+  let when = "";
+  if (!n) {
+    const from = addDays(date, -7);
+    const weeks = [...new Set([weekStartOf(wallMinutes(`${from} 12:00`)), weekStartOf(wallMinutes(`${addDays(date, -1)} 12:00`))])];
+    const moments: RawMoment[] = [];
+    for (const w of weeks) {
+      const { raw, skills } = await weekMoments(venue, w);
+      moments.push(...bestMoments(raw), ...skills.map((m) => ({ ...m, rank: m.rank + 1800 })));
+    }
+    const recent = moments.filter((m) => { const d = m.booking.startLocal.slice(0, 10); return d >= from && d < date; });
+    let found: RawMoment | null = null;
+    for (const f of free) {
+      const near = recent.filter((m) => Math.abs(minuteOf(m.booking.startLocal) - minuteOf(f.start)) <= 60);
+      const [best] = pickSpread(near, 1, 1);
+      if (best) { slot = f; found = best; break; }
+    }
+    if (!found) return { skip: "No moment from a game around a free afternoon hour this week" };
+    n = await toNominee(found);
+    when = `${dayLabel(found.booking.startLocal.slice(0, 10), locale)} · ${timeLabel(found.booking.startLocal.slice(11, 16), locale)}`;
+  } else {
+    // The pick's own day and time (its label: "Thu 6 Nov · 9:00 pm · Pitch 2"), the hour nearest it.
+    when = label(n, a).split(" · ").slice(0, 2).join(" · ");
+  }
+  const design = momentPart(venue, academy, locale, "field-same-hour", `${a ? "نفس الساعة" : "Same hour"} · ${date}`, n, {
+    kicker: when,
+    title: a ? "نفس الساعة، فاضية اليوم" : "Same hour, free today",
+    ...slotsEnd(free.filter((f) => f.start >= slot.start).slice(0, 3), venuePhone(academy), a, true),
+  });
+  if ("parts" in design) {
+    design.parts[0].data.custom = { ...design.parts[0].data.custom, meta: [a ? `اليوم ${timeLabel(slot.start.slice(11), locale)}` : `Today ${timeLabel(slot.start.slice(11), locale)}`, slot.pitch].filter(Boolean).join(" · ") };
+    design.moment = { ...design.moment, date, start: slot.start };
+  }
+  return design;
+}
+
+// ─── Best goals of the week ──────────────────────────────────────────────────
+
+/** This week's three best confirmed goals so far, counted down (#1 is data.media). */
+export async function bestGoalsDesign(venue: Venue, academy: Academy, s: IgSlotSettings, slotAt: Date, locale: Locale, picks: Nominee[] = []): Promise<FieldDesign> {
+  const t = weeklyTimes(s, "best_goals", nowWall(slotAt));
+  let nominees: Nominee[];
+  if (picks.length >= 3) {
+    nominees = picks.slice(0, 3);
+  } else {
+    const until = fromAmmanLocal(wallString(t.gamesUntil!)) ?? slotAt;
+    const { raw } = await weekMoments(venue, t.gamesWeek, until);
+    const three = pickSpread(raw.goal, 3, 2);
+    if (three.length < 3) return { skip: "Fewer than three confirmed goals this week" };
+    nominees = await Promise.all(three.map((m) => toNominee(m)));
+  }
+  const a = isAr(locale);
+  const windows = nominees.map((n) => nomineeWindow(n, 2.4, 6_000));
+  const bits = fieldBits(venue, academy, locale);
+  const custom: Record<string, string> = { ...bits.custom, kicker: a ? "هالأسبوع على أرضنا" : "This week on our pitches", title: a ? "أحلى 3 أجوال" : "Top 3 goals" };
+  nominees.forEach((n, i) => {
+    custom[`l${i + 1}`] = i === 0 ? (a ? "جول الأسبوع" : "Goal of the week") : sourceLabel(n.source, a);
+    custom[`m${i + 1}`] = label(n, a);
+  });
+  return {
+    moment: { bookingIds: [...new Set(nominees.map((n) => n.bookingId))] },
+    parts: [{
+      templateKey: "field-best-goals",
+      format: "story",
+      title: a ? `أحلى 3 أجوال · ${t.gamesWeek}` : `Top 3 goals · ${t.gamesWeek}`,
+      windows,
+      data: { academy: bits.academy, media: recording(windows[0]), more: windows.slice(1).map(recording), custom },
+    }],
   };
 }
 

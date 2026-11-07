@@ -35,8 +35,14 @@ import { addDays, ammanLocal, fromAmmanLocal, normaliseHours, wallMinutes, wallS
 import { AWARDS, closeVoting, pickSpread, readNominees, toNominee, weekCandidates, type Nominee } from "./igAwards";
 import {
   PICKABLE,
+  bestGoalsDesign,
   bookingClipDesign,
   dayBestDesign,
+  momentDayDesign,
+  passWeekDesign,
+  sameHourDesign,
+  skillWeekDesign,
+  soCloseDesign,
   itemExtraClips,
   itemMoments,
   gamesFilmed,
@@ -76,7 +82,9 @@ import {
   type IgSlotSettings,
 } from "./igCalendar";
 import { CONSENT_REASON_TEXT, bookingPostable, consentMode, type ConsentRef, type IgConsentMode } from "./igConsent";
-import { unbookedStillPostable } from "./igLibrary";
+import { itemLibraryClips, libraryNominee, unbookedStillPostable } from "./igLibrary";
+import { parseLibraryFilters } from "../creative/library";
+import { dailyOff } from "./igSuggest";
 import { checkInstagram, deleteInstagramMedia, mediaInsights } from "./igGraph";
 import { bookingFootage, pickBookingClip } from "./igPick";
 import { dayLabel, timeLabel, type Locale } from "./messages";
@@ -351,13 +359,40 @@ export async function designFor(venue: Venue, academy: Academy, item: VenueIgIte
     }
     case "day_best": return dayBestDesign(venue, academy, item.originKey.slice("day:".length), locale, picks);
     case "thanks": return thanksDesign(venue, academy, slots, slotAt, locale);
-    case "match_week": return matchWeekDesign(venue, academy, slots, slotAt, locale);
+    case "match_week": return matchWeekDesign(venue, academy, slots, slotAt, locale, picks);
+    case "moment_day": {
+      const d = await momentDayDesign(venue, academy, item.originKey.slice("moment:".length), now, locale, picks);
+      // Nothing of any one kind yesterday: the day's best, as before.
+      return "skip" in d ? dayBestDesign(venue, academy, addDays(item.originKey.slice("moment:".length), -1), locale) : d;
+    }
+    case "same_hour": return sameHourDesign(venue, academy, item.originKey.slice("samehour:".length), now, locale, picks);
+    case "so_close": return soCloseDesign(venue, academy, slots, slotAt, locale, picks);
+    case "pass_week": return passWeekDesign(venue, academy, slots, slotAt, locale, picks, picks.length ? null : await passNominee(venue, item, slots, slotAt));
+    case "skill_week": return skillWeekDesign(venue, academy, slots, slotAt, locale, picks);
+    case "best_goals": return bestGoalsDesign(venue, academy, slots, slotAt, locale, picks);
     case "player_week": return playerWeekDesign(venue, academy, slots, slotAt, locale);
     case "milestone": return milestoneDesign(venue, academy, Number((item.moment as { count?: number } | null)?.count ?? 0), now, locale);
     case "open_slots": return openSlotsDesign(venue, academy, item.originKey.slice("slots:".length), now, locale);
     case "leaderboard": return leaderboardDesign(venue, academy, item.originKey.slice("board:".length), locale);
     default: return { skip: `Unknown kind ${item.kind}` };
   }
+}
+
+/**
+ * Pass of the week's clip when the owner picked none: last week's clip cut as a pass (the
+ * library's "pass" clips; a player's own cut before Replay's), from games the field may post.
+ */
+async function passNominee(venue: Venue, item: VenueIgItem, s: IgSlotSettings, slotAt: Date): Promise<Nominee | null> {
+  const week = weeklyTimes(s, "pass_week", nowWall(slotAt)).gamesWeek;
+  const filters = { ...parseLibraryFilters({}, { limit: 24, maxLimit: 24 }), from: fromAmmanLocal(`${week} 00:00`), until: fromAmmanLocal(`${addDays(week, 7)} 00:00`) };
+  for (const origin of ["player", "auto"] as const) {
+    const { clips } = await itemLibraryClips(venue, item, { filters, origin, kind: "pass", sort: "newest" });
+    for (const c of clips) {
+      const n = await libraryNominee(venue, item, c.clipId);
+      if (n) return n;
+    }
+  }
+  return null;
 }
 
 /**
@@ -369,7 +404,7 @@ async function sceneFor(part: FieldPart, locale: Locale, own: Map<string, Scene>
   // A montage is laid out for its own number of clips, unless the field replaced the template.
   const montage = part.clips && !own.has(`${part.templateKey}:${part.format}`);
   let scene = sceneSchema.parse(montage
-    ? buildFieldMontage(part.templateKey as FieldTemplateKey, part.clips!, part.format, locale)
+    ? buildFieldMontage(part.templateKey as FieldTemplateKey, part.clips!, part.format, locale, { bars: part.bars })
     : withReplacements(own, buildTemplateScene)(part.templateKey, FIELD_STYLE, part.format, locale));
   if (scene.durationMs === undefined) return scene;
   const framed = new Map<string, Promise<Awaited<ReturnType<typeof framingFor>> | null>>();
@@ -856,11 +891,25 @@ export async function scheduleFieldPosts(venue: Venue, now = new Date()): Promis
     // Late: what's free is read as it renders, so it is made just an hour before.
     if (nowM >= at - 60 && nowM < at + IG_GRACE_MINUTES && await pinItem(venue, `slots:${today}`, "open_slots", "story", at, now)) added += 1;
   }
-  if (!off.has("day_best")) {
+  // The moment of the day takes the best of the day's slot while it is on (dailyOff).
+  const daily = dailyOff(s);
+  if (!daily.has("day_best")) {
     // Yesterday's best clips, at dayBestTime (the key is the games' day).
     const today = ammanLocal(now).slice(0, 10);
     const at = wallMinutes(`${today} ${s.dayBestTime}`);
     if (inWindow(at) && await pinItem(venue, `day:${addDays(today, -1)}`, "day_best", "reel", at, now)) added += 1;
+  }
+  if (!daily.has("moment_day")) {
+    // Yesterday's moment, at dayBestTime; it ends on tonight's free kick-offs, so it is made just an hour before.
+    const today = ammanLocal(now).slice(0, 10);
+    const at = wallMinutes(`${today} ${s.dayBestTime}`);
+    if (nowM >= at - 60 && nowM < at + IG_GRACE_MINUTES && await pinItem(venue, `moment:${today}`, "moment_day", "reel", at, now)) added += 1;
+  }
+  if (!daily.has("same_hour")) {
+    // An afternoon hour still free today, read from the booking grid: made an hour before too.
+    const today = ammanLocal(now).slice(0, 10);
+    const at = wallMinutes(`${today} ${s.sameHourTime}`);
+    if (nowM >= at - 60 && nowM < at + IG_GRACE_MINUTES && await pinItem(venue, `samehour:${today}`, "same_hour", "story", at, now)) added += 1;
   }
   if (!off.has("match_highlights")) added += await scheduleHighlights(venue, s, now);
   if (!off.has("leaderboard")) {

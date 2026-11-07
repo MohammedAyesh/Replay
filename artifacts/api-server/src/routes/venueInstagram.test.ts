@@ -919,8 +919,25 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     for (const i of got.body.items as Array<{ id: number }>) expect((await items()).some((x) => x.id === i.id)).toBe(true);
   });
 
-  it("puts yesterday's best clips on at its own time, under the games' day", async () => {
+  it("puts the moment of the day on an hour before its time, in place of the day's best", async () => {
     await db.update(venueSettingsTable).set({ igSlots: { dayBestTime: "13:00" } }).where(eq(venueSettingsTable.academyId, venueId));
+    const venue = (await loadVenue(venueId))!;
+    const today = ammanLocal(new Date()).slice(0, 10);
+    // It ends on tonight's free kick-offs: not made three hours ahead, only one.
+    await scheduleFieldPosts(venue, fromAmmanLocal(`${today} 10:00`)!);
+    expect((await items()).some((i) => i.originKey === `moment:${today}`)).toBe(false);
+    await scheduleFieldPosts(venue, fromAmmanLocal(`${today} 12:10`)!);
+    const [moment] = (await items()).filter((i) => i.originKey === `moment:${today}`);
+    expect(moment).toMatchObject({ kind: "moment_day", placement: "reel" });
+    expect((await items()).some((i) => i.originKey === `day:${addDays(today, -1)}`)).toBe(false);
+    const cands = await request(app).get(`${ig()}/items/${moment.id}/candidates`).set(auth(ownerId)).expect(200);
+    expect(cands.body).toMatchObject({ min: 1, max: 1 });
+    await db.delete(venueIgItemsTable).where(eq(venueIgItemsTable.id, moment.id));
+    await db.update(venueSettingsTable).set({ igSlots: {} }).where(eq(venueSettingsTable.academyId, venueId));
+  });
+
+  it("puts yesterday's best clips on at its own time, under the games' day", async () => {
+    await db.update(venueSettingsTable).set({ igSlots: { dayBestTime: "13:00", off: ["moment_day"] } }).where(eq(venueSettingsTable.academyId, venueId));
     const venue = (await loadVenue(venueId))!;
     const today = ammanLocal(new Date()).slice(0, 10);
     // Three hours before 13:00 is inside the render-ahead window.
