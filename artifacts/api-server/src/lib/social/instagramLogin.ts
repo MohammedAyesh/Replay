@@ -1,11 +1,11 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { academySocialAccountsTable, db } from "@workspace/db";
+import { academyMembersTable, academySocialAccountsTable, db } from "@workspace/db";
 import { metaConfig } from "../meta/config";
 import { encryptToken } from "../meta/crypto";
 import { graphGetWithStatus, MetaGraphError } from "../meta/graph";
 import { logger } from "../logger";
-import { accountByInstagram, getSocialAccount, saveSocialAccount } from "./account";
+import { getSocialAccount, saveSocialAccount } from "./account";
 
 const STATE_KEY = "__replayInstagramLogin";
 export const INSTAGRAM_ASSETS_PENDING = "instagram_assets_pending";
@@ -323,17 +323,8 @@ async function saveInstagramOnly(
   lookup: InstagramAssetLookup,
 ) {
   await assertNoFacebookPage(academyId);
-  const other = await accountByInstagram(asset.id);
-  if (other && other.academyId !== academyId) {
-    logger.info({
-      lookup,
-      instagramId: asset.id,
-      academyId,
-      alreadyConnectedAcademyId: other.academyId,
-    }, "Instagram account is already connected to another academy");
-    throw new MetaGraphError("That Instagram account is already connected to another academy on Replay.", 409);
-  }
-  return saveSocialAccount(academyId, {
+  const now = new Date();
+  const patch = {
     tokenEnc: encryptToken(token),
     pageId: null,
     pageName: null,
@@ -347,8 +338,77 @@ async function saveInstagramOnly(
     postsSyncedAt: null,
     status: "connected",
     error: null,
-    connectedAt: new Date(),
+    connectedAt: now,
     connectedBy: userId,
+  } as const;
+  return db.transaction(async (tx) => {
+    const [target] = await tx.select({ pageId: academySocialAccountsTable.pageId })
+      .from(academySocialAccountsTable)
+      .where(eq(academySocialAccountsTable.academyId, academyId))
+      .limit(1);
+    if (target?.pageId) {
+      throw new MetaGraphError("A Facebook Page is already connected to this academy. Continue using its existing Facebook connection.", 409);
+    }
+
+    const [other] = await tx.select().from(academySocialAccountsTable)
+      .where(eq(academySocialAccountsTable.igUserId, asset.id))
+      .limit(1)
+      .for("update");
+    if (other && other.academyId !== academyId) {
+      const [sourceOwner] = await tx.select({ userId: academyMembersTable.userId })
+        .from(academyMembersTable)
+        .where(and(
+          eq(academyMembersTable.academyId, other.academyId),
+          eq(academyMembersTable.userId, userId),
+          eq(academyMembersTable.role, "owner"),
+        ))
+        .limit(1);
+      if (!sourceOwner) {
+        logger.info({
+          lookup,
+          instagramId: asset.id,
+          academyId,
+          alreadyConnectedAcademyId: other.academyId,
+          transferAllowed: false,
+        }, "Instagram account transfer denied because the user does not own the current academy");
+        throw new MetaGraphError("Only an owner of the academy currently connected to this Instagram account can transfer it.", 403);
+      }
+
+      if (other.pageId) {
+        await tx.update(academySocialAccountsTable).set({
+          igUserId: null,
+          igUsername: null,
+          igPicture: null,
+          updatedAt: now,
+        }).where(and(
+          eq(academySocialAccountsTable.academyId, other.academyId),
+          eq(academySocialAccountsTable.igUserId, asset.id),
+        ));
+      } else {
+        await tx.delete(academySocialAccountsTable).where(and(
+          eq(academySocialAccountsTable.academyId, other.academyId),
+          eq(academySocialAccountsTable.igUserId, asset.id),
+        ));
+      }
+      logger.info({
+        lookup,
+        instagramId: asset.id,
+        fromAcademyId: other.academyId,
+        toAcademyId: academyId,
+        retainedFacebookPage: Boolean(other.pageId),
+      }, "Instagram account transferred between academies");
+    }
+
+    await tx.insert(academySocialAccountsTable).values({ academyId, ...patch, updatedAt: now })
+      .onConflictDoUpdate({
+        target: academySocialAccountsTable.academyId,
+        set: { ...patch, updatedAt: now },
+      });
+    const [saved] = await tx.select().from(academySocialAccountsTable)
+      .where(eq(academySocialAccountsTable.academyId, academyId))
+      .limit(1);
+    if (!saved) throw new MetaGraphError("Instagram connection could not be saved.", 500);
+    return saved;
   });
 }
 

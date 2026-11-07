@@ -1026,7 +1026,7 @@ describe("Instagram API with Unified Login", () => {
     expect(graphGets.filter((call) => call.path === "me/permissions").length).toBeGreaterThanOrEqual(3);
   });
 
-  it("refuses an Instagram account already connected to another academy", async () => {
+  it("transfers an Instagram-only account when the user owns both academies", async () => {
     const conflictInstagramId = `5${stamp}`;
     const [sourceField] = await db.insert(fieldsTable).values({ name: `Source Social ${stamp}`, cameraId: `source-${stamp}` })
       .returning({ id: fieldsTable.id });
@@ -1037,6 +1037,7 @@ describe("Instagram API with Unified Login", () => {
       igUserId: conflictInstagramId,
       status: "connected",
     });
+    await db.insert(academyMembersTable).values({ academyId: sourceAcademy.id, userId: ownerId, role: "owner" });
     const [targetField] = await db.insert(fieldsTable).values({ name: `Target Social ${stamp}`, cameraId: `target-${stamp}` })
       .returning({ id: fieldsTable.id });
     const [otherAcademy] = await db.insert(academiesTable).values({ name: `Target Social Academy ${stamp}`, fieldId: targetField.id })
@@ -1045,10 +1046,95 @@ describe("Instagram API with Unified Login", () => {
     try {
       const { state } = await startLogin(otherAcademy.id);
       const response = await completeLogin(state, [{ id: conflictInstagramId, username: "already.connected" }]);
-      expect(response.status).toBe(409);
-      expect(response.body.error).toContain("already connected to another academy");
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        status: "connected",
+        igUsername: "already.connected",
+        academyId: otherAcademy.id,
+      });
+      const sourceRows = await db.select().from(academySocialAccountsTable)
+        .where(eq(academySocialAccountsTable.academyId, sourceAcademy.id));
+      const [targetAccount] = await db.select().from(academySocialAccountsTable)
+        .where(eq(academySocialAccountsTable.academyId, otherAcademy.id));
+      expect(sourceRows).toHaveLength(0);
+      expect(targetAccount.igUserId).toBe(conflictInstagramId);
     } finally {
       await db.delete(academiesTable).where(eq(academiesTable.id, otherAcademy.id));
+      await db.delete(academiesTable).where(eq(academiesTable.id, sourceAcademy.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, targetField.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, sourceField.id));
+    }
+  });
+
+  it("keeps the old academy's Facebook Page when transferring only Instagram", async () => {
+    const conflictInstagramId = `23${stamp}`;
+    const sourcePageId = `28${stamp}`;
+    const [sourceField] = await db.insert(fieldsTable).values({ name: `Source Page ${stamp}`, cameraId: `source-page-${stamp}` })
+      .returning({ id: fieldsTable.id });
+    const [sourceAcademy] = await db.insert(academiesTable).values({ name: `Source Page Academy ${stamp}`, fieldId: sourceField.id })
+      .returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: sourceAcademy.id, userId: ownerId, role: "owner" });
+    await db.insert(academySocialAccountsTable).values({
+      academyId: sourceAcademy.id,
+      tokenEnc: encryptToken(`source-user-token-${stamp}`),
+      pageId: sourcePageId,
+      pageName: "Source Page",
+      pageTokenEnc: encryptToken(`source-page-token-${stamp}`),
+      igUserId: conflictInstagramId,
+      igUsername: "source.instagram",
+      status: "connected",
+    });
+    const [targetField] = await db.insert(fieldsTable).values({ name: `Target Page ${stamp}`, cameraId: `target-page-${stamp}` })
+      .returning({ id: fieldsTable.id });
+    const [targetAcademy] = await db.insert(academiesTable).values({ name: `Target Page Academy ${stamp}`, fieldId: targetField.id })
+      .returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: targetAcademy.id, userId: ownerId, role: "owner" });
+    try {
+      const { state } = await startLogin(targetAcademy.id);
+      const response = await completeLogin(state, [{ id: conflictInstagramId, username: "target.instagram" }]);
+      expect(response.status).toBe(200);
+      const [sourceAccount] = await db.select().from(academySocialAccountsTable)
+        .where(eq(academySocialAccountsTable.academyId, sourceAcademy.id));
+      const [targetAccount] = await db.select().from(academySocialAccountsTable)
+        .where(eq(academySocialAccountsTable.academyId, targetAcademy.id));
+      expect(sourceAccount).toMatchObject({ pageId: sourcePageId, igUserId: null, status: "connected" });
+      expect(sourceAccount.pageTokenEnc).not.toBeNull();
+      expect(targetAccount).toMatchObject({ pageId: null, igUserId: conflictInstagramId });
+    } finally {
+      await db.delete(academiesTable).where(eq(academiesTable.id, targetAcademy.id));
+      await db.delete(academiesTable).where(eq(academiesTable.id, sourceAcademy.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, targetField.id));
+      await db.delete(fieldsTable).where(eq(fieldsTable.id, sourceField.id));
+    }
+  });
+
+  it("does not transfer Instagram from an academy the user does not own", async () => {
+    const conflictInstagramId = `9${stamp}`;
+    const [sourceField] = await db.insert(fieldsTable).values({ name: `Protected Social ${stamp}`, cameraId: `protected-${stamp}` })
+      .returning({ id: fieldsTable.id });
+    const [sourceAcademy] = await db.insert(academiesTable).values({ name: `Protected Social Academy ${stamp}`, fieldId: sourceField.id })
+      .returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: sourceAcademy.id, userId: coachId, role: "owner" });
+    await db.insert(academySocialAccountsTable).values({
+      academyId: sourceAcademy.id,
+      igUserId: conflictInstagramId,
+      status: "connected",
+    });
+    const [targetField] = await db.insert(fieldsTable).values({ name: `Requested Social ${stamp}`, cameraId: `requested-${stamp}` })
+      .returning({ id: fieldsTable.id });
+    const [targetAcademy] = await db.insert(academiesTable).values({ name: `Requested Social Academy ${stamp}`, fieldId: targetField.id })
+      .returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values({ academyId: targetAcademy.id, userId: ownerId, role: "owner" });
+    try {
+      const { state } = await startLogin(targetAcademy.id);
+      const response = await completeLogin(state, [{ id: conflictInstagramId, username: "protected.instagram" }]);
+      expect(response.status).toBe(403);
+      expect(response.body.error).toContain("Only an owner");
+      const [sourceAccount] = await db.select().from(academySocialAccountsTable)
+        .where(eq(academySocialAccountsTable.academyId, sourceAcademy.id));
+      expect(sourceAccount.igUserId).toBe(conflictInstagramId);
+    } finally {
+      await db.delete(academiesTable).where(eq(academiesTable.id, targetAcademy.id));
       await db.delete(academiesTable).where(eq(academiesTable.id, sourceAcademy.id));
       await db.delete(fieldsTable).where(eq(fieldsTable.id, targetField.id));
       await db.delete(fieldsTable).where(eq(fieldsTable.id, sourceField.id));
