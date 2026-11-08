@@ -29,6 +29,8 @@ import { creativeBranding } from "./renderBranding";
 
 const active = new Set<number>();
 const MAX_VIDEO_RENDERS = Math.max(1, Number(process.env.CREATIVE_VIDEO_RENDERS) || 1);
+/** Autopilot/calendar renders check once and retry on a later scheduler run. */
+export const AUTOPILOT_CAMERA_4K_PROBE_MS = 1;
 let runningVideos = 0;
 const waiting: Array<() => void> = [];
 
@@ -56,7 +58,11 @@ async function cleanup(temps: string[], dir: string | null): Promise<void> {
 }
 
 /** Render a still now; returns the updated row (done or failed). */
-export async function renderStillNow(access: AcademyOwnerAccess, row: AcademyCreativeProject): Promise<AcademyCreativeProject> {
+export async function renderStillNow(
+  access: AcademyOwnerAccess,
+  row: AcademyCreativeProject,
+  options: { sourceWaitMs?: number } = {},
+): Promise<AcademyCreativeProject> {
   active.add(row.id);
   const temps: string[] = [];
   let dir: string | null = null;
@@ -66,7 +72,8 @@ export async function renderStillNow(access: AcademyOwnerAccess, row: AcademyCre
     const ctx = await loadCreativeContext(access, temps);
     const data = serverData(access, ctx, row.data);
     const png = await renderScenePng({
-      scene: sceneForData(scene, data), brand: ctx.brand, data, images: creativeImageResolver(access.academyId, ctx.look),
+      scene: sceneForData(scene, data), brand: ctx.brand, data,
+      images: creativeImageResolver(access.academyId, ctx.look, options.sourceWaitMs, temps),
     });
     dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "creative-still-"));
     const file = path.join(dir, "out.png");
@@ -95,7 +102,12 @@ async function videoSlot<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-async function runVideo(access: AcademyOwnerAccess, row: AcademyCreativeProject, scene: Scene): Promise<void> {
+async function runVideo(
+  access: AcademyOwnerAccess,
+  row: AcademyCreativeProject,
+  scene: Scene,
+  options: { sourceWaitMs?: number } = {},
+): Promise<void> {
   const temps: string[] = [];
   let dir: string | null = null;
   try {
@@ -112,8 +124,8 @@ async function runVideo(access: AcademyOwnerAccess, row: AcademyCreativeProject,
       await renderSceneMp4({
         branding,
         scene: sceneForData(scene, data), brand: ctx.brand, data,
-        images: creativeImageResolver(access.academyId, ctx.look),
-        videos: creativeVideoResolver(access.academyId, dir, temps),
+        images: creativeImageResolver(access.academyId, ctx.look, options.sourceWaitMs, temps),
+        videos: creativeVideoResolver(access.academyId, dir, temps, options.sourceWaitMs),
         music,
         workDir: dir, out,
       });
@@ -132,7 +144,11 @@ async function runVideo(access: AcademyOwnerAccess, row: AcademyCreativeProject,
 }
 
 /** Queue a video; returns the row as queued (or failed when the scene can't be read). */
-export async function queueVideoRender(access: AcademyOwnerAccess, row: AcademyCreativeProject): Promise<AcademyCreativeProject> {
+export async function queueVideoRender(
+  access: AcademyOwnerAccess,
+  row: AcademyCreativeProject,
+  options: { sourceWaitMs?: number } = {},
+): Promise<AcademyCreativeProject> {
   let scene: Scene;
   try {
     scene = sceneOf(row);
@@ -142,7 +158,7 @@ export async function queueVideoRender(access: AcademyOwnerAccess, row: AcademyC
   active.add(row.id);
   try {
     const queued = await setStatus(row.id, { renderStatus: "queued", renderError: null });
-    void runVideo(access, queued, scene);
+    void runVideo(access, queued, scene, options);
     return queued;
   } catch (err) {
     active.delete(row.id);

@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
-import { clipSpan } from "./clipSpan";
+import os from "node:os";
+import { randomUUID } from "node:crypto";
+import { spanOf } from "./clipSpan";
 import { venueClip, venueRecording } from "./venueLibrary";
 import fs from "node:fs";
 import path from "node:path";
@@ -28,11 +30,9 @@ import {
 } from "@workspace/api-zod";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { displayPhone, instagramHandle } from "../academyOwner";
-import { BUNNY_CDN_HOSTNAME, getBunnyPlaybackUrl, getBunnyProxiedThumbnailUrl, getBunnyThumbnailUrl, isBunnyConfigured, isBunnyStorageConfigured } from "../bunny";
 import { brandingAssetDir } from "../clipBranding/assets";
 import { drawCrest } from "../clipBranding/draw";
 import type { BrandLook } from "../clipBranding/types";
-import { mediaPlaylistFor, reelClip, reelClipOnBunny, segmentsFor } from "../goalReelClip";
 import { logger } from "../logger";
 import { downloadToTemp } from "../meta/media";
 import { firstName, namesAllowed, studioLook } from "../../routes/academyStudio";
@@ -41,6 +41,8 @@ import { avatarUrlFor } from "../matchRooms";
 import type { ConcreteSource, ImageResolver, MediaLayer } from "./render";
 import type { VideoResolver, VideoSourceFile } from "./renderVideo";
 import { tintKey, tintPicture } from "./renderTint";
+import { Camera4kNotReadyError, waitForCamera4kSource } from "../clipExportSource";
+import { bufferCameraHlsClip } from "../ffmpegExport";
 
 /**
  * Creative hub engine: where a scene's pictures and footage come from.
@@ -236,48 +238,104 @@ export async function academyUpload(academyId: number, mediaId: number): Promise
   return row && row.status !== "failed" ? row : null;
 }
 
-/** "https://cdn/<guid>/playlist.m3u8" → "<guid>". */
+/** Resolve the camera video GUID from a stored Bunny URL or GUID. */
 export function videoIdOf(url: string | null | undefined): string | null {
   if (!url) return null;
   if (!url.includes("/") && !url.includes(":")) return url;
   try {
-    return new URL(url).pathname.split("/").filter(Boolean)[0] ?? null;
+    const parts = new URL(url).pathname.split("/").filter(Boolean);
+    return parts.find((part) => /^(?:[0-9a-f]{32}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/i.test(part))
+      ?? parts[0]
+      ?? null;
   } catch {
     return null;
   }
 }
 
-/** A recording's master playlist for ffmpeg: its stored URL, or the Stream URL of its video. */
-function recordingPlaylist(videoUrl: string): string {
-  if (/\.m3u8(\?|$)/i.test(videoUrl)) return videoUrl;
-  const id = videoIdOf(videoUrl);
-  return id ? getBunnyPlaybackUrl(id) : videoUrl;
+const CAMERA_4K_NOT_READY = "The 4K for this match isn't ready yet. Please try again later.";
+const CAMERA_4K_WAIT_MS = 45 * 60_000;
+export const CAMERA_4K_AUTOPILOT_PROBE_MS = 1;
+
+type Camera4kSource = Awaited<ReturnType<typeof waitForCamera4kSource>>;
+
+async function resolveCamera4kSource(videoId: string, waitMs = CAMERA_4K_WAIT_MS): Promise<Camera4kSource> {
+  try {
+    return await waitForCamera4kSource(videoId, { timeoutMs: waitMs });
+  } catch (error) {
+    if (error instanceof Camera4kNotReadyError) {
+      logger.warn({ videoId, waitedMs: error.waitedMs }, "Creative render deferred: camera 4K is not ready");
+      throw new CreativeRenderError(CAMERA_4K_NOT_READY, 409);
+    }
+    throw error;
+  }
+}
+
+async function bufferCamera4kWindow(
+  source: Camera4kSource,
+  startSec: number,
+  endSec: number,
+  temps: string[],
+): Promise<Awaited<ReturnType<typeof bufferCameraHlsClip>>> {
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) {
+    throw new CreativeRenderError("There is no footage in the selected 4K window.");
+  }
+  const buffered = await bufferCameraHlsClip({
+    remoteUrl: source.url,
+    playlist: source.playlist,
+    referer: `${new URL(source.url).origin}/`,
+    startSec,
+    clipDuration: endSec - startSec,
+    totalDuration: source.duration,
+  });
+  temps.push(buffered.bufferPath);
+  logger.info({
+    source: "camera-original-4k",
+    videoId: source.url.split("/").at(-2),
+    sourceWidth: buffered.sourceDimensions.width,
+    sourceHeight: buffered.sourceDimensions.height,
+    startSec,
+    endSec,
+    downloadedBytes: buffered.downloadedBytes,
+  }, "Creative render buffered camera 4K byte ranges");
+  return buffered;
+}
+
+async function camera4kFrameBuffer(
+  source: Camera4kSource,
+  atSec: number,
+  temps: string[],
+): Promise<Buffer> {
+  const at = Math.max(0, Math.min(Math.max(0, source.duration - 0.05), atSec));
+  const startSec = Math.max(0, at - 0.5);
+  const endSec = Math.min(source.duration, Math.max(at + 0.1, startSec + 0.25));
+  const buffered = await bufferCamera4kWindow(source, startSec, endSec, temps);
+  const framePath = path.join(os.tmpdir(), `creative-4k-frame-${randomUUID()}.png`);
+  temps.push(framePath);
+  await new Promise<void>((resolve, reject) => {
+    execFile("ffmpeg", [
+      "-nostdin", "-hide_banner", "-loglevel", "error",
+      "-threads", "1", "-filter_threads", "1",
+      "-ss", Math.max(0, at - startSec).toFixed(3),
+      "-i", buffered.bufferPath,
+      "-frames:v", "1",
+      "-vf", "scale=w='min(1920,iw)':h=-2:flags=fast_bilinear",
+      "-threads", "1", "-y", framePath,
+    ], { timeout: 30_000 }, (error) => error ? reject(error) : resolve());
+  });
+  return fs.promises.readFile(framePath);
+}
+
+async function creativeFrame(
+  videoId: string,
+  atSec: number,
+  temps: string[],
+  sourceWaitMs = CAMERA_4K_WAIT_MS,
+): Promise<Image> {
+  const source = await resolveCamera4kSource(videoId, sourceWaitMs);
+  return loadImage(await camera4kFrameBuffer(source, atSec, temps));
 }
 
 // ── Stills (server) ──────────────────────────────────────────────────────────
-
-const stills = new Map<string, Promise<Image | null>>();
-
-/** A Bunny Stream thumbnail at a time (seconds), loaded once; null when Bunny is not set up or it fails. */
-function bunnyThumb(videoId: string, atSec: number): Promise<Image | null> {
-  if (!isBunnyConfigured()) return Promise.resolve(null);
-  const url = getBunnyThumbnailUrl(videoId, Math.max(0, atSec));
-  let hit = stills.get(url);
-  if (!hit) {
-    hit = (async () => {
-      const response = await fetch(url, { headers: { Referer: `https://${BUNNY_CDN_HOSTNAME}/` }, signal: AbortSignal.timeout(12_000) });
-      if (!response.ok) throw new Error(`thumbnail ${response.status}`);
-      return loadImage(Buffer.from(await response.arrayBuffer()));
-    })().catch((err: unknown) => {
-      logger.warn({ err, videoId }, "Creative render: thumbnail unavailable");
-      stills.delete(url);
-      return null;
-    });
-    stills.set(url, hit);
-    if (stills.size > 80) stills.delete(stills.keys().next().value!);
-  }
-  return hit;
-}
 
 async function dataUrlImage(dataUrl: string | null | undefined): Promise<Image | null> {
   const m = /^data:image\/[a-z+.-]+;base64,/i.exec(dataUrl ?? "");
@@ -289,7 +347,12 @@ async function dataUrlImage(dataUrl: string | null | undefined): Promise<Image |
  * Pictures for the still renderer. A video layer draws the frame at its trim
  * point; an image layer of a clip draws the clip's own thumbnail.
  */
-export function creativeImageResolver(academyId: number, look: Pick<BrandLook, "crest">): ImageResolver {
+export function creativeImageResolver(
+  academyId: number,
+  look: Pick<BrandLook, "crest">,
+  sourceWaitMs = CAMERA_4K_WAIT_MS,
+  temps: string[] = [],
+): ImageResolver {
   let names: Promise<boolean> | null = null;
   const allowed = () => (names ??= namesAllowed(academyId).catch(() => false));
   return async (layer: MediaLayer, src: ConcreteSource, scene?: { format: CreativeFormat }): Promise<Image | Canvas | null> => {
@@ -313,10 +376,16 @@ export function creativeImageResolver(academyId: number, look: Pick<BrandLook, "
       case "clip": {
         const clip = await academyClip(academyId, src.clipId);
         if (!clip || clip.videoId.startsWith("live:")) return null;
-        const span = await clipSpan(clip);
+        const source = await resolveCamera4kSource(clip.videoId, sourceWaitMs);
+        const span = spanOf(
+          Number(clip.startTime),
+          Number(clip.endTime),
+          clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null,
+          source.duration,
+        );
         if (!span) return null;
         const at = layer.kind === "video" ? span.startSec + trimSec : span.thumbSec ?? span.startSec;
-        return bunnyThumb(clip.videoId, at);
+        return loadImage(await camera4kFrameBuffer(source, at, temps));
       }
       case "recording":
       case "frame": {
@@ -324,7 +393,7 @@ export function creativeImageResolver(academyId: number, look: Pick<BrandLook, "
         const id = videoIdOf(rec?.videoUrl);
         if (!id) return null;
         const at = src.type === "frame" ? src.atMs / 1000 : src.fromMs / 1000 + trimSec;
-        return bunnyThumb(id, at);
+        return creativeFrame(id, at, temps, sourceWaitMs);
       }
     }
   };
@@ -372,36 +441,16 @@ function probeDurationMs(file: string): Promise<number | null> {
   });
 }
 
-/**
- * The HLS segments covering [fromSec, toSec] of a Bunny video, joined into one
- * local file (no re-encode: the final ffmpeg pass trims exactly). Returns the
- * file and the video time its first segment starts at.
- */
-async function fetchWindow(videoUrl: string, fromSec: number, toSec: number, workDir: string): Promise<{ path: string; segStart: number }> {
-  const playlist = await mediaPlaylistFor(videoUrl);
-  const { segments, offset } = segmentsFor(playlist, Math.max(0, fromSec), toSec);
-  if (!segments.length) throw new CreativeRenderError("There's no footage at that time in the recording.");
-  const file = path.join(workDir, `window-${Math.random().toString(36).slice(2)}.${playlist.init ? "mp4" : "ts"}`);
-  const out = fs.createWriteStream(file);
-  try {
-    for (const url of [...(playlist.init ? [playlist.init] : []), ...segments.map((s) => s.url)]) {
-      const referer = (() => { try { return `https://${new URL(url).hostname}/`; } catch { return "https://iframe.mediadelivery.net/"; } })();
-      const response = await fetch(url, { headers: { Referer: referer }, signal: AbortSignal.timeout(30_000) });
-      if (!response.ok) throw new Error(`segment ${response.status}`);
-      const buf = Buffer.from(await response.arrayBuffer());
-      if (!out.write(buf)) await new Promise<void>((r) => out.once("drain", () => r()));
-    }
-  } finally {
-    await new Promise<void>((r) => out.end(() => r()));
-  }
-  return { path: file, segStart: offset };
-}
-
 /** Longest stretch of source one layer may pull (a 3-minute scene at 4× speed). */
 const MAX_SOURCE_MS = 12 * 60_000;
 
 /** Footage for the MP4 renderer, as local files in `workDir` (the caller deletes it). */
-export function creativeVideoResolver(academyId: number, workDir: string, temps: string[]): VideoResolver {
+export function creativeVideoResolver(
+  academyId: number,
+  _workDir: string,
+  temps: string[],
+  sourceWaitMs = CAMERA_4K_WAIT_MS,
+): VideoResolver {
   return async (_layer, src, need): Promise<VideoSourceFile | null> => {
     const span = Math.min(MAX_SOURCE_MS, Math.max(500, need.toMs - need.fromMs));
     const fail = (err: unknown): never => {
@@ -414,31 +463,45 @@ export function creativeVideoResolver(academyId: number, workDir: string, temps:
         case "clip": {
           const clip = await academyClip(academyId, src.clipId);
           if (!clip) throw new CreativeRenderError("A clip in this design is no longer available. Pick another one.");
-          const clipped = clip.videoId.startsWith("live:") ? null : await clipSpan(clip);
-          const start = clipped?.startSec ?? 0;
-          const end = clipped?.endSec ?? 0;
-          if (clipped && isBunnyConfigured()) {
-            const from = start + need.fromMs / 1000;
-            const to = Math.min(end, start + (need.fromMs + span) / 1000) + 0.5;
-            const w = await fetchWindow(getBunnyPlaybackUrl(clip.videoId), from, to, workDir);
-            return { path: w.path, zeroAtSec: start - w.segStart, durationMs: Math.round((end - start) * 1000), hasAudio: await hasAudioStream(w.path) };
+          if (clip.videoId.startsWith("live:")) {
+            throw new CreativeRenderError("Live footage isn't available in the Creative Hub renderer.", 409);
           }
-          if (clip.exportedUrl && clip.exportStatus === "done") {
-            const file = await downloadToTemp(clip.exportedUrl);
-            temps.push(file);
-            return { path: file, zeroAtSec: 0, durationMs: await probeDurationMs(file), hasAudio: await hasAudioStream(file) };
-          }
-          throw new CreativeRenderError("A clip in this design isn't ready yet. Try again in a few minutes.", 409);
+          const source = await resolveCamera4kSource(clip.videoId, sourceWaitMs);
+          const clipped = spanOf(
+            Number(clip.startTime),
+            Number(clip.endTime),
+            clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null,
+            source.duration,
+          );
+          if (!clipped) throw new CreativeRenderError("This saved clip has no valid 4K source window.");
+          const from = clipped.startSec + need.fromMs / 1000;
+          const to = Math.min(clipped.endSec, clipped.startSec + (need.fromMs + span) / 1000);
+          const buffered = await bufferCamera4kWindow(source, from, to, temps);
+          return {
+            path: buffered.bufferPath,
+            zeroAtSec: -need.fromMs / 1000,
+            durationMs: Math.round((clipped.endSec - clipped.startSec) * 1000),
+            hasAudio: await hasAudioStream(buffered.bufferPath),
+            sourceDimensions: buffered.sourceDimensions,
+          };
         }
         case "recording": {
           const rec = await academyRecording(academyId, src.recordingId);
           if (!rec) throw new CreativeRenderError("A recording in this design is no longer available.");
-          if (!isBunnyConfigured()) throw new CreativeRenderError("Footage isn't available on this server.", 503);
+          const videoId = videoIdOf(rec.videoUrl);
+          if (!videoId) throw new CreativeRenderError("This recording has no camera video ID.");
+          const source = await resolveCamera4kSource(videoId, sourceWaitMs);
           const length = Math.max(0, src.toMs - src.fromMs);
           const from = (src.fromMs + need.fromMs) / 1000;
-          const to = (src.fromMs + Math.min(length || need.toMs, need.fromMs + span)) / 1000 + 0.5;
-          const w = await fetchWindow(recordingPlaylist(rec.videoUrl), from, to, workDir);
-          return { path: w.path, zeroAtSec: src.fromMs / 1000 - w.segStart, durationMs: length || null, hasAudio: await hasAudioStream(w.path) };
+          const to = (src.fromMs + Math.min(length || need.toMs, need.fromMs + span)) / 1000;
+          const buffered = await bufferCamera4kWindow(source, from, to, temps);
+          return {
+            path: buffered.bufferPath,
+            zeroAtSec: -need.fromMs / 1000,
+            durationMs: length || null,
+            hasAudio: await hasAudioStream(buffered.bufferPath),
+            sourceDimensions: buffered.sourceDimensions,
+          };
         }
         case "upload": {
           const row = await academyUpload(academyId, src.mediaId);
@@ -522,25 +585,39 @@ export async function browserMedia(
     }
     case "clip": {
       const clip = await academyClip(academyId, src.clipId);
-      if (!clip || clip.videoId.startsWith("live:") || !isBunnyConfigured()) return null;
-      const span = await clipSpan(clip);
+      if (!clip || clip.videoId.startsWith("live:")) return null;
+      const source = await resolveCamera4kSource(clip.videoId, 1_000);
+      const span = spanOf(
+        Number(clip.startTime),
+        Number(clip.endTime),
+        clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null,
+        source.duration,
+      );
       if (!span) return null;
       const start = span.startSec;
       const end = span.endSec;
-      if (want === "still") return { redirect: getBunnyProxiedThumbnailUrl(clip.videoId, span.thumbSec ?? start) };
-      return windowVideo(clip.sourceRecordingId, getBunnyPlaybackUrl(clip.videoId), start, Math.min(end, start + MAX_BROWSER_WINDOW_MS / 1000));
+      if (want === "still") {
+        return { buffer: await camera4kFrameBuffer(source, span.thumbSec ?? start, temps), type: "image/png" };
+      }
+      const to = Math.min(end, start + MAX_BROWSER_WINDOW_MS / 1000);
+      if (to <= start) return null;
+      const buffered = await bufferCamera4kWindow(source, start, to, temps);
+      return { file: buffered.bufferPath, type: "video/mp4" };
     }
     case "recording":
     case "frame": {
       const rec = await academyRecording(academyId, src.recordingId);
       const id = videoIdOf(rec?.videoUrl);
-      if (!rec || !id || !isBunnyConfigured()) return null;
+      if (!rec || !id) return null;
+      const source = await resolveCamera4kSource(id, 1_000);
       if (src.type === "frame" || want === "still") {
-        return { redirect: getBunnyProxiedThumbnailUrl(id, (src.type === "frame" ? src.atMs : src.fromMs) / 1000) };
+        const atSec = (src.type === "frame" ? src.atMs : src.fromMs) / 1000;
+        return { buffer: await camera4kFrameBuffer(source, atSec, temps), type: "image/png" };
       }
       const to = Math.min(src.toMs, src.fromMs + MAX_BROWSER_WINDOW_MS);
       if (to <= src.fromMs) return null;
-      return windowVideo(rec.id, recordingPlaylist(rec.videoUrl), src.fromMs / 1000, to / 1000);
+      const buffered = await bufferCamera4kWindow(source, src.fromMs / 1000, to / 1000, temps);
+      return { file: buffered.bufferPath, type: "video/mp4" };
     }
   }
 }
@@ -594,7 +671,7 @@ export async function tintedStill(
     job = (async () => {
       const look = src.type === "crest" ? await studioLook(access, temps) : { crest: null };
       const layer = { id: "tint", kind: "image", src, fit: "cover", x: 0, y: 0, w: 1, h: 1 } as MediaLayer;
-      const img = await creativeImageResolver(access.academyId, look)(layer, src, { format: format ?? "post" });
+      const img = await creativeImageResolver(access.academyId, look, 1_000, temps)(layer, src, { format: format ?? "post" });
       if (!img || img.width <= 0 || img.height <= 0) return null;
       const png = tintPicture(img, tint, side).toBuffer("image/png");
       rememberTinted(key, png);
@@ -603,16 +680,6 @@ export async function tintedStill(
     tinting.set(key, job);
   }
   return job;
-}
-
-/** A window of footage as a small MP4: from Bunny's edge once it has been cut there, else from this server's disk. */
-async function windowVideo(recordingId: number | null, videoUrl: string, from: number, to: number): Promise<BrowserMedia> {
-  if (recordingId && isBunnyStorageConfigured()) {
-    const stored = await reelClipOnBunny(recordingId, videoUrl, from, to);
-    if (stored) return { redirect: stored.url };
-  }
-  const clip = await reelClip(videoUrl, from, to);
-  return { file: clip.path, type: "video/mp4" };
 }
 
 export type { MediaSource };

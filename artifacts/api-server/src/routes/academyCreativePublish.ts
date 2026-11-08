@@ -73,7 +73,11 @@ function notRendered(res: Response, row: AcademyCreativeProject): boolean {
   if (renderIsDone(row)) return false;
   const busy = row.renderStatus === "queued" || row.renderStatus === "rendering";
   res.status(409).json({
-    error: busy ? "It's still rendering. Wait for it to finish." : "Render it first, then publish.",
+    error: busy
+      ? "It's still rendering. Wait for it to finish."
+      : row.renderStatus === "done" && row.outputPath
+        ? "This render is out of date. Render it again before publishing."
+        : "Render it first, then publish.",
     code: busy ? "rendering" : "not_rendered",
   });
   return true;

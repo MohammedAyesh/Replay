@@ -9,6 +9,8 @@ import { fetchExportObject } from "../backupExport";
 import { BUNNY_STORAGE_ZONE, bunnyStorageUrlFor, deleteBunnyStoragePath, isBunnyStorageConfigured, uploadFileToBunnyStoragePath } from "../bunny";
 import { logger } from "../logger";
 
+export const CREATIVE_RENDER_VERSION_PATH = "camera4k-v1";
+
 /**
  * Creative hub engine: where rendered PNGs and MP4s live.
  *
@@ -29,9 +31,9 @@ export function localOutputDir(): string {
 export async function storeOutput(academyId: number, projectId: number, file: string, ext: "png" | "mp4"): Promise<string> {
   const name = `${projectId}-${randomUUID()}.${ext}`;
   if (isBunnyStorageConfigured()) {
-    return uploadFileToBunnyStoragePath(file, `creative/${academyId}/${name}`);
+    return uploadFileToBunnyStoragePath(file, `creative/${academyId}/${CREATIVE_RENDER_VERSION_PATH}/${name}`);
   }
-  const dir = path.join(localOutputDir(), String(academyId));
+  const dir = path.join(localOutputDir(), String(academyId), CREATIVE_RENDER_VERSION_PATH);
   await fs.promises.mkdir(dir, { recursive: true });
   const dest = path.join(dir, name);
   await fs.promises.copyFile(file, dest);

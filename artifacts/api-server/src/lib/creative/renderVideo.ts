@@ -56,7 +56,13 @@ import { DIP_FADE_MS, hasFades, isFadeEntrance, wipeSpan } from "@workspace/api-
 type VideoLayer = Extract<SceneLayer, { kind: "video" }>;
 
 /** Footage on local disk. Source time 0 (trimInMs = 0) is at `zeroAtSec` in the file. */
-export type VideoSourceFile = { path: string; zeroAtSec: number; durationMs: number | null; hasAudio: boolean };
+export type VideoSourceFile = {
+  path: string;
+  zeroAtSec: number;
+  durationMs: number | null;
+  hasAudio: boolean;
+  sourceDimensions?: { width: number; height: number };
+};
 
 /** Local footage for a video layer, or null to draw it as its still. `need` is source ms. */
 export type VideoResolver = (layer: VideoLayer, src: ConcreteSource, need: { fromMs: number; toMs: number }) => Promise<VideoSourceFile | null>;
@@ -360,6 +366,9 @@ export function framingCrop(framing: NonNullable<VideoLayer["framing"]>, boxW: n
   const A = boxW / boxH;
   const keys = thinKeys(framing.keys);
   const at = (ms: number) => zeroAtSec + ms / 1000;
+  // Framing keys are normalized on the stored 3840×1080 grid. Multiplying by
+  // FFmpeg's probed iw/ih converts them to the actual camera-original pixels
+  // (e.g. 4096×1152) without assuming every recording has the same dimensions.
   const cx = piecewise(keys.map((k) => [at(k[0]), k[1]]));
   const cy = piecewise(keys.map((k) => [at(k[0]), k[2]]));
   const w = `trunc(min(iw*${framing.zoom.toFixed(4)},ih*${A.toFixed(6)})/2)*2`;
@@ -409,7 +418,8 @@ export function buildFfmpegArgs(opts: {
       return;
     }
     const { layer, file } = track;
-    inputs.push("-i", file.path);
+    // Keep HEVC/H.264 decoder worker counts bounded: camera originals are 4K.
+    inputs.push("-threads", "1", "-i", file.path);
     const S = layer.startMs ?? 0;
     const E = Math.min(layer.endMs ?? D, D);
     const parts = videoParts(layer, file.durationMs, E - S);
@@ -483,6 +493,7 @@ export function buildFfmpegArgs(opts: {
   const cap = footageless ? photoVideoMaxrateKbps(D) : null;
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-filter_complex_threads", "1",
     ...inputs,
     "-filter_complex", [...filters, ...afilters].join(";"),
     "-map", "[vout]", "-map", audioMap,
@@ -558,17 +569,19 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
 
   // 1. Footage for every video layer that can show; the rest are stills.
   const footage = new Map<string, VideoSourceFile>();
-  await Promise.all(liveLayers(scene).map(async (layer) => {
-    if (layer.kind !== "video") return;
+  // Buffer one camera original at a time. Concurrent 4K HEVC decode/encode
+  // jobs made busy multi-layer scenes exceed the render worker's memory limit.
+  for (const layer of liveLayers(scene)) {
+    if (layer.kind !== "video") continue;
     const src = resolveSource(layer.src, data);
-    if (!src) return;
+    if (!src) continue;
     const S = layer.startMs ?? 0;
     const E = Math.min(layer.endMs ?? D, D);
     const span = videoParts(layer, null, E - S);
     const need = { fromMs: span[0]?.srcFrom ?? 0, toMs: span[span.length - 1]?.srcTo ?? (E - S) };
     const file = await opts.videos(layer, src, need);
     if (file) footage.set(layer.id, file);
-  }));
+  }
 
   // 2. Overlays, drawn by the still renderer (unzoomed: ffmpeg zooms the background and photos).
   const zooms = (l: SceneLayer) => !!scene.slowZoom && slowZoomsLayer(l, l.kind === "image" ? resolveSource(l.src, data) : null, scene.format);

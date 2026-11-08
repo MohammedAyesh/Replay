@@ -1678,10 +1678,13 @@ export async function bufferCameraHlsClip(options: {
     await run(
       "ffmpeg",
       [
+        "-filter_threads", "1",
+        "-threads", "2",
         "-copyts",
         "-i", assembledPath,
         "-vf", `trim=start=${absoluteStart}:end=${absoluteEnd},setpts=PTS-STARTPTS`,
         ...audioArgs,
+        "-threads", "2",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
         "-movflags", "+faststart",
         "-y", bufferPath,

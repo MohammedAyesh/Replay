@@ -6,7 +6,7 @@ import { CREATIVE_BASE, creativeOwner, loadCreativeProject, publicProject } from
 import { logger } from "../lib/logger";
 import { renderScenePng } from "../lib/creative/render";
 import { isRendering, queueVideoRender, renderStillNow, sweepInterruptedRenders } from "../lib/creative/renderJobs";
-import { backgroundPlates, browserMedia, creativeImageResolver, loadCreativeContext, rescanPlates, serverData, tintedStill } from "../lib/creative/renderMedia";
+import { backgroundPlates, browserMedia, CreativeRenderError, creativeImageResolver, loadCreativeContext, rescanPlates, serverData, tintedStill } from "../lib/creative/renderMedia";
 import { sendOutput } from "../lib/creative/renderStore";
 import { styleAllowedFor } from "../lib/creative/packs";
 import type { ConcreteSource } from "../lib/creative/render";
@@ -127,7 +127,7 @@ router.post(`${base}/preview`, async (req, res): Promise<void> => {
     const data = serverData(access, ctx, b.data);
     const png = await renderScenePng({
       scene: sceneForData(b.scene, data), brand: ctx.brand, data,
-      images: creativeImageResolver(access.academyId, ctx.look),
+      images: creativeImageResolver(access.academyId, ctx.look, 1_000, temps),
       width: b.width,
       t: b.timeMs ?? null,
       entrances: b.timeMs !== undefined,
@@ -136,7 +136,11 @@ router.post(`${base}/preview`, async (req, res): Promise<void> => {
     res.type("png").send(png);
   } catch (err) {
     logger.error({ err, academyId: access.academyId }, "Creative preview failed");
-    if (!res.headersSent) res.status(500).json({ error: "Couldn't draw that. Try again." });
+    if (!res.headersSent) {
+      res.status(err instanceof CreativeRenderError ? err.status : 500).json({
+        error: err instanceof CreativeRenderError ? err.message : "Couldn't draw that. Try again.",
+      });
+    }
   } finally {
     previews--;
     for (const t of temps) fs.unlink(t, () => {});

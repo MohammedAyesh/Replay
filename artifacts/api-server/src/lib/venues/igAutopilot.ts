@@ -25,7 +25,7 @@ import type { AcademyOwnerAccess } from "../academyOwner";
 import { framingFor } from "../creative/framing";
 import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "../creative/music";
 import { ensureCreativeMedia, renderIsDone } from "../creative/publishMedia";
-import { queueVideoRender, renderStillNow } from "../creative/renderJobs";
+import { AUTOPILOT_CAMERA_4K_PROBE_MS, queueVideoRender, renderStillNow } from "../creative/renderJobs";
 import { deleteOutput } from "../creative/renderStore";
 import { logger } from "../logger";
 import { getSocialAccount, refreshSocialAccountHealth } from "../social/account";
@@ -496,7 +496,11 @@ export async function ensureRenderedAll(venue: Venue, item: VenueIgItem, now = n
   }
   const out: AcademyCreativeProject[] = [];
   for (const p of projects) {
-    out.push(p.renderStatus === "none" || p.renderStatus === "failed" ? (p.kind === "video" ? await queueVideoRender(access, p) : await renderStillNow(access, p)) : p);
+    out.push(!renderIsDone(p) && p.renderStatus !== "queued" && p.renderStatus !== "rendering"
+      ? (p.kind === "video"
+        ? await queueVideoRender(access, p, { sourceWaitMs: AUTOPILOT_CAMERA_4K_PROBE_MS })
+        : await renderStillNow(access, p, { sourceWaitMs: AUTOPILOT_CAMERA_4K_PROBE_MS }))
+      : p);
   }
   return out;
 }

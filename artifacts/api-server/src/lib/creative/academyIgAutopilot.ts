@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray, notLike, or, sql } from "drizzle-orm";
 import {
   academiesTable,
   academyCreativeProjectsTable,
@@ -17,7 +17,8 @@ import { getSocialAccount } from "../social/account";
 import { logProjectFeature, projectPlayers } from "../featured/store";
 import { academyHashtag } from "./publish";
 import { ensureCreativeMedia, renderIsDone } from "./publishMedia";
-import { queueVideoRender, renderStillNow } from "./renderJobs";
+import { CREATIVE_RENDER_VERSION_PATH } from "./renderStore";
+import { AUTOPILOT_CAMERA_4K_PROBE_MS, queueVideoRender, renderStillNow } from "./renderJobs";
 
 /**
  * Academies' Instagram autopilot. What it posts are the academy's own Creative hub designs:
@@ -195,8 +196,11 @@ export async function startRender(academyId: number, project: AcademyCreativePro
   if (renderIsDone(project) || project.renderStatus === "queued" || project.renderStatus === "rendering") return;
   const access = await ownerAccess(academyId);
   if (!access) return;
-  if (project.kind === "video") await queueVideoRender(access, project);
-  else await renderStillNow(access, project);
+  if (project.kind === "video") {
+    await queueVideoRender(access, project, { sourceWaitMs: AUTOPILOT_CAMERA_4K_PROBE_MS });
+  } else {
+    await renderStillNow(access, project, { sourceWaitMs: AUTOPILOT_CAMERA_4K_PROBE_MS });
+  }
 }
 
 async function renderAhead(academyId: number, now: Date): Promise<number> {
@@ -208,22 +212,35 @@ async function renderAhead(academyId: number, now: Date): Promise<number> {
       inArray(academyIgItemsTable.status, [...WAITING]),
       isNotNull(academyIgItemsTable.slotAt),
       lte(academyIgItemsTable.slotAt, soon),
-      inArray(academyCreativeProjectsTable.renderStatus, ["none", "failed"]),
+      or(
+        inArray(academyCreativeProjectsTable.renderStatus, ["none", "failed"]),
+        and(
+          eq(academyCreativeProjectsTable.renderStatus, "done"),
+          or(
+            isNull(academyCreativeProjectsTable.outputPath),
+            notLike(academyCreativeProjectsTable.outputPath, `%/${CREATIVE_RENDER_VERSION_PATH}/%`),
+          ),
+        ),
+      ),
     )).orderBy(asc(academyIgItemsTable.slotAt)).limit(2);
-  if (!rows.length) return 0;
+  const pending = rows.filter(({ project }) => !renderIsDone(project));
+  if (!pending.length) return 0;
   const access = await ownerAccess(academyId);
   if (!access) return 0;
-  for (const { item, project } of rows) {
+  for (const { item, project } of pending) {
     // A render that already failed is tried once more, at most every half hour.
     if (project.renderStatus === "failed" && project.updatedAt.getTime() > now.getTime() - 30 * 60_000) continue;
     try {
-      if (project.kind === "video") await queueVideoRender(access, project);
-      else await renderStillNow(access, project);
+      if (project.kind === "video") {
+        await queueVideoRender(access, project, { sourceWaitMs: AUTOPILOT_CAMERA_4K_PROBE_MS });
+      } else {
+        await renderStillNow(access, project, { sourceWaitMs: AUTOPILOT_CAMERA_4K_PROBE_MS });
+      }
     } catch (error) {
       await db.update(academyIgItemsTable).set({ error: (error as Error).message.slice(0, 300), updatedAt: now }).where(eq(academyIgItemsTable.id, item.id));
     }
   }
-  return rows.length;
+  return pending.length;
 }
 
 // ── 4. Publish ───────────────────────────────────────────────────────────────

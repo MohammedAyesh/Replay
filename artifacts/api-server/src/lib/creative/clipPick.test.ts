@@ -3,7 +3,7 @@ import { academiesTable, db, fieldsTable, recordingsTable, userClipsTable, users
 
 /**
  * Picking a clip in the Creative hub must give that clip's footage — the
- * seconds the player cut — in the preview, the poster and the export.
+ * seconds the player cut — in the preview and the export, from camera 4K.
  * user_clips stores start/end as shares of the video; reading them as seconds
  * (the old bug) played the first second of the match instead.
  */
@@ -22,18 +22,37 @@ vi.mock("../bunny", async (importOriginal) => {
   };
 });
 
-vi.mock("../goalReelClip", async (importOriginal) => {
-  const real = await importOriginal<typeof import("../goalReelClip")>();
+vi.mock("../clipExportSource", () => ({
+  waitForCamera4kSource: vi.fn(async (id: string) => ({
+    kind: "camera-4k",
+    url: `https://replayjo.b-cdn.net/vod/${id}/4k.m3u8`,
+    playlist: "#EXTM3U",
+    path: "camera-original-4k HLS",
+    duration: 5400,
+    renditionLabel: null,
+  })),
+  Camera4kNotReadyError: class Camera4kNotReadyError extends Error {},
+}));
+
+vi.mock("../ffmpegExport", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../ffmpegExport")>();
   return {
     ...real,
-    reelClip: vi.fn(async (url: string, from: number, to: number) => {
-      fetched.push({ how: "preview", url, from, to });
-      return { path: "/tmp/never-written.mp4" };
-    }),
-    mediaPlaylistFor: vi.fn(async () => ({ init: null, segments: [] })),
-    segmentsFor: vi.fn((_playlist: unknown, from: number, to: number) => {
-      fetched.push({ how: "export", url: "", from, to });
-      return { segments: [], offset: 0 };
+    bufferCameraHlsClip: vi.fn(async (options: { remoteUrl: string; startSec: number; clipDuration: number }) => {
+      fetched.push({
+        how: "4k-window",
+        url: options.remoteUrl,
+        from: options.startSec,
+        to: options.startSec + options.clipDuration,
+      });
+      return {
+        bufferPath: "/tmp/creative-4k-test.mp4",
+        bufferedDuration: options.clipDuration,
+        adjustedOffsetSec: 0,
+        sourceDimensions: { width: 4096, height: 1152 },
+        sourceTimeOffsetSec: 0,
+        downloadedBytes: 1024,
+      };
     }),
   };
 });
@@ -66,24 +85,34 @@ beforeAll(async () => {
 describe("picking a clip in the Creative hub", () => {
   const access = () => ({ academyId: venueId }) as AcademyOwnerAccess;
 
-  it("previews the clip's own 54 seconds, from 36:00", async () => {
+  it("previews only the clip's camera-4K window, from 36:00", async () => {
     fetched.length = 0;
     const res = await browserMedia(access(), { type: "clip", clipId }, "video", []);
     expect(res).toMatchObject({ type: "video/mp4" });
-    expect(fetched).toEqual([{ how: "preview", url: `https://play.test/${videoId}/playlist.m3u8`, from: 2160, to: 2214 }]);
+    expect(fetched).toEqual([{
+      how: "4k-window",
+      url: `https://replayjo.b-cdn.net/vod/${videoId}/4k.m3u8`,
+      from: 2160,
+      to: 2214,
+    }]);
   });
 
-  it("shows the clip's own poster frame", async () => {
-    const res = await browserMedia(access(), { type: "clip", clipId }, "still", []);
-    expect(res).toEqual({ redirect: `https://thumb.test/${videoId}?t=2170` });
-  });
-
-  it("exports from the clip's footage, not the start of the match", async () => {
+  it("renders from camera 4K and keeps the saved clip's source time", async () => {
     fetched.length = 0;
     const resolve = creativeVideoResolver(venueId, "/tmp", []);
-    await expect(resolve({} as never, { type: "clip", clipId }, { fromMs: 0, toMs: 54_000 })).rejects.toThrow(/no footage/i);
+    const result = await resolve({} as never, { type: "clip", clipId }, { fromMs: 0, toMs: 54_000 });
+    expect(result).toMatchObject({
+      path: "/tmp/creative-4k-test.mp4",
+      zeroAtSec: -0,
+      durationMs: 54_000,
+      sourceDimensions: { width: 4096, height: 1152 },
+    });
     expect(fetched).toHaveLength(1);
-    expect(fetched[0].from).toBe(2160);
-    expect(fetched[0].to).toBeCloseTo(2214.5, 3);
+    expect(fetched[0]).toEqual({
+      how: "4k-window",
+      url: `https://replayjo.b-cdn.net/vod/${videoId}/4k.m3u8`,
+      from: 2160,
+      to: 2214,
+    });
   });
 });

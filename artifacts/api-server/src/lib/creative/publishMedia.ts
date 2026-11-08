@@ -13,6 +13,7 @@ import { metaConfig } from "../meta/config";
 import { connectionToken, getConnection } from "../meta/connections";
 import { MAX_IMAGE_BYTES, MAX_VIDEO_SECONDS, preloadVideo, probeVideo, storeVideo, videoStill } from "../meta/media";
 import { mediaIdForRender, readTargets } from "./publish";
+import { CREATIVE_RENDER_VERSION_PATH } from "./renderStore";
 
 /**
  * Creative hub → Publish: the rendered file as an item of the academy's media
@@ -62,7 +63,9 @@ export function isVideoOutput(row: Pick<AcademyCreativeProject, "kind" | "output
 
 /** Ready for any channel: a finished render with a file. */
 export function renderIsDone(row: Pick<AcademyCreativeProject, "renderStatus" | "outputPath">): boolean {
-  return row.renderStatus === "done" && Boolean(row.outputPath);
+  if (row.renderStatus !== "done" || !row.outputPath) return false;
+  const pathParts = row.outputPath.split(/[\\/]/);
+  return pathParts.includes(CREATIVE_RENDER_VERSION_PATH);
 }
 
 /** Start uploading a video to the ad account its ads would run from (as Ads → Media does). */
