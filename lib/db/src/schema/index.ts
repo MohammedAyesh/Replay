@@ -9,6 +9,7 @@ export * from "./likes";
 export * from "./follows";
 export * from "./ads";
 export * from "./userClips";
+export * from "./camera4kReclip";
 export * from "./userClipAuditEvents";
 export * from "./portfolio";
 export * from "./academies";

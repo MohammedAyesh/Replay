@@ -58,6 +58,10 @@ import {
 } from "./userClips";
 import multer from "multer";
 import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
+import {
+  getCamera4kReclipStatus,
+  setCamera4kReclipPaused,
+} from "../lib/camera4kReclipBatch";
 
 const router: IRouter = Router();
 
@@ -379,6 +383,22 @@ router.get("/admin/ads/:id/stats", async (req, res): Promise<void> => {
 });
 
 // ─── Admin: Clips ─────────────────────────────────────────────────────────────
+
+router.get("/admin/clips/4k-reclip-batch", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  res.json({ batch: await getCamera4kReclipStatus() });
+});
+
+router.patch("/admin/clips/4k-reclip-batch", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const parsed = z.object({ action: z.enum(["pause", "resume"]) }).safeParse(req.body ?? {});
+  if (!parsed.success) { res.status(400).json({ error: "action must be pause or resume" }); return; }
+  const changed = await setCamera4kReclipPaused(parsed.data.action === "pause");
+  if (!changed) { res.status(409).json({ error: "The 4K re-clip batch is not active or has completed." }); return; }
+  res.json({ ok: true, paused: parsed.data.action === "pause" });
+});
 
 router.get("/admin/clips", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);

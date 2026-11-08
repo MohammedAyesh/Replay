@@ -95,6 +95,36 @@ interface AdminClip {
   userEmail: string;
 }
 
+type Camera4kBatchView = {
+  batchKey: string;
+  status: "scheduled" | "running" | "paused" | "completed";
+  paused: boolean;
+  scopeSeeded: boolean;
+  scopeCutoff: string;
+  totalCount: number;
+  completedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  currentClipId: number | null;
+  currentClipStartedAt: string | null;
+  sourceProbeSummary: Array<{
+    recordingId: number;
+    videoId: string;
+    recordingDate: string;
+    timeSlot: string | null;
+    state: "ready" | "unavailable";
+    reason: string | null;
+  }>;
+  failures: Array<{
+    clipId: number;
+    status: string;
+    failureReason: string | null;
+    elapsedMs: number | null;
+  }>;
+};
+
 interface ExportRepairResult {
   clipId: number; userId: number; userName: string; userEmail: string; title: string;
   currentStatus: string; exportedUrl: string; probe: "exists" | "missing" | "unverified";
@@ -690,6 +720,128 @@ function ClaimDisputesTab() {
   );
 }
 
+function Camera4kReclipBatchPanel() {
+  const [batch, setBatch] = useState<Camera4kBatchView | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const [working, setWorking] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const response = await apiFetch("/admin/clips/4k-reclip-batch") as { batch: Camera4kBatchView | null };
+      setBatch(response.batch);
+    } catch {
+      setBatch(null);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 15_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const togglePause = async () => {
+    if (!batch || working || batch.status === "completed") return;
+    setWorking(true);
+    try {
+      await apiFetch("/admin/clips/4k-reclip-batch", {
+        method: "PATCH",
+        body: JSON.stringify({ action: batch.paused ? "resume" : "pause" }),
+      });
+      await load();
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const percentage = batch && batch.totalCount > 0
+    ? Math.round((batch.completedCount + batch.failedCount + batch.skippedCount) / batch.totalCount * 100)
+    : 0;
+  const unavailableSources = batch?.sourceProbeSummary.filter((source) => source.state === "unavailable") ?? [];
+
+  return (
+    <section
+      className="rounded-xl border border-cyan-900/70 bg-cyan-950/20 p-4 space-y-3"
+      data-testid="card-camera-4k-reclip-batch"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-white">Camera-original 4K re-clip batch</h3>
+          <p className="mt-1 text-xs text-zinc-400">
+            Runs one clip at a time from 22:00–06:00 UTC. Clips without recoverable original presentation settings are skipped and keep their existing export.
+          </p>
+        </div>
+        {batch && batch.status !== "completed" && (
+          <button
+            type="button"
+            onClick={() => void togglePause()}
+            disabled={working}
+            data-testid="button-camera-4k-batch-pause"
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
+          >
+            {working ? "Saving…" : batch.paused ? "Resume batch" : "Pause batch"}
+          </button>
+        )}
+      </div>
+      {!loaded ? (
+        <p className="text-xs text-zinc-500" data-testid="status-camera-4k-batch-loading">Loading batch status…</p>
+      ) : !batch ? (
+        <p className="text-xs text-zinc-400" data-testid="status-camera-4k-batch-not-created">
+          Batch status will appear here after the next production publish.
+        </p>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-300">
+            <span data-testid="status-camera-4k-batch-state">Status: {batch.status}</span>
+            {batch.scopeSeeded
+              ? <span>{batch.completedCount + batch.failedCount + batch.skippedCount} / {batch.totalCount} processed</span>
+              : <span>Checking recording sources…</span>}
+            {batch.currentClipId != null && (
+              <span data-testid="text-camera-4k-current-clip">Rendering clip #{batch.currentClipId}</span>
+            )}
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-zinc-800" aria-label={`Batch progress ${percentage}%`}>
+            <div className="h-full bg-cyan-400 transition-all" style={{ width: `${percentage}%` }} />
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+            <div className="rounded-lg bg-zinc-900/80 p-2"><span className="text-zinc-500">Replaced</span><p className="mt-1 font-semibold text-emerald-300">{batch.completedCount}</p></div>
+            <div className="rounded-lg bg-zinc-900/80 p-2"><span className="text-zinc-500">Failed</span><p className="mt-1 font-semibold text-rose-300">{batch.failedCount}</p></div>
+            <div className="rounded-lg bg-zinc-900/80 p-2"><span className="text-zinc-500">Skipped</span><p className="mt-1 font-semibold text-amber-300">{batch.skippedCount}</p></div>
+            <div className="rounded-lg bg-zinc-900/80 p-2"><span className="text-zinc-500">Remaining</span><p className="mt-1 font-semibold text-white">{Math.max(0, batch.totalCount - batch.completedCount - batch.failedCount - batch.skippedCount)}</p></div>
+          </div>
+          {batch.status === "completed" && batch.skippedCount > 0 && (
+            <p className="rounded-lg border border-amber-900/70 bg-amber-950/30 p-3 text-xs text-amber-100" data-testid="text-camera-4k-skipped-summary">
+              No existing export was replaced for the skipped clips. Their original captions, overlays, and end-card settings were not saved, so an exact re-render could not be verified.
+            </p>
+          )}
+          {unavailableSources.length > 0 && (
+            <div className="space-y-1 text-xs text-amber-200" data-testid="list-camera-4k-unavailable-sources">
+              <p className="font-semibold">Recordings excluded because 4K was unavailable</p>
+              {unavailableSources.map((source) => (
+                <p key={source.recordingId} data-testid={`text-camera-4k-source-${source.recordingId}`}>
+                  Recording #{source.recordingId} · {source.recordingDate} {source.timeSlot ?? ""} · {source.reason}
+                </p>
+              ))}
+            </div>
+          )}
+          {batch.failures.length > 0 && (
+            <div className="max-h-40 space-y-1 overflow-auto text-xs" data-testid="list-camera-4k-batch-failures">
+              <p className="font-semibold text-rose-200">Failed or skipped clips</p>
+              {batch.failures.map((failure) => (
+                <p key={failure.clipId} data-testid={`text-camera-4k-failure-${failure.clipId}`} className="text-zinc-300">
+                  Clip #{failure.clipId} · {failure.status} · {failure.failureReason ?? "No reason recorded"}
+                </p>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
 function ClipsTab() {
   const [clips, setClips] = useState<AdminClip[]>([]);
   const [loading, setLoading] = useState(true);
@@ -972,6 +1124,7 @@ function ClipsTab() {
 
   return (
     <div className="space-y-4">
+      <Camera4kReclipBatchPanel />
       <section className="rounded-xl border border-zinc-700 bg-zinc-900/70 p-4 space-y-3">
         <div>
           <h3 className="text-sm font-semibold text-white">Repair expired clip exports</h3>

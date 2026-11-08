@@ -1429,6 +1429,55 @@ export async function probeFileDuration(filePath: string): Promise<number> {
   return seconds;
 }
 
+export type LocalMediaProbe = {
+  durationSeconds: number;
+  width: number;
+  height: number;
+  hasAudio: boolean;
+  frameCount: number;
+};
+
+/** Probe a local MP4's duration, geometry, audio presence, and decoded frames. */
+export async function probeLocalMedia(filePath: string): Promise<LocalMediaProbe> {
+  const out = await run("ffprobe", [
+    "-v", "error",
+    "-count_frames",
+    "-show_entries", "format=duration:stream=codec_type,width,height,nb_read_frames",
+    "-of", "json",
+    filePath,
+  ], 15 * 60_000);
+  const parsed = JSON.parse(out) as {
+    format?: { duration?: string };
+    streams?: Array<{ codec_type?: string; width?: number; height?: number; nb_read_frames?: string }>;
+  };
+  const video = parsed.streams?.find((stream) => stream.codec_type === "video");
+  const durationSeconds = Number.parseFloat(parsed.format?.duration ?? "");
+  const width = Number(video?.width);
+  const height = Number(video?.height);
+  const frameCount = Number.parseInt(video?.nb_read_frames ?? "", 10);
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    throw new Error(`Could not read the length of ${filePath}`);
+  }
+  if (!Number.isInteger(width) || width <= 0 || !Number.isInteger(height) || height <= 0) {
+    throw new Error(`Could not read video dimensions from ${filePath}`);
+  }
+  if (!Number.isInteger(frameCount) || frameCount <= 0) {
+    throw new Error(`No decodable video frames in ${filePath}`);
+  }
+  return {
+    durationSeconds,
+    width,
+    height,
+    hasAudio: !!parsed.streams?.some((stream) => stream.codec_type === "audio"),
+    frameCount,
+  };
+}
+
+/** Decode every stream of a local MP4; reject corrupt picture or audio data. */
+export async function decodeLocalMedia(filePath: string): Promise<void> {
+  await run("ffmpeg", ["-nostdin", "-v", "error", "-i", filePath, "-f", "null", "-"], 30 * 60_000);
+}
+
 /** A 32x18 grey thumbnail of one frame, to tell whether two videos show the same thing. */
 async function frameThumb(file: string, atSec: number, fit?: { w: number; h: number }): Promise<Buffer> {
   const out = path.join(os.tmpdir(), `soccerwatch-thumb-${randomUUID()}.gray`);

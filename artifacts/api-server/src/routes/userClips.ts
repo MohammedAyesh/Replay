@@ -117,6 +117,11 @@ import {
 import { fetchBrandingAsset } from "../lib/brandingFetch";
 import { introPlaybackPath } from "./clipIntro";
 import { canCreateClipFromVideo } from "../lib/publicFootage";
+import {
+  assertCamera4kUploadedSize,
+  validateCamera4kReclip,
+  type Camera4kReclipValidation,
+} from "../lib/camera4kReclipValidation";
 
 const router: IRouter = Router();
 
@@ -154,6 +159,14 @@ const localFallbackOwned = new Set<number>();
 const exportProgress = new Map<number, string>();
 /** Recent admin re-clip failures, intentionally process-local (no DB column). */
 const adminClipFailureReasons = new Map<number, string>();
+
+type BackgroundExportOptions = {
+  exportRevision?: string;
+  trackAdminFailure?: boolean;
+  /** Strict mode used only by the durable camera-original 4K batch. */
+  batchReclip?: boolean;
+  onValidated?: (validation: Camera4kReclipValidation) => void;
+};
 
 /**
  * Renders are CPU-bound and contend with the hourly archive for the same cores,
@@ -589,7 +602,7 @@ async function updateClipScore(clipId: number): Promise<number> {
  */
 function startBackgroundExport(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
-  options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
+  options: BackgroundExportOptions = {},
 ) {
   const clipId = clip.id;
   // Any replacement gets a distinct immutable object key. Admin re-clips pass
@@ -628,7 +641,7 @@ function startBackgroundExport(
 async function tryOverflowHandoff(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
   localQueue: ReturnType<typeof renderQueue.snapshot>,
-  options: { exportRevision?: string; trackAdminFailure?: boolean },
+  options: BackgroundExportOptions,
 ): Promise<"handed-off" | "owned-elsewhere" | "local"> {
   const [claimed] = await db
     .update(userClipsTable)
@@ -711,7 +724,7 @@ async function markOverflowForLocalFallback(clipId: number): Promise<boolean> {
 
 function queueLocalBackgroundExport(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
-  options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
+  options: BackgroundExportOptions = {},
 ): void {
   void withRenderSlot(clip.id, () => runBackgroundExport(clip, options)).catch((err) => {
     logger.error({ err, clipId: clip.id }, "Queued background clip export escaped its error handler");
@@ -756,7 +769,7 @@ function localFallbackOptions(
 
 async function runBackgroundExport(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
-  options: { exportRevision?: string; trackAdminFailure?: boolean } = {},
+  options: BackgroundExportOptions = {},
 ): Promise<void> {
   const clipId = clip.id;
   const startTime = parseFloat(clip.startTime);
@@ -962,6 +975,14 @@ async function runBackgroundExport(
         "Clip rendered from selected source",
       );
 
+      let batchValidation: Camera4kReclipValidation | null = null;
+      if (options.batchReclip) {
+        if (!clip.exportedUrl) throw new Error("The existing export is missing; batch replacement is unsafe");
+        exportProgress.set(clipId, "validating");
+        batchValidation = await validateCamera4kReclip(clipId, clip.exportedUrl, tmpPath);
+        options.onValidated?.(batchValidation);
+      }
+
       const [beforeUpload] = await db.select({ exportStatus: userClipsTable.exportStatus })
         .from(userClipsTable).where(eq(userClipsTable.id, clipId));
       if (beforeUpload?.exportStatus === "done") {
@@ -971,6 +992,13 @@ async function runBackgroundExport(
 
       exportProgress.set(clipId, "uploading");
       const exportedUrl = await uploadToBunnyStorage(tmpPath, clipId, options.exportRevision);
+      if (options.batchReclip) {
+        const uploaded = await probeExportObject(exportedUrl);
+        if (uploaded.state !== "exists") {
+          throw new Error(`Replacement upload could not be verified (${uploaded.state})`);
+        }
+        assertCamera4kUploadedSize(batchValidation?.newBytes ?? 0, uploaded.bytes);
+      }
       const [published] = await db
         .update(userClipsTable)
         .set({ exportStatus: "done", exportedUrl })
@@ -1008,6 +1036,19 @@ async function runBackgroundExport(
         );
       }
       if (classifyPortfolioSourceError(err) === "expired") {
+        if (options.batchReclip) {
+          await db.update(userClipsTable)
+            .set({ exportStatus: clip.exportedUrl ? "done" : "error" })
+            .where(and(
+              eq(userClipsTable.id, clipId),
+              inArray(userClipsTable.exportStatus, [
+                "pending",
+                PENDING_VPS1_OVERFLOW,
+                PENDING_LOCAL_FALLBACK,
+                PENDING_VPS1_AFTER_PRIMARY,
+              ]),
+            ));
+        } else {
         const probe = clip.exportedUrl ? await probeExportObject(clip.exportedUrl) : { state: "missing" as const, url: "", bytes: null };
         if (probe.state === "exists") {
           await db.update(userClipsTable).set({ exportStatus: "done", exportedUrl: probe.url })
@@ -1019,6 +1060,21 @@ async function runBackgroundExport(
           await db.update(userClipsTable).set({ exportStatus: "error" })
             .where(and(eq(userClipsTable.id, clipId), inArray(userClipsTable.exportStatus, ["pending", PENDING_LOCAL_FALLBACK])));
         }
+        }
+      } else if (options.batchReclip) {
+        // Batch failures do not fall over to vps1: that renderer must not
+        // replace a checked camera-original 4K export with a different source.
+        await db.update(userClipsTable)
+          .set({ exportStatus: clip.exportedUrl ? "done" : "error" })
+          .where(and(
+            eq(userClipsTable.id, clipId),
+            inArray(userClipsTable.exportStatus, [
+              "pending",
+              PENDING_VPS1_OVERFLOW,
+              PENDING_LOCAL_FALLBACK,
+              PENDING_VPS1_AFTER_PRIMARY,
+            ]),
+          ));
       } else {
         await failOverToBackup(clip, overlayUrlForBackup, err, options.exportRevision);
       }
@@ -1043,6 +1099,88 @@ export async function queueAdminClipReclip(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
 ): Promise<{ accepted: boolean; queuePosition: number | null }> {
   return queueClipRerender(clip, true);
+}
+
+/**
+ * Start one batch replacement only when the local render queue can admit it
+ * immediately. Busy queues are not added to: the batch can retry on its next
+ * scheduler tick without moving ahead of player exports.
+ */
+export async function renderAdminCamera4kBatchClip(
+  clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
+  revision: string,
+): Promise<
+  | { state: "completed"; validation: Camera4kReclipValidation }
+  | { state: "failed"; reason: string; validation: Camera4kReclipValidation | null }
+  | { state: "busy"; reason: string }
+> {
+  if (!clip.exportedUrl || clip.exportStatus !== "done" || isLiveVideoId(clip.videoId)) {
+    return { state: "failed", reason: "Clip no longer has a settled export to replace.", validation: null };
+  }
+  if (inFlight.has(clip.id) || isInternalPendingStatus(clip.exportStatus)) {
+    return { state: "busy", reason: "A render for this clip is already running." };
+  }
+
+  const [claimed] = await db.update(userClipsTable)
+    .set({ exportStatus: "pending" })
+    .where(and(
+      eq(userClipsTable.id, clip.id),
+      eq(userClipsTable.exportStatus, "done"),
+      eq(userClipsTable.exportedUrl, clip.exportedUrl),
+    ))
+    .returning();
+  if (!claimed) return { state: "busy", reason: "The clip changed or another renderer claimed it." };
+
+  inFlight.add(clip.id);
+  adminClipFailureReasons.delete(clip.id);
+  let validation: Camera4kReclipValidation | null = null;
+  try {
+    const admission = await renderQueue.tryRunImmediately(String(clip.id), () =>
+      runBackgroundExport(claimed, {
+        exportRevision: revision,
+        trackAdminFailure: true,
+        batchReclip: true,
+        onValidated: (result) => { validation = result; },
+      }),
+    );
+    if (!admission.started) {
+      await db.update(userClipsTable)
+        .set({ exportStatus: "done" })
+        .where(and(
+          eq(userClipsTable.id, clip.id),
+          eq(userClipsTable.exportStatus, "pending"),
+          eq(userClipsTable.exportedUrl, clip.exportedUrl),
+        ));
+      inFlight.delete(clip.id);
+      return { state: "busy", reason: "Render queue is occupied; the batch will retry later." };
+    }
+
+    await admission.completion;
+    const [after] = await db.select({
+      exportStatus: userClipsTable.exportStatus,
+      exportedUrl: userClipsTable.exportedUrl,
+    }).from(userClipsTable).where(eq(userClipsTable.id, clip.id));
+    if (after?.exportStatus === "done" && after.exportedUrl !== clip.exportedUrl && validation) {
+      return { state: "completed", validation };
+    }
+    return {
+      state: "failed",
+      reason: adminClipFailureReasons.get(clip.id) ?? "Replacement did not pass validation or publish.",
+      validation,
+    };
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await db.update(userClipsTable)
+      .set({ exportStatus: "done" })
+      .where(and(
+        eq(userClipsTable.id, clip.id),
+        eq(userClipsTable.exportStatus, "pending"),
+        eq(userClipsTable.exportedUrl, clip.exportedUrl),
+      )).catch(() => {});
+    return { state: "failed", reason, validation };
+  } finally {
+    inFlight.delete(clip.id);
+  }
 }
 
 /**

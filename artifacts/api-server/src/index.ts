@@ -8,6 +8,7 @@ import { refreshStaleMatchStatsCaches } from "./lib/matchStatsCacheJobs";
 import { warmDemoBrandingPreviews } from "./routes/demoBranding";
 import { ensureAdditiveColumns } from "./lib/ensureAdditiveColumns";
 import { ensureReplayMusic } from "./lib/creative/music";
+import { startCamera4kReclipBatchWorker } from "./lib/camera4kReclipBatch";
 
 attachPostgresIdleErrorListener(pool, logger);
 
@@ -51,6 +52,7 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  startCamera4kReclipBatchWorker();
   startOwnerStatusSync();
   void warmDemoBrandingPreviews()
     .then(() => logger.info("Public branding video previews warmed"))

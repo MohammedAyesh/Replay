@@ -2,7 +2,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import request from "supertest";
 import express, { type Express } from "express";
 import { and, eq, inArray } from "drizzle-orm";
-import { clipDownloadsTable, db, userClipsTable, userClipAuditEventsTable, usersTable } from "@workspace/db";
+import {
+  camera4kReclipBatchesTable,
+  clipDownloadsTable,
+  db,
+  userClipsTable,
+  userClipAuditEventsTable,
+  usersTable,
+} from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(),
@@ -41,6 +48,14 @@ vi.mock("../lib/ffmpegExport", async (importOriginal) => {
       bufferedDuration: 60,
       adjustedOffsetSec: 0,
     })),
+    bufferCameraHlsClip: vi.fn(async () => ({
+      bufferPath: "/tmp/admin-reclip-buffer.mp4",
+      bufferedDuration: 60,
+      adjustedOffsetSec: 0,
+      sourceDimensions: { width: 4096, height: 1152 },
+      sourceTimeOffsetSec: 0,
+      downloadedBytes: 1_000,
+    })),
   };
 });
 
@@ -63,6 +78,21 @@ vi.mock("../lib/exportSource", async (importOriginal) => {
       width: 3840,
       height: 1080,
       renditionLabel: "1080p",
+    })),
+  };
+});
+
+vi.mock("../lib/clipExportSource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/clipExportSource")>();
+  return {
+    ...actual,
+    waitForCamera4kSource: vi.fn(async () => ({
+      kind: "camera-4k" as const,
+      url: "https://source.test/ready.m3u8",
+      playlist: "#EXTM3U\n#EXTINF:60,\nsegment.m4s\n",
+      path: "camera-original-4k HLS" as const,
+      duration: 60,
+      renditionLabel: null,
     })),
   };
 });
@@ -91,6 +121,7 @@ import {
 } from "../lib/bunny";
 import { fetchExportObject, probeExportObject } from "../lib/backupExport";
 import { ADMIN_PREVIEW_RANGE_MAX_BYTES } from "../lib/exportPlayback";
+import { CAMERA_4K_RECLIP_BATCH_KEY } from "../lib/camera4kReclipBatch";
 import { renderClip } from "../lib/ffmpegExport";
 import adminRouter from "./admin";
 import userClipsRouter from "./userClips";
@@ -106,6 +137,7 @@ let adminId: number;
 let playerId: number;
 const clipIds: number[] = [];
 let sequence = 0;
+let batchId: number | null = null;
 
 beforeAll(async () => {
   app = express();
@@ -129,6 +161,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (batchId !== null) {
+    await db.delete(camera4kReclipBatchesTable).where(eq(camera4kReclipBatchesTable.id, batchId));
+  }
   if (clipIds.length) await db.delete(userClipAuditEventsTable).where(inArray(userClipAuditEventsTable.clipId, clipIds));
   if (clipIds.length) await db.delete(userClipsTable).where(inArray(userClipsTable.id, clipIds));
   await db.delete(usersTable).where(inArray(usersTable.id, [adminId, playerId]));
@@ -589,5 +624,36 @@ describe("admin clip re-clipping", () => {
       { owner: playerId, actor: adminId, actorRole: "admin", action: "deleted" },
       { owner: playerId, actor: adminId, actorRole: "admin", action: "restored" },
     ]);
+  });
+
+  it("shows skipped batch items only to admins", async () => {
+    const [batch] = await db.insert(camera4kReclipBatchesTable).values({
+      batchKey: CAMERA_4K_RECLIP_BATCH_KEY,
+      status: "completed",
+      scopeSeeded: true,
+      scopeCutoff: new Date("2026-11-08T16:05:00.000Z"),
+      totalCount: 3,
+      skippedCount: 3,
+      sourceProbeSummary: [{
+        recordingId: 408,
+        videoId: "1f497d2d-c19e-484b-a896-b59e896b1cdb",
+        recordingDate: "2026-10-22",
+        timeSlot: "22:30",
+        state: "unavailable",
+        reason: "Camera 4K original was not published within 8 seconds",
+      }],
+    }).returning({ id: camera4kReclipBatchesTable.id });
+    batchId = batch.id;
+
+    mockedGetLocalUserId.mockResolvedValue(playerId);
+    await request(app).get("/api/admin/clips/4k-reclip-batch").expect(403);
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    const status = await request(app).get("/api/admin/clips/4k-reclip-batch").expect(200);
+    expect(status.body.batch).toMatchObject({
+      status: "completed",
+      totalCount: 3,
+      skippedCount: 3,
+      sourceProbeSummary: [{ recordingId: 408, state: "unavailable" }],
+    });
   });
 });
