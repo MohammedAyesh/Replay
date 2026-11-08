@@ -26,15 +26,15 @@ import { useLibraryClips, useLibraryMatches } from "@/lib/creative-hub-library-a
 import { offeredStyles } from "@/lib/creative-styles";
 import { cn } from "@/lib/utils";
 import { useConsoleKind } from "@/lib/console-kind";
-import { projectTitle, seedKind, seedMedia, startingData } from "./templates/data";
+import { libraryStartingData, projectTitle, seedKind, seedMedia, startingData } from "./templates/data";
 import { useElementWidth } from "./templates/hooks";
 import { StyleSwatch } from "./templates/style-swatch";
 import { TemplateCard } from "./templates/template-card";
 import { StarButton } from "./star-button";
 import { starredFirst, useFavorites } from "@/lib/favorites-api";
 import { useMyTemplatesCopy } from "@/i18n/my-templates-strings";
-import type { MyTemplate } from "@/lib/my-templates-api";
-import { MyTemplatesGrid } from "./my-templates";
+import type { LibraryTemplate, MyTemplate } from "@/lib/my-templates-api";
+import { LibraryTemplatesGrid, MyTemplatesGrid } from "./my-templates";
 import type { SectionProps, TemplateSeed } from "./types";
 
 /**
@@ -217,6 +217,33 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
     }
   };
 
+  /** A template from Replay's library: filled like the built-in it names, with its own sample words. */
+  const libraryData = useCallback((t: LibraryTemplate) => libraryStartingData(dataFor(t.baseKey ?? t.key), t.sampleData), [dataFor]);
+  const openLibrary = async (t: LibraryTemplate) => {
+    setPending(`lib-${t.id}`);
+    setFailed(null);
+    try {
+      const data = libraryData(t);
+      const footage = active && (active.type === "clip" || active.type === "recording") && active.framing === undefined ? seedMedia(active) : null;
+      const framing = footage ? await followTheBall(academyId, footage) : null;
+      const seed = framing && active ? { ...active, framing } as TemplateSeed : active;
+      const stillCams = await camerasFor(queryClient, academyId, data);
+      const project = await create.mutateAsync({
+        title: projectTitle(t.title[postLocale], data, active),
+        templateKey: t.baseKey ?? t.key,
+        style: t.scene.template?.style ?? null,
+        scene: withSeedCamera(withStillCameras(t.scene, data, stillCams), seed),
+        data,
+        sourceSessionId: sessionId,
+      });
+      nav.openInEditor(project.id);
+    } catch {
+      setFailed(`lib-${t.id}`);
+    } finally {
+      setPending(null);
+    }
+  };
+
   const cols = gridWidth < 560 ? 2 : gridWidth < 900 ? 3 : 4;
   const gap = 12;
   const cardW = gridWidth > 0 ? Math.floor((gridWidth - gap * (cols - 1)) / cols) : 0;
@@ -291,6 +318,10 @@ export function CreativeTemplates({ academyId, nav, seed }: SectionProps & { see
 
       {category === "mine" ? (
         <div ref={gridRef}>
+          <LibraryTemplatesGrid academyId={academyId} brand={brand} width={cardW} cols={cols} gap={gap} dataFor={libraryData} mediaUrl={mediaUrl}
+            onOpen={(t) => void openLibrary(t)} pending={pending?.startsWith("lib-") ? Number(pending.slice(4)) : null}
+            labels={{ video: copy.video, seconds: copy.seconds, creating: copy.creating, open: copy.open }} />
+          {failed?.startsWith("lib-") ? <p className="mb-2 text-xs text-red-400" role="alert">{copy.createFailed}</p> : null}
           <MyTemplatesGrid academyId={academyId} brand={brand} width={cardW} cols={cols} gap={gap} dataFor={dataFor} mediaUrl={mediaUrl}
             onOpen={(t) => void openMine(t)} pending={pending?.startsWith("my-") ? Number(pending.slice(3)) : null}
             labels={{ video: copy.video, seconds: copy.seconds, creating: copy.creating, open: copy.open }} />

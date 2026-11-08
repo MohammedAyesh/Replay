@@ -2,6 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { academyCreativeTemplatesTable, db, type AcademyCreativeTemplate } from "@workspace/db";
 import { buildTemplateScene, sceneSchema, type Scene } from "@workspace/api-zod";
 import { logger } from "../logger";
+import { libraryReplacements } from "./templateLibrary";
 
 /**
  * My templates: a design saved from the editor to use again (routes/academyCreativeTemplates.ts).
@@ -45,8 +46,9 @@ export async function listMyTemplates(academyId: number): Promise<AcademyCreativ
 }
 
 /**
- * The academy's own scenes that stand in for catalogue templates, by "key:format". Autopilots
- * (field Instagram, academy drafts) build from these instead of the catalogue's.
+ * The scenes that stand in for catalogue templates, by "key:format" ("key:format:clips" for a
+ * library montage): the academy's own, then the template library's. Autopilots (field Instagram,
+ * academy drafts) build from these instead of the catalogue's.
  */
 export async function replacementScenes(academyId: number): Promise<Map<string, Scene>> {
   const rows = await db.select().from(academyCreativeTemplatesTable).where(and(
@@ -59,7 +61,22 @@ export async function replacementScenes(academyId: number): Promise<Map<string, 
     if (parsed.success) out.set(`${r.baseKey}:${r.format}`, parsed.data);
     else logger.warn({ academyId, templateId: r.id }, "My template: saved scene no longer valid; using the catalogue's");
   }
+  // Then the template library's (Admin → Template library): an uploaded file that replaces a
+  // built-in. The academy's own choice wins at the same template and size.
+  const library = await libraryReplacements(academyId).catch((error) => {
+    logger.warn({ academyId, error: (error as Error).message }, "Template library: replacements failed; using the built-ins");
+    return new Map<string, Scene>();
+  });
+  for (const [key, scene] of library) {
+    const [base, format] = key.split(":");
+    if (!out.has(`${base}:${format}`)) out.set(key, scene);
+  }
   return out;
+}
+
+/** A replacement for a montage laid out for `clips` clips, else one for the template at that size. */
+export function replacementFor(replacements: Map<string, Scene>, key: string, format: string, clips?: number): Scene | undefined {
+  return (clips ? replacements.get(`${key}:${format}:${clips}`) : undefined) ?? replacements.get(`${key}:${format}`);
 }
 
 /**

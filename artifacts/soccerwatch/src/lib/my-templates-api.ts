@@ -50,3 +50,29 @@ export function useMyTemplateActions(academyId: number) {
     }),
   };
 }
+
+/**
+ * Template library: templates Replay uploaded for every field or academy (Admin → Template library).
+ * Read-only here; opened like My templates. routes/creativeTemplateLibrary.ts.
+ */
+export type LibraryTemplate = {
+  id: number;
+  key: string;
+  title: { en: string; ar: string };
+  description: string | null;
+  baseKey: string | null;
+  replacesBase: boolean;
+  clips: number | null;
+  format: CreativeFormat;
+  kind: "image" | "video";
+  scene: Scene;
+  sampleData: { custom?: Record<string, string> } | null;
+};
+
+export function useLibraryTemplates(academyId: number) {
+  return useQuery({
+    queryKey: [...creativeKeys.all(academyId), "library-templates"] as const,
+    queryFn: () => call<{ templates: LibraryTemplate[] }>(creativePath(academyId, "/library-templates")).then((r) => r.templates),
+    staleTime: 60_000,
+  });
+}

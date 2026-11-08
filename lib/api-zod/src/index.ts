@@ -34,6 +34,7 @@ export const UpdateProfileBody = z.object({
 export * from "./creativeScene";
 export * from "./creativeMotion";
 export * from "./creativeTemplates";
+export * from "./templateFiles";
 export * from "./creativePacks";
 export * from "./creativeFonts";
 export * from "./playerPhotos";

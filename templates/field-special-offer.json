@@ -1,0 +1,1014 @@
+{
+  "replayTemplate": 1,
+  "key": "field-special-offer",
+  "title": {
+    "en": "Special offer",
+    "ar": "عرض خاص"
+  },
+  "description": "Prices for one day, up to three rows (hours and price). Recording and stats included.",
+  "audience": "field",
+  "formats": {
+    "story": {
+      "v": 1,
+      "format": "story",
+      "background": "@ink",
+      "layers": [
+        {
+          "id": "bg-ink",
+          "name": "bleed",
+          "x": 0,
+          "y": 0,
+          "w": 1080,
+          "h": 1920,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@ink"
+        },
+        {
+          "id": "bg-band",
+          "name": "bleed",
+          "x": -300,
+          "y": 1574,
+          "w": 1680,
+          "h": 210,
+          "rotation": 12,
+          "opacity": 0.1,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary"
+        },
+        {
+          "id": "bg-line",
+          "name": "bleed",
+          "x": -300,
+          "y": 1512,
+          "w": 1680,
+          "h": 14,
+          "rotation": 12,
+          "opacity": 0.4,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary"
+        },
+        {
+          "id": "head-crest",
+          "x": 912,
+          "y": 176,
+          "w": 96,
+          "h": 96,
+          "kind": "image",
+          "src": {
+            "type": "crest"
+          },
+          "fit": "contain"
+        },
+        {
+          "id": "head-name",
+          "x": 292,
+          "y": 188,
+          "w": 598,
+          "h": 77,
+          "kind": "text",
+          "text": "{{custom.field}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 35,
+          "weight": 800,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "shadow": {
+            "color": "#00000099",
+            "blur": 12,
+            "x": 0,
+            "y": 2
+          }
+        },
+        {
+          "id": "head-replay",
+          "x": 72,
+          "y": 197,
+          "w": 190,
+          "h": 54,
+          "kind": "text",
+          "text": "REPLAY",
+          "font": "condensed",
+          "dir": "ltr",
+          "size": 30,
+          "letterSpacing": 6,
+          "weight": 800,
+          "color": "@primary",
+          "align": "start"
+        },
+        {
+          "id": "kicker",
+          "x": 634,
+          "y": 446,
+          "w": 374,
+          "h": 84,
+          "kind": "text",
+          "text": "{{custom.kicker}}",
+          "font": "arabic-display",
+          "dir": "rtl",
+          "size": 42,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "start",
+          "background": {
+            "color": "@primary",
+            "padding": 18,
+            "radius": 999
+          }
+        },
+        {
+          "id": "title",
+          "x": 72,
+          "y": 562,
+          "w": 936,
+          "h": 190,
+          "kind": "text",
+          "text": "{{custom.title}}",
+          "font": "arabic-display",
+          "dir": "rtl",
+          "size": 123,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true
+        },
+        {
+          "id": "sub",
+          "x": 72,
+          "y": 766,
+          "w": 936,
+          "h": 60,
+          "opacity": 0.9,
+          "kind": "text",
+          "text": "{{custom.sub}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 37,
+          "weight": 700,
+          "color": "@paper",
+          "align": "start",
+          "when": [
+            {
+              "path": "custom.sub"
+            }
+          ]
+        },
+        {
+          "id": "row-1",
+          "x": 72,
+          "y": 896,
+          "w": 936,
+          "h": 170,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "#FFFFFF14",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.r1"
+            }
+          ]
+        },
+        {
+          "id": "row-1-t",
+          "x": 504,
+          "y": 937,
+          "w": 468,
+          "h": 88,
+          "kind": "text",
+          "text": "{{custom.r1}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 56,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.r1"
+            }
+          ]
+        },
+        {
+          "id": "row-1-p",
+          "x": 108,
+          "y": 937,
+          "w": 300,
+          "h": 88,
+          "kind": "text",
+          "text": "{{custom.p1}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 42,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "center",
+          "background": {
+            "color": "@primary",
+            "padding": 16,
+            "radius": 999
+          },
+          "when": [
+            {
+              "path": "custom.r1"
+            }
+          ]
+        },
+        {
+          "id": "row-2",
+          "x": 72,
+          "y": 1088,
+          "w": 936,
+          "h": 170,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "#FFFFFF14",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.r2"
+            }
+          ]
+        },
+        {
+          "id": "row-2-t",
+          "x": 504,
+          "y": 1129,
+          "w": 468,
+          "h": 88,
+          "kind": "text",
+          "text": "{{custom.r2}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 56,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.r2"
+            }
+          ]
+        },
+        {
+          "id": "row-2-p",
+          "x": 108,
+          "y": 1129,
+          "w": 300,
+          "h": 88,
+          "kind": "text",
+          "text": "{{custom.p2}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 42,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "center",
+          "background": {
+            "color": "@primary",
+            "padding": 16,
+            "radius": 999
+          },
+          "when": [
+            {
+              "path": "custom.r2"
+            }
+          ]
+        },
+        {
+          "id": "row-3",
+          "x": 72,
+          "y": 1280,
+          "w": 936,
+          "h": 170,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "#FFFFFF14",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.r3"
+            }
+          ]
+        },
+        {
+          "id": "row-3-t",
+          "x": 504,
+          "y": 1321,
+          "w": 468,
+          "h": 88,
+          "kind": "text",
+          "text": "{{custom.r3}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 56,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.r3"
+            }
+          ]
+        },
+        {
+          "id": "row-3-p",
+          "x": 108,
+          "y": 1321,
+          "w": 300,
+          "h": 88,
+          "kind": "text",
+          "text": "{{custom.p3}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 42,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "center",
+          "background": {
+            "color": "@primary",
+            "padding": 16,
+            "radius": 999
+          },
+          "when": [
+            {
+              "path": "custom.r3"
+            }
+          ]
+        },
+        {
+          "id": "band-band",
+          "x": 72,
+          "y": 1544,
+          "w": 936,
+          "h": 112,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.siteLine",
+              "not": true
+            }
+          ]
+        },
+        {
+          "id": "band-line",
+          "x": 431,
+          "y": 1569,
+          "w": 543,
+          "h": 63,
+          "kind": "text",
+          "text": "{{custom.bookLine}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 33,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine",
+              "not": true
+            }
+          ]
+        },
+        {
+          "id": "band-phone",
+          "x": 106,
+          "y": 1564,
+          "w": 359,
+          "h": 72,
+          "kind": "text",
+          "text": "{{academy.phone}}",
+          "font": "condensed",
+          "dir": "ltr",
+          "size": 52,
+          "weight": 800,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine",
+              "not": true
+            }
+          ]
+        },
+        {
+          "id": "band-s-band",
+          "x": 72,
+          "y": 1474,
+          "w": 936,
+          "h": 182,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-line",
+          "x": 431,
+          "y": 1499,
+          "w": 543,
+          "h": 63,
+          "kind": "text",
+          "text": "{{custom.bookLine}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 33,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-phone",
+          "x": 106,
+          "y": 1494,
+          "w": 359,
+          "h": 72,
+          "kind": "text",
+          "text": "{{academy.phone}}",
+          "font": "condensed",
+          "dir": "ltr",
+          "size": 52,
+          "weight": 800,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-rule",
+          "x": 106,
+          "y": 1582,
+          "w": 868,
+          "h": 2,
+          "opacity": 0.25,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@on-primary",
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-site",
+          "x": 106,
+          "y": 1590,
+          "w": 868,
+          "h": 54,
+          "kind": "text",
+          "text": "{{custom.siteLine}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 28,
+          "weight": 700,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        }
+      ],
+      "locale": "ar"
+    },
+    "post": {
+      "v": 1,
+      "format": "post",
+      "background": "@ink",
+      "layers": [
+        {
+          "id": "bg-ink",
+          "name": "bleed",
+          "x": 0,
+          "y": 0,
+          "w": 1080,
+          "h": 1350,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@ink"
+        },
+        {
+          "id": "bg-band",
+          "name": "bleed",
+          "x": -300,
+          "y": 1080,
+          "w": 1680,
+          "h": 170,
+          "rotation": 12,
+          "opacity": 0.1,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary"
+        },
+        {
+          "id": "bg-line",
+          "name": "bleed",
+          "x": -300,
+          "y": 1028,
+          "w": 1680,
+          "h": 14,
+          "rotation": 12,
+          "opacity": 0.4,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary"
+        },
+        {
+          "id": "head-crest",
+          "x": 924,
+          "y": 72,
+          "w": 84,
+          "h": 84,
+          "kind": "image",
+          "src": {
+            "type": "crest"
+          },
+          "fit": "contain"
+        },
+        {
+          "id": "head-name",
+          "x": 292,
+          "y": 82,
+          "w": 610,
+          "h": 67,
+          "kind": "text",
+          "text": "{{custom.field}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 31,
+          "weight": 800,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "shadow": {
+            "color": "#00000099",
+            "blur": 12,
+            "x": 0,
+            "y": 2
+          }
+        },
+        {
+          "id": "head-replay",
+          "x": 72,
+          "y": 90,
+          "w": 190,
+          "h": 47,
+          "kind": "text",
+          "text": "REPLAY",
+          "font": "condensed",
+          "dir": "ltr",
+          "size": 28,
+          "letterSpacing": 6,
+          "weight": 800,
+          "color": "@primary",
+          "align": "start"
+        },
+        {
+          "id": "kicker",
+          "x": 634,
+          "y": 222,
+          "w": 374,
+          "h": 76,
+          "kind": "text",
+          "text": "{{custom.kicker}}",
+          "font": "arabic-display",
+          "dir": "rtl",
+          "size": 38,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "start",
+          "background": {
+            "color": "@primary",
+            "padding": 17,
+            "radius": 999
+          }
+        },
+        {
+          "id": "title",
+          "x": 72,
+          "y": 322,
+          "w": 936,
+          "h": 150,
+          "kind": "text",
+          "text": "{{custom.title}}",
+          "font": "arabic-display",
+          "dir": "rtl",
+          "size": 98,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true
+        },
+        {
+          "id": "sub",
+          "x": 72,
+          "y": 484,
+          "w": 936,
+          "h": 60,
+          "opacity": 0.9,
+          "kind": "text",
+          "text": "{{custom.sub}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 33,
+          "weight": 700,
+          "color": "@paper",
+          "align": "start",
+          "when": [
+            {
+              "path": "custom.sub"
+            }
+          ]
+        },
+        {
+          "id": "row-1",
+          "x": 72,
+          "y": 582,
+          "w": 936,
+          "h": 132,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "#FFFFFF14",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.r1"
+            }
+          ]
+        },
+        {
+          "id": "row-1-t",
+          "x": 504,
+          "y": 614,
+          "w": 468,
+          "h": 69,
+          "kind": "text",
+          "text": "{{custom.r1}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 44,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.r1"
+            }
+          ]
+        },
+        {
+          "id": "row-1-p",
+          "x": 108,
+          "y": 614,
+          "w": 300,
+          "h": 69,
+          "kind": "text",
+          "text": "{{custom.p1}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 33,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "center",
+          "background": {
+            "color": "@primary",
+            "padding": 16,
+            "radius": 999
+          },
+          "when": [
+            {
+              "path": "custom.r1"
+            }
+          ]
+        },
+        {
+          "id": "row-2",
+          "x": 72,
+          "y": 736,
+          "w": 936,
+          "h": 132,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "#FFFFFF14",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.r2"
+            }
+          ]
+        },
+        {
+          "id": "row-2-t",
+          "x": 504,
+          "y": 768,
+          "w": 468,
+          "h": 69,
+          "kind": "text",
+          "text": "{{custom.r2}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 44,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.r2"
+            }
+          ]
+        },
+        {
+          "id": "row-2-p",
+          "x": 108,
+          "y": 768,
+          "w": 300,
+          "h": 69,
+          "kind": "text",
+          "text": "{{custom.p2}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 33,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "center",
+          "background": {
+            "color": "@primary",
+            "padding": 16,
+            "radius": 999
+          },
+          "when": [
+            {
+              "path": "custom.r2"
+            }
+          ]
+        },
+        {
+          "id": "row-3",
+          "x": 72,
+          "y": 890,
+          "w": 936,
+          "h": 132,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "#FFFFFF14",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.r3"
+            }
+          ]
+        },
+        {
+          "id": "row-3-t",
+          "x": 504,
+          "y": 922,
+          "w": 468,
+          "h": 69,
+          "kind": "text",
+          "text": "{{custom.r3}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 44,
+          "weight": 900,
+          "color": "@paper",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.r3"
+            }
+          ]
+        },
+        {
+          "id": "row-3-p",
+          "x": 108,
+          "y": 922,
+          "w": 300,
+          "h": 69,
+          "kind": "text",
+          "text": "{{custom.p3}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 33,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "center",
+          "background": {
+            "color": "@primary",
+            "padding": 16,
+            "radius": 999
+          },
+          "when": [
+            {
+              "path": "custom.r3"
+            }
+          ]
+        },
+        {
+          "id": "band-band",
+          "x": 72,
+          "y": 1174,
+          "w": 936,
+          "h": 104,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.siteLine",
+              "not": true
+            }
+          ]
+        },
+        {
+          "id": "band-line",
+          "x": 431,
+          "y": 1197,
+          "w": 543,
+          "h": 58,
+          "kind": "text",
+          "text": "{{custom.bookLine}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 31,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine",
+              "not": true
+            }
+          ]
+        },
+        {
+          "id": "band-phone",
+          "x": 106,
+          "y": 1193,
+          "w": 359,
+          "h": 67,
+          "kind": "text",
+          "text": "{{academy.phone}}",
+          "font": "condensed",
+          "dir": "ltr",
+          "size": 48,
+          "weight": 800,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine",
+              "not": true
+            }
+          ]
+        },
+        {
+          "id": "band-s-band",
+          "x": 72,
+          "y": 1112,
+          "w": 936,
+          "h": 166,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@primary",
+          "radius": 28,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-line",
+          "x": 431,
+          "y": 1135,
+          "w": 543,
+          "h": 58,
+          "kind": "text",
+          "text": "{{custom.bookLine}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 31,
+          "weight": 900,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-phone",
+          "x": 106,
+          "y": 1131,
+          "w": 359,
+          "h": 67,
+          "kind": "text",
+          "text": "{{academy.phone}}",
+          "font": "condensed",
+          "dir": "ltr",
+          "size": 48,
+          "weight": 800,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-rule",
+          "x": 106,
+          "y": 1212,
+          "w": 868,
+          "h": 2,
+          "opacity": 0.25,
+          "kind": "shape",
+          "shape": "rect",
+          "fill": "@on-primary",
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        },
+        {
+          "id": "band-s-site",
+          "x": 106,
+          "y": 1220,
+          "w": 868,
+          "h": 46,
+          "kind": "text",
+          "text": "{{custom.siteLine}}",
+          "font": "arabic",
+          "dir": "rtl",
+          "size": 26,
+          "weight": 700,
+          "color": "@on-primary",
+          "align": "start",
+          "fit": true,
+          "when": [
+            {
+              "path": "custom.siteLine"
+            }
+          ]
+        }
+      ],
+      "locale": "ar"
+    }
+  },
+  "sampleData": {
+    "custom": {
+      "field": "ملاعب جوردن جلاكسي",
+      "kicker": "بكرا",
+      "title": "عرض خاص",
+      "sub": "التصوير والأرقام مشمولة",
+      "r1": "ساعتين",
+      "p1": "30 دينار",
+      "r2": "ساعة ونص",
+      "p2": "25 دينار",
+      "bookLine": "احجز ملعبك · كل ماتش متصوّر",
+      "siteLine": "خذ كليباتك وأرقامك من replayjo.com"
+    }
+  }
+}

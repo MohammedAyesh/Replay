@@ -212,6 +212,22 @@ export const MY_TEMPLATES_STATEMENTS = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "academy_creative_templates_replaces_unique" ON "academy_creative_templates" ("academy_id", "base_key", "format") WHERE "replaces_base"`
 ];
 
+/** 0078: the template library. Exported for the test that compares them with the migration file. */
+export const LIBRARY_TEMPLATES_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "creative_library_templates" (
+  "id" serial PRIMARY KEY,
+  "key" text NOT NULL, "title_en" text NOT NULL, "title_ar" text NOT NULL, "description" text,
+  "audience" text DEFAULT 'field' NOT NULL, "academy_ids" jsonb, "base_key" text, "replaces_base" boolean DEFAULT false NOT NULL, "clips" integer,
+  "format" text NOT NULL, "kind" text DEFAULT 'image' NOT NULL, "scene" jsonb NOT NULL, "sample_data" jsonb, "active" boolean DEFAULT true NOT NULL,
+  "uploaded_by" integer CONSTRAINT "creative_library_templates_uploaded_by_users_id_fk" REFERENCES "users"("id") ON DELETE SET NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "creative_library_templates_audience_check" CHECK ("audience" in ('field', 'academy', 'all')),
+  CONSTRAINT "creative_library_templates_kind_check" CHECK ("kind" in ('image', 'video')))`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "creative_library_templates_key_format_unique" ON "creative_library_templates" ("key", "format")`,
+  `CREATE INDEX IF NOT EXISTS "creative_library_templates_base_idx" ON "creative_library_templates" ("base_key", "format")`
+];
+
 /** 0074: academies' Instagram autopilot. Exported for the test that compares them with the migration file. */
 export const ACADEMY_IG_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS "academy_ig_autopilot" (
@@ -730,6 +746,7 @@ const TABLES: Array<{ table: string; statements: string[] }> = [
   { table: "web_push_keys", statements: PUSH_KEYS_STATEMENTS },
   // 0073_academy_creative_templates.sql
   { table: "academy_creative_templates", statements: MY_TEMPLATES_STATEMENTS },
+  { table: "creative_library_templates", statements: LIBRARY_TEMPLATES_STATEMENTS },
   // 0074_academy_instagram_autopilot.sql
   { table: "academy_ig_autopilot", statements: [ACADEMY_IG_STATEMENTS[0]] },
   { table: "academy_ig_items", statements: [ACADEMY_IG_STATEMENTS[1], ACADEMY_IG_STATEMENTS[2]] },
