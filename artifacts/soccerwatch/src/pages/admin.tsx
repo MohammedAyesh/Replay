@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import Hls from "hls.js";
 import { withDirectSegments } from "@/lib/directSegments";
+import { useToast } from "@/hooks/use-toast";
+import { createUhdStallGuard, canDecodeUhd, isUhdPlaylistAvailable, readUhdPlaybackPreference, uhdPlaybackUrlForGuid, writeUhdPlaybackPreference } from "@/lib/uhdPlayback";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
 import CreativePackPanel from "@/components/admin/CreativePackPanel";
@@ -21,7 +23,7 @@ import { StreamingPanel } from "@/components/StreamingPanel";
 import StatPaymentsTab from "@/components/admin/StatPaymentsTab";
 import { ReportsTab } from "@/components/admin/ReportsTab";
 import { useAdminReports } from "@/lib/safety-api";
-import { useTranslation } from "@/i18n";
+import { useLocale, useTranslation } from "@/i18n";
 import { TrackingAlignmentCheck } from "@/components/TrackingAlignmentCheck";
 import { cn } from "@/lib/utils";
 import { parseFormatCVideoTitle } from "@workspace/api-zod";
@@ -250,6 +252,8 @@ interface AdminRecording {
   duration: string;
   score: string | null;
   videoUrl: string;
+  uhdPlaybackUrl?: string | null;
+  hasUhdPlayback?: boolean;
   isVisible: boolean;
   hasTrackingBundle?: boolean;
   trackingSegmentCount?: number | null;
@@ -3630,13 +3634,51 @@ interface RecordingJob {
   jobId?: string;
 }
 
-function HlsPlayer({ url, className }: { url: string; className?: string }) {
+function HlsPlayer({
+  url,
+  className,
+  uhdUrl,
+  hasUhdPlayback = false,
+}: {
+  url: string;
+  className?: string;
+  uhdUrl?: string | null;
+  hasUhdPlayback?: boolean;
+}) {
   const videoRef  = useRef<HTMLVideoElement>(null);
   const hlsRef    = useRef<Hls | null>(null);
-
-  // quality levels discovered from the HLS manifest (height → original index)
   const [levels,      setLevels]      = useState<Array<{ height: number; index: number }>>([]);
   const [activeLevel, setActiveLevel] = useState<number>(-1); // -1 = Auto (ABR)
+  const [uhdAvailable, setUhdAvailable] = useState(false);
+  const [sourceStage, setSourceStage] = useState<"checking" | "uhd" | "cdn" | "proxy">(
+    () => uhdUrl && readUhdPlaybackPreference() === "4k" ? "checking" : "cdn",
+  );
+  const positionRef = useRef<number | null>(null);
+  const restorePausedRef = useRef<boolean | null>(null);
+  const hasPlayedRef = useRef(false);
+  const { toast } = useToast();
+  const { locale } = useLocale();
+  useEffect(() => { hasPlayedRef.current = false; }, [url]);
+
+  useEffect(() => {
+    let active = true;
+    const element = videoRef.current;
+    if (!uhdUrl || !hasUhdPlayback || !element) {
+      setUhdAvailable(false);
+      setSourceStage((current) => current === "checking" ? "cdn" : current);
+      return () => { active = false; };
+    }
+    void (async () => {
+      const capable = await canDecodeUhd(element);
+      const available = capable && await isUhdPlaylistAvailable(uhdUrl);
+      if (!active) return;
+      setUhdAvailable(available);
+      setSourceStage((current) => current === "checking"
+        ? readUhdPlaybackPreference() === "4k" && available ? "uhd" : "cdn"
+        : current);
+    })();
+    return () => { active = false; };
+  }, [hasUhdPlayback, uhdUrl]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -3644,42 +3686,158 @@ function HlsPlayer({ url, className }: { url: string; className?: string }) {
 
     setLevels([]);
     setActiveLevel(-1);
+    if (sourceStage === "checking") return undefined;
+    const directUrl = withDirectSegments(url);
+    const sourceUrl = sourceStage === "uhd" ? uhdUrl : sourceStage === "proxy" ? url : directUrl;
+    if (!sourceUrl) {
+      setSourceStage("cdn");
+      return undefined;
+    }
+    const initialPosition = positionRef.current;
+    const initialPauseState = restorePausedRef.current;
+    let disposed = false;
+    let hasPlayed = false;
+    let onDirect = directUrl !== url;
+    const fallbackFromUhd = (stalled = false) => {
+      if (disposed || sourceStage !== "uhd") return;
+      positionRef.current = Number.isFinite(el.currentTime) ? el.currentTime : 0;
+      restorePausedRef.current = hasPlayedRef.current && el.paused;
+      setSourceStage("cdn");
+      if (stalled) {
+        toast({
+          title: locale === "ar"
+            ? "حوّلنا لـ HD عشان يمشي الفيديو أسلس"
+            : "Switched to HD for smoother playback",
+        });
+      }
+    };
+    const stallGuard = sourceStage === "uhd"
+      ? createUhdStallGuard({ onRepeatedStall: () => fallbackFromUhd(true) })
+      : null;
+    let uhdStartupTimer: number | null = sourceStage === "uhd"
+      ? window.setTimeout(() => fallbackFromUhd(), 8_000)
+      : null;
+    const clearUhdStartupTimer = () => {
+      if (uhdStartupTimer !== null) window.clearTimeout(uhdStartupTimer);
+      uhdStartupTimer = null;
+    };
+    const onLoadedData = () => clearUhdStartupTimer();
+    const onWaiting = () => { if (hasPlayed) stallGuard?.waiting(); };
+    const onRecovered = () => stallGuard?.recovered();
+    const onPlaying = () => {
+      hasPlayed = true;
+      hasPlayedRef.current = true;
+      onRecovered();
+    };
+    el.addEventListener("loadeddata", onLoadedData);
+    el.addEventListener("waiting", onWaiting);
+    el.addEventListener("stalled", onWaiting);
+    el.addEventListener("playing", onPlaying);
+    el.addEventListener("pause", onRecovered);
 
     if (Hls.isSupported()) {
-      const hls = new Hls({ liveSyncDurationCount: 3 });
-      hlsRef.current = hls;
-      // Segments straight from Bunny first; the relayed playlist if they fail.
-      const directUrl = withDirectSegments(url);
-      let onDirect = directUrl !== url;
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (!data.fatal || data.type !== Hls.ErrorTypes.NETWORK_ERROR || !onDirect) return;
-        onDirect = false;
-        hls.loadSource(url);
-        hls.startLoad(el.currentTime || 0);
+      const hls = new Hls({
+        liveSyncDurationCount: 3,
+        startPosition: initialPosition ?? -1,
       });
-      // Intentional omission: admin preview checks encode quality at full
-      // source resolution rather than ordinary viewer playback.
-      hls.loadSource(directUrl);
-      hls.attachMedia(el);
+      hlsRef.current = hls;
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (sourceStage === "uhd" && (data.fatal
+          || String(data.details ?? "") === "bufferAddCodecError"
+          || String(data.details ?? "") === "bufferIncompatibleCodecsError")) {
+          fallbackFromUhd();
+          return;
+        }
+        if (!data.fatal || data.type !== Hls.ErrorTypes.NETWORK_ERROR) return;
+        if (sourceStage === "cdn" && onDirect) {
+          positionRef.current = Number.isFinite(el.currentTime) ? el.currentTime : 0;
+          restorePausedRef.current = el.paused;
+          setSourceStage("proxy");
+        }
+      });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        // sort highest → lowest for the quality buttons
         const lvls = hls.levels
           .map((l, i) => ({ height: l.height, index: i }))
           .sort((a, b) => b.height - a.height);
         setLevels(lvls);
         setActiveLevel(-1);
+        const target = initialPosition;
+        if (target != null) {
+          hls.startLoad(target);
+          if (Math.abs(el.currentTime - target) > 0.25) el.currentTime = target;
+        }
+        if (initialPauseState !== true) el.play().catch(() => {});
+        else el.pause();
       });
+      hls.loadSource(sourceUrl);
+      hls.attachMedia(el);
       el.muted = true;
-      el.play().catch(() => { /* autoplay blocked */ });
-      return () => { hls.destroy(); hlsRef.current = null; };
+      return () => {
+        disposed = true;
+        clearUhdStartupTimer();
+        stallGuard?.dispose();
+        el.removeEventListener("loadeddata", onLoadedData);
+        el.removeEventListener("waiting", onWaiting);
+        el.removeEventListener("stalled", onWaiting);
+        el.removeEventListener("playing", onPlaying);
+        el.removeEventListener("pause", onRecovered);
+        hls.destroy();
+        hlsRef.current = null;
+      };
     } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
-      // Safari / iOS — native HLS, no JS quality switching
-      el.src = url;
+      el.src = sourceUrl;
       el.muted = true;
-      el.play().catch(() => { /* autoplay blocked */ });
+      const onLoadedMetadata = () => {
+        if (initialPosition != null) el.currentTime = initialPosition;
+        if (initialPauseState !== true) el.play().catch(() => {});
+        else el.pause();
+      };
+      const onNativeError = () => {
+        if (sourceStage === "uhd") fallbackFromUhd();
+        else if (sourceStage === "cdn" && onDirect) {
+          positionRef.current = Number.isFinite(el.currentTime) ? el.currentTime : 0;
+          restorePausedRef.current = el.paused;
+          setSourceStage("proxy");
+        }
+      };
+      el.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
+      el.addEventListener("error", onNativeError);
+      el.load();
+      return () => {
+        disposed = true;
+        clearUhdStartupTimer();
+        stallGuard?.dispose();
+        el.removeEventListener("loadeddata", onLoadedData);
+        el.removeEventListener("waiting", onWaiting);
+        el.removeEventListener("stalled", onWaiting);
+        el.removeEventListener("playing", onPlaying);
+        el.removeEventListener("pause", onRecovered);
+        el.removeEventListener("loadedmetadata", onLoadedMetadata);
+        el.removeEventListener("error", onNativeError);
+      };
     }
-    return undefined;
-  }, [url]);
+    return () => {
+      disposed = true;
+      clearUhdStartupTimer();
+      stallGuard?.dispose();
+      el.removeEventListener("loadeddata", onLoadedData);
+      el.removeEventListener("waiting", onWaiting);
+      el.removeEventListener("stalled", onWaiting);
+      el.removeEventListener("playing", onPlaying);
+      el.removeEventListener("pause", onRecovered);
+    };
+  }, [locale, sourceStage, toast, uhdUrl, url]);
+
+  const selectPlaybackSource = (preference: "4k" | "hd") => {
+    if (preference === "4k" && !uhdAvailable) return;
+    writeUhdPlaybackPreference(preference);
+    const element = videoRef.current;
+    if (element) {
+      positionRef.current = Number.isFinite(element.currentTime) ? element.currentTime : 0;
+      restorePausedRef.current = hasPlayedRef.current && element.paused;
+    }
+    setSourceStage(preference === "4k" ? "uhd" : "cdn");
+  };
 
   const setQuality = (level: number) => {
     if (hlsRef.current) hlsRef.current.currentLevel = level;
@@ -3728,6 +3886,20 @@ function HlsPlayer({ url, className }: { url: string; className?: string }) {
             </button>
           ))}
         </div>
+      )}
+      {uhdAvailable && uhdUrl && (
+        <button
+          type="button"
+          data-testid="button-playback-uhd-toggle"
+          aria-label={sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K"}
+          onClick={() => selectPlaybackSource(sourceStage === "uhd" ? "hd" : "4k")}
+          className={cn(
+            "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
+            sourceStage === "uhd" ? "border-primary text-primary bg-primary/10" : "border-zinc-700 text-zinc-400 hover:border-zinc-500",
+          )}
+        >
+          {sourceStage === "uhd" ? "4K" : "HD"}
+        </button>
       )}
     </div>
   );
@@ -4660,6 +4832,8 @@ function LiveJobCard({
               {showPlayer && (
                 <HlsPlayer
                   url={`${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(playbackUrl)}`}
+                  uhdUrl={uhdPlaybackUrlForGuid(job.videoId)}
+                  hasUhdPlayback={Boolean(job.videoId)}
                   className="max-h-64 mt-1"
                 />
               )}
@@ -5658,6 +5832,9 @@ function TrackingBundleUpload({
         <div className="min-w-0">
           <p className="truncate text-xs font-medium text-zinc-200">
             #{recording.id} · {recording.date} · {recording.timeSlot}
+            {recording.hasUhdPlayback && (
+              <span className="ms-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400">4K</span>
+            )}
           </p>
           <p className="text-[10px] text-zinc-500">
             {message || (hasBundle

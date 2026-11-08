@@ -14,6 +14,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
 import { CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } from "../lib/backupExport";
+import { getUhdPlaylist, rewriteUhdPlaylist } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 
@@ -354,6 +355,34 @@ export function wantsDirectSegments(query: unknown, referer: string | undefined,
     return false;
   }
 }
+
+/**
+ * GET /api/hls-proxy/uhd/:videoGuid.m3u8
+ * The original camera playlist is authorized like Bunny Stream manifests.
+ * Its fMP4 media object is fetched directly from the public Storage pull zone.
+ */
+router.get("/hls-proxy/uhd/:videoGuid.m3u8", async (req, res): Promise<void> => {
+  const videoGuid = Array.isArray(req.params.videoGuid) ? req.params.videoGuid[0] : req.params.videoGuid;
+  if (!videoGuid || !await canViewBunnyVideo(req, videoGuid)) {
+    res.status(404).type("text/plain").send("Media not found");
+    return;
+  }
+
+  try {
+    const playlist = await getUhdPlaylist(videoGuid);
+    if (playlist === null) {
+      res.status(404).type("text/plain").send("4K recording not found");
+      return;
+    }
+    res.set("Content-Type", "application/vnd.apple.mpegurl");
+    res.set("Cache-Control", "no-store");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.send(rewriteUhdPlaylist(playlist, videoGuid));
+  } catch (error) {
+    req.log?.warn({ err: error }, "4K Bunny Storage playlist fetch failed");
+    res.status(502).type("text/plain").send("4K recording unavailable");
+  }
+});
 
 /**
  * GET /api/hls-proxy/manifest?url=<encoded>

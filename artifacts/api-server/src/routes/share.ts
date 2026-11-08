@@ -36,6 +36,7 @@ import {
   POSTER_WIDTH,
   POSTER_HEIGHT,
 } from "../lib/posterFrame";
+import { getUhdPlaylist, rewriteUhdPlaylist, uhdMediaUrl } from "../lib/uhdPlayback";
 import {
   buildShareCardHtml,
   shareCardPath,
@@ -475,8 +476,14 @@ function ownerShareHtml(
   body { margin: 0; min-height: 100vh; background: #0B0F1A; color: #eef4f8;
     font: 15px/1.5 "Rajdhani", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   main { width: min(100%, 980px); margin: 0 auto; padding: 0 0 2rem; }
-  .stage { background: #000; }
+  .stage { position: relative; background: #000; }
   video { display: block; width: 100%; max-height: 78vh; background: #000; }
+  .quality-toggle { position: absolute; z-index: 2; inset-block-start: .75rem; inset-inline-end: .75rem;
+    display: none; border: 1px solid rgba(255,255,255,.25); background: rgba(11,15,26,.8);
+    color: #eef4f8; font-size: .75rem; font-weight: 700; }
+  .quality-toast { position: absolute; z-index: 2; inset-inline: .75rem; inset-block-end: .75rem;
+    display: none; width: fit-content; margin-inline: auto; border-radius: 999px; padding: .45rem .75rem;
+    background: rgba(11,15,26,.9); color: #fff; font-size: .78rem; }
   .content { padding: 1.1rem 1rem; }
   .brand { padding: 1rem 1rem .65rem; color: #D4FF4F; font-size: .75rem; font-weight: 700;
     letter-spacing: .28em; }
@@ -503,6 +510,8 @@ function ownerShareHtml(
   <div class="brand">REPLAY</div>
   <div class="stage">
     <video id="owner-video" controls controlsList="nodownload noplaybackrate" playsinline preload="metadata"></video>
+    <button id="quality-toggle" class="quality-toggle" type="button">4K</button>
+    <div id="quality-toast" class="quality-toast" aria-live="polite"></div>
   </div>
   <div class="content">
     <div class="en">
@@ -533,8 +542,28 @@ function ownerShareHtml(
   const ar = document.querySelector(".ar");
   const enButton = document.getElementById("en-button");
   const arButton = document.getElementById("ar-button");
+  const qualityButton = document.getElementById("quality-toggle");
+  const qualityToast = document.getElementById("quality-toast");
+  const uhdManifest = ${JSON.stringify(`${pageUrl}/4k.m3u8`)};
+  const preferenceKey = "replay.playback-quality";
+  let activeLanguage = "en";
+  let sourceStage = "cdn";
+  let hls = null;
+  let availableUhd = false;
+  let toastTimer = null;
+  let waitTimer = null;
+  let waiting = false;
+  let countedWait = false;
+  let hasPlayed = false;
+  let longStalls = [];
+  let uhdStartupTimer = null;
+  const clearUhdStartupTimer = () => {
+    if (uhdStartupTimer) clearTimeout(uhdStartupTimer);
+    uhdStartupTimer = null;
+  };
   const setLanguage = (language) => {
     const arabic = language === "ar";
+    activeLanguage = language;
     document.documentElement.lang = language;
     document.documentElement.dir = arabic ? "rtl" : "ltr";
     en.style.display = arabic ? "none" : "block";
@@ -546,15 +575,145 @@ function ownerShareHtml(
   arButton.addEventListener("click", () => setLanguage("ar"));
   setLanguage(new URLSearchParams(location.search).get("lang") === "ar"
     || navigator.language.toLowerCase().startsWith("ar") ? "ar" : "en");
-  if (window.Hls && window.Hls.isSupported()) {
-    const hls = new window.Hls({ enableWorker: false });
-    hls.loadSource(manifest);
-    hls.attachMedia(video);
-    hls.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
-  } else {
-    video.src = manifest;
-    video.addEventListener("loadedmetadata", () => video.play().catch(() => {}), { once: true });
-  }
+  const showToast = () => {
+    qualityToast.textContent = activeLanguage === "ar"
+      ? "حوّلنا لـ HD عشان يمشي الفيديو أسلس"
+      : "Switched to HD for smoother playback";
+    qualityToast.style.display = "block";
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => { qualityToast.style.display = "none"; }, 4000);
+  };
+  const useUhdPreference = () => {
+    try { return localStorage.getItem(preferenceKey) !== "hd"; }
+    catch { return true; }
+  };
+  const savePreference = (value) => {
+    try { localStorage.setItem(preferenceKey, value); } catch {}
+  };
+  const canDecodeUhd = async () => {
+    try {
+      const hlsCodec = 'application/vnd.apple.mpegurl; codecs="hvc1.1.6.L153.B0"';
+      const mp4Codec = 'video/mp4; codecs="hvc1.1.6.L153.B0"';
+      if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        return Boolean(video.canPlayType(hlsCodec) || video.canPlayType(mp4Codec));
+      }
+      if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) return false;
+      const result = await navigator.mediaCapabilities.decodingInfo({
+        type: "media-source",
+        video: { contentType: mp4Codec, width: 4096, height: 1152, bitrate: 10000000, framerate: 20 },
+      });
+      return result.supported && result.smooth;
+    } catch { return false; }
+  };
+  const setQualityButton = () => {
+    if (!availableUhd) return;
+    qualityButton.style.display = "block";
+    qualityButton.textContent = sourceStage === "uhd" ? "HD" : "4K";
+    qualityButton.setAttribute("aria-label", sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K");
+  };
+  const startSource = (stage, position = null, paused = null, playbackRate = video.playbackRate) => {
+    clearUhdStartupTimer();
+    sourceStage = stage;
+    if (hls) { hls.destroy(); hls = null; }
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+    if (stage === "uhd") {
+      longStalls = [];
+      uhdStartupTimer = window.setTimeout(() => {
+        if (sourceStage === "uhd" && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          startSource("cdn", Math.max(0, video.currentTime || position || 0), hasPlayed && video.paused, video.playbackRate);
+        }
+      }, 8000);
+    }
+    const source = stage === "uhd" ? uhdManifest : manifest;
+    const restorePlayback = () => {
+      if (position !== null && Number.isFinite(position)) video.currentTime = position;
+      video.playbackRate = playbackRate;
+      if (paused !== true) video.play().catch(() => {});
+      else video.pause();
+      setQualityButton();
+    };
+    if (window.Hls && window.Hls.isSupported()) {
+      hls = new window.Hls({ enableWorker: false, startPosition: position ?? -1 });
+      const instance = hls;
+      instance.on(window.Hls.Events.ERROR, (_event, data) => {
+        const details = String(data.details ?? "");
+        if (instance !== hls || sourceStage !== "uhd"
+          || (!data.fatal && details !== "bufferAddCodecError" && details !== "bufferIncompatibleCodecsError")) return;
+        startSource("cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+      });
+      instance.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        if (instance !== hls) return;
+        if (position !== null) instance.startLoad(position);
+        restorePlayback();
+      });
+      instance.loadSource(source);
+      instance.attachMedia(video);
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = source;
+      video.addEventListener("loadedmetadata", restorePlayback, { once: true });
+      video.onerror = () => {
+        if (sourceStage === "uhd") {
+          startSource("cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+        }
+      };
+      video.load();
+    } else {
+      video.src = source;
+      video.addEventListener("loadedmetadata", restorePlayback, { once: true });
+    }
+    setQualityButton();
+  };
+  qualityButton.addEventListener("click", () => {
+    const next = sourceStage === "uhd" ? "hd" : "4k";
+    savePreference(next);
+    startSource(next === "4k" ? "uhd" : "cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+  });
+  const recoverUhdStall = () => {
+    waiting = false;
+    countedWait = false;
+    if (waitTimer) clearTimeout(waitTimer);
+    waitTimer = null;
+  };
+  video.addEventListener("loadeddata", clearUhdStartupTimer);
+  const onPlaying = () => {
+    hasPlayed = true;
+    recoverUhdStall();
+  };
+  const onWait = () => {
+    if (sourceStage !== "uhd" || !hasPlayed || waiting) return;
+    waiting = true;
+    countedWait = false;
+    waitTimer = window.setTimeout(() => {
+      waitTimer = null;
+      if (!waiting || countedWait || sourceStage !== "uhd") return;
+      countedWait = true;
+      const now = Date.now();
+      longStalls = longStalls.filter((stamp) => now - stamp <= 60000);
+      longStalls.push(now);
+      if (longStalls.length >= 2) {
+        startSource("cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+        showToast();
+      }
+    }, 2000);
+  };
+  video.addEventListener("waiting", onWait);
+  video.addEventListener("stalled", onWait);
+  video.addEventListener("playing", onPlaying);
+  video.addEventListener("pause", recoverUhdStall);
+  void (async () => {
+    const capable = await canDecodeUhd();
+    if (capable) {
+      try {
+        const response = await fetch(uhdManifest, { credentials: "include", cache: "no-store" });
+        availableUhd = response.ok;
+        try { await response.body?.cancel(); } catch {}
+      } catch { availableUhd = false; }
+    }
+    setQualityButton();
+    startSource(availableUhd && useUhdPreference() ? "uhd" : "cdn");
+  })();
 })();
 </script>
 </body>
@@ -705,6 +864,74 @@ router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (re
   res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
   res.setHeader("Cache-Control", "no-store");
   res.send(rewriteOwnerManifest(token, manifest, rawUrl, ownerShareDirect(req)));
+});
+
+router.get(["/w/:token/4k.m3u8", "/api/w/:token/4k.m3u8"], async (req, res): Promise<void> => {
+  const token = String(req.params.token ?? "");
+  const share = await resolveOwnerShare(token);
+  if (!share) {
+    res.status(404).type("text/plain").send("Not found");
+    return;
+  }
+  try {
+    const playlist = await getUhdPlaylist(share.videoId!);
+    if (playlist === null) {
+      res.status(404).type("text/plain").send("Not found");
+      return;
+    }
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(rewriteUhdPlaylist(playlist, share.videoId!, `/w/${token}/4k.mp4`));
+  } catch (error) {
+    req.log?.warn({ err: error }, "Owner-share 4K playlist fetch failed");
+    res.status(502).type("text/plain").send("Not found");
+  }
+});
+
+router.get(["/w/:token/4k.mp4", "/api/w/:token/4k.mp4"], async (req, res): Promise<void> => {
+  const token = String(req.params.token ?? "");
+  const share = await resolveOwnerShare(token);
+  if (!share) {
+    res.status(404).type("text/plain").send("Not found");
+    return;
+  }
+
+  let mediaUrl: string;
+  try {
+    mediaUrl = uhdMediaUrl(share.videoId!);
+  } catch {
+    res.status(404).type("text/plain").send("Not found");
+    return;
+  }
+  const headers: Record<string, string> = {};
+  const range = req.header("range");
+  if (range && /^bytes=\d+-\d*$/.test(range)) headers.Range = range;
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  const response = await fetch(mediaUrl, {
+    headers,
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),
+  }).catch(() => null);
+  if (!response?.ok || !response.body) {
+    try { await response?.body?.cancel(); } catch { /* upstream closed */ }
+    res.status(404).type("text/plain").send("Not found");
+    return;
+  }
+
+  res.status(response.status);
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") ?? "bytes");
+  for (const header of ["content-length", "content-range"]) {
+    const value = response.headers.get(header);
+    if (value) res.setHeader(header, value);
+  }
+  const nodeStream = Readable.fromWeb(response.body as import("stream/web").ReadableStream<Uint8Array>);
+  try {
+    await pipeline(nodeStream, res);
+  } catch {
+    if (!res.headersSent) res.status(503).end();
+  }
 });
 
 router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceId"], async (req, res): Promise<void> => {

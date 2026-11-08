@@ -1142,6 +1142,7 @@ export const GetRecordingResponse = zod.object({
   "duration": zod.string(),
   "score": zod.string().nullish(),
   "videoUrl": zod.string().optional(),
+  "uhdPlaybackUrl": zod.string().nullish().describe('Optional authorized route for the original 4K Storage HLS playlist.'),
   "highlightMoment": zod.string().nullish(),
   "fieldName": zod.string().nullish()
 })
@@ -1215,6 +1216,7 @@ export const GetClaimMatchResponse = zod.object({
   "duration": zod.string(),
   "score": zod.string().nullish(),
   "videoUrl": zod.string().optional(),
+  "uhdPlaybackUrl": zod.string().nullish().describe('Optional authorized route for the original 4K Storage HLS playlist.'),
   "highlightMoment": zod.string().nullish(),
   "fieldName": zod.string().nullish()
 }),
@@ -2167,6 +2169,7 @@ export const GetAcademyRecordingsResponseItem = zod.object({
   "duration": zod.string(),
   "score": zod.string().nullish(),
   "videoUrl": zod.string().optional(),
+  "uhdPlaybackUrl": zod.string().nullish().describe('Optional authorized route for the original 4K Storage HLS playlist.'),
   "highlightMoment": zod.string().nullish(),
   "fieldName": zod.string().nullish()
 })

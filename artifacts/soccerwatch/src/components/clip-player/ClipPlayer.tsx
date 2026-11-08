@@ -23,7 +23,7 @@ import { SkipFlash } from "@/components/skip-flash";
 import { usePanoramaFrame, maxZoomFor } from "@/hooks/use-panorama-frame";
 import { useSkipTap } from "@/hooks/use-skip-tap";
 import { useToast } from "@/hooks/use-toast";
-import { useTranslation } from "@/i18n";
+import { useLocale, useTranslation } from "@/i18n";
 import { useExplainerCopy } from "@/i18n/explainer-strings";
 import { useFirstTime } from "@/lib/first-time";
 import { useClientSettings } from "@/lib/client-settings";
@@ -64,6 +64,14 @@ import {
   summarizeFatalHlsError,
   type PlaybackSourceStage,
 } from "./playbackRecovery";
+import {
+  canDecodeUhd,
+  createUhdStallGuard,
+  isUhdPlaylistAvailable,
+  readUhdPlaybackPreference,
+  uhdPlaybackUrlForSource,
+  writeUhdPlaybackPreference,
+} from "@/lib/uhdPlayback";
 import {
   createLiveClipWindow,
   formatAmmanClock,
@@ -120,6 +128,8 @@ export type ClipPlayerProps = {
   proxySrc?: string;
   /** Same-origin progressive MP4 fallback, tried only after an HLS retry fails. */
   fallbackSrc?: string;
+  /** Authorized original camera HLS playlist; Stream remains the fallback/export source. */
+  uhdPlaybackUrl?: string | null;
   onFallback?: () => void;
   title: string;
   source: ClipSource;
@@ -289,6 +299,7 @@ export function ClipPlayer({
   src,
   proxySrc,
   fallbackSrc,
+  uhdPlaybackUrl: suppliedUhdPlaybackUrl,
   onFallback,
   title,
   source,
@@ -315,13 +326,18 @@ export function ClipPlayer({
   stageBadge,
 }: ClipPlayerProps) {
   const singleRowToolbar = toolbarLayout === "single-row";
-  const initialSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
+  const uhdSrc = isLive ? null : suppliedUhdPlaybackUrl ?? uhdPlaybackUrlForSource(source, isLive);
+  const streamSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
+  const [initialSourceStage] = useState<PlaybackSourceStage>(() =>
+    !isLive && uhdSrc && readUhdPlaybackPreference() === "4k" ? "checking" : streamSourceStage);
   const videoRef = useRef<HTMLVideoElement>(null);
   const followFrameRef = useRef<Frame | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const fallbackRestoreUtcRef = useRef<number | null>(null);
   const sourceStageRef = useRef<PlaybackSourceStage>(initialSourceStage);
   const resumePositionRef = useRef<number | null>(null);
+  const restorePausedRef = useRef<boolean | null>(null);
+  const hasPlayedOnceRef = useRef(false);
   const lastKnownPositionRef = useRef(0);
   const currentSourceRetryRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -508,6 +524,7 @@ export function ClipPlayer({
   const [playingQuality, setPlayingQuality] = useState(-1);
   const [showQualityPicker, setShowQualityPicker] = useState(false);
   const [sourceStage, setSourceStageState] = useState<PlaybackSourceStage>(initialSourceStage);
+  const [uhdAvailable, setUhdAvailable] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [look, setLook] = useState<"original" | "warm" | "cinematic" | "noir">("original");
   const [currentTime, setCurrentTime] = useState(0);
@@ -520,6 +537,7 @@ export function ClipPlayer({
   const [playbackAttempt, setPlaybackAttempt] = useState(0);
   const [clipMode, setClipMode] = useState<ClipMode>("idle");
   const explainerCopy = useExplainerCopy();
+  const { locale } = useLocale();
   // First-time coach marks: how to look around, then how clipping works.
   const coachReady = playbackUiState === "ready" && clipMode === "idle";
   const [showLookCoach, dismissLookCoach] = useFirstTime("clip-player.look-around.v1", coachReady);
@@ -550,11 +568,13 @@ export function ClipPlayer({
   const cdnSrc = cdnPlaybackSource({ isLive, proxySrc, src });
   const activeSrc = sourceStage === "fallback"
     ? fallbackSrc ?? src
+    : sourceStage === "uhd"
+      ? uhdSrc ?? src
     : sourceStage === "cdn"
       ? cdnSrc ?? proxySrc ?? src
       : sourceStage === "proxy"
         ? proxySrc ?? src
-        : src;
+        : sourceStage === "checking" ? "" : src;
   const usingFallback = sourceStage === "fallback";
 
   const setPlaybackSourceStage = useCallback((stage: PlaybackSourceStage) => {
@@ -565,6 +585,28 @@ export function ClipPlayer({
     setIsRetryingPlayback(false);
     setSourceStageState(stage);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const element = videoRef.current;
+    if (!uhdSrc || isLive || !element) {
+      setUhdAvailable(false);
+      if (sourceStageRef.current === "checking") setPlaybackSourceStage(streamSourceStage);
+      return () => { active = false; };
+    }
+
+    const preference = readUhdPlaybackPreference();
+    void (async () => {
+      const capable = await canDecodeUhd(element);
+      const available = capable && await isUhdPlaylistAvailable(uhdSrc);
+      if (!active) return;
+      setUhdAvailable(available);
+      if (sourceStageRef.current === "checking") {
+        setPlaybackSourceStage(preference === "4k" && available ? "uhd" : streamSourceStage);
+      }
+    })();
+    return () => { active = false; };
+  }, [isLive, setPlaybackSourceStage, src, streamSourceStage, uhdSrc]);
 
   const retryPlayback = () => {
     const element = videoRef.current;
@@ -577,7 +619,9 @@ export function ClipPlayer({
     setPlaybackUiState("loading");
     setPlaybackDiagnostic(null);
     setIsRetryingPlayback(false);
-    setPlaybackSourceStage(initialPlaybackSourceStage({ isLive, proxySrc, src }));
+    setPlaybackSourceStage(
+      !isLive && uhdAvailable && readUhdPlaybackPreference() === "4k" ? "uhd" : streamSourceStage,
+    );
     setPlaybackAttempt((attempt) => attempt + 1);
   };
 
@@ -586,14 +630,19 @@ export function ClipPlayer({
   }, []);
 
   useEffect(() => {
-    setPlaybackSourceStage(initialPlaybackSourceStage({ isLive, proxySrc, src }));
+    const preferredStage: PlaybackSourceStage = !isLive && uhdSrc && readUhdPlaybackPreference() === "4k"
+      ? "checking"
+      : streamSourceStage;
+    setPlaybackSourceStage(preferredStage);
+    hasPlayedOnceRef.current = false;
     currentSourceRetryRef.current = false;
     resumePositionRef.current = null;
+    restorePausedRef.current = null;
     lastKnownPositionRef.current = 0;
     setPlaybackUiState("loading");
     setPlaybackDiagnostic(null);
     setIsPlaying(false);
-  }, [isLive, proxySrc, setPlaybackSourceStage, src]);
+  }, [isLive, proxySrc, setPlaybackSourceStage, src, streamSourceStage, uhdSrc]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
@@ -791,6 +840,7 @@ export function ClipPlayer({
   useEffect(() => {
     const element = videoRef.current;
     if (!element) return;
+    if (sourceStage === "checking") return;
 
     const hlsSupported = Hls.isSupported();
     const nativeHlsSupported = Boolean(element.canPlayType("application/vnd.apple.mpegurl"));
@@ -812,6 +862,7 @@ export function ClipPlayer({
     let previousTime = -1;
     let startupTimer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
+    let hasPlayed = false;
     let recoveryInProgress = false;
     let seekInProgress = false;
     let lastProgressPosition = Number.isFinite(element.currentTime) ? element.currentTime : 0;
@@ -839,6 +890,7 @@ export function ClipPlayer({
       }, PLAYBACK_STALL_TIMEOUT_MS);
     };
     const preservePosition = () => {
+      restorePausedRef.current = hasPlayedOnceRef.current && element.paused;
       if (isLiveDvr) {
         fallbackRestoreUtcRef.current = liveUtcRef.current;
       } else if (!isLive) {
@@ -848,14 +900,31 @@ export function ClipPlayer({
         );
       }
     };
+    const uhdStallGuard = sourceStage === "uhd"
+      ? createUhdStallGuard({
+        onRepeatedStall: () => {
+          if (disposed || sourceStageRef.current !== "uhd") return;
+          preservePosition();
+          setPlaybackSourceStage("cdn");
+          toast({
+            title: locale === "ar"
+              ? "حوّلنا لـ HD عشان يمشي الفيديو أسلس"
+              : "Switched to HD for smoother playback",
+          });
+        },
+      })
+      : null;
     const handlePlaybackFailure = async () => {
       if (recoveryInProgress || disposed) return;
       recoveryInProgress = true;
       clearStartupTimer();
       setPlaybackUiState("loading");
+      const currentStage = sourceStageRef.current;
+      if (currentStage === "uhd") setUhdAvailable(false);
       try {
         const decision = await decidePlaybackRecovery({
-          currentStage: sourceStageRef.current,
+          currentStage,
+          hasCdn: Boolean(cdnSrc),
           hasProxy: Boolean(proxySrc && proxySrc !== src),
           fallbackSrc,
           currentRetryAttempted: currentSourceRetryRef.current,
@@ -897,7 +966,9 @@ export function ClipPlayer({
         currentTime: element.currentTime,
         seeking: seekInProgress || seekInProgressRef.current || element.seeking,
       }),
-      onStalled: () => { void handlePlaybackFailure(); },
+      onStalled: () => {
+        if (sourceStageRef.current !== "uhd") void handlePlaybackFailure();
+      },
       onProgress: () => {
         setPlaybackUiState("ready");
         setIsRetryingPlayback(false);
@@ -907,6 +978,7 @@ export function ClipPlayer({
     const markPlaybackReady = () => {
       clearStartupTimer();
       mediaRecoveryPending = false;
+      uhdStallGuard?.recovered();
       watchdog?.progress();
       setPlaybackUiState("ready");
     };
@@ -926,6 +998,7 @@ export function ClipPlayer({
     const onPause = () => {
       setIsPlaying(false);
       lastWatchedPosition = element.currentTime;
+      uhdStallGuard?.recovered();
       watchdog?.pause();
       if (!seekInProgress && element.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
         setPlaybackUiState("ready");
@@ -940,8 +1013,11 @@ export function ClipPlayer({
       markPlaybackReady();
     };
     const onPlaying = () => {
+      hasPlayed = true;
+      hasPlayedOnceRef.current = true;
       setIsPlaying(true);
       lastWatchedPosition = element.currentTime;
+      uhdStallGuard?.recovered();
       if (!playbackStartReportedRef.current) {
         playbackStartReportedRef.current = true;
         playbackStartCallbackRef.current?.();
@@ -951,6 +1027,7 @@ export function ClipPlayer({
     };
     const onWaiting = () => {
       setPlaybackUiState("loading");
+      if (hasPlayed) uhdStallGuard?.waiting();
       watchdog?.waiting();
     };
     const onSeeking = () => {
@@ -971,6 +1048,7 @@ export function ClipPlayer({
     };
     const onMediaError = () => {
       if (mediaRecoveryPending) return;
+      if (sourceStageRef.current === "uhd") setUhdAvailable(false);
       void handlePlaybackFailure();
     };
     const onDurationChange = () => {
@@ -1090,7 +1168,10 @@ export function ClipPlayer({
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         const resumePosition = resumePositionRef.current;
         if (resumePosition != null && !isLive) hls.startLoad(resumePosition);
-        element.play().catch(() => {});
+        const wasPaused = restorePausedRef.current;
+        restorePausedRef.current = null;
+        if (wasPaused !== true) element.play().catch(() => {});
+        else element.pause();
         void getAllowedHlsLevelIndexes(hls.levels, { maxWidth: PLAYBACK_MAX_WIDTH }).then((allowed) => {
           if (disposed || hlsRef.current !== hls) return;
           setQualityLevels(allowed
@@ -1106,6 +1187,11 @@ export function ClipPlayer({
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
+        if (sourceStageRef.current === "uhd") {
+          setUhdAvailable(false);
+          void handlePlaybackFailure();
+          return;
+        }
         const diagnostic = summarizeFatalHlsError(data);
         setPlaybackDiagnostic(diagnostic);
         setPlaybackUiState("loading");
@@ -1142,7 +1228,12 @@ export function ClipPlayer({
       });
     } else if (isHlsSource && nativeHlsSupported) {
       element.src = activeSrc;
-      element.addEventListener("canplay", () => element.play().catch(() => {}), { once: true });
+      element.addEventListener("canplay", () => {
+        const wasPaused = restorePausedRef.current;
+        restorePausedRef.current = null;
+        if (wasPaused !== true) element.play().catch(() => {});
+        else element.pause();
+      }, { once: true });
       element.load();
     } else if (isHlsSource) {
       void handlePlaybackFailure();
@@ -1163,6 +1254,7 @@ export function ClipPlayer({
       }
       hlsRef.current?.destroy();
       hlsRef.current = null;
+      uhdStallGuard?.dispose();
       clearStartupTimer();
       watchdog?.dispose();
       element.removeEventListener("play", onPlay);
@@ -1191,10 +1283,28 @@ export function ClipPlayer({
     playbackAttempt,
     programTimeAt,
     proxySrc,
+    cdnSrc,
+    locale,
     setPlaybackSourceStage,
     sourceStage,
     src,
+    toast,
+    uhdSrc,
   ]);
+
+  const switchPlaybackQuality = (preference: "4k" | "hd") => {
+    if (isLive) return;
+    writeUhdPlaybackPreference(preference);
+    const element = videoRef.current;
+    if (element && !isLive) {
+      resumePositionRef.current = playbackPositionForRestore(
+        element.currentTime,
+        lastKnownPositionRef.current,
+      );
+      restorePausedRef.current = hasPlayedOnceRef.current && element.paused;
+    }
+    setPlaybackSourceStage(preference === "4k" ? "uhd" : streamSourceStage);
+  };
 
   const onLoadedMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
     if (isLive) return;
@@ -1822,6 +1932,21 @@ export function ClipPlayer({
                 >
                   {playbackRate}×
                 </button>
+                {!isLive && uhdAvailable && uhdSrc && sourceStage !== "checking" && (
+                  <button
+                    type="button"
+                    data-testid="button-playback-uhd-toggle"
+                    aria-label={sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K"}
+                    title={sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K"}
+                    onClick={() => switchPlaybackQuality(sourceStage === "uhd" ? "hd" : "4k")}
+                    className={cn(
+                      "h-10 min-w-10 shrink-0 rounded-full border px-2 text-[11px] font-bold text-white",
+                      sourceStage === "uhd" ? "border-primary bg-primary/20" : "border-white/20 bg-white/10",
+                    )}
+                  >
+                    {sourceStage === "uhd" ? "4K" : "HD"}
+                  </button>
+                )}
                 {!usingFallback && /\.m3u8(?:$|\?)/i.test(activeSrc) && (
                   <QualityPicker
                     levels={qualityLevels}

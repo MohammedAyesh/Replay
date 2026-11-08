@@ -6203,6 +6203,9 @@ components:
           type: ["string", "null"]
         videoUrl:
           type: string
+        uhdPlaybackUrl:
+          type: ["string", "null"]
+          description: Optional authorized route for the original 4K Storage HLS playlist.
         highlightMoment:
           type: ["string", "null"]
         fieldName:

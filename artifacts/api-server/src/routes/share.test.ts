@@ -83,6 +83,21 @@ beforeAll(async () => {
   realFetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : input.url;
+    if (url.startsWith("https://fake-pullzone.local/vod/") && url.endsWith("/4k.m3u8")) {
+      return new Response("#EXTM3U\n#EXT-X-MAP:URI=\"4k.mp4\"\n#EXTINF:12,\n4k.mp4\n", {
+        status: 200,
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    }
+    if (url.startsWith("https://fake-pullzone.local/vod/") && url.endsWith("/4k.mp4")) {
+      const range = init?.headers?.Range as string | undefined;
+      return new Response("4k-segment-bytes", {
+        status: range ? 206 : 200,
+        headers: range
+          ? { "content-range": "bytes 0-15/100", "content-length": "16", "accept-ranges": "bytes" }
+          : { "content-length": "16", "accept-ranges": "bytes" },
+      });
+    }
     if (url === "https://private-cdn.local/private-video-guid/playlist.m3u8") {
       return new Response("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo/segment-001.ts\n", {
         status: 200,
@@ -498,6 +513,11 @@ describe("public owner watch links", () => {
     expect(res.text).not.toContain("Owner footage from");
     expect(res.text).not.toContain("private-video-guid");
     expect(res.text).not.toContain("private-cdn.local");
+    expect(res.text).toContain("quality-toggle");
+    expect(res.text).toContain(`/w/${token}/4k.m3u8`);
+    expect(res.text).toContain("replay.playback-quality");
+    expect(res.text).toContain("Switched to HD for smoother playback");
+    expect(res.text).toContain("حوّلنا لـ HD عشان يمشي الفيديو أسلس");
   });
 
   it("returns active owner-share metadata as JSON", async () => {
@@ -515,6 +535,39 @@ describe("public owner watch links", () => {
     expect(res.body.keyMoments).toEqual([
       { kind: "goal", note: "Top corner", offsetSeconds: 90 },
     ]);
+  });
+
+  it("serves the original 4K playlist only through an active owner-share token", async () => {
+    const guid = "33333333-3333-4333-8333-333333333333";
+    const oldPullZone = process.env.BUNNY_REEL_CDN_URL;
+    process.env.BUNNY_REEL_CDN_URL = "https://fake-pullzone.local";
+    await db.update(footageRequestsTable)
+      .set({ videoId: guid })
+      .where(eq(footageRequestsTable.id, ownerRequestIds[0]));
+    try {
+      const playlist = await request(app).get(`/w/${token}/4k.m3u8`);
+      expect(playlist.status).toBe(200);
+      expect(playlist.headers["content-type"]).toContain("mpegurl");
+      expect(playlist.headers["cache-control"]).toBe("no-store");
+      expect(playlist.text).toContain(`URI=\"/w/${token}/4k.mp4\"`);
+      expect(playlist.text).toContain(`/w/${token}/4k.mp4`);
+
+      const media = await request(app).get(`/w/${token}/4k.mp4`).set("Range", "bytes=0-15");
+      expect(media.status).toBe(206);
+      expect(media.headers["content-range"]).toBe("bytes 0-15/100");
+      expect(media.body.toString()).toBe("4k-segment-bytes");
+
+      const before = vi.mocked(globalThis.fetch).mock.calls.length;
+      const invalid = await request(app).get(`/w/ffffffffffffffffffffffffffffffff/4k.m3u8`);
+      expect(invalid.status).toBe(404);
+      expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(before);
+    } finally {
+      await db.update(footageRequestsTable)
+        .set({ videoId: "private-video-guid" })
+        .where(eq(footageRequestsTable.id, ownerRequestIds[0]));
+      if (oldPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
+      else process.env.BUNNY_REEL_CDN_URL = oldPullZone;
+    }
   });
 
   it("uses the branded bilingual 404 for inactive owner-share metadata", async () => {

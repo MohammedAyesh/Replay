@@ -41,6 +41,7 @@
 - [Reviewer sign-in domain](reviewer-sign-in-domain.md) — reviewer links must use `publicBaseUrl()` so they land on the site configured for production Clerk.
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
 - [Public footage access](public-footage-access.md) — explicit per-recording visibility overrides schedules, but hidden fields and hidden recordings remain private.
+- [Replay 4K fallback boundaries](replay-4k-fallback-boundaries.md) — keep original 4K to recorded playback, admin previews, and token-gated owner shares.
 - [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.
 - [Orval input path](orval-input-path.md) — use an absolute OpenAPI target or codegen can clean generated outputs before failing from the workspace root.
 - [Claim continuity questions](claim-continuity-questions.md) — internal long gaps and optional kit changes use continuity questions without changing the tracking payload.

@@ -31,6 +31,7 @@ import {
   getBunnyProxiedPlaybackUrl,
   getBunnyProxiedThumbnailUrl,
 } from "../lib/bunny";
+import { hasUhdPlaylist, uhdPlaybackUrl } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 
@@ -109,9 +110,24 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
     )
     .orderBy(desc(recordingsTable.createdAt));
 
-  res.json(rows.map(({ recording, fieldName, hasTrackingBundle, trackingManifest }) =>
-    toAdminRecording(recording, fieldName ?? null, hasTrackingBundle !== null, trackingManifest),
-  ));
+  const response: Array<ReturnType<typeof toAdminRecording> & {
+    uhdPlaybackUrl: string | null;
+    hasUhdPlayback: boolean;
+  }> = [];
+  for (let offset = 0; offset < rows.length; offset += 8) {
+    const batch = await Promise.all(rows.slice(offset, offset + 8).map(async ({
+      recording, fieldName, hasTrackingBundle, trackingManifest,
+    }) => {
+      const videoId = extractBunnyVideoId(recording.videoUrl ?? "");
+      return {
+        ...toAdminRecording(recording, fieldName ?? null, hasTrackingBundle !== null, trackingManifest),
+        uhdPlaybackUrl: uhdPlaybackUrl(videoId),
+        hasUhdPlayback: videoId ? await hasUhdPlaylist(videoId) : false,
+      };
+    }));
+    response.push(...batch);
+  }
+  res.json(response);
 });
 
 router.get("/admin/recordings/:id/viewers", async (req, res): Promise<void> => {

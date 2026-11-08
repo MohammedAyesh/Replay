@@ -678,6 +678,11 @@ export interface Recording {
   /** @nullable */
   score?: string | null;
   videoUrl?: string;
+  /**
+     * Optional authorized route for the original 4K Storage HLS playlist.
+     * @nullable
+     */
+  uhdPlaybackUrl?: string | null;
   /** @nullable */
   highlightMoment?: string | null;
   /** @nullable */

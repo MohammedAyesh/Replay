@@ -64,6 +64,8 @@ import {
 } from "../lib/playerMetrics";
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { logger } from "../lib/logger";
+import { extractBunnyVideoId } from "../lib/publicFootage";
+import { uhdPlaybackUrl } from "../lib/uhdPlayback";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import {
@@ -1115,6 +1117,7 @@ function toRecording(
     duration: recording.duration,
     score: recording.score ?? null,
     videoUrl: clientVideoUrl,
+    uhdPlaybackUrl: uhdPlaybackUrl(extractBunnyVideoId(recording.videoUrl)),
     highlightMoment: recording.highlightMoment ?? null,
     fieldName,
   };

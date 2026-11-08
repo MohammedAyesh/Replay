@@ -13,12 +13,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
+import { getLocalUserRecord } from "../lib/clerkUserBridge";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserRecord: vi.fn().mockResolvedValue({ id: 1, isAdmin: true, isGuest: false }),
 }));
 
 import router, { PROGRESSIVE_MP4_RESPONSE_MAX_BYTES } from "./hlsProxy";
+let guidSequence = 0;
+
+function testVideoGuid() {
+  guidSequence += 1;
+  return `00000000-0000-4000-8000-${String(guidSequence).padStart(12, "0")}`;
+}
 
 const UPSTREAM = "https://vz-test.b-cdn.net/abc/1080p/video.m3u8";
 const LIVE_UPSTREAM = "https://replayjo.b-cdn.net/camera1/index.m3u8";
@@ -378,5 +385,51 @@ describe("GET /hls-proxy/mp4 (the MP4 a player falls back to)", () => {
     expect(playlist.status).toBe(400);
     const elsewhere = await request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent("https://example.com/a/play_720p.mp4")}`);
     expect(elsewhere.status).toBe(400);
+  });
+});
+
+describe("GET /hls-proxy/uhd/:videoGuid.m3u8", () => {
+  it("refuses viewers without media access before contacting Storage", async () => {
+    vi.mocked(getLocalUserRecord).mockResolvedValueOnce(null);
+    const res = await request(app).get(`/api/hls-proxy/uhd/${testVideoGuid()}.m3u8`);
+    expect(res.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns 404 when the original 4K playlist is not in Storage", async () => {
+    const guid = testVideoGuid();
+    fetchMock.mockResolvedValueOnce(new Response("missing", { status: 404 }));
+    const path = `/api/hls-proxy/uhd/${guid}.m3u8`;
+    const res = await request(app).get(path);
+    const cachedMiss = await request(app).get(path);
+    expect(res.status).toBe(404);
+    expect(cachedMiss.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rewrites the fMP4 map and media URI to the public Storage pull zone", async () => {
+    const guid = testVideoGuid();
+    fetchMock.mockResolvedValueOnce(new Response([
+      "#EXTM3U",
+      "#EXT-X-VERSION:7",
+      "#EXT-X-MAP:URI=\"4k.mp4\"",
+      "#EXTINF:12.000,",
+      "#EXT-X-BYTERANGE:1500000@0",
+      "4k.mp4",
+      "#EXT-X-ENDLIST",
+      "",
+    ].join("\n")));
+
+    const res = await request(app).get(`/api/hls-proxy/uhd/${guid}.m3u8`);
+    const mediaUrl = String(fetchMock.mock.calls[0][0]).replace(/4k\.m3u8$/, "4k.mp4");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("mpegurl");
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(mediaUrl).toContain(`/vod/${guid}/4k.mp4`);
+    expect(res.text).toContain(`URI=\"${mediaUrl}\"`);
+    expect(res.text).toContain(`\n${mediaUrl}\n`);
+    const cachedHit = await request(app).get(`/api/hls-proxy/uhd/${guid}.m3u8`);
+    expect(cachedHit.text).toBe(res.text);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

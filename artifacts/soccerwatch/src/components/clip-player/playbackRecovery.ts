@@ -6,7 +6,7 @@ import { canPlayDirect, withDirectSegments } from "@/lib/directSegments";
  * (the same playlist with every segment relayed), then "fallback" (the MP4).
  * "direct" is the bare `src`, used for live and for players given no proxy.
  */
-export type PlaybackSourceStage = "cdn" | "direct" | "proxy" | "fallback";
+export type PlaybackSourceStage = "checking" | "uhd" | "cdn" | "direct" | "proxy" | "fallback";
 
 export const PLAYBACK_STALL_TIMEOUT_MS = 8_000;
 
@@ -17,7 +17,7 @@ export type PlaybackSnapshot = {
 };
 
 export type RecoveryDecision =
-  | { type: "switch-source"; stage: "direct" | "proxy" | "fallback" }
+  | { type: "switch-source"; stage: "cdn" | "direct" | "proxy" | "fallback" }
   | { type: "retry-current" }
   | { type: "error" };
 
@@ -61,11 +61,19 @@ export function summarizeFatalHlsError(error: {
 
 export async function decidePlaybackRecovery(options: {
   currentStage: PlaybackSourceStage;
+  hasCdn?: boolean;
   hasProxy: boolean;
   fallbackSrc?: string;
   currentRetryAttempted: boolean;
   isFallbackAvailable?: (url: string) => Promise<boolean>;
 }): Promise<RecoveryDecision> {
+  // A failure in the original HEVC file silently falls back to the first
+  // Stream stage. It does not spend a retry on a source the browser failed.
+  if (options.currentStage === "uhd") {
+    return { type: "switch-source", stage: options.hasCdn ? "cdn" : options.hasProxy ? "proxy" : "direct" };
+  }
+  if (options.currentStage === "checking") return { type: "retry-current" };
+
   // A CDN failure (Referer refused, a CORS or network fault) goes straight to
   // the relayed playlist, with no retry of the CDN first.
   if (options.currentStage === "cdn") {
