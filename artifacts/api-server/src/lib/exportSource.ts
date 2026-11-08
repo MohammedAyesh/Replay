@@ -2,13 +2,12 @@ import { logger } from "./logger";
 import { BUNNY_CDN_HOSTNAME, getBunnyDirectMp4Url, getBunnyPlaybackUrl } from "./bunny";
 
 /**
- * Geometry of the rendition every export is calculated against.
+ * Geometry of the Bunny Stream rendition used as the export fallback.
  *
- * The camera records 4096x1152. Bunny Stream downscales that and
- * `KeepOriginalFiles` is false, so 4096 never leaves Bunny and nothing
- * downstream can ask for it. 3840x1080 is the real source geometry for crop
- * maths, and these two numbers are correct as they stand — they are NOT a bug
- * to be "fixed" up to 4096x1152.
+ * Stream exports are pinned to 3840x1080 because crop fractions must be
+ * converted against the exact decoded geometry. The separate camera-original
+ * export path measures its byte-range HLS source before applying those same
+ * stored fractions.
  *
  * The danger runs the other way. Every crop keyframe is stored as a fraction of
  * the frame and multiplied by these constants to get pixels. Hand the exporter a

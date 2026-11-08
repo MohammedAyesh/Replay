@@ -55,13 +55,12 @@ import {
 } from "../lib/bunny";
 import { classifyPortfolioSourceError } from "../lib/portfolioPlayback";
 import { clipSettingsTable } from "@workspace/db";
-import { renderClip, cleanupTempFile, bufferRemoteClip } from "../lib/ffmpegExport";
+import { renderClip, cleanupTempFile, bufferRemoteClip, bufferCameraHlsClip } from "../lib/ffmpegExport";
 import { cleanChoice, endScreenFor, endScreenOptions, planClipBranding } from "../lib/clipBranding/plan";
 import { MAX_CARD_STATS } from "../lib/clipBranding/types";
 import { PREVIEW_DIMS, renderPreviewPng } from "../lib/clipBranding/preview";
 import { backupBrandingFor } from "../lib/clipBranding/backup";
-import { selectExportSource as resolveExportSource } from "../lib/exportSource";
-import { renderWithStreamFallback, selectClipExportSource } from "../lib/clipExportSource";
+import { waitForCamera4kSource } from "../lib/clipExportSource";
 import { logger } from "../lib/logger";
 import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
 import { chooseBrandingAsset, type BrandingCandidate } from "../lib/brandingAssets";
@@ -778,21 +777,12 @@ async function runBackgroundExport(
       }
       logger.info({ clipId, startTime, endTime }, "Starting background clip export");
 
-      const {
-        duration: totalDuration,
-        hasMP4Fallback,
-        availableResolutions,
-      } = await getBunnyVideoInfo(videoId);
-      logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
-
-      const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
-      const streamSource = await resolveExportSource({
-        videoId,
-        hasMP4Fallback,
-        availableResolutions,
-        referer,
+      const source = await waitForCamera4kSource(videoId, {
+        onWaiting: () => exportProgress.set(clipId, "waiting_for_4k"),
       });
-      const source = await selectClipExportSource(videoId, streamSource);
+      const totalDuration = source.duration;
+      const referer = `${new URL(source.url).origin}/`;
+      logger.info({ clipId, videoId, totalDuration }, "Got duration from camera 4K playlist");
       logger.info(
         {
           clipId,
@@ -803,11 +793,11 @@ async function runBackgroundExport(
           // Declared geometry of the chosen variant, and the rendition folder
           // it happened to live in. The geometry is the contract; the label is
           // only there to make a ladder change readable in the logs.
-          sourceWidth: source.width,
-          sourceHeight: source.height,
+          sourceWidth: null,
+          sourceHeight: null,
           renditionLabel: source.renditionLabel,
         },
-        `Selected export source: ${source.path} (${source.width}x${source.height})`,
+        `Selected export source: ${source.path}`,
       );
 
       // Compute a bounded, ordered source window before buffering. Persisted clip
@@ -896,15 +886,15 @@ async function runBackgroundExport(
         exportProgress.set(clipId, "fetching");
         logger.info(
           { clipId, videoId, sourceKind: renderSource.kind, remoteUrl: renderSource.url, startSec, clipDuration },
-          "Buffering remote clip window locally",
+          "Buffering camera 4K byte ranges locally",
         );
-        const buffered = await bufferRemoteClip({
+        const buffered = await bufferCameraHlsClip({
           remoteUrl: renderSource.url,
+          playlist: renderSource.playlist,
           referer,
           startSec,
           clipDuration,
           totalDuration,
-          expectedDimensions: { width: renderSource.width, height: renderSource.height },
         });
         try {
           logger.info(
@@ -914,6 +904,7 @@ async function runBackgroundExport(
               sourceKind: renderSource.kind,
               sourceWidth: buffered.sourceDimensions.width,
               sourceHeight: buffered.sourceDimensions.height,
+              sourceTimeOffsetSec: buffered.sourceTimeOffsetSec,
               bufferPath: buffered.bufferPath,
               bufferedDuration: buffered.bufferedDuration,
               adjustedOffsetSec: buffered.adjustedOffsetSec,
@@ -921,8 +912,7 @@ async function runBackgroundExport(
             "Buffer complete — starting encode",
           );
 
-          // Both HLS sources start their timestamps at zero. In particular,
-          // do not apply a transport-stream seek correction to camera fMP4.
+          // Trim the assembled fMP4 against its original source timeline.
           const bufStartFraction = Math.max(0, buffered.adjustedOffsetSec / buffered.bufferedDuration);
           const bufEndFraction = Math.min(
             1,
@@ -961,16 +951,13 @@ async function runBackgroundExport(
           cleanupTempFile(buffered.bufferPath);
         }
       };
-      const rendered = await renderWithStreamFallback(source, { ...streamSource, kind: "stream" }, renderFromSource);
-      tmpPath = rendered.result;
+      tmpPath = await renderFromSource(source);
       logger.info(
         {
           clipId,
           videoId,
-          sourceKind: rendered.source.kind,
-          sourcePath: rendered.source.path,
-          sourceWidth: rendered.source.width,
-          sourceHeight: rendered.source.height,
+          sourceKind: source.kind,
+          sourcePath: source.path,
         },
         "Clip rendered from selected source",
       );
@@ -2145,15 +2132,15 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
     return;
   }
 
-  // Method A needs Bunny Stream's API and Bunny Storage configured on this
-  // server. If either is missing, go straight to Method B rather than refusing:
-  // Method B needs neither.
-  if (!isBunnyConfigured() || !isBunnyStorageConfigured()) {
+  // Method A fetches the public camera-original playlist and only needs Bunny
+  // Storage for its completed export. Without Storage, Method B still renders
+  // directly from the same 4K original.
+  if (!isBunnyStorageConfigured()) {
     if (!isBackupExportConfigured()) {
       res.status(400).json({ error: "Export is not configured on this server" });
       return;
     }
-    logger.warn({ clipId, bunny: isBunnyConfigured(), storage: isBunnyStorageConfigured() }, "Primary export not configured — using the backup renderer");
+    logger.warn({ clipId, storage: isBunnyStorageConfigured() }, "Primary export Storage is not configured — using the backup renderer");
     await db
       .update(userClipsTable)
       .set({ exportStatus: "pending" })
@@ -2328,7 +2315,6 @@ async function exportStatusFor(
       !wasBackup
       && !primaryActive
       && BUNNY_VIDEO_GUID_RE.test(clip.videoId)
-      && isBunnyConfigured()
       && isBunnyStorageConfigured()
     ) {
       inFlight.add(clip.id);

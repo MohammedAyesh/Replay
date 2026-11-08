@@ -12,16 +12,19 @@ import {
   EXPORT_SOURCE_HEIGHT,
   EXPORT_SOURCE_LABEL,
 } from "./exportSource";
-import { downloadHlsByteRangePlan, parseHlsByteRangePlan } from "./uhdHlsRanges";
+import {
+  calculateSourceTimestampOffset,
+  downloadHlsByteRangePlan,
+  parseHlsByteRangePlan,
+} from "./uhdHlsRanges";
 
 /**
- * Source geometry every crop calculation below is scaled against.
+ * Default geometry used by Bunny Stream exports and by callers that do not
+ * provide a probed source size.
  *
- * These are re-exported from exportSource so the constant the crop maths uses
- * and the constant the source-pinning logic verifies against are the same two
- * numbers. See exportSource.ts for why they are 3840x1080 and not 4096x1152,
- * and why handing this file a different rendition is a silent-corruption bug
- * rather than a visible failure.
+ * The camera-original byte-range path passes its measured geometry explicitly.
+ * Bunny Stream still uses these exact dimensions because its crop source is
+ * pinned by the declared HLS variant.
  */
 const SRC_W = EXPORT_SOURCE_WIDTH;
 const SRC_H = EXPORT_SOURCE_HEIGHT;
@@ -190,7 +193,7 @@ export function getOutputDims(is9to16: boolean): { w: number; h: number } {
  * Hard bounds on the crop frame, in multiples of the source dimensions.
  *
  * cropPath keyframes arrive from the client validated only as bare numbers, and
- * `w`/`h` size the pad canvas below (`frameW = w * 3840`). Unclamped, a single
+  * `w`/`h` size the pad canvas below (`frameW = w * sourceWidth`). Unclamped, a single
  * request carrying `{w: 50, h: 100}` makes FFmpeg allocate a 192000x108000
  * canvas — about 31 GB a frame — and takes the box down.
  *
@@ -301,8 +304,8 @@ function buildZoompanFilter(options: {
     kfs,
     clipDuration,
     is9to16,
-    sourceWidth = SRC_W,
-    sourceHeight = SRC_H,
+    sourceWidth = EXPORT_SOURCE_WIDTH,
+    sourceHeight = EXPORT_SOURCE_HEIGHT,
     outW,
     outH,
     canvasW,
@@ -609,7 +612,10 @@ export function cropRectAt(
   keyframes: KF[],
   aspectRatio: string,
   t: number,
-  sourceDimensions: { width: number; height: number } = { width: SRC_W, height: SRC_H },
+  sourceDimensions: { width: number; height: number } = {
+    width: EXPORT_SOURCE_WIDTH,
+    height: EXPORT_SOURCE_HEIGHT,
+  },
 ): { x: number; y: number; w: number; h: number } {
   const SRC_W = sourceDimensions.width;
   const SRC_H = sourceDimensions.height;
@@ -643,7 +649,10 @@ export function buildCropCommands(
   keyframes: KF[],
   clipDuration: number,
   is9to16: boolean,
-  sourceDimensions: { width: number; height: number } = { width: SRC_W, height: SRC_H },
+  sourceDimensions: { width: number; height: number } = {
+    width: EXPORT_SOURCE_WIDTH,
+    height: EXPORT_SOURCE_HEIGHT,
+  },
 ): { filter: string; filterScriptPath: string | null } {
   const SRC_W = sourceDimensions.width;
   const SRC_H = sourceDimensions.height;
@@ -1096,7 +1105,7 @@ async function withBookends(
 export async function renderClip(options: FfmpegExportOptions): Promise<string> {
   const {
     videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title, referer,
-    sourceDimensions = { width: SRC_W, height: SRC_H },
+    sourceDimensions = { width: EXPORT_SOURCE_WIDTH, height: EXPORT_SOURCE_HEIGHT },
   } = options;
 
   logger.info({ title, startTime, endTime, totalDuration }, "Starting FFmpeg render");
@@ -1610,6 +1619,123 @@ export async function bufferRemoteClip(options: {
   } catch (err) {
     cleanupTempFile(bufferPath);
     throw err;
+  }
+}
+
+/**
+ * Assemble the fMP4 init section and only the camera-source HLS byte ranges
+ * that overlap a clip. FFmpeg cannot seek this byte-range playlist remotely;
+ * all timestamp trimming happens against the assembled local file.
+ */
+export async function bufferCameraHlsClip(options: {
+  remoteUrl: string;
+  playlist: string;
+  referer: string;
+  startSec: number;
+  clipDuration: number;
+  totalDuration: number;
+}): Promise<{
+  bufferPath: string;
+  bufferedDuration: number;
+  adjustedOffsetSec: number;
+  sourceDimensions: { width: number; height: number };
+  sourceTimeOffsetSec: number;
+  downloadedBytes: number;
+}> {
+  const { remoteUrl, playlist, referer, startSec, clipDuration, totalDuration } = options;
+  const bufferPath = path.join(os.tmpdir(), `soccerwatch-camera-buffer-${randomUUID()}.mp4`);
+  const assembledPath = path.join(os.tmpdir(), `soccerwatch-camera-ranges-${randomUUID()}.mp4`);
+  const { requestedWindow } = getBufferedWindow({ startSec, clipDuration, totalDuration });
+  if (requestedWindow <= 0) throw new Error("Cannot buffer a clip with no source content remaining");
+
+  try {
+    const plan = parseHlsByteRangePlan(
+      playlist,
+      remoteUrl,
+      startSec,
+      startSec + requestedWindow,
+      { prerollSeconds: 4, postrollSeconds: 1 },
+    );
+    const downloadedBytes = await downloadHlsByteRangePlan(plan, assembledPath, referer, { concurrency: 6 });
+    const sourceTiming = await probeVideoTiming(assembledPath);
+    // The first selected segment carries source timestamps. Derive the source
+    // clock's zero point from the probed fragment timestamp rather than
+    // assuming the camera starts at exactly 0.000 seconds.
+    const sourceTimeOffsetSec = calculateSourceTimestampOffset(
+      sourceTiming.startTime,
+      plan.selectedStartTime,
+    );
+
+    const absoluteStart = startSec + sourceTimeOffsetSec;
+    const absoluteEnd = absoluteStart + requestedWindow;
+    const hasAudio = await probeHasAudio(assembledPath);
+    const audioArgs = hasAudio
+      ? [
+          "-af", `atrim=start=${absoluteStart}:end=${absoluteEnd},asetpts=PTS-STARTPTS`,
+          "-c:a", "aac", "-b:a", "128k",
+        ]
+      : ["-an"];
+    await run(
+      "ffmpeg",
+      [
+        "-copyts",
+        "-i", assembledPath,
+        "-vf", `trim=start=${absoluteStart}:end=${absoluteEnd},setpts=PTS-STARTPTS`,
+        ...audioArgs,
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+        "-movflags", "+faststart",
+        "-y", bufferPath,
+      ],
+      BUFFER_TIMEOUT_MS,
+    );
+
+    const durationOut = await run("ffprobe", [
+      "-v", "error",
+      "-show_entries", "format=duration",
+      "-of", "csv=p=0",
+      bufferPath,
+    ]);
+    const bufferedDuration = Number.parseFloat(durationOut.trim());
+    if (!Number.isFinite(bufferedDuration) || bufferedDuration <= 0) {
+      throw new Error(`Invalid camera buffer duration from ffprobe: "${durationOut.trim()}"`);
+    }
+    if (bufferedDuration < Math.min(requestedWindow, totalDuration - startSec) - 0.5) {
+      throw new Error(
+        `Camera buffer (${bufferedDuration.toFixed(2)}s) is unexpectedly shorter than ` +
+        `${requestedWindow.toFixed(2)}s`,
+      );
+    }
+
+    const sourceDimensions = await probeVideoDimensions(bufferPath);
+    assertCameraSourceGeometry(sourceDimensions, `buffered camera source ${remoteUrl}`);
+    logger.info(
+      {
+        remoteUrl,
+        bufferPath,
+        downloadedBytes,
+        segmentCount: plan.segments.length,
+        selectedStartTime: plan.selectedStartTime,
+        sourceTimeOffsetSec,
+        absoluteStart,
+        absoluteEnd,
+        bufferedDuration,
+        ...sourceDimensions,
+      },
+      "Camera HLS range buffer complete",
+    );
+    return {
+      bufferPath,
+      bufferedDuration,
+      adjustedOffsetSec: 0,
+      sourceDimensions,
+      sourceTimeOffsetSec,
+      downloadedBytes,
+    };
+  } catch (err) {
+    cleanupTempFile(bufferPath);
+    throw err;
+  } finally {
+    cleanupTempFile(assembledPath);
   }
 }
 

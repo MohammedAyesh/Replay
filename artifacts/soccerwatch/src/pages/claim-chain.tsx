@@ -905,6 +905,7 @@ export default function ClaimChainPage() {
     <main className="claim-page claim-page-stage" data-testid="page-claim-chain">
       <ClaimStage
         videoUrl={recording.videoUrl}
+        uhdPlaybackUrl={recording.uhdPlaybackUrl}
         bundle={bundle}
         candidates={candidates}
         highlightedId={highlightId}

@@ -21,13 +21,9 @@ import { and, eq, isNull, like, sql } from "drizzle-orm";
 import { db, recordingsTable, userClipsTable } from "@workspace/db";
 
 import {
-  BunnyVideoNotFoundError,
-  BUNNY_CDN_HOSTNAME,
   BUNNY_STORAGE_API_KEY,
   BUNNY_STORAGE_HOSTNAME,
   BUNNY_STORAGE_ZONE,
-  getBunnyVideoInfo,
-  isBunnyConfigured,
   isBunnyStorageConfigured,
   uploadBufferToBunnyStorage,
   uploadFileToBunnyStoragePath,
@@ -37,8 +33,8 @@ import { demoBrandLook } from "./clipBranding/demoLook";
 import { renderOverlayPng } from "./clipBranding/overlay";
 import { dateLabelFromLocal, publicBase } from "./clipBranding/plan";
 import type { EndScreenJob } from "./clipBranding/endScreenVideo";
-import { ExportSourceUnavailableError, selectExportSource } from "./exportSource";
-import { bufferRemoteClip, cleanupTempFile, getOutputDims, renderClip } from "./ffmpegExport";
+import { waitForCamera4kSource } from "./clipExportSource";
+import { bufferCameraHlsClip, cleanupTempFile, getOutputDims, renderClip } from "./ffmpegExport";
 import { logger } from "./logger";
 import { renderQueue } from "./renderQueue";
 
@@ -151,7 +147,7 @@ export async function checkStored(clipId: number, brand: DemoBrand = "galaxy"): 
  */
 export async function demoBrandedReadyIds(clips: ClipRow[], brand: DemoBrand = "galaxy"): Promise<Set<number>> {
   const ready = new Set<number>();
-  if (!isBunnyStorageConfigured() || !isBunnyConfigured()) return ready;
+  if (!isBunnyStorageConfigured()) return ready;
   const unknown = new Set<number>();
   await Promise.all(clips.map(async (clip) => {
     const stored = await checkStored(clip.id, brand);
@@ -188,9 +184,7 @@ async function whenIdle<T>(key: string, job: () => Promise<T>): Promise<T> {
 }
 
 function isPermanent(err: unknown): boolean {
-  return err instanceof BunnyVideoNotFoundError
-    || err instanceof ExportSourceUnavailableError
-    || /no footage|no source content/i.test(String((err as Error)?.message ?? ""));
+  return /no footage|no source content|No camera 4K source/i.test(String((err as Error)?.message ?? ""));
 }
 
 async function renderAndStore(clip: ClipRow, brand: DemoBrand, previousAttempts: number): Promise<void> {
@@ -245,18 +239,19 @@ function exportWindow(startFraction: number, endFraction: number, duration: numb
 async function renderDemoCopy(clip: ClipRow, brand: DemoBrand): Promise<string> {
   const temps: string[] = [];
   try {
-    const info = await getBunnyVideoInfo(clip.videoId);
-    const { startSec, clipDuration } = exportWindow(Number(clip.startTime), Number(clip.endTime), info.duration);
+    const source = await waitForCamera4kSource(clip.videoId);
+    const { startSec, clipDuration } = exportWindow(Number(clip.startTime), Number(clip.endTime), source.duration);
     if (clipDuration <= 0) throw new Error("The clip has no footage");
 
-    const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
-    const source = await selectExportSource({
-      videoId: clip.videoId,
-      hasMP4Fallback: info.hasMP4Fallback,
-      availableResolutions: info.availableResolutions,
-      referer,
+    const sourceReferer = `${new URL(source.url).origin}/`;
+    const buffer = await bufferCameraHlsClip({
+      remoteUrl: source.url,
+      playlist: source.playlist,
+      referer: sourceReferer,
+      startSec,
+      clipDuration,
+      totalDuration: source.duration,
     });
-    const buffer = await bufferRemoteClip({ remoteUrl: source.url, referer, startSec, clipDuration, totalDuration: info.duration });
     temps.push(buffer.bufferPath);
 
     const portrait = clip.aspectRatio === "9:16";
@@ -280,6 +275,7 @@ async function renderDemoCopy(clip: ClipRow, brand: DemoBrand): Promise<string> 
       cropPath: (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
       aspectRatio: clip.aspectRatio,
       title: `demo-${brand}-${clip.id}`,
+      sourceDimensions: buffer.sourceDimensions,
       overlayUrl: overlay,
       endScreen,
     });

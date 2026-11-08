@@ -92,6 +92,7 @@ export const DeckVideo = memo(function DeckVideo({
     if (!video || !started) return;
     let hls: Hls | null = null;
     let done = false;
+    let cancelled = false;
     const start = Math.max(0, card.start);
     let whole = false;
     const ready = () => {
@@ -111,6 +112,7 @@ export const DeckVideo = memo(function DeckVideo({
     const length = Math.max(4, card.end - card.start);
     // Segments straight from Bunny first; the relayed playlist if they fail.
     const directUrl = withDirectSegments(url);
+    video.crossOrigin = "anonymous";
     let onDirect = directUrl !== url;
     let usingUhd = false;
     let attaching = false;
@@ -128,7 +130,13 @@ export const DeckVideo = memo(function DeckVideo({
         if (!usingUhd) return false;
         usingUhd = false;
         attaching = false;
+        const resumePlayback = activeRef.current;
         attach(directUrl, video.currentTime || startPosition || start, false);
+        if (resumePlayback) {
+          const resume = () => { if (!cancelled) void video.play().catch(() => undefined); };
+          video.addEventListener("loadeddata", resume, { once: true });
+          video.addEventListener("canplay", resume, { once: true });
+        }
         return true;
       };
       fallbackFromUhd = fallbackToStream;
@@ -146,7 +154,7 @@ export const DeckVideo = memo(function DeckVideo({
         hls = instance;
         hlsRef.current = instance;
         instance.on(Hls.Events.ERROR, (_e, data) => {
-          if (done || hls !== instance) return;
+          if (cancelled || hls !== instance) return;
           const details = String(data.details ?? "");
           const codecError = details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError";
           if (usingUhd && (data.fatal || codecError)) {
@@ -212,6 +220,7 @@ export const DeckVideo = memo(function DeckVideo({
       attach(available && uhdUrl ? uhdUrl : directUrl, start, available && !!uhdUrl);
     });
     return () => {
+      cancelled = true;
       if (failTimer !== null) window.clearTimeout(failTimer);
       video.removeEventListener("loadeddata", ready);
       video.removeEventListener("seeked", ready);

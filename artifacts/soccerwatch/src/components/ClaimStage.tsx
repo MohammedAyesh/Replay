@@ -161,6 +161,7 @@ function useBunnyHls(
     const video = videoRef.current;
     setVideoError("");
     if (!video || !url) return;
+    let cancelled = false;
     let hls: Hls | null = null;
     let retryTimer: number | null = null;
     let decodeTimer: number | null = null;
@@ -220,6 +221,7 @@ function useBunnyHls(
       sourceUrl = url,
       isUhd = false,
       sourceStart = startVideoTimeRef.current,
+      resumePlayback = false,
     ) => {
       usingUhd = isUhd;
       const directUrl = withDirectSegments(sourceUrl);
@@ -258,6 +260,7 @@ function useBunnyHls(
           // while the element was paused or had already requested fragment 0.
           instance.startLoad(target);
           if (Math.abs(video.currentTime - target) > 0.25) video.currentTime = target;
+          if (resumePlayback) void video.play().catch(() => undefined);
         });
         instance.on(Hls.Events.FRAG_BUFFERED, () => {
           if (hls !== instance) return;
@@ -316,6 +319,7 @@ function useBunnyHls(
         video.src = directUrl;
         nativeMetadataHandler = () => {
           video.currentTime = Math.max(0, sourceStart);
+          if (resumePlayback) void video.play().catch(() => undefined);
         };
         video.addEventListener("loadedmetadata", nativeMetadataHandler, { once: true });
         video.onerror = () => {
@@ -334,10 +338,11 @@ function useBunnyHls(
     };
 
     function fallbackToStream(): boolean {
-      if (!usingUhd || streamFallbackUsed) return false;
+      if (!video || !usingUhd || streamFallbackUsed) return false;
       streamFallbackUsed = true;
       usingUhd = false;
       const at = Math.max(0, video.currentTime || startVideoTimeRef.current);
+      const wasPlaying = !video.paused;
       clearFirstFrameTimer();
       clearDecodeTimer();
       if (hls) { hls.destroy(); hls = null; }
@@ -348,7 +353,7 @@ function useBunnyHls(
       video.pause();
       video.removeAttribute("src");
       video.load();
-      startPlayback(url, false, at);
+      startPlayback(url, false, at, wasPlaying);
       watchForFirstFrame();
       return true;
     }
@@ -362,6 +367,7 @@ function useBunnyHls(
       watchForFirstFrame();
     });
     return () => {
+      cancelled = true;
       unsubscribeCache();
       if (retryTimer) window.clearTimeout(retryTimer);
       clearFirstFrameTimer();

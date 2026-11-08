@@ -1,16 +1,25 @@
 import { storagePullZoneBase } from "./bunny";
 
-const VIDEO_GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const HIT_TTL_MS = 10 * 60_000;
-const MISS_TTL_MS = 2 * 60_000;
+const VIDEO_GUID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+const HIT_TTL_MS = 30_000;
+const MISS_TTL_MS = 30_000;
 const MAX_CACHE_SIZE = 512;
 
 type CacheEntry = { playlist: string | null; expiresAt: number };
 const playlistCache = new Map<string, CacheEntry>();
 
+export class UhdPlaylistRequestError extends Error {
+  constructor(readonly status: number) {
+    super(`4K playlist request returned HTTP ${status}`);
+    this.name = "UhdPlaylistRequestError";
+  }
+}
+
 export function normalizeUhdVideoGuid(value: string | null | undefined): string | null {
   const guid = value?.trim() ?? "";
-  return VIDEO_GUID.test(guid) ? guid.toLowerCase() : null;
+  if (!VIDEO_GUID.test(guid)) return null;
+  const compact = guid.replace(/-/g, "").toLowerCase();
+  return `${compact.slice(0, 8)}-${compact.slice(8, 12)}-${compact.slice(12, 16)}-${compact.slice(16, 20)}-${compact.slice(20)}`;
 }
 
 export function uhdPlaybackUrl(videoGuid: string | null | undefined): string | null {
@@ -83,7 +92,7 @@ export async function getUhdPlaylist(videoGuid: string): Promise<string | null> 
   }
   if (!response.ok) {
     try { await response.body?.cancel(); } catch { /* closed upstream */ }
-    throw new Error(`4K playlist request returned HTTP ${response.status}`);
+    throw new UhdPlaylistRequestError(response.status);
   }
 
   const playlist = await response.text();

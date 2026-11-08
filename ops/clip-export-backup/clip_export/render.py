@@ -30,6 +30,7 @@ the branding overlay returning 401 from Bunny Storage.
     while the video renders, and the source lookup is cached per video.
     Same 16 s clip, same box: 46.5 s -> 13.9 s, byte-identical MP4 (bench/prof.py).
 """
+import atexit
 import fcntl
 import json
 import math
@@ -46,6 +47,7 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import camera_4k_source
 
 try:
     import endscreen  # clip_export/endscreen.py, added 2026-10-25
@@ -55,6 +57,7 @@ import cv2
 import numpy as np
 
 SRC_W, SRC_H = 3840, 1080
+OUT_H = 1080
 FPS = 30
 MAX_CLIP_SECONDS = 1800
 MAX_FRAME_SCALE = 4.5
@@ -92,7 +95,7 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
 
 
 class SourceGone(Exception):
-    """The recording no longer exists on Bunny Stream. Not retryable."""
+    """The camera-original recording is unavailable after its wait window."""
 
 
 class Permanent(Exception):
@@ -116,9 +119,7 @@ def read_env(path="/opt/replay/env"):
 
 
 ENV = read_env(os.environ.get("CLIP_EXPORT_ENV_FILE", "/opt/replay/env"))
-STREAM_HOST = ENV.get("BUNNY_STREAM_HOST", "")
-# https://<pull zone> in production; a plain-http base only in the off-box test.
-STREAM_BASE = ENV.get("CLIP_EXPORT_STREAM_BASE") or ("https://%s" % STREAM_HOST if STREAM_HOST else "")
+STORAGE_CDN_BASE = ENV.get("BUNNY_STORAGE_CDN_URL", "").rstrip("/")
 STORAGE_KEY = ENV.get("BUNNY_STORAGE_KEY", "")
 
 
@@ -150,105 +151,45 @@ def log(job, msg):
 
 # ------------------------------------------------------------------------ source
 
-def http_get(url, headers=None, timeout=30, referer=True):
-    base = {"Referer": REFERER, "User-Agent": UA} if referer else {"User-Agent": UA}
-    req = urllib.request.Request(url, headers={**base, **(headers or {})})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read()
-
-
 def _cache_path(video_id):
-    return os.path.join(SRC_CACHE_DIR, "%s.json" % video_id)
+    guid = camera_4k_source.normalize_video_guid(video_id)
+    return os.path.join(SRC_CACHE_DIR, "camera-4k-%s.json" % guid)
 
 
-def resolve_source(video_id):
-    """resolve_source_uncached, remembered per video for an hour.
-
-    A burst of clips from one match (the usual shape: a player saves all their
-    moments at once) otherwise re-reads two playlists and runs two ffprobes over
-    HTTP for every clip. Only a fully verified result is cached, and a finished
-    recording's playlist does not change.
-    """
-    if not re.fullmatch(r"[0-9a-fA-F-]{16,64}", video_id or ""):
-        raise Permanent("bad video id %r" % video_id)
+def resolve_source(video_id, job=None):
+    """Return a validated camera-original playlist, waiting up to 45 minutes."""
     path = _cache_path(video_id)
     try:
         if time.time() - os.path.getmtime(path) < SRC_CACHE_TTL:
             with open(path) as f:
-                c = json.load(f)
-            return c["variant"], float(c["duration"]), float(c["startPts"])
-    except (OSError, ValueError, KeyError, TypeError):
+                cached = json.load(f)
+            playlist = cached["playlist"]
+            duration = camera_4k_source.playlist_duration(playlist)
+            camera_4k_source.parse_range_plan(
+                playlist, cached["playlistUrl"], 0, min(duration, 1), preroll=0, postroll=0
+            )
+            return cached["guid"], cached["playlistUrl"], playlist, duration
+    except (OSError, ValueError, KeyError, TypeError, camera_4k_source.InvalidCameraSource):
         pass
-    variant, duration, start_pts = resolve_source_uncached(video_id)
+
+    write_log = lambda message: log(job or "source", message)
+    guid, playlist_url, playlist, duration = camera_4k_source.wait_for_playlist(
+        video_id, STORAGE_CDN_BASE, write_log,
+    )
     try:
         os.makedirs(SRC_CACHE_DIR, exist_ok=True)
         tmp = path + ".%d.tmp" % os.getpid()
         with open(tmp, "w") as f:
-            json.dump({"variant": variant, "duration": duration, "startPts": start_pts}, f)
+            json.dump({
+                "guid": guid,
+                "playlistUrl": playlist_url,
+                "playlist": playlist,
+                "duration": duration,
+            }, f)
         os.replace(tmp, path)
     except OSError:
         pass
-    return variant, duration, start_pts
-
-
-def resolve_source_uncached(video_id):
-    """Find the variant that DECLARES 3840x1080 and its total duration.
-
-    Rendition labels on this library do not identify geometry (the same "1080p"
-    label is 3840x1080 on one video and 1920x540 on another), so only the
-    RESOLUTION attribute is trusted -- and the decoded frame is checked again
-    later, because a playlist can lie.
-    """
-    if not STREAM_BASE:
-        raise RuntimeError("BUNNY_STREAM_HOST missing from /opt/replay/env")
-    if not re.fullmatch(r"[0-9a-fA-F-]{16,64}", video_id or ""):
-        raise Permanent("bad video id %r" % video_id)
-    master_url = "%s/%s/playlist.m3u8" % (STREAM_BASE, video_id)
-    try:
-        master = http_get(master_url).decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        if e.code in (403, 404, 410):
-            raise SourceGone("master playlist HTTP %d" % e.code)
-        raise
-    variant = None
-    lines = master.splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith("#EXT-X-STREAM-INF"):
-            m = re.search(r"RESOLUTION=(\d+)x(\d+)", line)
-            if m and int(m.group(1)) == SRC_W and int(m.group(2)) == SRC_H:
-                for nxt in lines[i + 1:]:
-                    if nxt.strip() and not nxt.startswith("#"):
-                        variant = urllib.parse.urljoin(master_url, nxt.strip())
-                        break
-            if variant:
-                break
-    if not variant:
-        raise Permanent("no %dx%d variant in master playlist" % (SRC_W, SRC_H))
-    media = http_get(variant).decode("utf-8", "replace")
-    duration = sum(float(m) for m in re.findall(r"#EXTINF:([0-9.]+)", media))
-    if duration <= 0:
-        raise RuntimeError("variant playlist has no segments")
-    # The playlist's word is not enough: every crop is multiplied by 3840x1080,
-    # so measure a decoded frame of the variant before trusting it.
-    p = subprocess.run(
-        [FFPROBE, "-v", "error", *http_input_args(), "-select_streams", "v:0",
-         "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", variant],
-        capture_output=True, text=True, timeout=90)
-    q = subprocess.run(
-        [FFPROBE, "-v", "error", *http_input_args(), "-show_entries", "format=start_time",
-         "-of", "csv=p=0", variant],
-        capture_output=True, text=True, timeout=90)
-    try:
-        start_pts = float(q.stdout.strip().splitlines()[0])
-    except (ValueError, IndexError):
-        raise RuntimeError("could not read the source start time: %s" % q.stderr.strip()[-300:])
-    # HLS reports the stream once per program; every report must agree.
-    dims = {ln.strip() for ln in p.stdout.splitlines() if ln.strip()}
-    if p.returncode != 0 or not dims:
-        raise RuntimeError("could not probe the source variant: %s" % p.stderr.strip()[-300:])
-    if dims != {"%dx%d" % (SRC_W, SRC_H)}:
-        raise Permanent("variant decodes as %s, expected %dx%d" % (sorted(dims), SRC_W, SRC_H))
-    return variant, duration, start_pts
+    return guid, playlist_url, playlist, duration
 
 
 # -------------------------------------------------------------------- crop model

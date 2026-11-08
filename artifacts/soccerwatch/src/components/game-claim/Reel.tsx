@@ -243,6 +243,7 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
     if (document.hidden) { setStatus(c.front); return; }
     const vurl = browserSafeVideoUrl(videoUrl);
     if (!vurl) return;
+    const streamUrl = vurl;
     setBusy(true);
     cancel.current = false;
     const vs = game.videoStartSeconds || 0;
@@ -328,7 +329,10 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
         if (!usingUhd || streamFallbackUsed) return Promise.resolve();
         streamFallbackUsed = true;
         usingUhd = false;
-        return attach(vurl, at, false).catch((error) => { throw error; });
+        const wasPlaying = !vid.paused;
+        return attach(streamUrl, at, false).then(async () => {
+          if (wasPlaying && !cancel.current) await vid.play();
+        });
       }
       const uhdUrl = uhdPlaybackUrlForStreamUrl(vurl);
       const useUhd = await canUseUhdPlayback(vid, uhdUrl);
@@ -431,7 +435,7 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
     } catch (e) {
       setStatus(c.failed(e instanceof Error ? e.message : String(e)));
     } finally {
-      try { hls?.destroy(); } catch { /* */ }
+      try { (hls as Hls | null)?.destroy(); } catch { /* */ }
       vid.remove();
       setBusy(false);
     }

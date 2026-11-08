@@ -2,8 +2,11 @@ export type UhdPlaybackPreference = "4k" | "hd";
 
 export const UHD_PLAYBACK_PREFERENCE_KEY = "replay.playback-quality";
 export const UHD_HEVC_CODEC = "hvc1.1.6.L153.B0";
+export const UHD_AVC_CODEC = "avc1.640033";
 const UHD_VIDEO_CONTENT_TYPE = `video/mp4; codecs="${UHD_HEVC_CODEC}"`;
 const UHD_HLS_CONTENT_TYPE = `application/vnd.apple.mpegurl; codecs="${UHD_HEVC_CODEC}"`;
+const UHD_AVC_VIDEO_CONTENT_TYPE = `video/mp4; codecs="${UHD_AVC_CODEC}"`;
+const UHD_AVC_HLS_CONTENT_TYPE = `application/vnd.apple.mpegurl; codecs="${UHD_AVC_CODEC}"`;
 
 function browserStorage(): Pick<Storage, "getItem" | "setItem"> | null {
   try {
@@ -124,9 +127,46 @@ export async function isUhdPlaylistAvailable(
 export async function canUseUhdPlayback(
   video: Pick<HTMLVideoElement, "canPlayType">,
   url: string | null | undefined,
+  mediaCapabilities?: MediaCapabilitiesLike | null,
+  fetcher: typeof fetch = fetch,
 ): Promise<boolean> {
-  if (!url || !(await canDecodeUhd(video))) return false;
-  return isUhdPlaylistAvailable(url);
+  if (!url) return false;
+  if (!(await isUhdPlaylistAvailable(url, fetcher))) return false;
+  if (
+    (await canDecodeUhd(video, mediaCapabilities))
+    || (await canDecodeUhdAvc(video, mediaCapabilities))
+  ) return true;
+  return false;
+}
+
+async function canDecodeUhdAvc(
+  video: Pick<HTMLVideoElement, "canPlayType">,
+  mediaCapabilities?: MediaCapabilitiesLike | null,
+): Promise<boolean> {
+  try {
+    const nativeHls = video.canPlayType("application/vnd.apple.mpegurl") !== "";
+    if (nativeHls) {
+      return video.canPlayType(UHD_AVC_HLS_CONTENT_TYPE) !== ""
+        || video.canPlayType(UHD_AVC_VIDEO_CONTENT_TYPE) !== "";
+    }
+    const capabilities = mediaCapabilities === undefined
+      ? (typeof navigator === "undefined" ? null : navigator.mediaCapabilities)
+      : mediaCapabilities;
+    if (!capabilities?.decodingInfo) return false;
+    const result = await capabilities.decodingInfo({
+      type: "media-source",
+      video: {
+        contentType: UHD_AVC_VIDEO_CONTENT_TYPE,
+        width: 3840,
+        height: 1080,
+        bitrate: 10_000_000,
+        framerate: 20,
+      },
+    });
+    return result.supported && result.smooth;
+  } catch {
+    return false;
+  }
 }
 
 export type UhdStallGuard = {

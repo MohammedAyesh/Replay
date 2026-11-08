@@ -1,12 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   canDecodeUhd,
+  canUseUhdPlayback,
   createUhdStallGuard,
   isUhdPlaylistAvailable,
   readUhdPlaybackPreference,
   RECORDED_PLAYBACK_STAGE_ORDER,
   stageAfterUhd,
   uhdPlaybackUrlForGuid,
+  uhdPlaybackUrlForStreamUrl,
   uhdPlaybackUrlForSource,
   UHD_HEVC_CODEC,
   UHD_PLAYBACK_PREFERENCE_KEY,
@@ -63,6 +65,28 @@ describe("recorded UHD playback eligibility and fallback", () => {
     expect(body.cancel).toHaveBeenCalledOnce();
   });
 
+  it("allows a smooth 4K H.264 source when HEVC is unavailable", async () => {
+    const capabilities = {
+      decodingInfo: vi.fn(async (configuration: MediaDecodingConfiguration) => ({
+        supported: configuration.video.contentType.includes("avc1."),
+        smooth: true,
+        powerEfficient: true,
+      })),
+    };
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, body: { cancel: vi.fn() } });
+    expect(await canUseUhdPlayback(
+      { canPlayType: () => "" },
+      "/api/hls-proxy/uhd/example.m3u8",
+      capabilities,
+      fetcher,
+    )).toBe(true);
+    expect(capabilities.decodingInfo).toHaveBeenCalledTimes(2);
+    expect(capabilities.decodingInfo.mock.calls[1]?.[0].video).toMatchObject({
+      width: 3840,
+      height: 1080,
+    });
+  });
+
   it("keeps the preference across player instances and builds only valid recorded routes", () => {
     const values = new Map<string, string>();
     const storage = {
@@ -76,6 +100,9 @@ describe("recorded UHD playback eligibility and fallback", () => {
     expect(uhdPlaybackUrlForGuid("123e4567-e89b-12d3-a456-426614174000"))
       .toBe("/api/hls-proxy/uhd/123e4567-e89b-12d3-a456-426614174000.m3u8");
     expect(uhdPlaybackUrlForGuid("live:camera-1")).toBeNull();
+    expect(uhdPlaybackUrlForStreamUrl(
+      "/api/hls-proxy/manifest?url=https%3A%2F%2Fvz-123.b-cdn.net%2F123e4567-e89b-12d3-a456-426614174000%2Fplaylist.m3u8",
+    )).toBe("/api/hls-proxy/uhd/123e4567-e89b-12d3-a456-426614174000.m3u8");
     expect(uhdPlaybackUrlForSource({ kind: "ownerShare", token: "a".repeat(32) }))
       .toBe(`/w/${"a".repeat(32)}/4k.m3u8`);
     expect(uhdPlaybackUrlForSource({ kind: "ownerShare", token: "bad-token" })).toBeNull();

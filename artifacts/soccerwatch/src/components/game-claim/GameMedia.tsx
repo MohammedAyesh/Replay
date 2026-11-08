@@ -277,6 +277,7 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
     const v = videoRef.current;
     const url = browserSafeVideoUrl(videoUrl);
     if (!v || !url) return;
+    const streamUrl = url;
     let hls: Hls | null = null;
     let cancelled = false;
     let currentIsUhd = false;
@@ -288,6 +289,9 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
     const attach = (source: string, startPosition: number, isUhd: boolean): Promise<void> => {
       if (hls) { hls.destroy(); hls = null; }
       currentIsUhd = isUhd;
+      v.pause();
+      v.removeAttribute("src");
+      v.load();
       const sourceProxy = source.replace(/&direct=1(?=&|$)/, "");
       const sourceCanFallBack = sourceProxy !== source;
       if ((source.includes(".m3u8") || source.includes("/hls-proxy/")) && Hls.isSupported()) {
@@ -326,6 +330,7 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
               return;
             }
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
+            else if (settled) setVideoError(true);
             else finish(new Error("Stream playback failed"));
           });
           instance.attachMedia(v);
@@ -359,10 +364,15 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
       });
     };
     function fallbackToStream(startPosition: number): Promise<void> {
-      if (!currentIsUhd || streamFallbackUsed) return Promise.resolve();
+      if (!v || !currentIsUhd || streamFallbackUsed) return Promise.resolve();
+      const activeVideo = v;
       streamFallbackUsed = true;
       currentIsUhd = false;
-      return attach(url, startPosition, false).catch(() => setVideoError(true));
+      const wasPlaying = !activeVideo.paused;
+      return attach(streamUrl, startPosition, false)
+        .then(() => wasPlaying && !cancelled ? activeVideo.play() : undefined)
+        .then(() => undefined)
+        .catch(() => setVideoError(true));
     }
     const uhdUrl = uhdPlaybackUrlForStreamUrl(url);
     void (async () => {

@@ -73,27 +73,10 @@ export function triggerDownload(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-/**
- * Rewrite a Bunny Stream HLS URL to go through our server-side proxy so the
- * canvas never directly touches the CDN. This prevents the canvas from being
- * tainted (no CORS headers needed from Bunny).
- */
-function toProxiedHlsUrl(url: string): string {
-  try {
-    const { hostname } = new URL(url);
-    if (/^[a-zA-Z0-9-]+\.b-cdn\.net$|^video\.bunnycdn\.com$/.test(hostname)) {
-      return `${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`;
-    }
-  } catch { /* not a valid URL — leave unchanged */ }
-  return url;
-}
-
 export async function exportClip(options: ExportClipOptions): Promise<ExportResult> {
   const { startTime, endTime, cropPath, title, aspectRatio, onProgress, returnBlob } = options;
-  const playbackUrl = toProxiedHlsUrl(options.playbackUrl);
   const uhdPlaybackUrl = options.uhdPlaybackUrl ?? uhdPlaybackUrlForStreamUrl(options.playbackUrl);
+  if (!uhdPlaybackUrl) throw new Error("The camera 4K source is unavailable; use server export instead.");
 
   const is9to16 = aspectRatio === "9:16";
   /** Output canvas dimensions — portrait for 9:16, landscape for 16:9 */
@@ -106,8 +89,7 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
   const framePath = normalizePath(cropPath, DEFAULT_SRC_ASPECT, outAspect);
 
   if (!canExportVideo()) {
-    await fallbackShare(playbackUrl, title);
-    return;
+    throw new Error("This browser cannot export video; use server export instead.");
   }
 
   return new Promise<ExportResult>((resolve, reject) => {
@@ -139,7 +121,6 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
     let clipDuration = 1;
     let hlsInstance: Hls | null = null;
     let usingUhd = false;
-    let streamFallbackUsed = false;
     let captureStream: MediaStream | null = null;
     let durationInitialized = false;
     let recordingStarted = false;
@@ -289,7 +270,6 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       mediaRecorder.start(200);
 
       video.play().catch((err) => {
-        if (fallbackToStream()) return;
         cleanup();
         reject(err);
       });
@@ -342,7 +322,6 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       video.removeAttribute("src");
       video.load();
       const sourceFailed = () => {
-        if (fallbackToStream()) return;
         cleanup();
         reject(new Error("Video load or decode failed"));
       };
@@ -384,27 +363,22 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
         video.src = sourceUrl;
       } else {
         cleanup();
-        fallbackShare(playbackUrl, title).then(resolve).catch(reject);
+        reject(new Error("This browser cannot play the camera 4K source; use server export instead."));
       }
-    }
-
-    function fallbackToStream(): boolean {
-      if (!usingUhd || streamFallbackUsed || !playbackUrl) return false;
-      usingUhd = false;
-      streamFallbackUsed = true;
-      const resumeAt = recordingStarted ? video.currentTime : 0;
-      if (!recordingStarted) durationInitialized = false;
-      attachSource(playbackUrl, resumeAt);
-      return true;
     }
 
     void (async () => {
       try {
         usingUhd = await canUseUhdPlayback(video, uhdPlaybackUrl);
-        attachSource(usingUhd ? uhdPlaybackUrl! : playbackUrl);
-      } catch {
-        usingUhd = false;
-        attachSource(playbackUrl);
+        if (!usingUhd) {
+          cleanup();
+          reject(new Error("This device cannot decode the camera 4K source; use server export instead."));
+          return;
+        }
+        attachSource(uhdPlaybackUrl);
+      } catch (err) {
+        cleanup();
+        reject(err instanceof Error ? err : new Error(String(err)));
       }
     })();
 
@@ -412,14 +386,6 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       clearTimeout(loadTimeoutId);
       loadTimeoutId = setTimeout(() => {
         loadTimeoutId = null;
-        if (fallbackToStream()) {
-          loadTimeoutId = setTimeout(() => {
-            loadTimeoutId = null;
-            cleanup();
-            reject(new Error("Export timed out waiting for video"));
-          }, LOAD_TIMEOUT_MS);
-          return;
-        }
         cleanup();
         reject(new Error("Export timed out waiting for video"));
       }, LOAD_TIMEOUT_MS);
@@ -427,14 +393,3 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
   });
 }
 
-async function fallbackShare(url: string | null, title: string): Promise<void> {
-  const shareUrl = url ?? window.location.href;
-  const nav = navigator as Navigator & {
-    share?: (data: { title?: string; url?: string }) => Promise<void>;
-  };
-  if (typeof nav.share === "function") {
-    await nav.share({ title, url: shareUrl });
-  } else {
-    await navigator.clipboard.writeText(shareUrl);
-  }
-}

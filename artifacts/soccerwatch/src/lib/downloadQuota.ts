@@ -121,6 +121,7 @@ export interface ExportStatusResponse {
 }
 
 const PRIMARY_STEP_LABELS: Record<string, string> = {
+  waiting_for_4k: "Preparing 0%",
   fetching: "Step 1/3",
   encoding: "Step 2/3",
   uploading: "Step 3/3",

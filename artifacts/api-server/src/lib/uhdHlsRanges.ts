@@ -20,6 +20,37 @@ export type HlsByteRangePlan = {
   selectedStartTime: number;
 };
 
+/** Total source timeline duration in an fMP4 media playlist. */
+export function hlsPlaylistDuration(body: string): number {
+  if (!body.trimStart().startsWith("#EXTM3U")) throw new Error("Source is not an HLS playlist");
+  let total = 0;
+  let count = 0;
+  for (const line of body.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("#EXTINF:")) continue;
+    const duration = Number.parseFloat(trimmed.slice("#EXTINF:".length).split(",")[0] ?? "");
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new Error(`Invalid HLS segment duration: ${trimmed}`);
+    }
+    total += duration;
+    count++;
+  }
+  if (count === 0 || !Number.isFinite(total) || total <= 0) {
+    throw new Error("fMP4 HLS playlist has no timed media segments");
+  }
+  return total;
+}
+
+export function calculateSourceTimestampOffset(formatStartTime: number, selectedStartTime: number): number {
+  const offset = formatStartTime - selectedStartTime;
+  if (!Number.isFinite(offset) || Math.abs(offset) > 2) {
+    throw new Error(
+      `Unexpected HLS source timestamp offset ${Number.isFinite(offset) ? offset.toFixed(3) : String(offset)}s`,
+    );
+  }
+  return offset;
+}
+
 function parseRange(value: string, implicitOffset: number | null, label: string): HlsByteRange {
   const match = /^\s*(\d+)(?:@(\d+))?\s*$/.exec(value);
   if (!match) throw new Error(`Invalid ${label} byte range: ${value}`);
@@ -50,6 +81,16 @@ export function parseHlsByteRangePlan(
 
   const lines = body.split(/\r?\n/).map((line) => line.trim());
   const base = new URL(playlistUrl);
+  const resolveMediaUrl = (uri: string) => {
+    const resolved = new URL(uri, base);
+    if (resolved.protocol !== "https:" && resolved.protocol !== "http:") {
+      throw new Error(`Unsupported HLS media URL scheme: ${resolved.protocol}`);
+    }
+    if (resolved.origin !== base.origin) {
+      throw new Error("HLS byte-range playlist references media on a different origin");
+    }
+    return resolved.toString();
+  };
   const previousSegmentEndByUrl = new Map<string, number>();
   let init: HlsByteRange | null = null;
   let duration: number | null = null;
@@ -64,9 +105,12 @@ export function parseHlsByteRangePlan(
       const uri = /(?:^|,)URI=(?:"([^"]+)"|'([^']+)'|([^,]+))/i.exec(attrs);
       const byteRange = /(?:^|,)BYTERANGE=(?:"([^"]+)"|'([^']+)'|([^,]+))/i.exec(attrs);
       if (!uri || !byteRange) throw new Error("fMP4 HLS playlist is missing an init byte range");
-      const resolved = new URL(uri[1] ?? uri[2] ?? uri[3]!, base).toString();
+      const resolved = resolveMediaUrl(uri[1] ?? uri[2] ?? uri[3]!);
       const spec = byteRange[1] ?? byteRange[2] ?? byteRange[3]!;
       const parsed = parseRange(spec, 0, "init");
+      if (init && (init.url !== resolved || init.start !== parsed.start || init.end !== parsed.end)) {
+        throw new Error("HLS byte-range playlist changes its init section");
+      }
       init = { ...parsed, url: resolved };
       continue;
     }
@@ -82,7 +126,7 @@ export function parseHlsByteRangePlan(
     if (line.startsWith("#")) continue;
     if (duration === null || rangeSpec === null) continue;
 
-    const resolved = new URL(line, base).toString();
+    const resolved = resolveMediaUrl(line);
     const parsed = parseRange(rangeSpec, previousSegmentEndByUrl.get(resolved) ?? null, "segment");
     previousSegmentEndByUrl.set(resolved, parsed.end + 1);
     const segmentStart = elapsed;

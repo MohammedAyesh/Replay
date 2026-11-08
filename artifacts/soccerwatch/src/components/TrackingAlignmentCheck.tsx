@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
+import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 
 /**
  * admin.tsx keeps its apiFetch private, and this component is only ever mounted
@@ -83,6 +84,7 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
     video.muted = true;
     video.playsInline = true;
     video.preload = "auto";
+    video.crossOrigin = "anonymous";
     // Only ever drawImage from this element, never getImageData, so a tainted
     // canvas does not matter here and no CORS header is required.
     let hls: Hls | null = null;
@@ -134,29 +136,78 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
     const run = async () => {
       try {
         const claim = await get<{
-          recording: { videoUrl: string };
+          recording: { videoUrl: string; uhdPlaybackUrl?: string | null };
           manifest: Manifest;
         }>(`/recordings/${recordingId}/claim-match`);
         if (cancelled) return;
         const { manifest } = claim;
         const videoStart = manifest.videoStartSeconds ?? 0;
         const url = claim.recording.videoUrl;
+        const uhdUrl = claim.recording.uhdPlaybackUrl ?? uhdPlaybackUrlForStreamUrl(url);
+        let usingUhd = false;
+        let streamFallbackUsed = false;
 
         setStatus(`Loading video · tracking starts ${videoStart}s in`);
-        await new Promise<void>((resolve, reject) => {
-          const ok = () => resolve();
-          video.addEventListener("loadedmetadata", ok, { once: true });
-          video.addEventListener("error", () => reject(new Error("video failed to load")), { once: true });
-          if (url.includes(".m3u8") && Hls.isSupported()) {
-            hls = new Hls({ enableWorker: false });
-            // Intentional omission: tracking alignment measures source pixels.
-            hls.loadSource(url);
-            hls.attachMedia(video);
-            hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) reject(new Error("HLS load failed")); });
+        const attachSource = (source: string, isUhd: boolean, resumeAt = 0) => new Promise<void>((resolve, reject) => {
+          if (hls) { hls.destroy(); hls = null; }
+          usingUhd = isUhd;
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+          let settled = false;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timeout);
+            video.removeEventListener("loadeddata", loaded);
+            video.removeEventListener("error", failed);
+            error ? reject(error) : resolve();
+          };
+          const timeout = window.setTimeout(() => finish(new Error("Video source timed out")), 20_000);
+          const loaded = () => {
+            if (resumeAt > 0) video.currentTime = resumeAt;
+            finish();
+          };
+          const failed = () => {
+            if (isUhd && !streamFallbackUsed) {
+              if (settled) void fallbackToStream(video.currentTime || resumeAt);
+              else finish(new Error("Camera 4K playback failed"));
+            } else finish(new Error("Video source failed to load"));
+          };
+          video.addEventListener("loadeddata", loaded, { once: true });
+          video.addEventListener("error", failed);
+          if (source.includes(".m3u8") && Hls.isSupported()) {
+            const instance = new Hls({ enableWorker: false });
+            hls = instance;
+            instance.loadSource(source);
+            instance.attachMedia(video);
+            instance.on(Hls.Events.ERROR, (_e, data) => {
+              if (hls !== instance) return;
+              const detail = String(data.details ?? "");
+              const codecError = detail === "bufferAddCodecError" || detail === "bufferIncompatibleCodecsError";
+              if (isUhd && (data.fatal || codecError)) {
+                if (settled) void fallbackToStream(video.currentTime || resumeAt);
+                else finish(new Error("Camera 4K playback failed"));
+              } else if (data.fatal && !settled) finish(new Error("Stream playback failed"));
+            });
           } else {
-            video.src = url;
+            video.src = source;
           }
         });
+        function fallbackToStream(at: number): Promise<void> {
+          if (!usingUhd || streamFallbackUsed) return Promise.resolve();
+          usingUhd = false;
+          streamFallbackUsed = true;
+          return attachSource(url, false, at);
+        }
+        const useUhd = await canUseUhdPlayback(video, uhdUrl);
+        try {
+          await attachSource(useUhd && uhdUrl ? uhdUrl : url, useUhd && !!uhdUrl);
+        } catch (error) {
+          if (!useUhd || !uhdUrl || streamFallbackUsed) throw error;
+          streamFallbackUsed = true;
+          await attachSource(url, false);
+        }
         if (cancelled) return;
 
         const results: Array<{ name: string; seconds: number; drawn: number }> = [];
@@ -186,15 +237,19 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
           // empty corner would prove nothing either way
           const cx = boxes.length ? median(boxes.map((b) => b.x + b.w / 2)) : manifest.width / 2;
           const cy = boxes.length ? median(boxes.map((b) => b.y + b.h / 2)) : manifest.height / 2;
-          const sx = Math.max(0, Math.min(manifest.width - CROP_W, cx - CROP_W / 2));
-          const sy = Math.max(0, Math.min(manifest.height - CROP_H, cy - CROP_H / 2));
-          const scale = SHOT_W / CROP_W;
+          const scaleX = video.videoWidth / manifest.width;
+          const scaleY = video.videoHeight / manifest.height;
+          const cropWidth = Math.round(CROP_W * scaleX);
+          const cropHeight = Math.round(CROP_H * scaleY);
+          const sx = Math.max(0, Math.min(video.videoWidth - cropWidth, cx * scaleX - cropWidth / 2));
+          const sy = Math.max(0, Math.min(video.videoHeight - cropHeight, cy * scaleY - cropHeight / 2));
+          const scale = SHOT_W / cropWidth;
           canvas.width = SHOT_W;
-          canvas.height = Math.round(CROP_H * scale);
+          canvas.height = Math.round(cropHeight * scale);
 
           const ctx = canvas.getContext("2d");
           if (!ctx) continue;
-          ctx.drawImage(video, sx, sy, CROP_W, CROP_H, 0, 0, canvas.width, canvas.height);
+          ctx.drawImage(video, sx, sy, cropWidth, cropHeight, 0, 0, canvas.width, canvas.height);
           ctx.lineWidth = 2;
           ctx.strokeStyle = getComputedStyle(document.documentElement)
             .getPropertyValue("--replay-turf")
@@ -202,10 +257,10 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
           ctx.font = "11px Rajdhani, sans-serif";
           let drawn = 0;
           for (const box of boxes) {
-            const bx = (box.x - sx) * scale;
-            const by = (box.y - sy) * scale;
-            const bw = box.w * scale;
-            const bh = box.h * scale;
+            const bx = (box.x * scaleX - sx) * scale;
+            const by = (box.y * scaleY - sy) * scale;
+            const bw = box.w * scaleX * scale;
+            const bh = box.h * scaleY * scale;
             if (bx + bw < 0 || by + bh < 0 || bx > canvas.width || by > canvas.height) continue;
             ctx.strokeRect(bx, by, bw, bh);
             drawn++;
