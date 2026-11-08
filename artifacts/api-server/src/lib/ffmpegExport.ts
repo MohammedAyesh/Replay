@@ -12,6 +12,7 @@ import {
   EXPORT_SOURCE_HEIGHT,
   EXPORT_SOURCE_LABEL,
 } from "./exportSource";
+import { downloadHlsByteRangePlan, parseHlsByteRangePlan } from "./uhdHlsRanges";
 
 /**
  * Source geometry every crop calculation below is scaled against.
@@ -890,6 +891,37 @@ export async function probeVideoDimensions(
     );
   }
   return { width: w, height: h };
+}
+
+export async function probeVideoTiming(
+  url: string,
+): Promise<{ startTime: number; duration: number | null }> {
+  const out = await run("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=start_time,duration",
+    "-of", "json",
+    url,
+  ]);
+  const parsed = JSON.parse(out) as { format?: { start_time?: string; duration?: string } };
+  const startTime = Number.parseFloat(parsed.format?.start_time ?? "");
+  const duration = Number.parseFloat(parsed.format?.duration ?? "");
+  if (!Number.isFinite(startTime)) {
+    throw new Error(`Invalid format start_time from ffprobe: ${JSON.stringify(parsed.format ?? {})}`);
+  }
+  return {
+    startTime,
+    duration: Number.isFinite(duration) && duration > 0 ? duration : null,
+  };
+}
+
+export function assertCameraSourceGeometry(dims: { width: number; height: number }, context: string): void {
+  const ratioError = Math.abs(dims.width * 9 - dims.height * 32);
+  if (dims.width < 3840 || dims.height <= 0 || ratioError > 32) {
+    throw new Error(
+      `Refusing to export from ${context}: decoded frame is ${dims.width}x${dims.height}; ` +
+      "camera originals must be at least 3840px wide and 32:9.",
+    );
+  }
 }
 
 /**

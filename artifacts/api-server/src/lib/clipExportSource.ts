@@ -10,9 +10,10 @@ export type ClipExportSource =
   | {
       kind: "camera-4k";
       url: string;
+      playlist: string;
       path: "camera-original-4k HLS";
-      width: typeof CAMERA_EXPORT_WIDTH;
-      height: typeof CAMERA_EXPORT_HEIGHT;
+      width?: number;
+      height?: number;
       renditionLabel: null;
     };
 
@@ -22,13 +23,13 @@ export async function selectClipExportSource(
   streamSource: ExportSource,
 ): Promise<ClipExportSource> {
   try {
-    if (await getUhdPlaylist(videoId)) {
+    const playlist = await getUhdPlaylist(videoId);
+    if (playlist) {
       return {
         kind: "camera-4k",
         url: uhdPlaylistUrl(videoId),
+        playlist,
         path: "camera-original-4k HLS",
-        width: CAMERA_EXPORT_WIDTH,
-        height: CAMERA_EXPORT_HEIGHT,
         renditionLabel: null,
       };
     }
