@@ -53,6 +53,25 @@ export function uhdPlaybackUrlForGuid(videoGuid: string | null | undefined): str
   return `/api/hls-proxy/uhd/${encodeURIComponent(guid)}.m3u8`;
 }
 
+/** Resolve a 4K playlist for a Bunny Stream URL, including our proxied form. */
+export function uhdPlaybackUrlForStreamUrl(streamUrl: string | null | undefined): string | null {
+  if (!streamUrl) return null;
+  try {
+    let parsed = new URL(streamUrl, typeof window === "undefined" ? "https://replayjo.com" : window.location.origin);
+    if (/^\/w\/[a-f0-9]{32}\/manifest\.m3u8$/i.test(parsed.pathname)) {
+      const token = parsed.pathname.split("/")[2];
+      return token ? `/w/${token}/4k.m3u8` : null;
+    }
+    const upstream = parsed.searchParams.get("url");
+    if (upstream) parsed = new URL(upstream);
+    if (!parsed.hostname.endsWith(".b-cdn.net") && parsed.hostname !== "video.bunnycdn.com") return null;
+    const match = parsed.pathname.match(/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(?:playlist|video)\.m3u8$/i);
+    return uhdPlaybackUrlForGuid(match?.[1]);
+  } catch {
+    return null;
+  }
+}
+
 type MediaCapabilitiesLike = {
   decodingInfo: (configuration: MediaDecodingConfiguration) => Promise<MediaCapabilitiesDecodingInfo>;
 };
@@ -99,6 +118,15 @@ export async function isUhdPlaylistAvailable(
   } catch {
     return false;
   }
+}
+
+/** The players' shared capability + playlist check for non-interactive exports. */
+export async function canUseUhdPlayback(
+  video: Pick<HTMLVideoElement, "canPlayType">,
+  url: string | null | undefined,
+): Promise<boolean> {
+  if (!url || !(await canDecodeUhd(video))) return false;
+  return isUhdPlaylistAvailable(url);
 }
 
 export type UhdStallGuard = {

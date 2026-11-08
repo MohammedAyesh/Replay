@@ -112,6 +112,8 @@ type KF = { t: number; x: number; y: number; w: number; h: number };
 export interface FfmpegExportOptions {
   /** URL passed to FFmpeg as the input source (HLS or direct MP4). */
   videoUrl: string;
+  /** Decoded source geometry; crop fractions are multiplied by these dimensions. */
+  sourceDimensions?: { width: number; height: number };
   /**
    * Total recording duration in seconds.
    * Obtained from the Bunny Stream Management API (server-to-server, no CDN access needed).
@@ -285,6 +287,8 @@ function buildZoompanFilter(options: {
   kfs: KF[];
   clipDuration: number;
   is9to16: boolean;
+  sourceWidth?: number;
+  sourceHeight?: number;
   outW: number;
   outH: number;
   canvasW: number;
@@ -296,6 +300,8 @@ function buildZoompanFilter(options: {
     kfs,
     clipDuration,
     is9to16,
+    sourceWidth = SRC_W,
+    sourceHeight = SRC_H,
     outW,
     outH,
     canvasW,
@@ -303,6 +309,8 @@ function buildZoompanFilter(options: {
     padLeft,
     padTop,
   } = options;
+  const SRC_W = sourceWidth;
+  const SRC_H = sourceHeight;
   const evenCeil = (value: number) => Math.max(2, Math.ceil(value / 2) * 2);
   const evenFloor = (value: number) => Math.max(2, Math.floor(value / 2) * 2);
 
@@ -600,7 +608,10 @@ export function cropRectAt(
   keyframes: KF[],
   aspectRatio: string,
   t: number,
+  sourceDimensions: { width: number; height: number } = { width: SRC_W, height: SRC_H },
 ): { x: number; y: number; w: number; h: number } {
+  const SRC_W = sourceDimensions.width;
+  const SRC_H = sourceDimensions.height;
   const is9to16 = aspectRatio === "9:16";
   const normalized = normalizePath(sanitizeKeyframes(keyframes), is9to16)
     .sort((a, b) => a.t - b.t);
@@ -631,7 +642,10 @@ export function buildCropCommands(
   keyframes: KF[],
   clipDuration: number,
   is9to16: boolean,
+  sourceDimensions: { width: number; height: number } = { width: SRC_W, height: SRC_H },
 ): { filter: string; filterScriptPath: string | null } {
+  const SRC_W = sourceDimensions.width;
+  const SRC_H = sourceDimensions.height;
   const { w: OUT_W, h: OUT_H } = getOutputDims(is9to16);
   const normalized = normalizePath(sanitizeKeyframes(keyframes), is9to16)
     .sort((a, b) => a.t - b.t);
@@ -733,6 +747,8 @@ export function buildCropCommands(
     kfs,
     clipDuration,
     is9to16,
+    sourceWidth: SRC_W,
+    sourceHeight: SRC_H,
     outW: OUT_W,
     outH: OUT_H,
     canvasW,
@@ -894,12 +910,13 @@ export async function probeVideoDimensions(
 export function assertExportSourceGeometry(
   dims: { width: number; height: number },
   context: string,
+  expected: { width: number; height: number } = { width: SRC_W, height: SRC_H },
 ): void {
-  if (dims.width !== SRC_W || dims.height !== SRC_H) {
+  if (dims.width !== expected.width || dims.height !== expected.height) {
     throw new Error(
       `Refusing to export from ${context}: decoded frame is ${dims.width}x${dims.height}, ` +
-        `expected ${EXPORT_SOURCE_LABEL}. ` +
-        `Every crop keyframe is stored as a fraction and multiplied by ${SRC_W}x${SRC_H}, ` +
+        `expected ${expected.width}x${expected.height}. ` +
+        `Every crop keyframe is stored as a fraction and multiplied by ${expected.width}x${expected.height}, ` +
         `so rendering from any other geometry produces a silently mis-framed clip. ` +
         `This is a hard stop by design — do not "fix" it by relaxing the check.`,
     );
@@ -1045,7 +1062,10 @@ async function withBookends(
 
 
 export async function renderClip(options: FfmpegExportOptions): Promise<string> {
-  const { videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title, referer } = options;
+  const {
+    videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title, referer,
+    sourceDimensions = { width: SRC_W, height: SRC_H },
+  } = options;
 
   logger.info({ title, startTime, endTime, totalDuration }, "Starting FFmpeg render");
 
@@ -1063,7 +1083,12 @@ export async function renderClip(options: FfmpegExportOptions): Promise<string> 
   const is9to16 = aspectRatio === "9:16";
   // Includes pad (for out-of-source black bars), crop pan, and the output scale.
   // Multi-keyframe clips use zoompan; static clips keep the direct crop fast path.
-  const { filter: cropFilter, filterScriptPath } = buildCropCommands(cropPath, clipDuration, is9to16);
+  const { filter: cropFilter, filterScriptPath } = buildCropCommands(
+    cropPath,
+    clipDuration,
+    is9to16,
+    sourceDimensions,
+  );
 
   const tmpPath = path.join(os.tmpdir(), `soccerwatch-clip-${randomUUID()}.mp4`);
 
@@ -1455,8 +1480,18 @@ export async function bufferRemoteClip(options: {
   clipDuration: number;
   /** Total duration of the source recording, used to cap the buffer request. */
   totalDuration: number;
-}): Promise<{ bufferPath: string; bufferedDuration: number; adjustedOffsetSec: number }> {
-  const { remoteUrl, referer, startSec, clipDuration, totalDuration } = options;
+  /** Geometry expected from the selected HLS source; defaults to Bunny Stream. */
+  expectedDimensions?: { width: number; height: number };
+}): Promise<{
+  bufferPath: string;
+  bufferedDuration: number;
+  adjustedOffsetSec: number;
+  sourceDimensions: { width: number; height: number };
+}> {
+  const {
+    remoteUrl, referer, startSec, clipDuration, totalDuration,
+    expectedDimensions = { width: SRC_W, height: SRC_H },
+  } = options;
   const bufferPath = path.join(os.tmpdir(), `soccerwatch-buffer-${randomUUID()}.mp4`);
   const headerVal = buildHeaderVal(referer, remoteUrl);
 
@@ -1533,13 +1568,13 @@ export async function bufferRemoteClip(options: {
     // trust. renderClip runs immediately after this and treats every keyframe
     // as a fraction of SRC_W x SRC_H, so anything else must not reach it.
     const dims = await probeVideoDimensions(bufferPath);
-    assertExportSourceGeometry(dims, `buffered source ${remoteUrl}`);
+    assertExportSourceGeometry(dims, `buffered source ${remoteUrl}`, expectedDimensions);
 
     logger.info(
       { bufferPath, bufferedDuration, requestedWindow, startSec, ...dims },
       "bufferRemoteClip complete",
     );
-    return { bufferPath, bufferedDuration, adjustedOffsetSec };
+    return { bufferPath, bufferedDuration, adjustedOffsetSec, sourceDimensions: dims };
   } catch (err) {
     cleanupTempFile(bufferPath);
     throw err;

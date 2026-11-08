@@ -61,6 +61,7 @@ import { MAX_CARD_STATS } from "../lib/clipBranding/types";
 import { PREVIEW_DIMS, renderPreviewPng } from "../lib/clipBranding/preview";
 import { backupBrandingFor } from "../lib/clipBranding/backup";
 import { selectExportSource as resolveExportSource } from "../lib/exportSource";
+import { renderWithStreamFallback, selectClipExportSource } from "../lib/clipExportSource";
 import { logger } from "../lib/logger";
 import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
 import { chooseBrandingAsset, type BrandingCandidate } from "../lib/brandingAssets";
@@ -765,7 +766,6 @@ async function runBackgroundExport(
   const videoId = clip.videoId;
 
     let tmpPath: string | null = null;
-    let bufferTmpFile: string | null = null;
     const assetTmpFiles: string[] = [];
     let overlayUrlForBackup: string | null = null;
     notePrimaryStarted(clipId);
@@ -786,19 +786,20 @@ async function runBackgroundExport(
       logger.info({ clipId, videoId, totalDuration }, "Got video duration from Bunny API");
 
       const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
-      const source = await resolveExportSource({
+      const streamSource = await resolveExportSource({
         videoId,
         hasMP4Fallback,
         availableResolutions,
         referer,
       });
-      const remoteUrl = source.url;
+      const source = await selectClipExportSource(videoId, streamSource);
       logger.info(
         {
           clipId,
           videoId,
+          sourceKind: source.kind,
           sourcePath: source.path,
-          remoteUrl,
+          remoteUrl: source.url,
           // Declared geometry of the chosen variant, and the rendition folder
           // it happened to live in. The geometry is the contract; the label is
           // only there to make a ladder change readable in the logs.
@@ -836,26 +837,6 @@ async function runBackgroundExport(
           logger.warn({ clipId, resolvedIntro }, "Intro URL is not absolute — exporting without it");
         }
       }
-
-      // ── Fix 4: buffer the required time window to disk before encoding ──
-      // Downloading the clip window locally first avoids live-network stalls
-      // during the encode pass, which was the main source of the freeze/stutter.
-      exportProgress.set(clipId, "fetching");
-      logger.info({ clipId, remoteUrl, startSec, clipDuration }, "Buffering remote clip window locally");
-      const { bufferPath, bufferedDuration, adjustedOffsetSec } = await bufferRemoteClip({
-        remoteUrl,
-        referer,
-        startSec,
-        clipDuration,
-        totalDuration,
-      });
-      bufferTmpFile = bufferPath;
-      logger.info({ clipId, bufferPath, bufferedDuration, adjustedOffsetSec }, "Buffer complete — starting encode");
-
-      // Recompute fractions relative to the buffered file so renderClip's
-      // startTime * totalDuration / endTime * totalDuration arithmetic is correct.
-      const bufStartFraction = Math.max(0, adjustedOffsetSec / bufferedDuration);
-      const bufEndFraction = Math.min(1, (adjustedOffsetSec + clipDuration) / bufferedDuration);
 
       const clipFieldId = await fieldIdForClip(clipId);
       const branding = await resolveBrandingForClip(clip.academyId, clipFieldId, { academyId: clip.academyId, fieldId: clipFieldId });
@@ -910,33 +891,89 @@ async function runBackgroundExport(
         );
       }
 
-      exportProgress.set(clipId, "encoding");
-      const renderOptions = {
-        // Encode from the local buffer — no remote URL, no referer needed
-        videoUrl: bufferPath,
-        totalDuration: bufferedDuration,
-        startTime: bufStartFraction,
-        endTime: bufEndFraction,
-        cropPath,
-        aspectRatio: clip.aspectRatio,
-        title: clip.title,
-      };
       const branded = !!(introPath || overlayPath || endCardPath || drawn.overlayPath || drawn.endScreen);
-      try {
-        tmpPath = await renderClip({
-          ...renderOptions,
-          introUrl: introPath ?? undefined,
-          overlayUrl: drawn.overlayPath ?? overlayPath ?? undefined,
-          endCardUrl: endCardPath ?? undefined,
-          endScreen: drawn.endScreen ?? undefined,
+      const renderFromSource = async (renderSource: typeof source): Promise<string> => {
+        exportProgress.set(clipId, "fetching");
+        logger.info(
+          { clipId, videoId, sourceKind: renderSource.kind, remoteUrl: renderSource.url, startSec, clipDuration },
+          "Buffering remote clip window locally",
+        );
+        const buffered = await bufferRemoteClip({
+          remoteUrl: renderSource.url,
+          referer,
+          startSec,
+          clipDuration,
+          totalDuration,
+          expectedDimensions: { width: renderSource.width, height: renderSource.height },
         });
-      } catch (renderErr) {
-        if (!branded) throw renderErr;
-        // A branded encode that fails gets one more try with no branding at
-        // all: the clip is what the user asked for, the logo is ours.
-        logger.error({ err: renderErr, clipId }, "Branded render failed — retrying the clip unbranded");
-        tmpPath = await renderClip(renderOptions);
-      }
+        try {
+          logger.info(
+            {
+              clipId,
+              videoId,
+              sourceKind: renderSource.kind,
+              sourceWidth: buffered.sourceDimensions.width,
+              sourceHeight: buffered.sourceDimensions.height,
+              bufferPath: buffered.bufferPath,
+              bufferedDuration: buffered.bufferedDuration,
+              adjustedOffsetSec: buffered.adjustedOffsetSec,
+            },
+            "Buffer complete — starting encode",
+          );
+
+          // Both HLS sources start their timestamps at zero. In particular,
+          // do not apply a transport-stream seek correction to camera fMP4.
+          const bufStartFraction = Math.max(0, buffered.adjustedOffsetSec / buffered.bufferedDuration);
+          const bufEndFraction = Math.min(
+            1,
+            (buffered.adjustedOffsetSec + clipDuration) / buffered.bufferedDuration,
+          );
+          const renderOptions = {
+            videoUrl: buffered.bufferPath,
+            totalDuration: buffered.bufferedDuration,
+            startTime: bufStartFraction,
+            endTime: bufEndFraction,
+            cropPath,
+            aspectRatio: clip.aspectRatio,
+            title: clip.title,
+            sourceDimensions: buffered.sourceDimensions,
+          };
+          exportProgress.set(clipId, "encoding");
+          try {
+            return await renderClip({
+              ...renderOptions,
+              introUrl: introPath ?? undefined,
+              overlayUrl: drawn.overlayPath ?? overlayPath ?? undefined,
+              endCardUrl: endCardPath ?? undefined,
+              endScreen: drawn.endScreen ?? undefined,
+            });
+          } catch (renderErr) {
+            if (!branded) throw renderErr;
+            // A branded encode that fails gets one more try with no branding
+            // before the source-level retry is considered.
+            logger.error(
+              { err: renderErr, clipId, sourceKind: renderSource.kind },
+              "Branded render failed — retrying the clip unbranded",
+            );
+            return renderClip(renderOptions);
+          }
+        } finally {
+          cleanupTempFile(buffered.bufferPath);
+        }
+      };
+      const rendered = await renderWithStreamFallback(source, { ...streamSource, kind: "stream" }, renderFromSource);
+      tmpPath = rendered.result;
+      logger.info(
+        {
+          clipId,
+          videoId,
+          sourceKind: rendered.source.kind,
+          sourcePath: rendered.source.path,
+          sourceWidth: rendered.source.width,
+          sourceHeight: rendered.source.height,
+        },
+        "Clip rendered from selected source",
+      );
 
       const [beforeUpload] = await db.select({ exportStatus: userClipsTable.exportStatus })
         .from(userClipsTable).where(eq(userClipsTable.id, clipId));
@@ -1003,7 +1040,6 @@ async function runBackgroundExport(
       localFallbackOwned.delete(clipId);
       exportProgress.delete(clipId);
       notePrimaryFinished(clipId);
-      if (bufferTmpFile) cleanupTempFile(bufferTmpFile);
       if (tmpPath) cleanupTempFile(tmpPath);
       for (const f of assetTmpFiles) cleanupTempFile(f);
       // The player changed his end screen while this was rendering.

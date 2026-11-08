@@ -46,6 +46,12 @@ export function uhdMediaUrl(videoGuid: string): string {
   return `${storagePullZoneBase()}/vod/${guid}/4k.mp4`;
 }
 
+export function uhdPlaylistUrl(videoGuid: string): string {
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid) throw new Error("Invalid Bunny video guid");
+  return `${storagePullZoneBase()}/vod/${guid}/4k.m3u8`;
+}
+
 export function rewriteUhdPlaylist(
   playlist: string,
   videoGuid: string,
@@ -68,7 +74,7 @@ export async function getUhdPlaylist(videoGuid: string): Promise<string | null> 
   const cached = cachedPlaylist(guid);
   if (cached !== undefined) return cached;
 
-  const url = `${storagePullZoneBase()}/vod/${guid}/4k.m3u8`;
+  const url = uhdPlaylistUrl(guid);
   const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   if (response.status === 404 || response.status === 410) {
     try { await response.body?.cancel(); } catch { /* closed upstream */ }

@@ -6,11 +6,14 @@ import {
   normalizePath,
   type AspectRatio,
 } from "./cropFrame";
+import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "./uhdPlayback";
 
 type KF = { t: number; x: number; y: number; w: number; h: number };
 
 export interface ExportClipOptions {
   playbackUrl: string;
+  /** Optional authorized camera-original playlist; derived from playbackUrl when omitted. */
+  uhdPlaybackUrl?: string | null;
   startTime: number;
   endTime: number;
   cropPath: KF[];
@@ -90,6 +93,7 @@ function toProxiedHlsUrl(url: string): string {
 export async function exportClip(options: ExportClipOptions): Promise<ExportResult> {
   const { startTime, endTime, cropPath, title, aspectRatio, onProgress, returnBlob } = options;
   const playbackUrl = toProxiedHlsUrl(options.playbackUrl);
+  const uhdPlaybackUrl = options.uhdPlaybackUrl ?? uhdPlaybackUrlForStreamUrl(options.playbackUrl);
 
   const is9to16 = aspectRatio === "9:16";
   /** Output canvas dimensions — portrait for 9:16, landscape for 16:9 */
@@ -134,6 +138,8 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
     let endSec = 0;
     let clipDuration = 1;
     let hlsInstance: Hls | null = null;
+    let usingUhd = false;
+    let streamFallbackUsed = false;
     let captureStream: MediaStream | null = null;
     let durationInitialized = false;
     let recordingStarted = false;
@@ -179,6 +185,7 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
         hlsInstance.destroy();
         hlsInstance = null;
       }
+      video.onerror = null;
       if (document.body.contains(video)) {
         document.body.removeChild(video);
       }
@@ -196,10 +203,12 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       // centre crop of a different part of the pitch — nothing like the preview.
       // The frame may extend outside the source; those regions are black bars.
       const f = interpolateFrame(framePath, t);
-      const sx = f.x * SRC_W;
-      const sy = f.y * SRC_H;
-      const sw = Math.max(1, f.w * SRC_W);
-      const sh = Math.max(1, f.h * SRC_H);
+      const sourceWidth = video.videoWidth || SRC_W;
+      const sourceHeight = video.videoHeight || SRC_H;
+      const sx = f.x * sourceWidth;
+      const sy = f.y * sourceHeight;
+      const sw = Math.max(1, f.w * sourceWidth);
+      const sh = Math.max(1, f.h * sourceHeight);
 
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, OUT_W, OUT_H);
@@ -209,8 +218,8 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       // clipping behaviour.
       const ix0 = Math.max(sx, 0);
       const iy0 = Math.max(sy, 0);
-      const ix1 = Math.min(sx + sw, SRC_W);
-      const iy1 = Math.min(sy + sh, SRC_H);
+      const ix1 = Math.min(sx + sw, sourceWidth);
+      const iy1 = Math.min(sy + sh, sourceHeight);
       if (ix1 > ix0 && iy1 > iy0) {
         const scaleX = OUT_W / sw;
         const scaleY = OUT_H / sh;
@@ -280,6 +289,7 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
       mediaRecorder.start(200);
 
       video.play().catch((err) => {
+        if (fallbackToStream()) return;
         cleanup();
         reject(err);
       });
@@ -323,27 +333,96 @@ export async function exportClip(options: ExportClipOptions): Promise<ExportResu
     video.addEventListener("loadedmetadata", onDurationReady);
     video.addEventListener("durationchange", onDurationReady);
 
-    if (Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: false });
-      hlsInstance = hls;
-      // Intentional omission: client-side clip export needs the real source
-      // pixels for its frame measurements and export output.
-      hls.loadSource(playbackUrl);
-      hls.attachMedia(video);
-      // MANIFEST_PARSED is a fast path; loadedmetadata/durationchange above handle the
-      // cases where duration is not yet finite at manifest parse time.
-      hls.on(Hls.Events.MANIFEST_PARSED, () => onDurationReady());
-      hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          cleanup();
-          reject(new Error("HLS load failed"));
+    function attachSource(sourceUrl: string, resumeAt = 0) {
+      if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+      }
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      const sourceFailed = () => {
+        if (fallbackToStream()) return;
+        cleanup();
+        reject(new Error("Video load or decode failed"));
+      };
+      video.onerror = sourceFailed;
+
+      if (Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: false });
+        hlsInstance = hls;
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (hlsInstance !== hls) return;
+          if (resumeAt > 0) {
+            hls.startLoad(resumeAt);
+            try { video.currentTime = resumeAt; } catch { /* metadata may still be settling */ }
+          }
+          onDurationReady();
+          if (recordingStarted) void video.play().catch(() => undefined);
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (hlsInstance !== hls) return;
+          const details = String(data.details ?? "");
+          if (data.fatal || details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError") {
+            sourceFailed();
+          }
+        });
+        hls.loadSource(sourceUrl);
+        hls.attachMedia(video);
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.addEventListener("loadedmetadata", () => {
+          if (resumeAt > 0) {
+            video.currentTime = resumeAt;
+            video.addEventListener("seeked", () => {
+              onDurationReady();
+              if (recordingStarted) void video.play().catch(() => undefined);
+            }, { once: true });
+          } else {
+            onDurationReady();
+          }
+        }, { once: true });
+        video.src = sourceUrl;
+      } else {
+        cleanup();
+        fallbackShare(playbackUrl, title).then(resolve).catch(reject);
+      }
+    }
+
+    function fallbackToStream(): boolean {
+      if (!usingUhd || streamFallbackUsed || !playbackUrl) return false;
+      usingUhd = false;
+      streamFallbackUsed = true;
+      const resumeAt = recordingStarted ? video.currentTime : 0;
+      if (!recordingStarted) durationInitialized = false;
+      attachSource(playbackUrl, resumeAt);
+      return true;
+    }
+
+    void (async () => {
+      try {
+        usingUhd = await canUseUhdPlayback(video, uhdPlaybackUrl);
+        attachSource(usingUhd ? uhdPlaybackUrl! : playbackUrl);
+      } catch {
+        usingUhd = false;
+        attachSource(playbackUrl);
+      }
+    })();
+
+    if (loadTimeoutId !== null) {
+      clearTimeout(loadTimeoutId);
+      loadTimeoutId = setTimeout(() => {
+        loadTimeoutId = null;
+        if (fallbackToStream()) {
+          loadTimeoutId = setTimeout(() => {
+            loadTimeoutId = null;
+            cleanup();
+            reject(new Error("Export timed out waiting for video"));
+          }, LOAD_TIMEOUT_MS);
+          return;
         }
-      });
-    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = playbackUrl;
-    } else {
-      cleanup();
-      fallbackShare(playbackUrl, title).then(resolve).catch(reject);
+        cleanup();
+        reject(new Error("Export timed out waiting for video"));
+      }, LOAD_TIMEOUT_MS);
     }
   });
 }

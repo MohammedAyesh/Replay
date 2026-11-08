@@ -1,5 +1,6 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Hls from "hls.js";
+import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 import { capPlaybackQuality } from "@/lib/hlsQuality";
 import type { Chunk, Game, Point } from "@/lib/game-claim/model";
 import { chunkAt, G2L, mmss } from "@/lib/game-claim/model";
@@ -278,49 +279,117 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
     if (!v || !url) return;
     let hls: Hls | null = null;
     let cancelled = false;
+    let currentIsUhd = false;
+    let streamFallbackUsed = false;
     setVideoError(false);
-    const isHls = url.includes(".m3u8") || url.includes("/hls-proxy/");
-    // If Bunny refuses the direct segments, play the proxied stream instead,
-    // once, from where the video was.
     const proxied = url.replace(/&direct=1(?=&|$)/, "");
     const canFallBack = proxied !== url;
-    const attach = (source: string, startPosition: number, fallback: boolean) => {
-      hls = new Hls({ enableWorker: true, maxBufferLength: 20, backBufferLength: 30, startPosition });
-      capPlaybackQuality(hls);
-      const instance = hls;
-      instance.on(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(source));
-      instance.on(Hls.Events.ERROR, (_e, data) => {
-        if (!data.fatal || cancelled) return;
-        if (fallback) {
-          const at = v.currentTime || 0;
-          instance.destroy();
-          attach(proxied, at, false);
-          return;
-        }
-        setVideoError(true);
-      });
-      instance.attachMedia(v);
-    };
-    let onNativeError: (() => void) | null = null;
-    if (isHls && Hls.isSupported()) {
-      attach(url, -1, canFallBack);
-    } else {
-      if (canFallBack) {
-        onNativeError = () => {
-          if (!onNativeError) return;
-          v.removeEventListener("error", onNativeError);
-          onNativeError = null;
-          const at = v.currentTime || 0;
-          v.src = proxied;
-          if (at > 0) v.currentTime = at;
-        };
-        v.addEventListener("error", onNativeError);
+    v.crossOrigin = "anonymous";
+    const attach = (source: string, startPosition: number, isUhd: boolean): Promise<void> => {
+      if (hls) { hls.destroy(); hls = null; }
+      currentIsUhd = isUhd;
+      const sourceProxy = source.replace(/&direct=1(?=&|$)/, "");
+      const sourceCanFallBack = sourceProxy !== source;
+      if ((source.includes(".m3u8") || source.includes("/hls-proxy/")) && Hls.isSupported()) {
+        return new Promise<void>((resolve, reject) => {
+          const instance = new Hls({ enableWorker: true, maxBufferLength: 20, backBufferLength: 30, startPosition });
+          hls = instance;
+          if (!isUhd) capPlaybackQuality(instance);
+          let settled = false;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timeout);
+            error ? reject(error) : resolve();
+          };
+          const timeout = window.setTimeout(() => finish(new Error("HLS source timed out")), 15_000);
+          instance.on(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(source));
+          instance.on(Hls.Events.MANIFEST_PARSED, () => {
+            if (startPosition > 0) {
+              instance.startLoad(startPosition);
+              try { v.currentTime = startPosition; } catch { /* metadata can still be settling */ }
+            }
+          });
+          instance.on(Hls.Events.ERROR, (_e, data) => {
+            if (cancelled || hls !== instance) return;
+            const detail = String(data.details ?? "");
+            const codecError = detail === "bufferAddCodecError" || detail === "bufferIncompatibleCodecsError";
+            if (isUhd && (data.fatal || codecError)) {
+              if (settled) void fallbackToStream(v.currentTime || startPosition);
+              else finish(new Error("Camera 4K playback failed"));
+              return;
+            }
+            if (!data.fatal) return;
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && sourceCanFallBack) {
+              instance.loadSource(sourceProxy);
+              instance.startLoad(startPosition);
+              return;
+            }
+            if (data.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
+            else finish(new Error("Stream playback failed"));
+          });
+          instance.attachMedia(v);
+          instance.on(Hls.Events.FRAG_BUFFERED, () => {
+            if (!settled && v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) finish();
+          });
+        });
       }
-      v.src = url;
+      return new Promise<void>((resolve, reject) => {
+        const timeout = window.setTimeout(() => finish(new Error("Native video source timed out")), 15_000);
+        const finish = (error?: Error) => {
+          window.clearTimeout(timeout);
+          v.removeEventListener("loadedmetadata", onMetadata);
+          v.removeEventListener("error", onError);
+          error ? reject(error) : resolve();
+        };
+        const onMetadata = () => {
+          if (startPosition > 0) v.currentTime = startPosition;
+          finish();
+        };
+        const onError = () => {
+          if (isUhd) void fallbackToStream(v.currentTime || startPosition);
+          else if (canFallBack) {
+            v.src = sourceProxy;
+            if (startPosition > 0) v.currentTime = startPosition;
+          } else finish(new Error("Native video source failed"));
+        };
+        v.addEventListener("loadedmetadata", onMetadata, { once: true });
+        v.addEventListener("error", onError);
+        v.src = source;
+      });
+    };
+    function fallbackToStream(startPosition: number): Promise<void> {
+      if (!currentIsUhd || streamFallbackUsed) return Promise.resolve();
+      streamFallbackUsed = true;
+      currentIsUhd = false;
+      return attach(url, startPosition, false).catch(() => setVideoError(true));
     }
+    const uhdUrl = uhdPlaybackUrlForStreamUrl(url);
+    void (async () => {
+      try {
+        const useUhd = await canUseUhdPlayback(v, uhdUrl);
+        if (cancelled) return;
+        try {
+          await attach(useUhd && uhdUrl ? uhdUrl : url, 0, useUhd && !!uhdUrl);
+        } catch (error) {
+          if (!useUhd || !uhdUrl || streamFallbackUsed) throw error;
+          streamFallbackUsed = true;
+          await attach(url, v.currentTime || 0, false);
+        }
+        if (!cancelled) {
+          const onError = () => {
+            if (currentIsUhd) void fallbackToStream(v.currentTime || 0);
+            else setVideoError(true);
+          };
+          v.onerror = onError;
+        }
+      } catch {
+        if (!cancelled) setVideoError(true);
+      }
+    })();
     return () => {
       cancelled = true;
-      if (onNativeError) v.removeEventListener("error", onNativeError);
+      v.onerror = null;
       (hls as Hls | null)?.destroy();
     };
   }, [videoUrl]);

@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { withDirectSegments } from "@/lib/directSegments";
+import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 import type { DeckCard, FocusPoint } from "@/lib/check-deck";
 
 /**
@@ -102,7 +103,7 @@ export const DeckVideo = memo(function DeckVideo({
         }
       }
     };
-    const failTimer = window.setTimeout(() => { if (!done) set("failed"); }, 20_000);
+    let failTimer: number | null = null;
     video.addEventListener("loadeddata", ready);
     video.addEventListener("seeked", ready);
     video.addEventListener("canplay", ready);
@@ -111,78 +112,107 @@ export const DeckVideo = memo(function DeckVideo({
     // Segments straight from Bunny first; the relayed playlist if they fail.
     const directUrl = withDirectSegments(url);
     let onDirect = directUrl !== url;
-    if (url.includes(".m3u8") || url.includes("/hls-proxy/")) {
-      if (Hls.isSupported()) {
-        hls = new Hls({
+    let usingUhd = false;
+    let attaching = false;
+    let fallbackFromUhd: (() => boolean) | null = null;
+    const attach = (source: string, startPosition: number, isUhd: boolean) => {
+      if (cancelled || attaching) return;
+      attaching = true;
+      usingUhd = isUhd;
+      if (hls) { hls.destroy(); hls = null; }
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      onDirect = !isUhd && directUrl !== url;
+      const fallbackToStream = () => {
+        if (!usingUhd) return false;
+        usingUhd = false;
+        attaching = false;
+        attach(directUrl, video.currentTime || startPosition || start, false);
+        return true;
+      };
+      fallbackFromUhd = fallbackToStream;
+      if ((source.includes(".m3u8") || source.includes("/hls-proxy/")) && Hls.isSupported()) {
+        const instance = new Hls({
           enableWorker: true,
-          startPosition: start,
-          // A card waiting behind fetches only its first seconds: an instant
-          // first frame and enough to start playing. The rest comes while
-          // that plays, once it is on top (see the effect below).
+          startPosition: startPosition,
           maxBufferLength: activeRef.current ? length + 2 : loadRef.current ? WAITING_AHEAD : 0,
           maxMaxBufferLength: length + 4,
           backBufferLength: 0,
           startFragPrefetch: true,
-          // a deck card is never worth a minute of retries
           fragLoadingMaxRetry: 2,
           manifestLoadingMaxRetry: 2,
         });
-        hls.on(Hls.Events.ERROR, (_e, data) => {
-          if (!data.fatal || !hls) return;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && onDirect) {
-            onDirect = false;
-            hls.loadSource(url);
-            hls.startLoad(start);
+        hls = instance;
+        hlsRef.current = instance;
+        instance.on(Hls.Events.ERROR, (_e, data) => {
+          if (done || hls !== instance) return;
+          const details = String(data.details ?? "");
+          const codecError = details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError";
+          if (usingUhd && (data.fatal || codecError)) {
+            fallbackToStream();
             return;
           }
-          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+          if (!data.fatal) return;
+          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && onDirect) {
+            onDirect = false;
+            instance.loadSource(url);
+            instance.startLoad(startPosition);
+            return;
+          }
+          if (data.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
           else if (!done) set("failed");
         });
-        hls.on(Hls.Events.FRAG_BUFFERED, ready);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          if (!hls) return;
-          // The lightest rendition is plenty for a phone-sized crop: recordings
-          // carry a 2560x720 rung at ~4.3 Mbit/s beside the 3840x1080 one at
-          // ~7.5 (recording 401, 2026-10-25), so a card costs ~4 MB, not ~7.
-          const levels = hls.levels ?? [];
-          if (levels.length > 1) {
+        instance.on(Hls.Events.FRAG_BUFFERED, ready);
+        instance.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (hls !== instance) return;
+          const levels = instance.levels ?? [];
+          if (!isUhd && levels.length > 1) {
             let pick = 0;
             levels.forEach((level, index) => {
               const h = level.height || 0, best = levels[pick].height || 0;
               if ((h >= MIN_LEVEL_HEIGHT && (best < MIN_LEVEL_HEIGHT || h < best)) || (best < MIN_LEVEL_HEIGHT && h > best)) pick = index;
             });
-            hls.startLevel = pick;
-            hls.loadLevel = pick;
+            instance.startLevel = pick;
+            instance.loadLevel = pick;
           }
-          hls.startLoad(start);
-          if (Math.abs(video.currentTime - start) > 0.25) video.currentTime = start;
+          instance.startLoad(startPosition);
+          if (Math.abs(video.currentTime - startPosition) > 0.25) video.currentTime = startPosition;
+          attaching = false;
         });
-        hls.attachMedia(video);
-        hls.loadSource(directUrl);
-        hlsRef.current = hls;
+        instance.attachMedia(video);
+        instance.loadSource(source);
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        // iPhone Safari: its own HLS; seek once the metadata is in
         video.preload = "auto";
-        video.src = directUrl;
-        video.addEventListener("loadedmetadata", () => { video.currentTime = start; }, { once: true });
-        if (onDirect) {
-          video.addEventListener("error", () => {
-            if (!onDirect) return;
+        video.onerror = () => {
+          if (fallbackToStream()) return;
+          if (onDirect) {
             onDirect = false;
             video.src = url;
-            video.addEventListener("loadedmetadata", () => { video.currentTime = start; }, { once: true });
-          }, { once: true });
-        }
+            video.addEventListener("loadedmetadata", () => { video.currentTime = startPosition; }, { once: true });
+          } else if (!done) set("failed");
+        };
+        video.addEventListener("loadedmetadata", () => {
+          video.currentTime = startPosition;
+          attaching = false;
+        }, { once: true });
+        video.src = source;
       } else {
+        attaching = false;
         set("failed");
       }
-    } else {
-      video.preload = "auto";
-      video.src = url;
-      video.addEventListener("loadedmetadata", () => { video.currentTime = start; }, { once: true });
-    }
+    };
+
+    const uhdUrl = uhdPlaybackUrlForStreamUrl(url);
+    failTimer = window.setTimeout(() => {
+      if (!done && !(fallbackFromUhd?.() ?? false)) set("failed");
+    }, 20_000);
+    void canUseUhdPlayback(video, uhdUrl).then((available) => {
+      if (cancelled) return;
+      attach(available && uhdUrl ? uhdUrl : directUrl, start, available && !!uhdUrl);
+    });
     return () => {
-      window.clearTimeout(failTimer);
+      if (failTimer !== null) window.clearTimeout(failTimer);
       video.removeEventListener("loadeddata", ready);
       video.removeEventListener("seeked", ready);
       video.removeEventListener("canplay", ready);

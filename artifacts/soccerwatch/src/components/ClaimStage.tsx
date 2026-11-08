@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
 import { withDirectSegments } from "@/lib/directSegments";
+import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 import { capPlaybackQuality } from "../lib/hlsQuality";
 import {
   Expand,
@@ -147,6 +148,7 @@ function seekableEnd(video: HTMLVideoElement): number | null {
 function useBunnyHls(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   url: string | undefined,
+  uhdUrl: string | null | undefined,
   startVideoTime: number,
   onCacheUpdate: (update: VideoCacheUpdate) => void,
   seekRequest: { id: number; videoTime: number } | null,
@@ -167,6 +169,8 @@ function useBunnyHls(
     let firstFrameTimer: number | null = null;
     let mediaRecoveryAttempted = false;
     let nativeMetadataHandler: (() => void) | null = null;
+    let usingUhd = false;
+    let streamFallbackUsed = false;
     const unsubscribeCache = subscribeToVideoCache(onCacheUpdate);
     const clearDecodeTimer = () => {
       if (decodeTimer) window.clearTimeout(decodeTimer);
@@ -183,6 +187,7 @@ function useBunnyHls(
       clearDecodeTimer();
       decodeTimer = window.setTimeout(() => {
         if (confirmDecodedFrame() || !hls) return;
+        if (usingUhd && fallbackToStream()) return;
         if (!mediaRecoveryAttempted) {
           mediaRecoveryAttempted = true;
           setVideoError("Recovering the video picture…");
@@ -201,6 +206,7 @@ function useBunnyHls(
       if (firstFrameTimer) window.clearTimeout(firstFrameTimer);
       firstFrameTimer = window.setTimeout(() => {
         if (!video || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
+        if (usingUhd && fallbackToStream()) return;
         setVideoError("The recording did not start playing. Reload the page to try again.");
       }, 15_000);
     };
@@ -210,28 +216,35 @@ function useBunnyHls(
     };
 
     // Segments straight from Bunny first; the relayed playlist if they fail.
-    const directUrl = withDirectSegments(url);
-    let onDirect = directUrl !== url;
-    const startPlayback = () => {
-      if (url.includes(".m3u8") && Hls.isSupported()) {
-        hls = new Hls({
+    const startPlayback = (
+      sourceUrl = url,
+      isUhd = false,
+      sourceStart = startVideoTimeRef.current,
+    ) => {
+      usingUhd = isUhd;
+      const directUrl = withDirectSegments(sourceUrl);
+      let onDirect = !isUhd && directUrl !== sourceUrl;
+      if (sourceUrl.includes(".m3u8") && Hls.isSupported()) {
+        const instance = new Hls({
           enableWorker: false,
           maxBufferLength: 30,
           backBufferLength: 60,
-          startPosition: Math.max(0, startVideoTimeRef.current),
+          startPosition: Math.max(0, sourceStart),
         });
-        hlsRef.current = hls;
-        capPlaybackQuality(hls);
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(directUrl));
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          const requested = Math.max(0, startVideoTimeRef.current);
+        hls = instance;
+        hlsRef.current = instance;
+        if (!isUhd) capPlaybackQuality(instance);
+        instance.on(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(directUrl));
+        instance.attachMedia(video);
+        instance.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (hls !== instance) return;
+          const requested = Math.max(0, sourceStart);
           // A level's duration is known here even before any fragment loads,
           // which is the earliest point an impossible start position can be
           // caught. Leave a second of runway so the target is inside the last
           // fragment rather than exactly on its boundary.
-          const limit = hls?.levels?.[hls.currentLevel]?.details?.totalduration
-            ?? hls?.levels?.[0]?.details?.totalduration
+          const limit = instance.levels?.[instance.currentLevel]?.details?.totalduration
+            ?? instance.levels?.[0]?.details?.totalduration
             ?? null;
           let target = requested;
           if (typeof limit === "number" && Number.isFinite(limit) && limit > 0 && requested > limit - 1) {
@@ -243,16 +256,17 @@ function useBunnyHls(
           // startPosition is used by hls.js when it first starts loading, but
           // explicitly restarting here also covers an instance that attached
           // while the element was paused or had already requested fragment 0.
-          hls?.startLoad(target);
+          instance.startLoad(target);
           if (Math.abs(video.currentTime - target) > 0.25) video.currentTime = target;
         });
-        hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        instance.on(Hls.Events.FRAG_BUFFERED, () => {
+          if (hls !== instance) return;
           networkRetries = 0;
           clearFirstFrameTimer();
           if (!confirmDecodedFrame()) watchForDecodedFrame();
         });
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (!hls) return;
+        instance.on(Hls.Events.ERROR, (_event, data) => {
+          if (hls !== instance) return;
           if (!data.fatal) {
             // Non-fatal is not the same as harmless. hls.js reports
             // bufferAddCodecError and bufferIncompatibleCodecsError with
@@ -263,22 +277,24 @@ function useBunnyHls(
             // ErrorDetails members a given hls.js version exports.
             const details = String(data.details ?? "");
             if (details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError") {
+              if (usingUhd && fallbackToStream()) return;
               clearFirstFrameTimer();
               setVideoError("This browser could not decode the recording's video track.");
             }
             return;
           }
+          if (usingUhd && fallbackToStream()) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR && onDirect) {
             onDirect = false;
-            hls.loadSource(url);
-            hls.startLoad(Math.max(0, video.currentTime || startVideoTimeRef.current));
+            instance.loadSource(sourceUrl);
+            instance.startLoad(Math.max(0, video.currentTime || sourceStart));
             return;
           }
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             networkRetries += 1;
             if (networkRetries > 5) { clearFirstFrameTimer(); setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
             setVideoError("Reconnecting…");
-            retryTimer = window.setTimeout(() => hls?.startLoad(), 1000 * networkRetries);
+            retryTimer = window.setTimeout(() => instance.startLoad(), 1000 * networkRetries);
           } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
             // recoverMediaError() used to be called with no counter and no
             // message, so a recovery that never succeeded looped forever in
@@ -290,7 +306,7 @@ function useBunnyHls(
               return;
             }
             setVideoError("Recovering the video picture…");
-            hls.recoverMediaError();
+            instance.recoverMediaError();
           } else {
             clearFirstFrameTimer();
             setVideoError("The recording could not be played.");
@@ -299,15 +315,16 @@ function useBunnyHls(
       } else {
         video.src = directUrl;
         nativeMetadataHandler = () => {
-          video.currentTime = Math.max(0, startVideoTimeRef.current);
+          video.currentTime = Math.max(0, sourceStart);
         };
         video.addEventListener("loadedmetadata", nativeMetadataHandler, { once: true });
         video.onerror = () => {
+          if (usingUhd && fallbackToStream()) return;
           if (onDirect) {
             onDirect = false;
-            video.src = url;
+            video.src = sourceUrl;
             video.addEventListener("loadedmetadata", () => {
-              video.currentTime = Math.max(0, startVideoTimeRef.current);
+              video.currentTime = Math.max(0, sourceStart);
             }, { once: true });
             return;
           }
@@ -315,8 +332,35 @@ function useBunnyHls(
         };
       }
     };
-    startPlayback();
-    watchForFirstFrame();
+
+    function fallbackToStream(): boolean {
+      if (!usingUhd || streamFallbackUsed) return false;
+      streamFallbackUsed = true;
+      usingUhd = false;
+      const at = Math.max(0, video.currentTime || startVideoTimeRef.current);
+      clearFirstFrameTimer();
+      clearDecodeTimer();
+      if (hls) { hls.destroy(); hls = null; }
+      if (nativeMetadataHandler) {
+        video.removeEventListener("loadedmetadata", nativeMetadataHandler);
+        nativeMetadataHandler = null;
+      }
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      startPlayback(url, false, at);
+      watchForFirstFrame();
+      return true;
+    }
+
+    void canUseUhdPlayback(video, uhdUrl ?? uhdPlaybackUrlForStreamUrl(url)).then((available) => {
+      if (cancelled) return;
+      startPlayback(available && (uhdUrl ?? uhdPlaybackUrlForStreamUrl(url))
+        ? (uhdUrl ?? uhdPlaybackUrlForStreamUrl(url))!
+        : url,
+      available);
+      watchForFirstFrame();
+    });
     return () => {
       unsubscribeCache();
       if (retryTimer) window.clearTimeout(retryTimer);
@@ -329,7 +373,7 @@ function useBunnyHls(
       video.removeAttribute("src");
       video.load();
     };
-  }, [onCacheUpdate, url, videoRef]);
+  }, [onCacheUpdate, uhdUrl, url, videoRef]);
 
   useEffect(() => {
     if (!seekRequest) return;
@@ -399,6 +443,7 @@ function browserSafeVideoUrl(url: string | undefined) {
 
 export function ClaimStage({
   videoUrl,
+  uhdPlaybackUrl,
   bundle,
   candidates,
   highlightedId,
@@ -430,6 +475,7 @@ export function ClaimStage({
   panel,
 }: {
   videoUrl?: string;
+  uhdPlaybackUrl?: string | null;
   bundle: ClaimBundle;
   candidates: StageCandidate[];
   /** Candidate to light up while the number picker points at it. Optional, so
@@ -491,7 +537,7 @@ export function ClaimStage({
       if (update.detail) setCacheError(update.detail);
     }
   }, []);
-  const videoError = useBunnyHls(videoRef, playbackUrl, startVideoTime, handleCacheUpdate, seekRequest);
+  const videoError = useBunnyHls(videoRef, playbackUrl, uhdPlaybackUrl, startVideoTime, handleCacheUpdate, seekRequest);
   useEffect(() => {
     cacheStartedForRef.current = null;
     setCachedResourceCount(0);
