@@ -116,6 +116,18 @@ function fieldCustom(custom: Record<string, string>, locale: "en" | "ar", name: 
   return out;
 }
 
+/**
+ * A library template's starting data (Admin → Template library): what the template it fills like
+ * would start with, its own sample words on top, and the field's own name where the design shows it.
+ */
+export function libraryStartingData(base: CreativeData, sample: { custom?: Record<string, string> } | null): CreativeData {
+  const custom = { ...(base.custom ?? {}), ...(sample?.custom ?? {}) };
+  const name = base.custom?.field ?? base.academy?.name ?? "";
+  if ("field" in custom) custom.field = name;
+  if ("endBig" in custom && base.custom && "endBig" in base.custom) custom.endBig = base.custom.endBig;
+  return { ...base, custom };
+}
+
 /** A project title: the template's name and, for a match, the opponent. */
 export function projectTitle(templateTitle: string, data: CreativeData, seed: TemplateSeed | null): string {
   const vs = seed?.type === "session" ? data.match?.opponent : undefined;

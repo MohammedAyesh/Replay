@@ -138,3 +138,12 @@ describe("strings", () => {
     expect(creativeTemplatesStrings.ar.seconds(15)).toBe("15 ثانية");
   });
 });
+
+describe("a library template's starting data", () => {
+  it("keeps the template's own words and puts the field's own name where the design shows it", async () => {
+    const { libraryStartingData } = await import("./data");
+    const base = { academy: { name: "Al Saha" }, custom: { field: "Al Saha", title: "Free tonight", endBig: "079 000 0000" } };
+    const out = libraryStartingData(base, { custom: { field: "Jordan Galaxy", title: "Special offer", endBig: "077 248 2828", p1: "30 JD" } });
+    expect(out.custom).toEqual({ field: "Al Saha", title: "Special offer", endBig: "079 000 0000", p1: "30 JD" });
+  });
+});

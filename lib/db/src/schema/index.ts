@@ -68,5 +68,6 @@ export * from "./academyValueReports";
 export * from "./academyTrials";
 export * from "./academyFavorites";
 export * from "./academyCreativeTemplates";
+export * from "./creativeLibraryTemplates";
 export * from "./academyInstagram";
 export * from "./pushSubscriptions";

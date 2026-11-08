@@ -20,7 +20,7 @@ import {
   type VenueIgItem,
 } from "@workspace/db";
 import { FIELD_STYLE, awardTitle, buildFieldMontage, buildTemplateScene, resolveSource, sceneSchema, type FieldTemplateKey, type Scene } from "@workspace/api-zod";
-import { replacementScenes, withReplacements } from "../creative/myTemplates";
+import { replacementFor, replacementScenes, withReplacements } from "../creative/myTemplates";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { framingFor } from "../creative/framing";
 import { ensureReplayMusic, replayLibrary, sceneWithDefaultMusic, templateMusicOverrides } from "../creative/music";
@@ -402,10 +402,12 @@ async function passNominee(venue: Venue, item: VenueIgItem, s: IgSlotSettings, s
 async function sceneFor(part: FieldPart, locale: Locale, own: Map<string, Scene> = new Map()): Promise<Scene> {
   // The field's own version of the template (My templates, "use instead"), else the catalogue's.
   // A montage is laid out for its own number of clips, unless the field replaced the template.
-  const montage = part.clips && !own.has(`${part.templateKey}:${part.format}`);
-  let scene = sceneSchema.parse(montage
-    ? buildFieldMontage(part.templateKey as FieldTemplateKey, part.clips!, part.format, locale, { bars: part.bars })
-    : withReplacements(own, buildTemplateScene)(part.templateKey, FIELD_STYLE, part.format, locale));
+  // A library template laid out for this many clips counts as the field's for this post.
+  const replaced = replacementFor(own, part.templateKey, part.format, part.clips);
+  let scene = sceneSchema.parse(replaced
+    ?? (part.clips
+      ? buildFieldMontage(part.templateKey as FieldTemplateKey, part.clips, part.format, locale, { bars: part.bars })
+      : withReplacements(own, buildTemplateScene)(part.templateKey, FIELD_STYLE, part.format, locale)));
   if (scene.durationMs === undefined) return scene;
   const framed = new Map<string, Promise<Awaited<ReturnType<typeof framingFor>> | null>>();
   const layers = await Promise.all(scene.layers.map(async (l) => {

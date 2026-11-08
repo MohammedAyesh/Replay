@@ -34,6 +34,7 @@ import MetaAdsTab from "@/components/admin/MetaAdsTab";
 import AnalysisTab from "@/components/admin/AnalysisTab";
 import BrandingTab from "@/components/admin/BrandingTab";
 import CreativeMusicTab from "@/components/admin/CreativeMusicTab";
+import TemplateLibraryTab from "@/components/admin/TemplateLibraryTab";
 import { WeeklyHighlightsTab } from "@/components/admin/WeeklyHighlightsTab";
 import {
   getGetFeedQueryKey,
@@ -62,7 +63,7 @@ import {
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads" | "weekly-highlights" | "whatsapp" | "meta-ads" | "field-consoles" | "creative-music";
+type Tab = "clips" | "accounts" | "access" | "fields" | "owners" | "banners" | "academies" | "live" | "recordings" | "var" | "stat-payments" | "reports" | "claim-disputes" | "analysis" | "branding" | "settings" | "demo-leads" | "weekly-highlights" | "whatsapp" | "meta-ads" | "field-consoles" | "creative-music" | "template-library";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -7366,6 +7367,7 @@ const TABS: Record<Tab, { label: string; render: () => ReactNode }> = {
   "meta-ads": { label: "Meta ads", render: () => <MetaAdsTab /> },
   "field-consoles": { label: "Field consoles", render: () => <FieldConsolesTab /> },
   "creative-music": { label: "Creative music", render: () => <CreativeMusicTab /> },
+  "template-library": { label: "Template library", render: () => <TemplateLibraryTab /> },
 };
 
 const TAB_ORDER = Object.keys(TABS) as Tab[];

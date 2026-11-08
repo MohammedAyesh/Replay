@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useMyTemplatesCopy } from "@/i18n/my-templates-strings";
 import { useConsoleKind } from "@/lib/console-kind";
-import { useMyTemplateActions, useMyTemplates, type MyTemplate } from "@/lib/my-templates-api";
+import { useLibraryTemplates, useMyTemplateActions, useMyTemplates, type LibraryTemplate, type MyTemplate } from "@/lib/my-templates-api";
 import { cn } from "@/lib/utils";
 import { TemplateCard } from "./templates/template-card";
 
@@ -161,6 +161,50 @@ export function MyTemplatesGrid({ academyId, brand, width, cols, gap, dataFor, m
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Templates → My templates, first: Replay's library (templates uploaded from Admin → Template
+ * library, no code change). Opened like the field's own; "In use" marks one that stands in for a
+ * built-in. Nothing shows when the library has none for this field or academy.
+ */
+export function LibraryTemplatesGrid({ academyId, brand, width, cols, gap, dataFor, mediaUrl, onOpen, pending, labels }: {
+  academyId: number;
+  brand: CreativeBrand;
+  width: number;
+  cols: number;
+  gap: number;
+  /** A library template's starting data (templates/data.ts libraryStartingData). */
+  dataFor: (t: LibraryTemplate) => CreativeData;
+  mediaUrl: (layer: MediaLayer) => string | null;
+  onOpen: (t: LibraryTemplate) => void;
+  pending: number | null;
+  labels: { video: string; seconds: (n: number) => string; creating: string; open: (title: string) => string };
+}) {
+  const copy = useMyTemplatesCopy();
+  const list = useLibraryTemplates(academyId);
+  const items = list.data ?? [];
+  if (!items.length) return null;
+  return (
+    <div className="mb-5 space-y-2" data-testid="library-templates">
+      <p className="text-xs font-semibold text-muted-text">{copy.fromReplay}</p>
+      <div className="grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap }}>
+        {items.map((t) => {
+          const title = t.title[copy.locale];
+          const meta = { key: `lib-${t.id}`, category: "community", title: t.title, kind: t.kind, formats: [t.format], fields: [] } as TemplateMeta;
+          return (
+            <div key={t.id} className="min-w-0" data-testid={`library-template-${t.key}-${t.format}`}>
+              <TemplateCard meta={meta} title={title} scene={t.scene} data={dataFor(t)} brand={brand} width={width}
+                mediaUrl={mediaUrl} onOpen={() => onOpen(t)} busy={pending === t.id} disabled={pending !== null} failed={null}
+                labels={{ ...labels, open: labels.open(title) }}
+                star={t.replacesBase ? <span className="rounded-full bg-turf px-2 py-0.5 text-[11px] font-bold text-void">{copy.inUse}</span> : null} />
+              <p className="truncate text-[11px] text-muted-text">{copy.formatOf(t.format)}</p>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

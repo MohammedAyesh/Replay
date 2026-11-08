@@ -25,6 +25,8 @@ const en = {
   remove: "Delete",
   confirmRemove: (name: string) => `Delete “${name}”? Designs already made from it stay.`,
   basedOn: (base: string) => `From ${base}`,
+  fromReplay: "New from Replay",
+  formatOf: (f: string) => ({ story: "Story", post: "Post", square: "Square", wide: "Wide" } as Record<string, string>)[f] ?? f,
 };
 type Strings = typeof en;
 
@@ -52,6 +54,8 @@ const ar: Strings = {
   remove: "احذف",
   confirmRemove: (name: string) => `تحذف «${name}»؟ التصاميم اللي انعملت منه بتضل.`,
   basedOn: (base: string) => `من ${base}`,
+  fromReplay: "جديد من ريبلاي",
+  formatOf: (f: string) => ({ story: "ستوري", post: "بوست", square: "مربّع", wide: "عريض" } as Record<string, string>)[f] ?? f,
 };
 
 export function useMyTemplatesCopy(): Strings & { locale: "ar" | "en" } {

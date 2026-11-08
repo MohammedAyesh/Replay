@@ -489,6 +489,8 @@ describe("3. Weekly awards", () => {
   it("votes in the app (counts hidden while open), and a thin vote goes to the owner, whose pick makes the winner Reel", async () => {
     const venue = (await loadVenue(venueId))!;
     const nominees = (await weekCandidates(venue, week)).save;
+    // Earlier tests run the scheduler on today's clock, which opens the week's awards on some weekdays.
+    await db.delete(venueIgAwardsTable).where(and(eq(venueIgAwardsTable.academyId, venueId), eq(venueIgAwardsTable.weekStart, week), eq(venueIgAwardsTable.category, "save")));
     const [award] = await db.insert(venueIgAwardsTable).values({
       academyId: venueId, weekStart: week, category: "save", status: "voting", nominees, votingEndsAt: new Date(Date.now() + 3_600_000),
     }).returning();
