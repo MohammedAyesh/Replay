@@ -101,6 +101,17 @@ const BUFFER_TIMEOUT_MS = Math.max(
   parseInt(process.env.FFMPEG_BUFFER_TIMEOUT_MS ?? "600000", 10) || 600_000,
 );
 
+/** Large 4K camera byte-range buffers need a separate, longer network/encode budget. */
+const CAMERA_BUFFER_TIMEOUT_MS = Math.max(
+  60_000,
+  parseInt(process.env.FFMPEG_CAMERA_BUFFER_TIMEOUT_MS ?? "1800000", 10) || 1_800_000,
+);
+
+/** The +7 second buffer tail is optional; only selected content must be present. */
+export function requiredCameraClipDuration(clipDuration: number, totalDuration: number, startSec: number): number {
+  return Math.min(Math.max(0, clipDuration), Math.max(0, totalDuration - startSec));
+}
+
 /**
  * Longest intro we will prepend. An intro is branding, not content, and it is
  * re-encoded on every export that uses it, so an admin uploading a
@@ -1656,7 +1667,7 @@ export async function bufferCameraHlsClip(options: {
       startSec + requestedWindow,
       { prerollSeconds: 4, postrollSeconds: 1 },
     );
-    const downloadedBytes = await downloadHlsByteRangePlan(plan, assembledPath, referer, { concurrency: 6 });
+    const downloadedBytes = await downloadHlsByteRangePlan(plan, assembledPath, referer, { concurrency: 3, timeoutMs: 90_000 });
     const sourceTiming = await probeVideoTiming(assembledPath);
     // The first selected segment carries source timestamps. Derive the source
     // clock's zero point from the probed fragment timestamp rather than
@@ -1689,7 +1700,7 @@ export async function bufferCameraHlsClip(options: {
         "-movflags", "+faststart",
         "-y", bufferPath,
       ],
-      BUFFER_TIMEOUT_MS,
+      CAMERA_BUFFER_TIMEOUT_MS,
     );
 
     const durationOut = await run("ffprobe", [
@@ -1702,10 +1713,14 @@ export async function bufferCameraHlsClip(options: {
     if (!Number.isFinite(bufferedDuration) || bufferedDuration <= 0) {
       throw new Error(`Invalid camera buffer duration from ffprobe: "${durationOut.trim()}"`);
     }
-    if (bufferedDuration < Math.min(requestedWindow, totalDuration - startSec) - 0.5) {
+    // +7 seconds is optional run-on footage for end screens. A clip ending at
+    // the recording boundary is complete when the selected clip window itself
+    // is present, even if there is no post-roll to satisfy that padding.
+    const requiredClipWindow = requiredCameraClipDuration(clipDuration, totalDuration, startSec);
+    if (bufferedDuration < requiredClipWindow - 0.5) {
       throw new Error(
         `Camera buffer (${bufferedDuration.toFixed(2)}s) is unexpectedly shorter than ` +
-        `${requestedWindow.toFixed(2)}s`,
+        `the selected clip window (${requiredClipWindow.toFixed(2)}s)`,
       );
     }
 

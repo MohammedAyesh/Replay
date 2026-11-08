@@ -88,6 +88,12 @@ export const windowSource = (w: RecordingWindow): Extract<MediaSource, { type: "
 export const frameSource = (recordingId: number, atMs: number): Extract<MediaSource, { type: "frame" }> =>
   ({ type: "frame", recordingId, atMs: Math.max(0, Math.round(atMs)) });
 
+/** Private Creative Hub thumbnail endpoint; it resolves saved-file/Stream media without requiring 4K. */
+export function creativeClipStillUrl(academyId: number, clipId: number): string {
+  const src = encodeURIComponent(JSON.stringify({ type: "clip", clipId }));
+  return `/api/academy/console/academies/${academyId}/creative/media?src=${src}&want=still`;
+}
+
 // ── Players ─────────────────────────────────────────────────────────────────
 
 export function firstNameOf(name: string | null | undefined): string | null {

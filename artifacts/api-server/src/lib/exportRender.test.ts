@@ -12,6 +12,7 @@ const {
   probeVideoDimensions,
   assertExportSourceGeometry,
   buildCropCommands,
+  requiredCameraClipDuration,
 } = await import("./ffmpegExport");
 
 /**
@@ -103,6 +104,14 @@ describe("crop maths against the pinned source geometry", () => {
     expect(f({ t: 0, x: 0.25, y: 0, w: 0.5, h: 1 })).toContain("crop=1920:1080:960:0");
     expect(f({ t: 0, x: 0.5, y: 0, w: 0.5, h: 1 })).toContain("crop=1920:1080:1920:0");
     expect(f({ t: 0, x: 0.5, y: 0, w: 0.25, h: 0.5 })).toContain("crop=960:540:1920:0");
+  });
+});
+
+describe("camera HLS source-window validation", () => {
+  it("does not treat optional post-roll as missing clip content", () => {
+    expect(requiredCameraClipDuration(30, 100, 70)).toBe(30);
+    expect(requiredCameraClipDuration(30, 100, 80)).toBe(20);
+    expect(requiredCameraClipDuration(30, 100, 100)).toBe(0);
   });
 });
 

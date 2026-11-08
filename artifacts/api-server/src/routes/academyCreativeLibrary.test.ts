@@ -174,6 +174,7 @@ describe("creative library: academy scoping", () => {
       window: { recordingId, fromMs: 600_000, toMs: 620_000 },
       durationMs: 20_000,
       sessionId,
+      thumbnailUrl: `/api/academy/console/academies/${academyId}/creative/media?src=${encodeURIComponent(JSON.stringify({ type: "clip", clipId: coachClipId }))}&want=still`,
     });
     const uploads = await request(app).get(url("/uploads")).set(auth(ownerId));
     const mediaIds = uploads.body.uploads.map((u: { mediaId: number }) => u.mediaId);

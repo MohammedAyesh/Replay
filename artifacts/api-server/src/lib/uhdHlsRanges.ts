@@ -167,10 +167,11 @@ async function fetchRange(
   range: HlsByteRange,
   referer: string,
   fetcher: typeof fetch,
+  timeoutMs: number,
 ): Promise<Uint8Array> {
   const response = await fetcher(range.url, {
     headers: { Referer: referer, Range: `bytes=${range.start}-${range.end}` },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (response.status !== 206) {
     try { await response.body?.cancel(); } catch { /* already closed */ }
@@ -196,18 +197,19 @@ export async function downloadHlsByteRangePlan(
   plan: HlsByteRangePlan,
   outputPath: string,
   referer: string,
-  options: { fetcher?: typeof fetch; concurrency?: number } = {},
+  options: { fetcher?: typeof fetch; concurrency?: number; timeoutMs?: number } = {},
 ): Promise<number> {
   const fetcher = options.fetcher ?? fetch;
   const concurrency = Math.max(1, Math.min(8, Math.floor(options.concurrency ?? 6)));
+  const timeoutMs = Math.max(1_000, options.timeoutMs ?? 30_000);
   let totalBytes = 0;
   try {
-    const init = await fetchRange(plan.init, referer, fetcher);
+    const init = await fetchRange(plan.init, referer, fetcher, timeoutMs);
     await fs.writeFile(outputPath, init);
     totalBytes += init.byteLength;
     for (let offset = 0; offset < plan.segments.length; offset += concurrency) {
       const batch = plan.segments.slice(offset, offset + concurrency);
-      const buffers = await Promise.all(batch.map((range) => fetchRange(range, referer, fetcher)));
+      const buffers = await Promise.all(batch.map((range) => fetchRange(range, referer, fetcher, timeoutMs)));
       for (const bytes of buffers) {
         await fs.appendFile(outputPath, bytes);
         totalBytes += bytes.byteLength;

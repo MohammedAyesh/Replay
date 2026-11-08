@@ -18,6 +18,7 @@ import {
 } from "@workspace/db";
 import { requireAcademyConsoleUser, requireAcademyMembership, type AcademyConsoleUser } from "../lib/academyAccess";
 import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
+import { creativeClipStillUrl } from "../lib/creative/library";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { mayConfirmGoalsInRoom } from "../lib/goalRights";
 import { logger } from "../lib/logger";
@@ -420,8 +421,8 @@ router.get(`${base}/items/:itemId/candidates`, async (req, res): Promise<void> =
       max: rule.max,
       picked,
       empty,
-      pickedItems: pickedNominees.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: thumb(n.recordingId, urls, n.atMs) })),
-      candidates: list.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: thumb(n.recordingId, urls, n.atMs) })),
+      pickedItems: pickedNominees.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: n.clipId ? creativeClipStillUrl(a.venue.id, n.clipId) : thumb(n.recordingId, urls, n.atMs) })),
+      candidates: list.map((n) => ({ key: n.key, source: n.source, label: n.label, labelAr: n.labelAr, bookingId: n.bookingId, thumbnailUrl: n.clipId ? creativeClipStillUrl(a.venue.id, n.clipId) : thumb(n.recordingId, urls, n.atMs) })),
     });
   } catch (error) {
     logger.warn({ itemId: item.id, error: (error as Error).message }, "Instagram: reading clip candidates failed");

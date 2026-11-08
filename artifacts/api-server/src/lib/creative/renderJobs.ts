@@ -1,13 +1,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import { academyCreativeProjectsTable, db, type AcademyCreativeProject } from "@workspace/db";
 import { sceneForData, sceneSchema, type Scene } from "@workspace/api-zod";
 import type { AcademyOwnerAccess } from "../academyOwner";
 import { logger } from "../logger";
 import { renderScenePng, sceneSize } from "./render";
-import { CreativeRenderError, creativeImageResolver, creativeVideoResolver, loadCreativeContext, serverData } from "./renderMedia";
+import { CAMERA_4K_AUTOPILOT_PROBE_MS, CreativeRenderError, creativeImageResolver, creativeVideoResolver, loadCreativeContext, serverData } from "./renderMedia";
 import { resolveSceneMusic } from "./music";
 import { deleteOutput, storeOutput } from "./renderStore";
 import { renderSceneMp4 } from "./renderVideo";
@@ -22,22 +22,21 @@ import { creativeBranding } from "./renderBranding";
  * (default 1) ffmpeg passes at once on this server, the rest wait their turn.
  * Scratch files live in one temp directory per job, removed when it ends.
  *
- * The guard is in this process. A row left queued/rendering by a restart is
- * marked failed at start-up (sweepInterruptedRenders) so the console offers
- * "render again" instead of a spinner.
+ * The guard is in this process. A stale queued/rendering row is marked failed
+ * at start-up; live renders heartbeat their shared row to protect other replicas.
  */
 
 const active = new Set<number>();
 const MAX_VIDEO_RENDERS = Math.max(1, Number(process.env.CREATIVE_VIDEO_RENDERS) || 1);
-/** Autopilot/calendar renders check once and retry on a later scheduler run. */
-export const AUTOPILOT_CAMERA_4K_PROBE_MS = 1;
+/** A bounded cached probe; not a wait for the 4K upload pipeline. */
+export const AUTOPILOT_CAMERA_4K_PROBE_MS = CAMERA_4K_AUTOPILOT_PROBE_MS;
 let runningVideos = 0;
 const waiting: Array<() => void> = [];
 
 export const isRendering = (projectId: number) => active.has(projectId);
 
 async function setStatus(id: number, set: Partial<typeof academyCreativeProjectsTable.$inferInsert>): Promise<AcademyCreativeProject> {
-  const [row] = await db.update(academyCreativeProjectsTable).set(set).where(eq(academyCreativeProjectsTable.id, id)).returning();
+  const [row] = await db.update(academyCreativeProjectsTable).set({ ...set, updatedAt: new Date() }).where(eq(academyCreativeProjectsTable.id, id)).returning();
   return row;
 }
 
@@ -110,6 +109,16 @@ async function runVideo(
 ): Promise<void> {
   const temps: string[] = [];
   let dir: string | null = null;
+  const heartbeat = setInterval(() => {
+    void db.update(academyCreativeProjectsTable)
+      .set({ updatedAt: new Date() })
+      .where(and(
+        eq(academyCreativeProjectsTable.id, row.id),
+        inArray(academyCreativeProjectsTable.renderStatus, ["queued", "rendering"]),
+      ))
+      .catch((err) => logger.warn({ err, projectId: row.id }, "Creative render heartbeat failed"));
+  }, 60_000);
+  heartbeat.unref();
   try {
     await videoSlot(async () => {
       await setStatus(row.id, { renderStatus: "rendering", renderError: null });
@@ -138,6 +147,7 @@ async function runVideo(
     if (!(err instanceof CreativeRenderError)) logger.error({ err, projectId: row.id, academyId: access.academyId }, "Creative video render failed");
     await setStatus(row.id, { renderStatus: "failed", renderError: readableError(err) }).catch(() => {});
   } finally {
+    clearInterval(heartbeat);
     active.delete(row.id);
     await cleanup(temps, dir);
   }
@@ -166,12 +176,16 @@ export async function queueVideoRender(
   }
 }
 
-/** Rows a previous process left queued or rendering: nothing is working on them now. */
+/** Rows a previous process left queued or rendering without a recent heartbeat. */
 export async function sweepInterruptedRenders(): Promise<void> {
   try {
+    const staleBefore = new Date(Date.now() - 15 * 60_000);
     await db.update(academyCreativeProjectsTable)
       .set({ renderStatus: "failed", renderError: "The render was interrupted. Render it again." })
-      .where(inArray(academyCreativeProjectsTable.renderStatus, ["queued", "rendering"]));
+      .where(and(
+        inArray(academyCreativeProjectsTable.renderStatus, ["queued", "rendering"]),
+        lt(academyCreativeProjectsTable.updatedAt, staleBefore),
+      ));
   } catch (err) {
     logger.warn({ err }, "Creative hub: sweeping interrupted renders failed");
   }

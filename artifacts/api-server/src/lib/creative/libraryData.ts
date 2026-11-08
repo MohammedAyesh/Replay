@@ -44,6 +44,7 @@ import {
   ammanClock,
   ammanDate,
   bunnyVideoIdOf,
+  creativeClipStillUrl,
   frameSource,
   libraryPlayer,
   matchMinute,
@@ -451,7 +452,7 @@ export async function libraryClips(academyId: number, f: LibraryFilters, showNam
       source: { type: "clip", clipId: clip.id } as Extract<MediaSource, { type: "clip" }>,
       window: w ? { recordingId: w.recordingId, fromMs: w.fromMs, toMs: w.toMs } : null,
       still: w ? frameSource(w.recordingId, w.atMs) : null,
-      thumbnailUrl: !isLive && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
+      thumbnailUrl: !isLive ? creativeClipStillUrl(academyId, clip.id) : null,
       videoUrl: status === "ready" ? `/api/academy/console/academies/${academyId}/studio/clips/${clip.id}/video` : null,
     });
   }

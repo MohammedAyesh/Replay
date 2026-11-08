@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
-import { spanOf } from "./clipSpan";
+import { spanOf, clipSpan } from "./clipSpan";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { venueClip, venueRecording } from "./venueLibrary";
 import fs from "node:fs";
 import path from "node:path";
@@ -43,6 +45,8 @@ import type { VideoResolver, VideoSourceFile } from "./renderVideo";
 import { tintKey, tintPicture } from "./renderTint";
 import { Camera4kNotReadyError, waitForCamera4kSource } from "../clipExportSource";
 import { bufferCameraHlsClip } from "../ffmpegExport";
+import { fetchExportObject, probeExportObject } from "../backupExport";
+import { getBunnyPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
 
 /**
  * Creative hub engine: where a scene's pictures and footage come from.
@@ -253,8 +257,8 @@ export function videoIdOf(url: string | null | undefined): string | null {
 }
 
 const CAMERA_4K_NOT_READY = "The 4K for this match isn't ready yet. Please try again later.";
-const CAMERA_4K_WAIT_MS = 45 * 60_000;
-export const CAMERA_4K_AUTOPILOT_PROBE_MS = 1;
+const CAMERA_4K_WAIT_MS = 3_000;
+export const CAMERA_4K_AUTOPILOT_PROBE_MS = 3_000;
 
 type Camera4kSource = Awaited<ReturnType<typeof waitForCamera4kSource>>;
 
@@ -268,6 +272,166 @@ async function resolveCamera4kSource(videoId: string, waitMs = CAMERA_4K_WAIT_MS
     }
     throw error;
   }
+}
+
+type ClipVideoSource =
+  | { kind: "camera-4k"; source: Camera4kSource; span: NonNullable<ReturnType<typeof spanOf>> }
+  | { kind: "saved-file"; path: string; durationMs: number; hasAudio: boolean }
+  | { kind: "stream"; url: string; referer: string; span: NonNullable<Awaited<ReturnType<typeof clipSpan>>> };
+
+const STREAM_PROBE_TIMEOUT_MS = 8_000;
+const STREAM_BUFFER_TIMEOUT_MS = 20 * 60_000;
+const CREATIVE_EXPORT_DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
+
+/**
+ * Confirm Stream has a real media playlist and at least one retrievable
+ * segment. A GUID or a master playlist alone is not proof that it can play.
+ */
+async function playableStream(videoId: string): Promise<{ url: string; referer: string } | null> {
+  if (!isBunnyConfigured() || videoId.startsWith("live:")) return null;
+  let masterUrl: string;
+  try {
+    masterUrl = getBunnyPlaybackUrl(videoId);
+  } catch {
+    return null;
+  }
+  const referer = `${new URL(masterUrl).origin}/`;
+  try {
+    const master = await fetch(masterUrl, { headers: { Referer: referer }, signal: AbortSignal.timeout(STREAM_PROBE_TIMEOUT_MS) });
+    if (!master.ok) { await master.body?.cancel().catch(() => {}); return null; }
+    const body = await master.text();
+    if (!body.trimStart().startsWith("#EXTM3U")) return null;
+    let mediaUrl = masterUrl;
+    let mediaBody = body;
+    if (!mediaBody.includes("#EXTINF:")) {
+      const entry = body.split(/\r?\n/).map((line) => line.trim()).find((line) => line && !line.startsWith("#"));
+      if (!entry) return null;
+      mediaUrl = new URL(entry, masterUrl).href;
+      const media = await fetch(mediaUrl, { headers: { Referer: referer }, signal: AbortSignal.timeout(STREAM_PROBE_TIMEOUT_MS) });
+      if (!media.ok) { await media.body?.cancel().catch(() => {}); return null; }
+      mediaBody = await media.text();
+    }
+    if (!mediaBody.trimStart().startsWith("#EXTM3U") || !mediaBody.includes("#EXTINF:")) return null;
+    const segment = mediaBody.split(/\r?\n/).map((line) => line.trim()).find((line) => line && !line.startsWith("#"));
+    if (!segment) return null;
+    const probe = await fetch(new URL(segment, mediaUrl), {
+      headers: { Referer: referer, Range: "bytes=0-0" },
+      signal: AbortSignal.timeout(STREAM_PROBE_TIMEOUT_MS),
+    });
+    await probe.body?.cancel().catch(() => {});
+    if (probe.status !== 200 && probe.status !== 206) return null;
+    return { url: masterUrl, referer };
+  } catch (err) {
+    logger.debug({ err, videoId }, "Creative Stream source did not pass playback probe");
+    return null;
+  }
+}
+
+async function downloadSavedClip(clip: Awaited<ReturnType<typeof academyClip>>, temps: string[]): Promise<{ path: string; durationMs: number; hasAudio: boolean } | null> {
+  if (!clip?.exportedUrl) return null;
+  const probe = await probeExportObject(clip.exportedUrl);
+  if (probe.state !== "exists") return null;
+  const file = path.join(os.tmpdir(), `creative-saved-clip-${randomUUID()}.mp4`);
+  temps.push(file);
+  try {
+    const response = await fetchExportObject(probe.url, { signal: AbortSignal.timeout(CREATIVE_EXPORT_DOWNLOAD_TIMEOUT_MS) });
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
+    await pipeline(Readable.fromWeb(response.body as never), fs.createWriteStream(file));
+    const durationMs = await probeDurationMs(file);
+    if (!durationMs) return null;
+    return { path: file, durationMs, hasAudio: await hasAudioStream(file) };
+  } catch (err) {
+    await fs.promises.rm(file, { force: true }).catch(() => {});
+    logger.debug({ err, clipId: clip.id }, "Creative saved clip file could not be loaded");
+    return null;
+  }
+}
+
+async function resolveClipVideo(
+  clip: NonNullable<Awaited<ReturnType<typeof academyClip>>>,
+  temps: string[],
+  sourceWaitMs = CAMERA_4K_WAIT_MS,
+): Promise<ClipVideoSource> {
+  try {
+    const source = await resolveCamera4kSource(clip.videoId, sourceWaitMs);
+    const span = spanOf(Number(clip.startTime), Number(clip.endTime), clip.thumbnailTime == null ? null : Number(clip.thumbnailTime), source.duration);
+    if (span) return { kind: "camera-4k", source, span };
+  } catch (err) {
+    logger.debug({ err, clipId: clip.id }, "Creative 4K unavailable; checking saved clip and Stream");
+  }
+
+  const saved = await downloadSavedClip(clip, temps);
+  if (saved) return { kind: "saved-file", ...saved };
+
+  const [span, stream] = await Promise.all([
+    clipSpan(clip),
+    playableStream(clip.videoId),
+  ]);
+  if (span && stream) return { kind: "stream", ...stream, span };
+  throw new CreativeRenderError(
+    "This clip is unavailable right now. Its 4K, saved file, and playable Stream source could not be loaded.",
+    409,
+  );
+}
+
+async function frameFromFile(file: string, atSec: number, temps: string[]): Promise<Buffer> {
+  const framePath = path.join(os.tmpdir(), `creative-saved-frame-${randomUUID()}.png`);
+  temps.push(framePath);
+  await new Promise<void>((resolve, reject) => {
+    execFile("ffmpeg", [
+      "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1",
+      "-ss", Math.max(0, atSec).toFixed(3), "-i", file,
+      "-frames:v", "1", "-vf", "scale=w='min(1920,iw)':h=-2:flags=fast_bilinear", "-y", framePath,
+    ], { timeout: 30_000 }, (error) => error ? reject(error) : resolve());
+  });
+  return fs.promises.readFile(framePath);
+}
+
+async function frameFromStream(url: string, referer: string, atSec: number, temps: string[]): Promise<Buffer> {
+  const framePath = path.join(os.tmpdir(), `creative-stream-frame-${randomUUID()}.png`);
+  temps.push(framePath);
+  const headers = `Referer: ${referer}\r\n`;
+  await new Promise<void>((resolve, reject) => {
+    execFile("ffmpeg", [
+      "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "1", "-headers", headers,
+      "-ss", Math.max(0, atSec).toFixed(3), "-i", url, "-frames:v", "1",
+      "-vf", "scale=w='min(1920,iw)':h=-2:flags=fast_bilinear", "-threads", "1", "-y", framePath,
+    ], { timeout: STREAM_BUFFER_TIMEOUT_MS }, (error) => error ? reject(error) : resolve());
+  });
+  return fs.promises.readFile(framePath);
+}
+
+async function bufferStreamClip(
+  url: string,
+  referer: string,
+  startSec: number,
+  durationSec: number,
+  temps: string[],
+): Promise<{ bufferPath: string; bufferedDuration: number }> {
+  if (!Number.isFinite(startSec) || !Number.isFinite(durationSec) || durationSec <= 0) {
+    throw new CreativeRenderError("There is no playable footage in this clip.", 404);
+  }
+  const bufferPath = path.join(os.tmpdir(), `creative-stream-clip-${randomUUID()}.mp4`);
+  temps.push(bufferPath);
+  await new Promise<void>((resolve, reject) => {
+    execFile("ffmpeg", [
+      "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "2",
+      "-headers", `Referer: ${referer}\r\n`,
+      "-ss", Math.max(0, startSec).toFixed(3), "-i", url, "-t", durationSec.toFixed(3),
+      "-map", "0:v:0", "-map", "0:a?",
+      "-vf", "scale=3840:1080:flags=fast_bilinear",
+      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+      "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-y", bufferPath,
+    ], { timeout: STREAM_BUFFER_TIMEOUT_MS }, (error) => error ? reject(error) : resolve());
+  });
+  const bufferedDuration = await probeDurationMs(bufferPath);
+  if (!bufferedDuration || bufferedDuration < durationSec * 1000 - 1_500) {
+    throw new CreativeRenderError("The playable Stream clip ended before its selected window.", 409);
+  }
+  return { bufferPath, bufferedDuration: bufferedDuration / 1000 };
 }
 
 async function bufferCamera4kWindow(
@@ -298,41 +462,6 @@ async function bufferCamera4kWindow(
     downloadedBytes: buffered.downloadedBytes,
   }, "Creative render buffered camera 4K byte ranges");
   return buffered;
-}
-
-async function camera4kFrameBuffer(
-  source: Camera4kSource,
-  atSec: number,
-  temps: string[],
-): Promise<Buffer> {
-  const at = Math.max(0, Math.min(Math.max(0, source.duration - 0.05), atSec));
-  const startSec = Math.max(0, at - 0.5);
-  const endSec = Math.min(source.duration, Math.max(at + 0.1, startSec + 0.25));
-  const buffered = await bufferCamera4kWindow(source, startSec, endSec, temps);
-  const framePath = path.join(os.tmpdir(), `creative-4k-frame-${randomUUID()}.png`);
-  temps.push(framePath);
-  await new Promise<void>((resolve, reject) => {
-    execFile("ffmpeg", [
-      "-nostdin", "-hide_banner", "-loglevel", "error",
-      "-threads", "1", "-filter_threads", "1",
-      "-ss", Math.max(0, at - startSec).toFixed(3),
-      "-i", buffered.bufferPath,
-      "-frames:v", "1",
-      "-vf", "scale=w='min(1920,iw)':h=-2:flags=fast_bilinear",
-      "-threads", "1", "-y", framePath,
-    ], { timeout: 30_000 }, (error) => error ? reject(error) : resolve());
-  });
-  return fs.promises.readFile(framePath);
-}
-
-async function creativeFrame(
-  videoId: string,
-  atSec: number,
-  temps: string[],
-  sourceWaitMs = CAMERA_4K_WAIT_MS,
-): Promise<Image> {
-  const source = await resolveCamera4kSource(videoId, sourceWaitMs);
-  return loadImage(await camera4kFrameBuffer(source, atSec, temps));
 }
 
 // ── Stills (server) ──────────────────────────────────────────────────────────
@@ -376,16 +505,17 @@ export function creativeImageResolver(
       case "clip": {
         const clip = await academyClip(academyId, src.clipId);
         if (!clip || clip.videoId.startsWith("live:")) return null;
-        const source = await resolveCamera4kSource(clip.videoId, sourceWaitMs);
-        const span = spanOf(
-          Number(clip.startTime),
-          Number(clip.endTime),
-          clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null,
-          source.duration,
-        );
-        if (!span) return null;
+        // Thumbnails and editor previews must not wait for camera-original 4K.
+        const saved = await downloadSavedClip(clip, temps);
+        if (saved) {
+          const span = await clipSpan(clip);
+          const at = layer.kind === "video" ? trimSec : span ? Math.max(0, (span.thumbSec ?? span.startSec) - span.startSec) : saved.durationMs / 2000;
+          return loadImage(await frameFromFile(saved.path, at, temps));
+        }
+        const [span, stream] = await Promise.all([clipSpan(clip), playableStream(clip.videoId)]);
+        if (!span || !stream) return null;
         const at = layer.kind === "video" ? span.startSec + trimSec : span.thumbSec ?? span.startSec;
-        return loadImage(await camera4kFrameBuffer(source, at, temps));
+        return loadImage(await frameFromStream(stream.url, stream.referer, at, temps));
       }
       case "recording":
       case "frame": {
@@ -393,7 +523,8 @@ export function creativeImageResolver(
         const id = videoIdOf(rec?.videoUrl);
         if (!id) return null;
         const at = src.type === "frame" ? src.atMs / 1000 : src.fromMs / 1000 + trimSec;
-        return creativeFrame(id, at, temps, sourceWaitMs);
+        const stream = await playableStream(id);
+        return stream ? loadImage(await frameFromStream(stream.url, stream.referer, at, temps)) : null;
       }
     }
   };
@@ -456,7 +587,7 @@ export function creativeVideoResolver(
     const fail = (err: unknown): never => {
       if (err instanceof CreativeRenderError) throw err;
       logger.warn({ err, academyId, src }, "Creative render: footage unavailable");
-      throw new CreativeRenderError("Couldn't load the footage for one of the videos. Try again in a minute.", 502);
+      throw new CreativeRenderError("Couldn't load the footage for one of the videos. Please try again.", 409);
     };
     try {
       switch (src.type) {
@@ -466,21 +597,28 @@ export function creativeVideoResolver(
           if (clip.videoId.startsWith("live:")) {
             throw new CreativeRenderError("Live footage isn't available in the Creative Hub renderer.", 409);
           }
-          const source = await resolveCamera4kSource(clip.videoId, sourceWaitMs);
-          const clipped = spanOf(
-            Number(clip.startTime),
-            Number(clip.endTime),
-            clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null,
-            source.duration,
-          );
-          if (!clipped) throw new CreativeRenderError("This saved clip has no valid 4K source window.");
-          const from = clipped.startSec + need.fromMs / 1000;
-          const to = Math.min(clipped.endSec, clipped.startSec + (need.fromMs + span) / 1000);
-          const buffered = await bufferCamera4kWindow(source, from, to, temps);
+          const resolved = await resolveClipVideo(clip, temps, sourceWaitMs);
+          if (resolved.kind === "saved-file") {
+            return { path: resolved.path, zeroAtSec: 0, durationMs: resolved.durationMs, hasAudio: resolved.hasAudio };
+          }
+          if (resolved.kind === "stream") {
+            const from = resolved.span.startSec + need.fromMs / 1000;
+            const to = Math.min(resolved.span.endSec, resolved.span.startSec + (need.fromMs + span) / 1000);
+            const buffered = await bufferStreamClip(resolved.url, resolved.referer, from, to - from, temps);
+            return {
+              path: buffered.bufferPath,
+              zeroAtSec: -need.fromMs / 1000,
+              durationMs: Math.round((resolved.span.endSec - resolved.span.startSec) * 1000),
+              hasAudio: await hasAudioStream(buffered.bufferPath),
+            };
+          }
+          const from = resolved.span.startSec + need.fromMs / 1000;
+          const to = Math.min(resolved.span.endSec, resolved.span.startSec + (need.fromMs + span) / 1000);
+          const buffered = await bufferCamera4kWindow(resolved.source, from, to, temps);
           return {
             path: buffered.bufferPath,
             zeroAtSec: -need.fromMs / 1000,
-            durationMs: Math.round((clipped.endSec - clipped.startSec) * 1000),
+            durationMs: Math.round((resolved.span.endSec - resolved.span.startSec) * 1000),
             hasAudio: await hasAudioStream(buffered.bufferPath),
             sourceDimensions: buffered.sourceDimensions,
           };
@@ -490,18 +628,31 @@ export function creativeVideoResolver(
           if (!rec) throw new CreativeRenderError("A recording in this design is no longer available.");
           const videoId = videoIdOf(rec.videoUrl);
           if (!videoId) throw new CreativeRenderError("This recording has no camera video ID.");
-          const source = await resolveCamera4kSource(videoId, sourceWaitMs);
           const length = Math.max(0, src.toMs - src.fromMs);
           const from = (src.fromMs + need.fromMs) / 1000;
           const to = (src.fromMs + Math.min(length || need.toMs, need.fromMs + span)) / 1000;
-          const buffered = await bufferCamera4kWindow(source, from, to, temps);
-          return {
-            path: buffered.bufferPath,
-            zeroAtSec: -need.fromMs / 1000,
-            durationMs: length || null,
-            hasAudio: await hasAudioStream(buffered.bufferPath),
-            sourceDimensions: buffered.sourceDimensions,
-          };
+          try {
+            const source = await resolveCamera4kSource(videoId, sourceWaitMs);
+            const buffered = await bufferCamera4kWindow(source, from, to, temps);
+            return {
+              path: buffered.bufferPath,
+              zeroAtSec: -need.fromMs / 1000,
+              durationMs: length || null,
+              hasAudio: await hasAudioStream(buffered.bufferPath),
+              sourceDimensions: buffered.sourceDimensions,
+            };
+          } catch (err) {
+            logger.debug({ err, videoId, recordingId: src.recordingId }, "Creative recording 4K unavailable; checking Stream");
+            const stream = await playableStream(videoId);
+            if (!stream) throw new CreativeRenderError("This recording is unavailable: neither 4K nor a playable Stream source could be loaded.", 409);
+            const buffered = await bufferStreamClip(stream.url, stream.referer, from, to - from, temps);
+            return {
+              path: buffered.bufferPath,
+              zeroAtSec: -need.fromMs / 1000,
+              durationMs: length || null,
+              hasAudio: await hasAudioStream(buffered.bufferPath),
+            };
+          }
         }
         case "upload": {
           const row = await academyUpload(academyId, src.mediaId);
@@ -586,37 +737,49 @@ export async function browserMedia(
     case "clip": {
       const clip = await academyClip(academyId, src.clipId);
       if (!clip || clip.videoId.startsWith("live:")) return null;
-      const source = await resolveCamera4kSource(clip.videoId, 1_000);
-      const span = spanOf(
-        Number(clip.startTime),
-        Number(clip.endTime),
-        clip.thumbnailTime != null ? Number(clip.thumbnailTime) : null,
-        source.duration,
-      );
-      if (!span) return null;
-      const start = span.startSec;
-      const end = span.endSec;
       if (want === "still") {
-        return { buffer: await camera4kFrameBuffer(source, span.thumbSec ?? start, temps), type: "image/png" };
+        // The editor/library thumbnail is deliberately independent of 4K.
+        const saved = await downloadSavedClip(clip, temps);
+        if (saved) {
+          const span = await clipSpan(clip);
+          const at = span ? Math.max(0, (span.thumbSec ?? span.startSec) - span.startSec) : saved.durationMs / 2000;
+          return { buffer: await frameFromFile(saved.path, at, temps), type: "image/png" };
+        }
+        const [span, stream] = await Promise.all([clipSpan(clip), playableStream(clip.videoId)]);
+        if (!span || !stream) return null;
+        return { redirect: getBunnyProxiedThumbnailUrl(clip.videoId, span.thumbSec ?? span.startSec) };
       }
+      const resolved = await resolveClipVideo(clip, temps, CAMERA_4K_WAIT_MS);
+      if (resolved.kind === "saved-file") return { file: resolved.path, type: "video/mp4" };
+      const start = resolved.span.startSec;
+      const end = resolved.span.endSec;
       const to = Math.min(end, start + MAX_BROWSER_WINDOW_MS / 1000);
       if (to <= start) return null;
-      const buffered = await bufferCamera4kWindow(source, start, to, temps);
-      return { file: buffered.bufferPath, type: "video/mp4" };
+      if (resolved.kind === "camera-4k") {
+        const buffered = await bufferCamera4kWindow(resolved.source, start, to, temps);
+        return { file: buffered.bufferPath, type: "video/mp4" };
+      }
+      if (resolved.kind === "stream") {
+        const buffered = await bufferStreamClip(resolved.url, resolved.referer, start, to - start, temps);
+        return { file: buffered.bufferPath, type: "video/mp4" };
+      }
+      return null;
     }
     case "recording":
     case "frame": {
       const rec = await academyRecording(academyId, src.recordingId);
       const id = videoIdOf(rec?.videoUrl);
       if (!rec || !id) return null;
-      const source = await resolveCamera4kSource(id, 1_000);
       if (src.type === "frame" || want === "still") {
         const atSec = (src.type === "frame" ? src.atMs : src.fromMs) / 1000;
-        return { buffer: await camera4kFrameBuffer(source, atSec, temps), type: "image/png" };
+        const stream = await playableStream(id);
+        return stream ? { redirect: getBunnyProxiedThumbnailUrl(id, atSec) } : null;
       }
       const to = Math.min(src.toMs, src.fromMs + MAX_BROWSER_WINDOW_MS);
       if (to <= src.fromMs) return null;
-      const buffered = await bufferCamera4kWindow(source, src.fromMs / 1000, to / 1000, temps);
+      const stream = await playableStream(id);
+      if (!stream) return null;
+      const buffered = await bufferStreamClip(stream.url, stream.referer, src.fromMs / 1000, (to - src.fromMs) / 1000, temps);
       return { file: buffered.bufferPath, type: "video/mp4" };
     }
   }

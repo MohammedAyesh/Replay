@@ -184,7 +184,11 @@ router.get(`${base}/media`, async (req, res): Promise<void> => {
     });
   } catch (err) {
     logger.warn({ err, academyId: access.academyId, src }, "Creative media failed");
-    if (!res.headersSent) res.status(502).json({ error: "That picture or video isn't available right now." });
+    if (!res.headersSent) {
+      const status = err instanceof CreativeRenderError ? err.status : 409;
+      const message = err instanceof Error ? err.message : "That picture or video isn't available right now.";
+      res.status(status).json({ error: message });
+    }
   } finally {
     for (const t of temps) fs.unlink(t, () => {});
   }

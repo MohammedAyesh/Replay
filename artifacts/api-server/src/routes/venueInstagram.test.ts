@@ -92,10 +92,10 @@ vi.mock("../lib/creative/renderJobs", async () => {
   const { academyCreativeProjectsTable: t, db: d } = await import("@workspace/db");
   const { eq: e } = await import("drizzle-orm");
   const done = async (_a: unknown, row: { id: number; kind: string }) => {
-    const [r] = await d.update(t).set({ renderStatus: "done", outputPath: `/tmp/ig-${row.id}.${row.kind === "video" ? "mp4" : "png"}`, outputMime: row.kind === "video" ? "video/mp4" : "image/png", renderedAt: new Date() }).where(e(t.id, row.id)).returning();
+    const [r] = await d.update(t).set({ renderStatus: "done", outputPath: `/tmp/camera4k-v1/ig-${row.id}.${row.kind === "video" ? "mp4" : "png"}`, outputMime: row.kind === "video" ? "video/mp4" : "image/png", renderedAt: new Date() }).where(e(t.id, row.id)).returning();
     return r;
   };
-  return { queueVideoRender: vi.fn(done), renderStillNow: vi.fn(done), isRendering: () => false, sweepInterruptedRenders: async () => undefined };
+  return { AUTOPILOT_CAMERA_4K_PROBE_MS: 3_000, queueVideoRender: vi.fn(done), renderStillNow: vi.fn(done), isRendering: () => false, sweepInterruptedRenders: async () => undefined };
 });
 vi.mock("../lib/creative/publishMedia", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/creative/publishMedia")>();
@@ -738,8 +738,9 @@ describe("9. Match highlights, the day's best, and picking the clips", () => {
     // the captain's saved clip first, then moments spread through the game, about one every 5 minutes.
     const cands = await request(app).get(`${ig()}/items/${hl.id}/candidates`).set(auth(ownerId)).expect(200);
     expect(cands.body).toMatchObject({ min: 2, max: 5, picked: [], empty: null });
-    const list = cands.body.candidates as Array<{ key: string; source: string; bookingId: number; label: string }>;
+    const list = cands.body.candidates as Array<{ key: string; source: string; bookingId: number; label: string; thumbnailUrl: string | null }>;
     expect(list[0]).toMatchObject({ key: expect.stringMatching(/^\d+:clip:\d+$/), source: "saved_clip", bookingId: played.booking.id });
+    expect(list[0]?.thumbnailUrl).toContain("/creative/media?src=");
     const footage = list.filter((c) => c.source === "footage");
     expect(footage).toHaveLength(12);
     expect(footage.every((c) => c.bookingId === played.booking.id && /\d+:\d{2}$/.test(c.label))).toBe(true);
