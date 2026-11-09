@@ -4,7 +4,7 @@ import Hls from "hls.js";
 import { ballTrailAt, drawBallTrail, framingWindow, trailWidthFor, type BallTrailSample, type Framing, type SceneBranding } from "@workspace/api-zod";
 import { useCreativeFramerCopy } from "@/i18n/creative-framer-strings";
 import { videoUrlFor } from "../library/media";
-import { creativePlaybackSourcesUrl, type CreativePlaybackSource } from "@/lib/creative-hub-media";
+import { creativePlaybackSourcesUrl, withCreativePlaybackWindow, type CreativePlaybackSource } from "@/lib/creative-hub-media";
 import {
   DEFAULT_BRANDING, FRAMER_SHAPES, MAX_VIDEO_MS, absPlaybackTimeMs, boxAspectOf, fetchFraming, footageBox,
   playbackSecondsAt, shapeFormat, thin, zoomRange,
@@ -12,6 +12,7 @@ import {
 } from "@/lib/creative-framing";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
+import { canDecodeUhd } from "@/lib/uhdPlayback";
 
 /**
  * The clip framer: a 16:9 camera on the panorama, following the ball unless
@@ -47,7 +48,13 @@ function parsePlaybackSources(value: unknown): CreativePlaybackSource[] {
       || typeof source.url !== "string"
       || !source.url.startsWith("/api/hls-proxy/")
     ) return [];
-    return [{ kind: source.kind, url: source.url }];
+    return [{
+      kind: source.kind,
+      url: source.url,
+      ...(typeof source.fullUrl === "string" && source.fullUrl.startsWith("/api/hls-proxy/uhd/")
+        ? { fullUrl: source.fullUrl }
+        : {}),
+    }];
   });
 }
 
@@ -98,6 +105,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const [failed, setFailed] = useState(false);
   const [playbackSources, setPlaybackSources] = useState<CreativePlaybackSource[]>([]);
   const [playbackSourceIndex, setPlaybackSourceIndex] = useState(0);
+  const [sourceChoiceReady, setSourceChoiceReady] = useState(false);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [recording, setRecording] = useState(false);
   const [nowAbs, setNowAbs] = useState(win.from);
@@ -105,6 +113,17 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const mutedRef = useRef(muted);
   mutedRef.current = muted;
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
+  const hlsMediaAttachedRef = useRef(false);
+  const pendingSourceRef = useRef<CreativePlaybackSource | null>(null);
+  const playbackOffsetMs = useRef(0);
+  const playbackSourcesRef = useRef(playbackSources);
+  playbackSourcesRef.current = playbackSources;
+  const playbackSourceIndexRef = useRef(playbackSourceIndex);
+  playbackSourceIndexRef.current = playbackSourceIndex;
+  const uhdCapabilityRef = useRef<boolean | null>(null);
+  const failureHandledRef = useRef(false);
+  const failSourceRef = useRef<() => void>(() => {});
   const viewRef = useRef<HTMLCanvasElement>(null);
   const stripRef = useRef<HTMLCanvasElement>(null);
   const pointer = useRef<{ x: number; y: number; down: boolean } | null>(null);
@@ -127,14 +146,14 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     () => clipId === null ? null : videoUrlFor(academyId, { type: "clip", clipId }),
     [academyId, clipId],
   );
-  const absAt = (v: HTMLVideoElement) => absPlaybackTimeMs(v.currentTime, isRec ? 0 : live.current.loaded.from);
+  const absAt = (v: HTMLVideoElement) => absPlaybackTimeMs(v.currentTime, isRec ? playbackOffsetMs.current : live.current.loaded.from);
   const seekAbs = (ms: number) => {
     const v = videoRef.current;
-    if (v) v.currentTime = playbackSecondsAt(ms, isRec ? 0 : live.current.loaded.from);
+    if (v) v.currentTime = playbackSecondsAt(ms, isRec ? playbackOffsetMs.current : live.current.loaded.from);
   };
 
-  // Ask the owner-scoped endpoint for HLS URLs only. This does not cut or
-  // download a second video file; 4K is tried first, then Stream if needed.
+  // Ask the owner-scoped endpoint for HLS URLs only. Recording moments receive
+  // a bounded 4K playlist window, not a second cut or download.
   useEffect(() => {
     if (!isRec) return;
     let cancelled = false;
@@ -142,9 +161,10 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     const timeout = window.setTimeout(() => controller.abort(), 8_000);
     setReady(false);
     setFailed(false);
-    setPlaybackSources([]);
-    setPlaybackSourceIndex(0);
+    setSourceChoiceReady(false);
     setPlaying(false);
+    videoRef.current?.pause();
+    hlsRef.current?.stopLoad();
     if (!sourcesUrl) {
       window.clearTimeout(timeout);
       setFailed(true);
@@ -158,7 +178,9 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       .then((sources) => {
         if (cancelled) return;
         if (!sources.length) throw new Error("No playable recording sources");
-        setPlaybackSources(sources);
+        setPlaybackSources(sources.map((source) => source.kind === "camera-4k"
+          ? { ...source, url: withCreativePlaybackWindow(source.url, live.current.win.from, live.current.win.to) }
+          : source));
       })
       .catch(() => {
         if (!cancelled) {
@@ -174,39 +196,75 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     };
   }, [isRec, sourcesUrl, loadAttempt]);
 
-  // Use HLS for full-match recordings, seeking directly to the moment. A slow
-  // 4K manifest/first frame falls back to Stream; every attempt has a timeout.
+  // Keep the 4K source URL aligned with clip-edge changes without another
+  // owner-scoped source-list request. Stream playback uses the full recording.
   useEffect(() => {
+    if (!isRec || playbackSources[playbackSourceIndex]?.kind !== "camera-4k") return;
+    const source = playbackSources[playbackSourceIndex]!;
+    const url = withCreativePlaybackWindow(source.url, Math.round(win.from), Math.round(win.to));
+    if (url === source.url) return;
+    hlsRef.current?.stopLoad();
+    videoRef.current?.pause();
+    setPlaying(false);
+    setReady(false);
+    setSourceChoiceReady(false);
+    setPlaybackSources((current) => current.map((item, index) =>
+      index === playbackSourceIndex ? { ...item, url } : item));
+  }, [isRec, playbackSources, playbackSourceIndex, win.from, win.to]);
+
+  // HEVC must pass MediaCapabilities before it is even requested. A browser
+  // without smooth 4096×1152 support starts on the Stream rendition.
+  useEffect(() => {
+    if (!isRec || !playbackSources.length) return;
+    let cancelled = false;
+    setSourceChoiceReady(false);
+    const video = videoRef.current;
+    void (async () => {
+      let supportsUhd = false;
+      if (playbackSources.some((source) => source.kind === "camera-4k")) {
+        if (uhdCapabilityRef.current === null) {
+          uhdCapabilityRef.current = video ? await canDecodeUhd(video) : false;
+        }
+        supportsUhd = uhdCapabilityRef.current;
+      }
+      if (cancelled) return;
+      const preferredKind = supportsUhd ? "camera-4k" : "stream";
+      let index = playbackSources.findIndex((source) => source.kind === preferredKind);
+      if (index < 0 && supportsUhd) {
+        index = playbackSources.findIndex((source) => source.kind === "stream");
+      }
+      if (index < 0 && !supportsUhd) {
+        setFailed(true);
+        return;
+      }
+      setPlaybackSourceIndex(index);
+      setSourceChoiceReady(true);
+    })();
+    return () => { cancelled = true; };
+  }, [isRec, playbackSources]);
+
+  // Keep one HLS instance for the lifetime of this open framer. Fatal errors
+  // may switch its source to Stream, but playhead, drag, trail, and resize
+  // updates never tear it down.
+  useEffect(() => {
+    if (!isRec) return;
     const video = videoRef.current;
     if (!video) return;
-    const source = isRec
-      ? playbackSources[playbackSourceIndex]
-      : url ? { kind: "clip" as const, url } : undefined;
-    if (isRec && !playbackSources.length) return;
-    if (!source) {
-      setReady(false);
-      setFailed(true);
-      return;
-    }
-
     let disposed = false;
-    let failureHandled = false;
-    let timeout: number | undefined;
-    let hls: Hls | null = null;
-    const clearTimeoutId = () => {
-      if (timeout !== undefined) window.clearTimeout(timeout);
-      timeout = undefined;
-    };
     const failSource = () => {
-      if (disposed || failureHandled) return;
-      failureHandled = true;
-      clearTimeoutId();
+      if (disposed || failureHandledRef.current) return;
+      failureHandledRef.current = true;
       video.pause();
       setPlaying(false);
       setReady(false);
-      if (isRec && playbackSourceIndex + 1 < playbackSources.length) {
+      const currentIndex = playbackSourceIndexRef.current;
+      const current = playbackSourcesRef.current[currentIndex];
+      const nextStream = current?.kind === "camera-4k"
+        ? playbackSourcesRef.current.findIndex((item, index) => index > currentIndex && item.kind === "stream")
+        : -1;
+      if (nextStream >= 0) {
         setFailed(false);
-        setPlaybackSourceIndex(playbackSourceIndex + 1);
+        setPlaybackSourceIndex(nextStream);
       } else {
         setFailed(true);
       }
@@ -219,7 +277,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       const duration = video.duration;
       if (!Number.isFinite(duration) || duration <= 0) return false;
       const target = Math.min(
-        Math.max(0, live.current.win.from / 1000),
+        Math.max(0, playbackSecondsAt(live.current.win.from, playbackOffsetMs.current)),
         Math.max(0, duration - 0.1),
       );
       try {
@@ -234,7 +292,6 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     };
     const onLoadedData = () => {
       if (disposed || !seekToWindow() || video.readyState < 2) return;
-      clearTimeoutId();
       setFailed(false);
       setReady(true);
       void video.play().catch(() => undefined);
@@ -247,67 +304,173 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     video.addEventListener("durationchange", onMetadata);
     video.addEventListener("seeked", onLoadedData);
     video.addEventListener("error", onVideoError);
+    failSourceRef.current = failSource;
     video.crossOrigin = "anonymous";
     video.muted = mutedRef.current;
     setReady(false);
     setFailed(false);
-
-    if (isRec) {
-      video.removeAttribute("src");
-      if (Hls.isSupported()) {
-        const startPosition = Math.max(0, live.current.win.from / 1000);
-        hls = new Hls({
-          enableWorker: false,
-          maxBufferLength: 20,
-          backBufferLength: 30,
-          startPosition,
-        });
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
-          if (!disposed) hls?.loadSource(source.url);
-        });
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          if (disposed) return;
-          hls?.startLoad(startPosition);
-          seekToWindow();
-        });
-        hls.on(Hls.Events.FRAG_BUFFERED, () => {
-          if (!disposed && video.readyState >= 2) onLoadedData();
-        });
-        hls.on(Hls.Events.ERROR, (_event, data) => {
-          if (data.fatal) failSource();
-        });
-        hls.attachMedia(video);
-      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-        video.src = source.url;
-        video.load();
-      } else {
-        failSource();
-      }
+    video.removeAttribute("src");
+    hlsMediaAttachedRef.current = false;
+    if (Hls.isSupported()) {
+      const hls = new Hls({
+        enableWorker: false,
+        autoStartLoad: false,
+        maxBufferLength: 30,
+        backBufferLength: 120,
+        startPosition: -1,
+        xhrSetup: (xhr, requestUrl) => {
+          if (!requestUrl.includes("/api/hls-proxy/uhd/")) return;
+          xhr.addEventListener("load", () => {
+            const offset = xhr.getResponseHeader("X-Replay-Window-Start-Ms");
+            if (offset && /^\d+$/.test(offset)) playbackOffsetMs.current = Number(offset);
+          }, { once: true });
+        },
+      });
+      hlsRef.current = hls;
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+        if (disposed) return;
+        hlsMediaAttachedRef.current = true;
+        const pending = pendingSourceRef.current;
+        if (pending) {
+          pendingSourceRef.current = null;
+          hls.loadSource(pending.url);
+        }
+      });
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (disposed) return;
+        hls.startLoad(playbackSecondsAt(live.current.win.from, playbackOffsetMs.current));
+        seekToWindow();
+      });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => {
+        if (!disposed && video.readyState >= 2) onLoadedData();
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) failSource();
+      });
+      hls.attachMedia(video);
     } else {
-      video.src = source.url;
-      video.load();
-    }
-
-    if (!failureHandled) {
-      timeout = window.setTimeout(
-        failSource,
-        source.kind === "camera-4k" ? 4_000 : isRec ? 8_000 : 12_000,
-      );
+      hlsRef.current = null;
     }
 
     return () => {
       disposed = true;
-      clearTimeoutId();
+      if (failSourceRef.current === failSource) failSourceRef.current = () => {};
       video.removeEventListener("loadeddata", onLoadedData);
       video.removeEventListener("loadedmetadata", onMetadata);
       video.removeEventListener("durationchange", onMetadata);
       video.removeEventListener("seeked", onLoadedData);
       video.removeEventListener("error", onVideoError);
-      hls?.destroy();
+      hlsRef.current?.destroy();
+      hlsRef.current = null;
+      pendingSourceRef.current = null;
+      hlsMediaAttachedRef.current = false;
       video.pause();
       video.removeAttribute("src");
+      video.load();
     };
-  }, [isRec, playbackSources, playbackSourceIndex, url, loadAttempt]);
+  }, [isRec, loadAttempt]);
+
+  // Load a new bounded manifest into the existing HLS instance. Safari's
+  // native-HLS path uses the full playlist because it cannot expose the
+  // window-start response header to the player.
+  useEffect(() => {
+    if (!isRec || !sourceChoiceReady) return;
+    const source = playbackSources[playbackSourceIndex];
+    const video = videoRef.current;
+    if (!source || !video) return;
+
+    const useHls = Hls.isSupported();
+    const url = !useHls && source.kind === "camera-4k"
+      ? source.fullUrl ?? source.url
+      : source.url;
+    const activeSource = { ...source, url };
+    pendingSourceRef.current = activeSource;
+    playbackOffsetMs.current = 0;
+    failureHandledRef.current = false;
+    video.pause();
+    setPlaying(false);
+    setReady(false);
+    setFailed(false);
+
+    if (useHls) {
+      const hls = hlsRef.current;
+      if (!hls) {
+        failSourceRef.current();
+        return;
+      }
+      if (hlsMediaAttachedRef.current) {
+        pendingSourceRef.current = null;
+        hls.stopLoad();
+        hls.loadSource(url);
+      }
+      return;
+    }
+    if (!video.canPlayType("application/vnd.apple.mpegurl")) {
+      failSourceRef.current();
+      return;
+    }
+    pendingSourceRef.current = null;
+    video.src = url;
+    video.load();
+  }, [isRec, sourceChoiceReady, playbackSources, playbackSourceIndex]);
+
+  // Saved clips are already short MP4 files; keep their native playback path.
+  useEffect(() => {
+    if (isRec) return;
+    const video = videoRef.current;
+    if (!video) return;
+    let disposed = false;
+    const seekToWindow = () => {
+      try {
+        const target = Math.min(Math.max(0, live.current.win.from / 1000), Math.max(0, video.duration - 0.1));
+        if (Math.abs(video.currentTime - target) > 0.5) {
+          video.currentTime = target;
+          return false;
+        }
+        return !video.seeking;
+      } catch {
+        return false;
+      }
+    };
+    const onLoadedData = () => {
+      if (disposed || !seekToWindow() || video.readyState < 2) return;
+      setFailed(false);
+      setReady(true);
+      void video.play().catch(() => undefined);
+    };
+    const onMetadata = () => { if (!disposed) seekToWindow(); };
+    const onVideoError = () => { setReady(false); setFailed(true); };
+    const timeout = window.setTimeout(() => {
+      if (!disposed && !video.readyState) setFailed(true);
+    }, 12_000);
+    video.addEventListener("loadeddata", onLoadedData);
+    video.addEventListener("loadedmetadata", onMetadata);
+    video.addEventListener("durationchange", onMetadata);
+    video.addEventListener("seeked", onLoadedData);
+    video.addEventListener("error", onVideoError);
+    video.crossOrigin = "anonymous";
+    video.muted = mutedRef.current;
+    setReady(false);
+    setFailed(false);
+    if (!url) {
+      setFailed(true);
+    } else {
+      video.src = url;
+      video.load();
+    }
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeout);
+      video.removeEventListener("loadeddata", onLoadedData);
+      video.removeEventListener("loadedmetadata", onMetadata);
+      video.removeEventListener("durationchange", onMetadata);
+      video.removeEventListener("seeked", onLoadedData);
+      video.removeEventListener("error", onVideoError);
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [isRec, url, loadAttempt]);
 
   // The ball through the loaded stretch (or the clip): the camera's default.
   useEffect(() => {
@@ -510,7 +673,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     if (ballKeys?.length) setKeys(ballKeys);
   };
 
-  // Moving an edge outside the tracking window loads more framing data. HLS stays on the full recording.
+  // Moving an edge can extend tracking data and loads the matching HLS window.
   const moveEdge = (edge: "from" | "to", d: number) => {
     setWin((w) => {
       let from = w.from, to = w.to;

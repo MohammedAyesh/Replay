@@ -84,15 +84,13 @@ export async function canDecodeUhd(
   mediaCapabilities?: MediaCapabilitiesLike | null,
 ): Promise<boolean> {
   try {
-    const nativeHls = video.canPlayType("application/vnd.apple.mpegurl") !== "";
-    if (nativeHls) {
-      return video.canPlayType(UHD_HLS_CONTENT_TYPE) !== ""
-        || video.canPlayType(UHD_VIDEO_CONTENT_TYPE) !== "";
-    }
+    const hlsCodecSupport = video.canPlayType(UHD_HLS_CONTENT_TYPE);
+    const mp4CodecSupport = video.canPlayType(UHD_VIDEO_CONTENT_TYPE);
+    const nativeCodecLikely = hlsCodecSupport === "probably" || mp4CodecSupport === "probably";
     const capabilities = mediaCapabilities === undefined
       ? (typeof navigator === "undefined" ? null : navigator.mediaCapabilities)
       : mediaCapabilities;
-    if (!capabilities?.decodingInfo) return false;
+    if (!capabilities?.decodingInfo) return nativeCodecLikely;
     const result = await capabilities.decodingInfo({
       type: "media-source",
       video: {

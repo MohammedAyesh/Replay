@@ -47,6 +47,20 @@ describe("recorded UHD playback eligibility and fallback", () => {
     )).toBe(false);
   });
 
+  it("uses MediaCapabilities when generic HLS support does not confirm HEVC", async () => {
+    const decodingInfo = vi.fn().mockResolvedValue({ supported: true, smooth: true });
+    const canPlayType = vi.fn((type: string) => type === "application/vnd.apple.mpegurl" ? "maybe" : "");
+    expect(await canDecodeUhd({ canPlayType }, { decodingInfo })).toBe(true);
+    expect(decodingInfo).toHaveBeenCalledOnce();
+  });
+
+  it("does not treat a codec hint as smooth when MediaCapabilities disagrees", async () => {
+    expect(await canDecodeUhd(
+      { canPlayType: (type: string) => type.includes(UHD_HEVC_CODEC) ? "probably" : "" },
+      { decodingInfo: vi.fn().mockResolvedValue({ supported: true, smooth: false }) },
+    )).toBe(false);
+  });
+
   it("rejects thrown capability checks rather than risking a broken 4K start", async () => {
     expect(await canDecodeUhd(
       { canPlayType: () => "" },

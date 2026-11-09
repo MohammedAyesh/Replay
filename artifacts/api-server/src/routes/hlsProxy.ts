@@ -14,7 +14,7 @@ import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
 import { CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } from "../lib/backupExport";
-import { getUhdPlaylist, rewriteUhdPlaylist } from "../lib/uhdPlayback";
+import { getUhdPlaylist, getUhdPlaylistWindow, isValidUhdWindow, rewriteUhdPlaylist } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 
@@ -369,6 +369,33 @@ router.get("/hls-proxy/uhd/:videoGuid.m3u8", async (req, res): Promise<void> => 
   }
 
   try {
+    const fromValue = req.query.fromMs;
+    const toValue = req.query.toMs;
+    const fromRaw = typeof fromValue === "string" ? fromValue : null;
+    const toRaw = typeof toValue === "string" ? toValue : null;
+    const hasWindow = fromValue !== undefined || toValue !== undefined;
+    if (hasWindow) {
+      const fromMs = fromRaw && /^\d+$/.test(fromRaw) ? Number(fromRaw) : Number.NaN;
+      const toMs = toRaw && /^\d+$/.test(toRaw) ? Number(toRaw) : Number.NaN;
+      if (!isValidUhdWindow(fromMs, toMs)) {
+        res.status(400).type("text/plain").send("Invalid 4K playback window");
+        return;
+      }
+
+      const window = await getUhdPlaylistWindow(videoGuid, fromMs, toMs);
+      if (window === null) {
+        res.status(404).type("text/plain").send("4K playback window not found");
+        return;
+      }
+      res.set("Content-Type", "application/vnd.apple.mpegurl");
+      res.set("Cache-Control", "no-store");
+      res.set("Access-Control-Allow-Origin", "*");
+      res.set("Access-Control-Expose-Headers", "X-Replay-Window-Start-Ms");
+      res.set("X-Replay-Window-Start-Ms", String(window.startMs));
+      res.send(rewriteUhdPlaylist(window.playlist, videoGuid));
+      return;
+    }
+
     const playlist = await getUhdPlaylist(videoGuid);
     if (playlist === null) {
       res.status(404).type("text/plain").send("4K recording not found");

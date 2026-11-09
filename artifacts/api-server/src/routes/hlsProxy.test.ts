@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
+import { UHD_PLAYBACK_MAX_WINDOW_MS } from "../lib/uhdPlayback";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserRecord: vi.fn().mockResolvedValue({ id: 1, isAdmin: true, isGuest: false }),
@@ -431,5 +432,45 @@ describe("GET /hls-proxy/uhd/:videoGuid.m3u8", () => {
     const cachedHit = await request(app).get(`/api/hls-proxy/uhd/${guid}.m3u8`);
     expect(cachedHit.text).toBe(res.text);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns only a padded byte-range window with its absolute timeline offset", async () => {
+    const guid = testVideoGuid();
+    const playlist = [
+      "#EXTM3U",
+      "#EXT-X-VERSION:7",
+      "#EXT-X-TARGETDURATION:2",
+      "#EXT-X-MEDIA-SEQUENCE:10",
+      '#EXT-X-MAP:URI="4k.mp4",BYTERANGE="1399@0"',
+    ];
+    for (let index = 0; index < 10; index += 1) {
+      playlist.push("#EXTINF:2.000,");
+      playlist.push(index === 0 ? "#EXT-X-BYTERANGE:100@0" : "#EXT-X-BYTERANGE:100");
+      playlist.push("4k.mp4");
+    }
+    playlist.push("#EXT-X-ENDLIST", "");
+    fetchMock.mockResolvedValueOnce(new Response(playlist.join("\n")));
+
+    const path = `/api/hls-proxy/uhd/${guid}.m3u8?fromMs=10000&toMs=12000`;
+    const res = await request(app).get(path);
+    const cachedHit = await request(app).get(path);
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-replay-window-start-ms"]).toBe("4000");
+    expect(res.text).toContain("#EXT-X-MEDIA-SEQUENCE:12");
+    expect(res.text).toContain("#EXT-X-BYTERANGE:100@200");
+    expect(res.text).not.toContain("#EXT-X-BYTERANGE:100@0");
+    expect(res.text.match(/#EXTINF:/g)).toHaveLength(8);
+    expect(cachedHit.text).toBe(res.text);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects invalid or oversized playback windows before fetching Storage", async () => {
+    const guid = testVideoGuid();
+    const res = await request(app).get(
+      `/api/hls-proxy/uhd/${guid}.m3u8?fromMs=0&toMs=${UHD_PLAYBACK_MAX_WINDOW_MS + 1}`,
+    );
+    expect(res.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

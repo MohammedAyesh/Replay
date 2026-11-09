@@ -25,7 +25,19 @@ export function creativeMediaUrl(academyId: number, src: MediaSource, want: "sti
   return variant ? withMediaVariant(url, variant) : url;
 }
 
-export type CreativePlaybackSource = { kind: "camera-4k" | "stream"; url: string };
+export type CreativePlaybackSource = { kind: "camera-4k" | "stream"; url: string; fullUrl?: string };
+
+export function withCreativePlaybackWindow(url: string, fromMs: number, toMs: number): string {
+  if (!url.startsWith("/api/hls-proxy/uhd/") || !Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || fromMs < 0 || toMs <= fromMs) {
+    return url;
+  }
+  const queryAt = url.indexOf("?");
+  const path = queryAt < 0 ? url : url.slice(0, queryAt);
+  const query = new URLSearchParams(queryAt < 0 ? "" : url.slice(queryAt + 1));
+  query.set("fromMs", String(fromMs));
+  query.set("toMs", String(toMs));
+  return `${path}?${query.toString()}`;
+}
 
 /** The source list is authorized by the same owner-scoped media route. */
 export function creativePlaybackSourcesUrl(
