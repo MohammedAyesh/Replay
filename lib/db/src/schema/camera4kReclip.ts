@@ -13,6 +13,7 @@ import {
   unique,
 } from "drizzle-orm/pg-core";
 import { userClipsTable } from "./userClips";
+import { renderSnapshotsTable } from "./renderSnapshots";
 
 export type Camera4kSourceProbe = {
   recordingId: number;
@@ -58,6 +59,8 @@ export const camera4kReclipItemsTable = pgTable("camera_4k_reclip_items", {
     .references(() => userClipsTable.id, { onDelete: "cascade" }),
   recordingId: integer("recording_id").notNull(),
   videoId: text("video_id").notNull(),
+  sourceExportUrl: text("source_export_url"),
+  snapshotId: integer("snapshot_id").references(() => renderSnapshotsTable.id, { onDelete: "set null" }),
   status: text("status").notNull().default("pending")
     .$type<"pending" | "running" | "completed" | "failed" | "skipped">(),
   failureReason: text("failure_reason"),

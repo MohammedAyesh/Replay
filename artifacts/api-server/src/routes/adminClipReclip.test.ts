@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
 import request from "supertest";
 import express, { type Express } from "express";
 import { and, eq, inArray } from "drizzle-orm";
@@ -6,6 +7,7 @@ import {
   camera4kReclipBatchesTable,
   clipDownloadsTable,
   db,
+  renderSnapshotsTable,
   userClipsTable,
   userClipAuditEventsTable,
   usersTable,
@@ -140,6 +142,11 @@ let sequence = 0;
 let batchId: number | null = null;
 
 beforeAll(async () => {
+  await new Promise<void>((resolve, reject) => execFile("ffmpeg", [
+    "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "lavfi", "-i", "color=c=black:s=1920x1080:r=30:d=1",
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "/tmp/admin-reclip-output.mp4",
+  ], (error) => error ? reject(error) : resolve()));
   app = express();
   app.use(express.json());
   app.use("/api", adminRouter);
@@ -288,6 +295,19 @@ describe("admin clip re-clipping", () => {
     const rows = await db.select().from(userClipsTable)
       .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.userId, playerId)));
     expect(rows).toHaveLength(1);
+    const [snapshot] = await db.select().from(renderSnapshotsTable)
+      .where(and(
+        eq(renderSnapshotsTable.artifactKey, `user_clip:${clip.id}`),
+        eq(renderSnapshotsTable.outputLocator, after.exportedUrl!),
+      ));
+    expect(snapshot?.snapshot).toMatchObject({
+      renderKind: "user_clip",
+      source: { kind: "camera-4k", videoId: clip.videoId, width: 4096, height: 1152 },
+      timeWindow: { startTime: Number(clip.startTime), endTime: Number(clip.endTime) },
+      output: { mimeType: "video/mp4", width: 1920, height: 1080 },
+      content: { cropPath: clip.cropPath, title: clip.title },
+      replayable: true,
+    });
   });
 
   it("keeps a re-clip pending while the old export is viewed, then publishes the new render", async () => {
@@ -655,5 +675,28 @@ describe("admin clip re-clipping", () => {
       skippedCount: 3,
       sourceProbeSummary: [{ recordingId: 408, state: "unavailable" }],
     });
+  });
+
+  it("creates the batch only after an authenticated admin explicitly starts it", async () => {
+    await db.delete(camera4kReclipBatchesTable)
+      .where(eq(camera4kReclipBatchesTable.batchKey, CAMERA_4K_RECLIP_BATCH_KEY));
+    batchId = null;
+    mockedGetLocalUserId.mockResolvedValue(playerId);
+    await request(app).post("/api/admin/clips/4k-reclip-batch/start").expect(403);
+    mockedGetLocalUserId.mockResolvedValue(adminId);
+    const before = await request(app).get("/api/admin/clips/4k-reclip-batch").expect(200);
+    expect(before.body.batch).toBeNull();
+
+    const started = await request(app).post("/api/admin/clips/4k-reclip-batch/start").expect(200);
+    expect(started.body.batch).toMatchObject({
+      status: "scheduled",
+      paused: false,
+      scopeSeeded: false,
+      workerActive: false,
+    });
+    const [row] = await db.select({ id: camera4kReclipBatchesTable.id })
+      .from(camera4kReclipBatchesTable)
+      .where(eq(camera4kReclipBatchesTable.batchKey, CAMERA_4K_RECLIP_BATCH_KEY));
+    batchId = row.id;
   });
 });

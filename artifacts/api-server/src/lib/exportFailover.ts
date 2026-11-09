@@ -26,7 +26,7 @@
  */
 import { createHash } from "crypto";
 import { and, asc, eq, inArray, like } from "drizzle-orm";
-import { db, userClipsTable } from "@workspace/db";
+import { db, renderSnapshotsTable, userClipsTable, type RenderSnapshotDocument } from "@workspace/db";
 import { logger } from "./logger";
 import {
   BACKUP_EXPORT_PREFIX,
@@ -45,6 +45,7 @@ import {
   PENDING_VPS1_AFTER_PRIMARY,
   PENDING_VPS1_OVERFLOW,
 } from "./userClipExportState";
+import { contentAddressedHashPrefix } from "./renderSnapshots";
 
 type ClipRow = typeof userClipsTable.$inferSelect;
 
@@ -264,20 +265,92 @@ async function reconcileUncached(
         return { state: "running", progress: 100, stage: "waiting_for_primary" };
       }
       // Never overwrite a finished Method A export; both are valid, first wins.
-      const updated = await db
-        .update(userClipsTable)
-        .set({ exportStatus: "done", exportedUrl: url })
-        .where(and(
-          eq(userClipsTable.id, clip.id),
-          inArray(userClipsTable.exportStatus, [
-            "pending",
-            "error",
-            PENDING_VPS1_OVERFLOW,
-            PENDING_LOCAL_FALLBACK,
-            PENDING_VPS1_AFTER_PRIMARY,
-          ]),
-        ))
-        .returning({ id: userClipsTable.id });
+      const output = status.output;
+      const snapshot: RenderSnapshotDocument = {
+        schemaVersion: 1,
+        renderKind: "user_clip",
+        renderer: { name: "vps1-clip-export", version: "source-report-unavailable" },
+        renderedAt: new Date().toISOString(),
+        source: {
+          kind: "vps1",
+          selection: "not reported by worker",
+          videoId: spec.videoId,
+          width: null,
+          height: null,
+          durationSec: output?.duration ?? null,
+        },
+        timeWindow: {
+          startTime: spec.startTime,
+          endTime: spec.endTime,
+          clipDuration: output?.duration ?? null,
+        },
+        crop: spec.cropPath,
+        output: {
+          mimeType: "video/mp4",
+          width: output?.width ?? null,
+          height: output?.height ?? null,
+          durationMs: output?.duration ? Math.round(output.duration * 1000) : null,
+        },
+        text: { title: spec.title },
+        branding: {
+          applied: !!(spec.overlayUrl || spec.endScreen),
+          overlayUrl: spec.overlayUrl,
+          endCardUrl: spec.endScreen?.cardUrl ?? null,
+        },
+        endCard: spec.endScreen,
+        music: { kind: "source-audio", addedTrackId: null },
+        template: { id: spec.endScreen?.kind ?? null, version: "vps1-end-card-v1" },
+        content: {
+          title: spec.title,
+          aspectRatio: spec.aspectRatio,
+          cropPath: spec.cropPath,
+          startTime: spec.startTime,
+          endTime: spec.endTime,
+          backupSpec: spec,
+        },
+        assets: [
+          ...(spec.overlayUrl ? [{
+            kind: "overlay",
+            locator: spec.overlayUrl,
+            sha256: contentAddressedHashPrefix(spec.overlayUrl),
+          }] : []),
+          ...(spec.endScreen?.cardUrl ? [{
+            kind: "end_card",
+            locator: spec.endScreen.cardUrl,
+            sha256: contentAddressedHashPrefix(spec.endScreen.cardUrl),
+          }] : []),
+        ],
+        replayable: false,
+        replayabilityReason: "VPS1 did not report the selected input source or its dimensions.",
+      };
+      const updated = await db.transaction(async (tx) => {
+        const rows = await tx
+          .update(userClipsTable)
+          .set({ exportStatus: "done", exportedUrl: url })
+          .where(and(
+            eq(userClipsTable.id, clip.id),
+            inArray(userClipsTable.exportStatus, [
+              "pending",
+              "error",
+              PENDING_VPS1_OVERFLOW,
+              PENDING_LOCAL_FALLBACK,
+              PENDING_VPS1_AFTER_PRIMARY,
+            ]),
+          ))
+          .returning({ id: userClipsTable.id });
+        if (rows.length) {
+          await tx.insert(renderSnapshotsTable).values({
+            artifactKey: `user_clip:${clip.id}`,
+            outputLocator: url,
+            outputSha256: null,
+            snapshot,
+          }).onConflictDoUpdate({
+            target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
+            set: { snapshot, createdAt: new Date() },
+          });
+        }
+        return rows;
+      });
       if (updated.length) {
         logger.info({ clipId: clip.id, job: status.job, output: status.output }, "Clip export completed by the backup renderer (vps1)");
       }

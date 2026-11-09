@@ -10,6 +10,7 @@ export * from "./follows";
 export * from "./ads";
 export * from "./userClips";
 export * from "./camera4kReclip";
+export * from "./renderSnapshots";
 export * from "./userClipAuditEvents";
 export * from "./portfolio";
 export * from "./academies";

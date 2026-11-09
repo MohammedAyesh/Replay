@@ -40,6 +40,26 @@ export async function storeOutput(academyId: number, projectId: number, file: st
   return dest;
 }
 
+/** Content-addressed inputs used by a render snapshot (brand, logo, soundtrack, end card). */
+export async function storeSnapshotAsset(
+  academyId: number,
+  projectId: number,
+  file: string,
+  sha256: string,
+  ext: string,
+): Promise<string> {
+  if (!/^[a-f0-9]{64}$/i.test(sha256) || !/^[a-z0-9]{2,8}$/i.test(ext)) {
+    throw new Error("Invalid render snapshot asset identity.");
+  }
+  const name = `${sha256.toLowerCase()}.${ext.toLowerCase()}`;
+  const remote = `creative/${academyId}/${CREATIVE_RENDER_VERSION_PATH}/snapshots/${projectId}/${name}`;
+  if (isBunnyStorageConfigured()) return uploadFileToBunnyStoragePath(file, remote);
+  const dest = path.join(localOutputDir(), String(academyId), CREATIVE_RENDER_VERSION_PATH, "snapshots", String(projectId), name);
+  await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+  await fs.promises.copyFile(file, dest);
+  return dest;
+}
+
 /** The Storage path (zone-relative) of a stored output, if it is one of ours for this academy. */
 function storagePathOf(outputPath: string, academyId: number): string | null {
   try {

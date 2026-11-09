@@ -99,6 +99,7 @@ type Camera4kBatchView = {
   batchKey: string;
   status: "scheduled" | "running" | "paused" | "completed";
   paused: boolean;
+  workerActive: boolean;
   scopeSeeded: boolean;
   scopeCutoff: string;
   totalCount: number;
@@ -756,6 +757,17 @@ function Camera4kReclipBatchPanel() {
     }
   };
 
+  const startOrResume = async () => {
+    if (working || batch?.status === "completed") return;
+    setWorking(true);
+    try {
+      await apiFetch("/admin/clips/4k-reclip-batch/start", { method: "POST" });
+      await load();
+    } finally {
+      setWorking(false);
+    }
+  };
+
   const percentage = batch && batch.totalCount > 0
     ? Math.round((batch.completedCount + batch.failedCount + batch.skippedCount) / batch.totalCount * 100)
     : 0;
@@ -770,10 +782,20 @@ function Camera4kReclipBatchPanel() {
         <div>
           <h3 className="text-sm font-semibold text-white">Camera-original 4K re-clip batch</h3>
           <p className="mt-1 text-xs text-zinc-400">
-            Runs one clip at a time from 22:00–06:00 UTC. Clips without recoverable original presentation settings are skipped and keep their existing export.
+            Runs only after an admin starts it, one clip at a time from 22:00–06:00 UTC. Clips without a saved presentation snapshot are skipped and keep their existing export.
           </p>
         </div>
-        {batch && batch.status !== "completed" && (
+        {!batch ? (
+          <button
+            type="button"
+            onClick={() => void startOrResume()}
+            disabled={working || !loaded}
+            data-testid="button-camera-4k-batch-start"
+            className="rounded-lg border border-cyan-700 bg-cyan-950/60 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-900/70 disabled:opacity-50"
+          >
+            {working ? "Starting…" : "Start batch"}
+          </button>
+        ) : batch.status !== "completed" && batch.workerActive && !batch.paused ? (
           <button
             type="button"
             onClick={() => void togglePause()}
@@ -781,7 +803,17 @@ function Camera4kReclipBatchPanel() {
             data-testid="button-camera-4k-batch-pause"
             className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800 disabled:opacity-50"
           >
-            {working ? "Saving…" : batch.paused ? "Resume batch" : "Pause batch"}
+            {working ? "Saving…" : "Pause batch"}
+          </button>
+        ) : batch.status !== "completed" ? (
+          <button
+            type="button"
+            onClick={() => void startOrResume()}
+            disabled={working}
+            data-testid="button-camera-4k-batch-resume"
+            className="rounded-lg border border-cyan-700 bg-cyan-950/60 px-3 py-2 text-xs font-semibold text-cyan-100 hover:bg-cyan-900/70 disabled:opacity-50"
+          >
+            {working ? "Starting…" : batch.paused || batch.status === "paused" ? "Resume batch" : "Start batch"}
           </button>
         )}
       </div>
@@ -789,7 +821,7 @@ function Camera4kReclipBatchPanel() {
         <p className="text-xs text-zinc-500" data-testid="status-camera-4k-batch-loading">Loading batch status…</p>
       ) : !batch ? (
         <p className="text-xs text-zinc-400" data-testid="status-camera-4k-batch-not-created">
-          Batch status will appear here after the next production publish.
+          The batch is inactive until an admin starts it. No exports will change before then.
         </p>
       ) : (
         <>

@@ -1,11 +1,12 @@
 import fs from "fs";
+import { createHash } from "node:crypto";
 import { firstNameOf, venueClip, venueClipRows, venueFieldIds } from "../lib/creative/venueLibrary";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { and, asc, desc, eq, gte, inArray, isNotNull, lt } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { loadImage, type Image } from "@napi-rs/canvas";
+import { createCanvas, loadImage, type Image } from "@napi-rs/canvas";
 import {
   academyMatchLineupsTable,
   academyMatchPlayerStatsTable,
@@ -15,13 +16,21 @@ import {
   academySquadsTable,
   brandingProfilesTable,
   db,
+  renderSnapshotsTable,
   userClipsTable,
   usersTable,
   type Academy,
+  type RenderSnapshotDocument,
 } from "@workspace/db";
 import { displayPhone, instagramHandle, requireAcademyOwner, type AcademyOwnerAccess } from "../lib/academyOwner";
 import { fetchExportObject, forwardExportContentLength, probeExportObject } from "../lib/backupExport";
-import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
+import {
+  bunnyStorageUrlFor,
+  getBunnyProxiedThumbnailUrl,
+  isBunnyConfigured,
+  isBunnyStorageConfigured,
+  uploadBufferToBunnyStorage,
+} from "../lib/bunny";
 import { loadLocalImage, replayMarkPath } from "../lib/clipBranding/assets";
 import { lookFor } from "../lib/clipBranding/plan";
 import { decodeDataUrl } from "../lib/clipBranding/profileStore";
@@ -30,6 +39,7 @@ import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } fro
 import { logger } from "../lib/logger";
 import { renderStudioPng, type StudioContent, type StudioLocale } from "../lib/studio/posts";
 import { academyClipStatus } from "../lib/userClipExportState";
+import { inspectRenderedPng } from "../lib/renderSnapshots";
 
 /**
  * Academy console → Studio (owner only).
@@ -310,18 +320,45 @@ export const RenderBody = z.discriminatedUnion("template", [
 ]);
 export type RenderBodyInput = z.infer<typeof RenderBody>;
 
-type ImageResult = { image: Image | null } | { error: string; status: number };
+type ImageResult = { image: Image | null; bytes: Buffer | null; mime: string | null } | { error: string; status: number };
 
 async function uploadedImage(data: string | null | undefined): Promise<ImageResult> {
-  if (!data) return { image: null };
+  if (!data) return { image: null, bytes: null, mime: null };
   const decoded = decodeDataUrl(data);
   if (!decoded) return { error: "Use a JPEG, PNG or WebP photo.", status: 400 };
   if (decoded.buffer.length > MAX_UPLOAD_BYTES) return { error: "That photo is over 6 MB. Pick a smaller one.", status: 413 };
   try {
-    return { image: await loadImage(decoded.buffer) };
+    return { image: await loadImage(decoded.buffer), bytes: decoded.buffer, mime: decoded.mime };
   } catch {
     return { error: "That photo couldn't be read.", status: 400 };
   }
+}
+
+async function persistStudioSnapshotAsset(
+  academyId: number,
+  kind: string,
+  bytes: Buffer,
+  mime: string,
+): Promise<{ kind: string; locator: string | null; sha256: string }> {
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const ext = mime === "image/webp" ? "webp" : mime === "image/jpeg" ? "jpg" : "png";
+  const remotePath = `creative-snapshots/studio/${academyId}/${sha256}.${ext}`;
+  if (!isBunnyStorageConfigured()) return { kind, locator: null, sha256 };
+  try {
+    const locator = await uploadBufferToBunnyStorage(bytes, remotePath, mime);
+    return { kind, locator: locator || bunnyStorageUrlFor(remotePath), sha256 };
+  } catch (err) {
+    logger.warn({ err, academyId, kind }, "Studio render snapshot asset could not be stored");
+    return { kind, locator: null, sha256 };
+  }
+}
+
+function studioLogoPng(logo: Image): Buffer {
+  const canvas = createCanvas(512, 512);
+  const ctx = canvas.getContext("2d");
+  const scale = Math.min(512 / logo.width, 512 / logo.height);
+  ctx.drawImage(logo, (512 - logo.width * scale) / 2, (512 - logo.height * scale) / 2, logo.width * scale, logo.height * scale);
+  return canvas.toBuffer("image/png");
 }
 
 router.post(`${base}/render`, async (req, res): Promise<void> => {
@@ -341,10 +378,14 @@ router.post(`${base}/render`, async (req, res): Promise<void> => {
     const background = await uploadedImage(body.backgroundData);
     if ("error" in background) { res.status(background.status).json({ error: background.error }); return; }
     let photo: Image | null = null;
+    let photoBytes: Buffer | null = null;
+    let photoMime: string | null = null;
     if (body.template === "player") {
       const p = await uploadedImage(body.photoData);
       if ("error" in p) { res.status(p.status).json({ error: p.error }); return; }
       photo = p.image;
+      photoBytes = p.bytes;
+      photoMime = p.mime;
     }
     const look = await studioLook(access, temps);
     let content: StudioContent;
@@ -398,6 +439,84 @@ router.post(`${base}/render`, async (req, res): Promise<void> => {
       mark: await loadLocalImage(replayMarkPath()),
       scale: body.preview ? 0.5 : 1,
     });
+    if (!body.preview) {
+      const facts = inspectRenderedPng(png);
+      const assets: RenderSnapshotDocument["assets"] = [];
+      const storeInput = async (kind: string, bytes: Buffer | null, mime: string | null) => {
+        if (!bytes || !mime) return null;
+        const asset = await persistStudioSnapshotAsset(access.academyId, kind, bytes, mime);
+        assets.push(asset);
+        return asset;
+      };
+      const backgroundAsset = await storeInput("background", background.bytes, background.mime);
+      const photoAsset = await storeInput("player-photo", photoBytes, photoMime);
+      const logoAsset = look.crest ? await storeInput("academy-logo", studioLogoPng(look.crest), "image/png") : null;
+      const profile = {
+        nameEn: look.nameEn,
+        nameAr: look.nameAr,
+        taglineAr: look.taglineAr,
+        primaryColor: look.primaryColor,
+        accentColor: look.accentColor,
+        bookingPhone: look.bookingPhone,
+        instagram: look.instagram,
+        isAcademy: look.isAcademy,
+      };
+      const requestSettings = {
+        ...body,
+        backgroundData: undefined,
+        photoData: undefined,
+        preview: false,
+      };
+      const snapshot: RenderSnapshotDocument = {
+        schemaVersion: 1,
+        renderKind: "studio_post",
+        renderer: { name: "academy-studio-post", version: "studio-post-v1" },
+        renderedAt: new Date().toISOString(),
+        source: {
+          kind: "academy-studio-template",
+          background: backgroundAsset,
+          playerPhoto: photoAsset,
+          logo: logoAsset,
+          showNames,
+        },
+        timeWindow: {},
+        crop: null,
+        output: { mimeType: "image/png", width: facts.width, height: facts.height, durationMs: null },
+        text: content,
+        branding: {
+          profile,
+          logo: logoAsset,
+          mark: "bundled-replay-mark-v1",
+        },
+        endCard: null,
+        music: { kind: "none" },
+        template: { id: body.template, version: `${body.format}-studio-post-v1` },
+        content: {
+          requestSettings,
+          resolvedContent: content,
+          profile,
+          format: body.format,
+          locale,
+          showNames,
+          renderScale: 1,
+        },
+        assets,
+        replayable: assets.every((asset) => !!asset.locator && !!asset.sha256),
+        replayabilityReason: assets.some((asset) => !asset.locator)
+          ? "An input or logo asset could not be durably stored."
+          : null,
+      };
+      const outputLocator = `sha256:${facts.sha256}`;
+      await db.insert(renderSnapshotsTable).values({
+        artifactKey: `studio_post:${access.academyId}`,
+        outputLocator,
+        outputSha256: facts.sha256,
+        snapshot,
+      }).onConflictDoUpdate({
+        target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
+        set: { outputSha256: facts.sha256, snapshot, createdAt: new Date() },
+      });
+    }
     res.setHeader("Cache-Control", "no-store");
     res.type("png").send(png);
   } catch (err) {

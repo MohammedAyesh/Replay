@@ -60,6 +60,7 @@ import multer from "multer";
 import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 import {
   getCamera4kReclipStatus,
+  startCamera4kReclipBatch,
   setCamera4kReclipPaused,
 } from "../lib/camera4kReclipBatch";
 
@@ -388,6 +389,17 @@ router.get("/admin/clips/4k-reclip-batch", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
   if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
   res.json({ batch: await getCamera4kReclipStatus() });
+});
+
+router.post("/admin/clips/4k-reclip-batch/start", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+  const result = await startCamera4kReclipBatch();
+  if (!result.started) {
+    res.status(409).json({ error: "The 4K re-clip batch has completed and cannot be restarted." });
+    return;
+  }
+  res.json({ ok: true, batch: await getCamera4kReclipStatus() });
 });
 
 router.patch("/admin/clips/4k-reclip-batch", async (req, res): Promise<void> => {

@@ -16,13 +16,15 @@ import {
   camera4kReclipBatchesTable,
   camera4kReclipItemsTable,
   db,
+  renderSnapshotsTable,
   recordingsTable,
   userClipsTable,
   type Camera4kSourceProbe,
+  type RenderSnapshotDocument,
 } from "@workspace/db";
 import { logger } from "./logger";
 import { waitForCamera4kSource } from "./clipExportSource";
-import { createLegacyReclipSkipItem } from "./camera4kReclipEligibility";
+import { createLegacyReclipSkipItem, isReplayableCamera4kClipSnapshot } from "./camera4kReclipEligibility";
 import { renderAdminCamera4kBatchClip } from "../routes/userClips";
 
 export const CAMERA_4K_RECLIP_BATCH_KEY = "camera-original-4k-20261108";
@@ -42,7 +44,14 @@ export function camera4kReclipRevision(clipId: number): string {
   return `${BATCH_REVISION_PREFIX}-${clipId}`;
 }
 
-async function findOrCreateBatch() {
+async function findBatch() {
+  const [batch] = await db.select().from(camera4kReclipBatchesTable)
+    .where(eq(camera4kReclipBatchesTable.batchKey, CAMERA_4K_RECLIP_BATCH_KEY))
+    .limit(1);
+  return batch ?? null;
+}
+
+async function createBatchForExplicitStart() {
   await db.insert(camera4kReclipBatchesTable).values({
     batchKey: CAMERA_4K_RECLIP_BATCH_KEY,
     status: "scheduled",
@@ -106,6 +115,7 @@ async function seedBatchScope(batchId: number): Promise<void> {
     const clips = await db.select({
       id: userClipsTable.id,
       videoId: userClipsTable.videoId,
+      exportedUrl: userClipsTable.exportedUrl,
     }).from(userClipsTable).where(and(
       inArray(userClipsTable.videoId, readyGuids),
       eq(userClipsTable.exportStatus, "done"),
@@ -114,12 +124,36 @@ async function seedBatchScope(batchId: number): Promise<void> {
     )).orderBy(asc(userClipsTable.id));
 
     if (clips.length) {
-      await db.insert(camera4kReclipItemsTable).values(clips.map((clip) => createLegacyReclipSkipItem({
-        batchId,
-        clipId: clip.id,
-        videoId: clip.videoId,
-        recordingId: recordingByGuid.get(clip.videoId)!,
-      }))).onConflictDoNothing({
+      const snapshots = await db.select().from(renderSnapshotsTable)
+        .where(inArray(renderSnapshotsTable.artifactKey, clips.map((clip) => `user_clip:${clip.id}`)));
+      const snapshotByOutput = new Map(snapshots.map((row) => [`${row.artifactKey}\u0000${row.outputLocator}`, row]));
+      const items = clips.map((clip) => {
+        const row = clip.exportedUrl
+          ? snapshotByOutput.get(`user_clip:${clip.id}\u0000${clip.exportedUrl}`)
+          : null;
+        const snapshot = row?.snapshot as RenderSnapshotDocument | undefined;
+        const validSnapshot = isReplayableCamera4kClipSnapshot(snapshot, clip.videoId);
+        return validSnapshot && row && clip.exportedUrl
+          ? {
+            batchId,
+            clipId: clip.id,
+            videoId: clip.videoId,
+            recordingId: recordingByGuid.get(clip.videoId)!,
+            sourceExportUrl: clip.exportedUrl,
+            snapshotId: row.id,
+            status: "pending" as const,
+          }
+          : {
+            ...createLegacyReclipSkipItem({
+              batchId,
+              clipId: clip.id,
+              videoId: clip.videoId,
+              recordingId: recordingByGuid.get(clip.videoId)!,
+            }),
+            sourceExportUrl: clip.exportedUrl,
+          };
+      });
+      await db.insert(camera4kReclipItemsTable).values(items).onConflictDoNothing({
         target: [camera4kReclipItemsTable.batchId, camera4kReclipItemsTable.clipId],
       });
     }
@@ -215,7 +249,8 @@ async function setBatchState(
 }
 
 async function processBatchTick(): Promise<void> {
-  const batch = await findOrCreateBatch();
+  const batch = await findBatch();
+  if (!batch) return;
   if (batch.status === "completed") return;
 
   const leaseToken = randomUUID();
@@ -301,6 +336,25 @@ async function processBatchTick(): Promise<void> {
       const revision = camera4kReclipRevision(item.clipId);
       const [clip] = await db.select().from(userClipsTable)
         .where(eq(userClipsTable.id, item.clipId));
+      const [snapshotRow] = item.snapshotId
+        ? await db.select().from(renderSnapshotsTable)
+          .where(eq(renderSnapshotsTable.id, item.snapshotId)).limit(1)
+        : [];
+      const snapshot = snapshotRow?.snapshot as RenderSnapshotDocument | undefined;
+      const snapshotStillMatches = snapshotRow
+        && snapshotRow.artifactKey === `user_clip:${item.clipId}`
+        && snapshotRow.outputLocator === item.sourceExportUrl
+        && isReplayableCamera4kClipSnapshot(snapshot, item.videoId);
+      if (!snapshotStillMatches) {
+        await db.update(camera4kReclipItemsTable).set({
+          status: "skipped",
+          failureReason: "The saved presentation snapshot is missing or no longer matches the source export. The existing export was kept.",
+          completedAt: new Date(),
+          updatedAt: new Date(),
+        }).where(eq(camera4kReclipItemsTable.id, item.id));
+        await refreshCounts(current.id);
+        continue;
+      }
       if (clip?.exportStatus === "done" && clip.exportedUrl?.endsWith(`-${revision}.mp4`)) {
         await db.update(camera4kReclipItemsTable).set({
           status: "completed",
@@ -311,10 +365,11 @@ async function processBatchTick(): Promise<void> {
         await refreshCounts(current.id);
         continue;
       }
-      if (!clip || clip.videoId !== item.videoId || clip.exportStatus !== "done" || !clip.exportedUrl) {
+      if (!clip || clip.videoId !== item.videoId || clip.exportStatus !== "done" || !clip.exportedUrl
+        || clip.exportedUrl !== item.sourceExportUrl) {
         await db.update(camera4kReclipItemsTable).set({
           status: "skipped",
-          failureReason: "Clip was deleted, changed source, or no longer has a settled export.",
+          failureReason: "Clip source/export changed or no longer has a settled export. The existing export was kept.",
           completedAt: new Date(),
           updatedAt: new Date(),
         }).where(eq(camera4kReclipItemsTable.id, item.id));
@@ -333,7 +388,7 @@ async function processBatchTick(): Promise<void> {
         eq(camera4kReclipItemsTable.status, "pending"),
       ));
 
-      const result = await renderAdminCamera4kBatchClip(clip, revision);
+      const result = await renderAdminCamera4kBatchClip(clip, revision, snapshot);
       if (result.state === "busy") {
         await db.update(camera4kReclipItemsTable).set({
           status: "pending",
@@ -375,8 +430,16 @@ async function processBatchTick(): Promise<void> {
   }
 }
 
+let stopBatchWorker: (() => void) | null = null;
+let batchWorkerActive = false;
+
+export function isCamera4kReclipBatchWorkerActive(): boolean {
+  return batchWorkerActive;
+}
+
 export function startCamera4kReclipBatchWorker(): () => void {
-  if (process.env.NODE_ENV !== "production") return () => {};
+  if (stopBatchWorker) return stopBatchWorker;
+  if (process.env.NODE_ENV === "test") return () => {};
   let busy = false;
   const tick = () => {
     if (busy) return;
@@ -387,12 +450,35 @@ export function startCamera4kReclipBatchWorker(): () => void {
   };
   const timer = setInterval(tick, TICK_MS);
   timer.unref?.();
-  const first = setTimeout(tick, 15_000);
+  const first = setTimeout(tick, 0);
   first.unref?.();
-  return () => {
+  batchWorkerActive = true;
+  stopBatchWorker = () => {
     clearInterval(timer);
     clearTimeout(first);
+    batchWorkerActive = false;
+    stopBatchWorker = null;
   };
+  return stopBatchWorker;
+}
+
+export async function startCamera4kReclipBatch(): Promise<{
+  started: boolean;
+  status: "scheduled" | "running" | "paused" | "completed";
+}> {
+  let batch = await findBatch();
+  if (!batch) batch = await createBatchForExplicitStart();
+  if (batch.status === "completed") return { started: false, status: "completed" };
+  if (batch.paused || batch.status === "paused") {
+    await db.update(camera4kReclipBatchesTable).set({
+      paused: false,
+      status: "scheduled",
+      updatedAt: new Date(),
+    }).where(eq(camera4kReclipBatchesTable.id, batch.id));
+    batch = { ...batch, paused: false, status: "scheduled" };
+  }
+  startCamera4kReclipBatchWorker();
+  return { started: true, status: batch.status };
 }
 
 export async function getCamera4kReclipStatus() {
@@ -425,6 +511,7 @@ export async function getCamera4kReclipStatus() {
     batchKey: batch.batchKey,
     status: batch.status,
     paused: batch.paused,
+    workerActive: isCamera4kReclipBatchWorkerActive(),
     scopeSeeded: batch.scopeSeeded,
     scopeCutoff: batch.scopeCutoff,
     totalCount: batch.totalCount,
@@ -450,5 +537,6 @@ export async function setCamera4kReclipPaused(paused: boolean) {
     ne(camera4kReclipBatchesTable.status, "completed"),
   )).returning({ id: camera4kReclipBatchesTable.id });
   if (!batch) return false;
+  if (!paused) startCamera4kReclipBatchWorker();
   return true;
 }

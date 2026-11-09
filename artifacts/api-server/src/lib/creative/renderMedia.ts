@@ -44,7 +44,7 @@ import type { ConcreteSource, ImageResolver, MediaLayer } from "./render";
 import type { VideoResolver, VideoSourceFile } from "./renderVideo";
 import { tintKey, tintPicture } from "./renderTint";
 import { Camera4kNotReadyError, waitForCamera4kSource } from "../clipExportSource";
-import { bufferCameraHlsClip } from "../ffmpegExport";
+import { bufferCameraHlsClip, probeVideoDimensions } from "../ffmpegExport";
 import { fetchExportObject, probeExportObject } from "../backupExport";
 import { getBunnyPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
 
@@ -278,6 +278,19 @@ type ClipVideoSource =
   | { kind: "camera-4k"; source: Camera4kSource; span: NonNullable<ReturnType<typeof spanOf>> }
   | { kind: "saved-file"; path: string; durationMs: number; hasAudio: boolean }
   | { kind: "stream"; url: string; referer: string; span: NonNullable<Awaited<ReturnType<typeof clipSpan>>> };
+
+export type CreativeResolvedVideoSource = {
+  layerId: string;
+  sceneSource: ConcreteSource;
+  selectedKind: "camera-4k" | "saved-file" | "stream" | "academy-upload";
+  videoId: string | null;
+  locator: string | null;
+  width: number;
+  height: number;
+  durationMs: number | null;
+  fromMs: number;
+  toMs: number;
+};
 
 const STREAM_PROBE_TIMEOUT_MS = 8_000;
 const STREAM_BUFFER_TIMEOUT_MS = 20 * 60_000;
@@ -581,8 +594,9 @@ export function creativeVideoResolver(
   _workDir: string,
   temps: string[],
   sourceWaitMs = CAMERA_4K_WAIT_MS,
+  onResolved?: (source: CreativeResolvedVideoSource) => void | Promise<void>,
 ): VideoResolver {
-  return async (_layer, src, need): Promise<VideoSourceFile | null> => {
+  return async (layer, src, need): Promise<VideoSourceFile | null> => {
     const span = Math.min(MAX_SOURCE_MS, Math.max(500, need.toMs - need.fromMs));
     const fail = (err: unknown): never => {
       if (err instanceof CreativeRenderError) throw err;
@@ -599,12 +613,38 @@ export function creativeVideoResolver(
           }
           const resolved = await resolveClipVideo(clip, temps, sourceWaitMs);
           if (resolved.kind === "saved-file") {
+            const dimensions = await probeVideoDimensions(resolved.path);
+            await onResolved?.({
+              layerId: layer.id,
+              sceneSource: src,
+              selectedKind: "saved-file",
+              videoId: clip.videoId,
+              locator: clip.exportedUrl,
+              width: dimensions.width,
+              height: dimensions.height,
+              durationMs: resolved.durationMs,
+              fromMs: need.fromMs,
+              toMs: need.toMs,
+            });
             return { path: resolved.path, zeroAtSec: 0, durationMs: resolved.durationMs, hasAudio: resolved.hasAudio };
           }
           if (resolved.kind === "stream") {
             const from = resolved.span.startSec + need.fromMs / 1000;
             const to = Math.min(resolved.span.endSec, resolved.span.startSec + (need.fromMs + span) / 1000);
             const buffered = await bufferStreamClip(resolved.url, resolved.referer, from, to - from, temps);
+            const dimensions = await probeVideoDimensions(buffered.bufferPath);
+            await onResolved?.({
+              layerId: layer.id,
+              sceneSource: src,
+              selectedKind: "stream",
+              videoId: clip.videoId,
+              locator: resolved.url,
+              width: dimensions.width,
+              height: dimensions.height,
+              durationMs: buffered.bufferedDuration * 1000,
+              fromMs: Math.round(from * 1000),
+              toMs: Math.round(to * 1000),
+            });
             return {
               path: buffered.bufferPath,
               zeroAtSec: -need.fromMs / 1000,
@@ -615,6 +655,18 @@ export function creativeVideoResolver(
           const from = resolved.span.startSec + need.fromMs / 1000;
           const to = Math.min(resolved.span.endSec, resolved.span.startSec + (need.fromMs + span) / 1000);
           const buffered = await bufferCamera4kWindow(resolved.source, from, to, temps);
+          await onResolved?.({
+            layerId: layer.id,
+            sceneSource: src,
+            selectedKind: "camera-4k",
+            videoId: clip.videoId,
+            locator: `camera-original-4k:${clip.videoId}`,
+            width: buffered.sourceDimensions.width,
+            height: buffered.sourceDimensions.height,
+            durationMs: Math.round((resolved.span.endSec - resolved.span.startSec) * 1000),
+            fromMs: Math.round(from * 1000),
+            toMs: Math.round(to * 1000),
+          });
           return {
             path: buffered.bufferPath,
             zeroAtSec: -need.fromMs / 1000,
@@ -634,6 +686,18 @@ export function creativeVideoResolver(
           try {
             const source = await resolveCamera4kSource(videoId, sourceWaitMs);
             const buffered = await bufferCamera4kWindow(source, from, to, temps);
+            await onResolved?.({
+              layerId: layer.id,
+              sceneSource: src,
+              selectedKind: "camera-4k",
+              videoId,
+              locator: `camera-original-4k:${videoId}`,
+              width: buffered.sourceDimensions.width,
+              height: buffered.sourceDimensions.height,
+              durationMs: length || null,
+              fromMs: Math.round(from * 1000),
+              toMs: Math.round(to * 1000),
+            });
             return {
               path: buffered.bufferPath,
               zeroAtSec: -need.fromMs / 1000,
@@ -646,6 +710,19 @@ export function creativeVideoResolver(
             const stream = await playableStream(videoId);
             if (!stream) throw new CreativeRenderError("This recording is unavailable: neither 4K nor a playable Stream source could be loaded.", 409);
             const buffered = await bufferStreamClip(stream.url, stream.referer, from, to - from, temps);
+            const dimensions = await probeVideoDimensions(buffered.bufferPath);
+            await onResolved?.({
+              layerId: layer.id,
+              sceneSource: src,
+              selectedKind: "stream",
+              videoId,
+              locator: stream.url,
+              width: dimensions.width,
+              height: dimensions.height,
+              durationMs: buffered.bufferedDuration * 1000,
+              fromMs: Math.round(from * 1000),
+              toMs: Math.round(to * 1000),
+            });
             return {
               path: buffered.bufferPath,
               zeroAtSec: -need.fromMs / 1000,
@@ -660,6 +737,19 @@ export function creativeVideoResolver(
           if (row.kind !== "video" || !row.storageUrl) return null;
           const file = await downloadToTemp(row.storageUrl);
           temps.push(file);
+          const dimensions = await probeVideoDimensions(file);
+          await onResolved?.({
+            layerId: layer.id,
+            sceneSource: src,
+            selectedKind: "academy-upload",
+            videoId: null,
+            locator: row.storageUrl,
+            width: dimensions.width,
+            height: dimensions.height,
+            durationMs: row.durationSec ? Math.round(row.durationSec * 1000) : await probeDurationMs(file),
+            fromMs: need.fromMs,
+            toMs: need.toMs,
+          });
           return { path: file, zeroAtSec: 0, durationMs: row.durationSec ? Math.round(row.durationSec * 1000) : await probeDurationMs(file), hasAudio: await hasAudioStream(file) };
         }
         default:

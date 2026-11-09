@@ -19,6 +19,8 @@ import {
   claimMatchProgressTable,
   weeklyHighlightsTable,
   highlightClipsTable,
+  renderSnapshotsTable,
+  type RenderSnapshotDocument,
 } from "@workspace/db";
 import {
   CreateUserClipBody,
@@ -59,7 +61,7 @@ import { renderClip, cleanupTempFile, bufferRemoteClip, bufferCameraHlsClip } fr
 import { cleanChoice, endScreenFor, endScreenOptions, planClipBranding } from "../lib/clipBranding/plan";
 import { MAX_CARD_STATS } from "../lib/clipBranding/types";
 import { PREVIEW_DIMS, renderPreviewPng } from "../lib/clipBranding/preview";
-import { backupBrandingFor } from "../lib/clipBranding/backup";
+import { backupBrandingFor, prepareBackupBrandingAssets } from "../lib/clipBranding/backup";
 import { waitForCamera4kSource } from "../lib/clipExportSource";
 import { logger } from "../lib/logger";
 import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
@@ -122,6 +124,8 @@ import {
   validateCamera4kReclip,
   type Camera4kReclipValidation,
 } from "../lib/camera4kReclipValidation";
+import { contentAddressedHashPrefix, inspectRenderedVideo, sha256File, sha256Text } from "../lib/renderSnapshots";
+import { clipRenderOptionsFromSnapshot } from "../lib/clipRenderSnapshot";
 
 const router: IRouter = Router();
 
@@ -165,8 +169,24 @@ type BackgroundExportOptions = {
   trackAdminFailure?: boolean;
   /** Strict mode used only by the durable camera-original 4K batch. */
   batchReclip?: boolean;
+  /** The immutable original presentation settings required for a batch replay. */
+  presentationSnapshot?: RenderSnapshotDocument;
   onValidated?: (validation: Camera4kReclipValidation) => void;
 };
+
+function snapshotRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function refererForAsset(locator: string | null | undefined): string | undefined {
+  try { return locator ? `${new URL(locator).origin}/` : undefined; } catch { return undefined; }
+}
+
+function presentationAsset(snapshot: RenderSnapshotDocument, kind: string) {
+  return snapshot.assets.find((asset) => asset.kind === kind) ?? null;
+}
 
 /**
  * Renders are CPU-bound and contend with the hourly archive for the same cores,
@@ -772,9 +792,14 @@ async function runBackgroundExport(
   options: BackgroundExportOptions = {},
 ): Promise<void> {
   const clipId = clip.id;
-  const startTime = parseFloat(clip.startTime);
-  const endTime = parseFloat(clip.endTime);
-  const cropPath = (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[];
+  const savedContent = options.presentationSnapshot?.content;
+  const startTime = Number(savedContent?.startTime ?? clip.startTime);
+  const endTime = Number(savedContent?.endTime ?? clip.endTime);
+  const cropPath = (Array.isArray(savedContent?.cropPath) ? savedContent.cropPath : clip.cropPath ?? []) as Array<{
+    t: number; x: number; y: number; w: number; h: number;
+  }>;
+  const aspectRatio = typeof savedContent?.aspectRatio === "string" ? savedContent.aspectRatio : clip.aspectRatio;
+  const title = typeof savedContent?.title === "string" ? savedContent.title : clip.title;
   const videoId = clip.videoId;
 
     let tmpPath: string | null = null;
@@ -817,11 +842,40 @@ async function runBackgroundExport(
       // fractions can be outside [0, 1], but renderClip has always clamped them
       // to the recording duration; keep the buffer path consistent with that
       // behavior so it does not reject a window the main render would accept.
-      const { startSec, endSec, clipDuration } = normalizeExportWindow(
+      const normalizedWindow = normalizeExportWindow(
         startTime,
         endTime,
         totalDuration,
       );
+      let { startSec, endSec, clipDuration } = normalizedWindow;
+      if (options.presentationSnapshot) {
+        const savedSource = options.presentationSnapshot.source;
+        const savedWindow = options.presentationSnapshot.timeWindow;
+        const savedStart = Number(savedWindow.startSec);
+        const savedEnd = Number(savedWindow.endSec);
+        const savedDuration = Number(savedWindow.clipDuration);
+        const savedSourceDuration = Number(savedSource.durationSec);
+        if (
+          options.presentationSnapshot.replayable !== true
+          || options.presentationSnapshot.renderKind !== "user_clip"
+          || savedSource.videoId !== videoId
+          || savedSource.kind !== "camera-4k"
+          || !Number.isFinite(Number(savedSource.width))
+          || !Number.isFinite(Number(savedSource.height))
+          || !Number.isFinite(savedStart)
+          || !Number.isFinite(savedEnd)
+          || !Number.isFinite(savedDuration)
+          || !Number.isFinite(savedSourceDuration)
+          || Math.abs(savedSourceDuration - totalDuration) > 0.5
+          || Math.abs(savedStart - normalizedWindow.startSec) > 0.02
+          || Math.abs(savedEnd - normalizedWindow.endSec) > 0.02
+        ) {
+          throw new Error("The saved presentation snapshot does not match this camera-original source and time window.");
+        }
+        startSec = savedStart;
+        endSec = savedEnd;
+        clipDuration = savedDuration;
+      }
       if (clipDuration <= 0) {
         throw new Error(
           `Clip selection has no content after clamping to the ${totalDuration}s recording`,
@@ -830,44 +884,68 @@ async function runBackgroundExport(
 
       let introUrl: string | undefined;
       let introReferer: string | undefined;
-      const resolvedIntro = await resolveIntroVideoUrl(clip.academyId);
-      if (resolvedIntro) {
-        try {
-          introReferer = `https://${new URL(resolvedIntro).host}/`;
-          introUrl = resolvedIntro;
-          logger.info({ clipId, academyId: clip.academyId, introUrl }, "Prepending intro to export");
-        } catch {
-          logger.warn({ clipId, resolvedIntro }, "Intro URL is not absolute — exporting without it");
+      let branding: Awaited<ReturnType<typeof resolveBrandingForClip>>;
+      let drawn: Awaited<ReturnType<typeof planClipBranding>>;
+      let preparedBranding: Awaited<ReturnType<typeof prepareBackupBrandingAssets>> | null = null;
+      let savedEndScreen: unknown = null;
+
+      if (options.presentationSnapshot) {
+        const snapshot = options.presentationSnapshot;
+        const replayBranding = snapshotRecord(snapshot.branding);
+        const assetUrl = (kind: string) => presentationAsset(snapshot, kind)?.locator ?? undefined;
+        if (replayBranding?.applied === true && snapshot.assets.some((asset) => !asset.locator || !asset.sha256)) {
+          throw new Error("A required saved branding asset is missing its durable locator or checksum.");
         }
+        introUrl = assetUrl("intro");
+        introReferer = refererForAsset(introUrl);
+        branding = {
+          overlayUrl: assetUrl("overlay"),
+          endCardUrl: assetUrl("end_card"),
+          brandingReferer: refererForAsset(assetUrl("overlay") ?? assetUrl("end_card")),
+        };
+        drawn = { overlayPath: null, endScreen: null, temps: [] };
+        savedEndScreen = snapshot.content.endScreenSettings ?? null;
+      } else {
+        const resolvedIntro = await resolveIntroVideoUrl(clip.academyId);
+        if (resolvedIntro) {
+          try {
+            introReferer = `${new URL(resolvedIntro).origin}/`;
+            introUrl = resolvedIntro;
+            logger.info({ clipId, academyId: clip.academyId, introUrl }, "Prepending intro to export");
+          } catch {
+            logger.warn({ clipId, resolvedIntro }, "Intro URL is not absolute — exporting without it");
+          }
+        }
+
+        const clipFieldId = await fieldIdForClip(clipId);
+        branding = await resolveBrandingForClip(clip.academyId, clipFieldId, { academyId: clip.academyId, fieldId: clipFieldId });
+        overlayUrlForBackup = branding.overlayUrl ?? null;
+        const [fresh] = await db.select({ endScreen: userClipsTable.endScreen })
+          .from(userClipsTable).where(eq(userClipsTable.id, clipId)).catch(() => [] as { endScreen: unknown }[]);
+        savedEndScreen = fresh ? fresh.endScreen : clip.endScreen;
+        drawn = await planClipBranding(
+          {
+            id: clip.id,
+            userId: clip.userId,
+            academyId: clip.academyId,
+            matchCode: clip.matchCode,
+            footageRequestId: clip.footageRequestId,
+            videoId: clip.videoId,
+            endScreen: savedEndScreen,
+          },
+          clipFieldId,
+          aspectRatio === "9:16",
+          { academyId: clip.academyId, fieldId: clipFieldId, userId: clip.userId },
+        );
+        assetTmpFiles.push(...drawn.temps);
+        preparedBranding = await prepareBackupBrandingAssets(
+          clip.id,
+          aspectRatio === "9:16",
+          branding.overlayUrl ?? null,
+          drawn,
+        );
+        if (drawn.overlayPath) branding.overlayUrl = undefined;
       }
-
-      const clipFieldId = await fieldIdForClip(clipId);
-      const branding = await resolveBrandingForClip(clip.academyId, clipFieldId, { academyId: clip.academyId, fieldId: clipFieldId });
-      overlayUrlForBackup = branding.overlayUrl ?? null;
-
-      // Drawn branding (Admin → Branding): a generated overlay replaces the
-      // uploaded one. A drawn end screen replaces the uploaded end card, which
-      // renderClip keeps only as the fallback if the end screen fails.
-      // Planning never throws; anything it cannot do it leaves out.
-      // The choice as it is now, not when the job was queued.
-      const [fresh] = await db.select({ endScreen: userClipsTable.endScreen })
-        .from(userClipsTable).where(eq(userClipsTable.id, clipId)).catch(() => [] as { endScreen: unknown }[]);
-      const drawn = await planClipBranding(
-        {
-          id: clip.id,
-          userId: clip.userId,
-          academyId: clip.academyId,
-          matchCode: clip.matchCode,
-          footageRequestId: clip.footageRequestId,
-          videoId: clip.videoId,
-          endScreen: fresh ? fresh.endScreen : clip.endScreen,
-        },
-        clipFieldId,
-        clip.aspectRatio === "9:16",
-        { academyId: clip.academyId, fieldId: clipFieldId, userId: clip.userId },
-      );
-      assetTmpFiles.push(...drawn.temps);
-      if (drawn.overlayPath) branding.overlayUrl = undefined;
 
       // Every branding asset is fetched here, with its own timeout and its own
       // HTTP status in the log, before FFmpeg starts. FFmpeg then only reads
@@ -894,7 +972,34 @@ async function runBackgroundExport(
         );
       }
 
-      const branded = !!(introPath || overlayPath || endCardPath || drawn.overlayPath || drawn.endScreen);
+      const replayBranding = options.presentationSnapshot
+        ? snapshotRecord(options.presentationSnapshot.branding)
+        : null;
+      const branded = options.presentationSnapshot
+        ? replayBranding?.applied === true
+        : !!(introPath || overlayPath || endCardPath || drawn.overlayPath || drawn.endScreen);
+      if (options.presentationSnapshot) {
+        for (const kind of ["intro", "overlay", "end_card"]) {
+          const asset = presentationAsset(options.presentationSnapshot, kind);
+          if (!asset) continue;
+          const local = kind === "intro" ? introPath : kind === "overlay" ? overlayPath : endCardPath;
+          if (!local || local === asset.locator || !asset.sha256) {
+            throw new Error(`Saved ${kind.replace("_", " ")} asset could not be loaded for an exact replay.`);
+          }
+          const digest = await sha256File(local);
+          if (!digest.startsWith(asset.sha256)) {
+            throw new Error(`Saved ${kind.replace("_", " ")} asset checksum changed; the existing export was kept.`);
+          }
+        }
+      }
+      let lastRenderBrandingApplied = branded;
+      const sourceBufferFacts: { current: {
+        width: number;
+        height: number;
+        bufferedDuration: number;
+        adjustedOffsetSec: number;
+        sourceTimeOffsetSec: number;
+      } | null } = { current: null };
       const renderFromSource = async (renderSource: typeof source): Promise<string> => {
         exportProgress.set(clipId, "fetching");
         logger.info(
@@ -910,6 +1015,13 @@ async function runBackgroundExport(
           totalDuration,
         });
         try {
+          sourceBufferFacts.current = {
+            width: buffered.sourceDimensions.width,
+            height: buffered.sourceDimensions.height,
+            bufferedDuration: buffered.bufferedDuration,
+            adjustedOffsetSec: buffered.adjustedOffsetSec,
+            sourceTimeOffsetSec: buffered.sourceTimeOffsetSec,
+          };
           logger.info(
             {
               clipId,
@@ -931,16 +1043,18 @@ async function runBackgroundExport(
             1,
             (buffered.adjustedOffsetSec + clipDuration) / buffered.bufferedDuration,
           );
-          const renderOptions = {
-            videoUrl: buffered.bufferPath,
-            totalDuration: buffered.bufferedDuration,
-            startTime: bufStartFraction,
-            endTime: bufEndFraction,
-            cropPath,
-            aspectRatio: clip.aspectRatio,
-            title: clip.title,
-            sourceDimensions: buffered.sourceDimensions,
-          };
+          const renderOptions = options.presentationSnapshot
+            ? clipRenderOptionsFromSnapshot(options.presentationSnapshot, videoId, buffered)
+            : {
+              videoUrl: buffered.bufferPath,
+              totalDuration: buffered.bufferedDuration,
+              startTime: bufStartFraction,
+              endTime: bufEndFraction,
+              cropPath,
+              aspectRatio,
+              title,
+              sourceDimensions: buffered.sourceDimensions,
+            };
           exportProgress.set(clipId, "encoding");
           try {
             return await renderClip({
@@ -958,6 +1072,7 @@ async function runBackgroundExport(
               { err: renderErr, clipId, sourceKind: renderSource.kind },
               "Branded render failed — retrying the clip unbranded",
             );
+            lastRenderBrandingApplied = false;
             return renderClip(renderOptions);
           }
         } finally {
@@ -999,19 +1114,162 @@ async function runBackgroundExport(
         }
         assertCamera4kUploadedSize(batchValidation?.newBytes ?? 0, uploaded.bytes);
       }
-      const [published] = await db
-        .update(userClipsTable)
-        .set({ exportStatus: "done", exportedUrl })
-        .where(and(
-          eq(userClipsTable.id, clipId),
-          inArray(userClipsTable.exportStatus, [
-            "pending",
-            PENDING_VPS1_OVERFLOW,
-            PENDING_LOCAL_FALLBACK,
-            PENDING_VPS1_AFTER_PRIMARY,
-          ]),
-        ))
-        .returning({ id: userClipsTable.id });
+      const bufferFacts = sourceBufferFacts.current;
+      if (!bufferFacts) throw new Error("The clip render completed without source geometry metadata.");
+      if (options.presentationSnapshot
+        && (bufferFacts.width !== Number(options.presentationSnapshot.source.width)
+          || bufferFacts.height !== Number(options.presentationSnapshot.source.height))) {
+        throw new Error("Camera-original source geometry changed; the existing export was kept.");
+      }
+      const outputFacts = await inspectRenderedVideo(tmpPath);
+      const snapshotAssets = options.presentationSnapshot
+        ? options.presentationSnapshot.assets
+        : [];
+      if (!options.presentationSnapshot && lastRenderBrandingApplied) {
+        const addAsset = async (kind: string, locator: string | null | undefined, localPath: string | null | undefined) => {
+          if (!locator && !localPath) return;
+          let sha256 = locator ? contentAddressedHashPrefix(locator) : null;
+          if (localPath) {
+            try { sha256 = await sha256File(localPath); } catch { sha256 = null; }
+          }
+          snapshotAssets.push({ kind, locator: locator ?? null, sha256 });
+        };
+        await addAsset("intro", introPath ? introUrl : null, introPath);
+        const overlayLocator = drawn.overlayPath
+          ? preparedBranding?.overlayUrl
+          : overlayPath ? branding.overlayUrl : null;
+        await addAsset("overlay", overlayLocator, drawn.overlayPath ?? overlayPath);
+        const endCardLocator = drawn.endScreen
+          ? preparedBranding?.endScreen?.cardUrl
+          : endCardPath ? branding.endCardUrl : null;
+        await addAsset("end_card", endCardLocator, drawn.endScreen ? null : endCardPath);
+      }
+      const replayable = options.presentationSnapshot
+        ? true
+        : !!bufferFacts.width && !!bufferFacts.height
+          && (lastRenderBrandingApplied
+            ? snapshotAssets.every((asset) => !!asset.locator && !!asset.sha256)
+              && preparedBranding?.complete !== false
+            : true);
+      const snapshot: RenderSnapshotDocument = options.presentationSnapshot
+        ? {
+          ...options.presentationSnapshot,
+          renderedAt: new Date().toISOString(),
+          source: {
+            ...options.presentationSnapshot.source,
+            width: bufferFacts.width,
+            height: bufferFacts.height,
+            durationSec: totalDuration,
+            path: source.path,
+          },
+          timeWindow: {
+            ...options.presentationSnapshot.timeWindow,
+            bufferedDuration: bufferFacts.bufferedDuration,
+            adjustedOffsetSec: bufferFacts.adjustedOffsetSec,
+            sourceTimeOffsetSec: bufferFacts.sourceTimeOffsetSec,
+          },
+          output: {
+            mimeType: "video/mp4",
+            width: outputFacts.width,
+            height: outputFacts.height,
+            durationMs: outputFacts.durationMs,
+          },
+        }
+        : {
+          schemaVersion: 1,
+          renderKind: "user_clip",
+          renderer: { name: "camera-original-clip-export", version: "camera-clip-v1" },
+          renderedAt: new Date().toISOString(),
+          source: {
+            kind: source.kind,
+            selection: source.path,
+            videoId,
+            width: bufferFacts.width,
+            height: bufferFacts.height,
+            durationSec: totalDuration,
+            renditionLabel: source.renditionLabel,
+          },
+          timeWindow: {
+            startTime,
+            endTime,
+            startSec,
+            endSec,
+            clipDuration,
+            bufferedDuration: bufferFacts.bufferedDuration,
+            adjustedOffsetSec: bufferFacts.adjustedOffsetSec,
+            sourceTimeOffsetSec: bufferFacts.sourceTimeOffsetSec,
+            bufferStartFraction: Math.max(0, bufferFacts.adjustedOffsetSec / bufferFacts.bufferedDuration),
+            bufferEndFraction: Math.min(1, (bufferFacts.adjustedOffsetSec + clipDuration) / bufferFacts.bufferedDuration),
+          },
+          crop: cropPath,
+          output: {
+            mimeType: "video/mp4",
+            width: outputFacts.width,
+            height: outputFacts.height,
+            durationMs: outputFacts.durationMs,
+          },
+          text: { title },
+          branding: {
+            applied: lastRenderBrandingApplied,
+            academyId: clip.academyId,
+            overlayType: drawn.overlayPath ? "drawn" : branding.overlayUrl ? "uploaded" : null,
+            assets: snapshotAssets,
+          },
+          endCard: {
+            settings: savedEndScreen,
+            templateId: snapshotRecord(drawn.endScreen?.spec)?.kind ?? null,
+            templateVersion: "clip-end-card-v1",
+            asset: snapshotAssets.find((asset) => asset.kind === "end_card") ?? null,
+          },
+          music: { kind: "source-audio", addedTrackId: null },
+          template: {
+            id: snapshotRecord(drawn.endScreen?.spec)?.kind as string | null ?? null,
+            version: "clip-export-v1",
+          },
+          content: {
+            title,
+            aspectRatio,
+            cropPath,
+            startTime,
+            endTime,
+            endScreenSettings: savedEndScreen,
+          },
+          assets: snapshotAssets,
+          replayable,
+          replayabilityReason: replayable
+            ? null
+            : "One or more generated branding assets were not durably stored with a verifiable checksum.",
+        };
+      const [published] = await db.transaction(async (tx) => {
+        const rows = await tx
+          .update(userClipsTable)
+          .set({ exportStatus: "done", exportedUrl })
+          .where(and(
+            eq(userClipsTable.id, clipId),
+            inArray(userClipsTable.exportStatus, [
+              "pending",
+              PENDING_VPS1_OVERFLOW,
+              PENDING_LOCAL_FALLBACK,
+              PENDING_VPS1_AFTER_PRIMARY,
+            ]),
+          ))
+          .returning({ id: userClipsTable.id });
+        if (!rows.length) return [];
+        await tx.insert(renderSnapshotsTable).values({
+          artifactKey: `user_clip:${clipId}`,
+          outputLocator: exportedUrl,
+          outputSha256: outputFacts.sha256,
+          snapshot,
+        }).onConflictDoUpdate({
+          target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
+          set: {
+            outputSha256: outputFacts.sha256,
+            snapshot,
+            createdAt: new Date(),
+          },
+        });
+        return rows;
+      });
       if (!published) {
         logger.info({ clipId, exportedUrl }, "Primary render finished after another renderer settled the clip");
         return;
@@ -1109,6 +1367,7 @@ export async function queueAdminClipReclip(
 export async function renderAdminCamera4kBatchClip(
   clip: typeof import("@workspace/db").userClipsTable.$inferSelect,
   revision: string,
+  presentationSnapshot: RenderSnapshotDocument,
 ): Promise<
   | { state: "completed"; validation: Camera4kReclipValidation }
   | { state: "failed"; reason: string; validation: Camera4kReclipValidation | null }
@@ -1116,6 +1375,10 @@ export async function renderAdminCamera4kBatchClip(
 > {
   if (!clip.exportedUrl || clip.exportStatus !== "done" || isLiveVideoId(clip.videoId)) {
     return { state: "failed", reason: "Clip no longer has a settled export to replace.", validation: null };
+  }
+  if (presentationSnapshot.renderKind !== "user_clip" || !presentationSnapshot.replayable
+    || presentationSnapshot.source.videoId !== clip.videoId) {
+    return { state: "failed", reason: "The saved presentation snapshot is not replayable for this clip.", validation: null };
   }
   if (inFlight.has(clip.id) || isInternalPendingStatus(clip.exportStatus)) {
     return { state: "busy", reason: "A render for this clip is already running." };
@@ -1140,6 +1403,7 @@ export async function renderAdminCamera4kBatchClip(
         exportRevision: revision,
         trackAdminFailure: true,
         batchReclip: true,
+        presentationSnapshot,
         onValidated: (result) => { validation = result; },
       }),
     );
