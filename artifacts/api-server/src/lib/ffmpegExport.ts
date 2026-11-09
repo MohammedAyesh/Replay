@@ -47,6 +47,7 @@ const SRC_H = EXPORT_SOURCE_HEIGHT;
  */
 export const EXPORT_ENCODE_ARGS: { video: string[]; audio: string[] } = {
   video: [
+    "-threads:v", "1",
     "-c:v", "libx264",
     "-preset", "veryfast",
     "-crf", "23",
@@ -1698,7 +1699,10 @@ export async function bufferCameraHlsClip(options: {
   bufferPath: string;
   bufferedDuration: number;
   adjustedOffsetSec: number;
+  /** Original camera geometry; retained for render snapshots and source provenance. */
   sourceDimensions: { width: number; height: number };
+  /** Geometry actually decoded by downstream composition and tracking stages. */
+  bufferDimensions: { width: number; height: number };
   sourceTimeOffsetSec: number;
   downloadedBytes: number;
 }> {
@@ -1725,6 +1729,8 @@ export async function bufferCameraHlsClip(options: {
       sourceTiming.startTime,
       plan.selectedStartTime,
     );
+    const sourceDimensions = await probeVideoDimensions(assembledPath);
+    assertCameraSourceGeometry(sourceDimensions, `assembled camera source ${remoteUrl}`);
 
     const absoluteStart = startSec + sourceTimeOffsetSec;
     const absoluteEnd = absoluteStart + requestedWindow;
@@ -1739,12 +1745,12 @@ export async function bufferCameraHlsClip(options: {
       "ffmpeg",
       [
         "-filter_threads", "1",
-        "-threads", "2",
+        "-threads", "1",
         "-copyts",
         "-i", assembledPath,
-        "-vf", `trim=start=${absoluteStart}:end=${absoluteEnd},setpts=PTS-STARTPTS`,
+        "-vf", `trim=start=${absoluteStart}:end=${absoluteEnd},setpts=PTS-STARTPTS,scale=3840:1080:flags=fast_bilinear,format=yuv420p`,
         ...audioArgs,
-        "-threads", "2",
+        "-threads:v", "1",
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
         "-movflags", "+faststart",
         "-y", bufferPath,
@@ -1773,8 +1779,13 @@ export async function bufferCameraHlsClip(options: {
       );
     }
 
-    const sourceDimensions = await probeVideoDimensions(bufferPath);
-    assertCameraSourceGeometry(sourceDimensions, `buffered camera source ${remoteUrl}`);
+    const bufferDimensions = await probeVideoDimensions(bufferPath);
+    assertCameraSourceGeometry(bufferDimensions, `downscaled camera buffer ${remoteUrl}`);
+    if (bufferDimensions.width !== 3840 || bufferDimensions.height !== 1080) {
+      throw new Error(
+        `Camera buffer scaler produced ${bufferDimensions.width}x${bufferDimensions.height}; expected 3840x1080.`,
+      );
+    }
     logger.info(
       {
         remoteUrl,
@@ -1786,7 +1797,8 @@ export async function bufferCameraHlsClip(options: {
         absoluteStart,
         absoluteEnd,
         bufferedDuration,
-        ...sourceDimensions,
+        sourceDimensions,
+        bufferDimensions,
       },
       "Camera HLS range buffer complete",
     );
@@ -1795,6 +1807,7 @@ export async function bufferCameraHlsClip(options: {
       bufferedDuration,
       adjustedOffsetSec: 0,
       sourceDimensions,
+      bufferDimensions,
       sourceTimeOffsetSec,
       downloadedBytes,
     };

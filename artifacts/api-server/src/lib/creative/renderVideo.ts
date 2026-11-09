@@ -507,6 +507,7 @@ export function buildFfmpegArgs(opts: {
   const cap = footageless ? photoVideoMaxrateKbps(D) : null;
   return [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+    "-filter_threads", "1",
     "-filter_complex_threads", "1",
     ...inputs,
     "-filter_complex", [...filters, ...afilters].join(";"),
@@ -522,6 +523,26 @@ export function buildFfmpegArgs(opts: {
 
 // ── Running ──────────────────────────────────────────────────────────────────
 
+export class FfmpegProcessError extends Error {
+  constructor(
+    readonly exitCode: number | null,
+    readonly signal: NodeJS.Signals | null,
+    readonly stderrTail: string,
+    readonly pid: number | null,
+    readonly retries = 0,
+  ) {
+    const details = stderrTail || "(no stderr output)";
+    const retryNote = retries > 0 ? " after one automatic retry" : "";
+    const message = signal === "SIGKILL"
+      ? `FFmpeg was killed by SIGKILL${retryNote}. The operating system may have terminated it because of memory pressure; the cause is not confirmed. stderr: ${details}`
+      : signal
+        ? `FFmpeg was terminated by ${signal}: ${details}`
+        : `FFmpeg exited with code ${exitCode}: ${details}`;
+    super(message);
+    this.name = "FfmpegProcessError";
+  }
+}
+
 export function runFfmpeg(args: string[], signal?: AbortSignal, timeoutMs = FFMPEG_TIMEOUT_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn("ffmpeg", args, { stdio: ["ignore", "ignore", "pipe"] });
@@ -535,10 +556,46 @@ export function runFfmpeg(args: string[], signal?: AbortSignal, timeoutMs = FFMP
       clearTimeout(timer);
       signal?.removeEventListener("abort", kill);
       if (code === 0) resolve();
-      // A signal with no exit code: killed from outside, most often for memory (SIGKILL).
-      else reject(new Error(code === null ? `ffmpeg killed by ${sig ?? "a signal"}${sig === "SIGKILL" ? " (likely out of memory)" : ""}: ${err.trim().split("\n").slice(-6).join(" | ")}` : `ffmpeg exit ${code}: ${err.trim().split("\n").slice(-6).join(" | ")}`));
+      else {
+        const stderrTail = err.trim().split("\n").slice(-6).join(" | ");
+        reject(new FfmpegProcessError(code, sig, stderrTail, proc.pid ?? null));
+      }
     });
   });
+}
+
+export async function runFfmpegWithSigkillRetry(
+  args: string[],
+  signal: AbortSignal | undefined,
+  outputPath: string,
+  runner: typeof runFfmpeg = runFfmpeg,
+): Promise<void> {
+  try {
+    await runner(args, signal);
+  } catch (error) {
+    if (!(error instanceof FfmpegProcessError) || error.signal !== "SIGKILL" || signal?.aborted) throw error;
+    logger.warn({
+      outputPath,
+      pid: error.pid,
+      retry: 1,
+      stderrTail: error.stderrTail || null,
+    }, "Creative render FFmpeg was killed by SIGKILL; retrying once");
+    await fs.promises.rm(outputPath, { force: true }).catch(() => {});
+    try {
+      await runner(args, signal);
+    } catch (retryError) {
+      if (retryError instanceof FfmpegProcessError && retryError.signal === "SIGKILL") {
+        throw new FfmpegProcessError(
+          retryError.exitCode,
+          retryError.signal,
+          retryError.stderrTail,
+          retryError.pid,
+          1,
+        );
+      }
+      throw retryError;
+    }
+  }
 }
 
 export type VideoRenderOptions = Omit<SceneRenderOptions, "t" | "include" | "background" | "width" | "entrances"> & {
@@ -684,7 +741,7 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
     music: musicMixFor(scene, opts.music ?? (opts.musicPath ? { path: opts.musicPath, loudnessLufs: null } : null)),
     out: opts.out,
   });
-  await runFfmpeg(args, opts.signal);
+  await runFfmpegWithSigkillRetry(args, opts.signal, opts.out);
 
   // 4. The sign-off card after the scene, over its held last frame. Without it the video still stands.
   const card = opts.branding?.endScreen;
