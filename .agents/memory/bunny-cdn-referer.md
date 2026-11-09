@@ -39,3 +39,15 @@ buffering the entire recording.
 not HLS segments. Direct Bunny MP4 playback remains unverified: `readyState ===
 0` after 15 seconds is inconclusive. Do not switch to that route unless
 `loadedmetadata` and a finite duration are confirmed.
+
+## HLS range corruption after cache replacement
+
+On 2026-11-09, purging the pull-zone cache changed a tested 4K recording from
+31/40 corrupt boundary-crossing pieces to 0/40. A 45:01 piece decoded with zero
+errors, and eight other recordings tested at 0/20 each.
+
+**Why:** The corruption disappeared after clearing cached range responses, so
+playback resets alone are not evidence of incorrect crop timing or scaling.
+
+**How to apply:** For 4K playback corruption, verify range integrity and cache
+state before changing timestamps, offsets, crop scaling, or framing curves.

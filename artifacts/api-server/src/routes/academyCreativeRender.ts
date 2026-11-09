@@ -112,7 +112,7 @@ const playbackTelemetryBody = z.object({
   ]),
   elapsedMs: z.number().int().min(0).max(86_400_000),
   engine: z.enum(["native-hls", "hls.js", "mms", "unknown"]),
-  sourceType: z.enum(["camera-4k-window", "camera-4k-full", "stream", "none"]),
+  sourceType: z.enum(["camera-4k", "stream", "none"]),
   hevcSupported: z.boolean().nullable(),
   detail: z.object({
     fromMs: z.number().finite().min(0).max(86_400_000).optional(),

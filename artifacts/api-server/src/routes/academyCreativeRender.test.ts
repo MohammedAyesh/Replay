@@ -146,7 +146,7 @@ describe("POST …/creative/playback-telemetry", () => {
     event: "sample",
     elapsedMs: 4_000,
     engine: "native-hls",
-    sourceType: "camera-4k-full",
+    sourceType: "camera-4k",
     hevcSupported: true,
     detail: {
       currentTime: 2701,

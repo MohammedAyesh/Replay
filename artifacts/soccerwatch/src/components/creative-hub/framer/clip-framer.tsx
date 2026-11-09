@@ -14,7 +14,6 @@ import {
   framerPlaybackEngine,
   framerSourceKey,
   initialSeekAction,
-  resolveFramerPlaybackSource,
   type FramerPlaybackEngine,
   type FramerPlaybackSourceType,
 } from "./playback";
@@ -166,7 +165,6 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     key: string;
   } | null>(null);
   const playbackOffsetMs = useRef(0);
-  const timelineOffsetReadyRef = useRef(false);
   const activeSourceKeyRef = useRef<string | null>(null);
   const initialSeekSourceKeyRef = useRef<string | null>(null);
   const sourceLoadOrdinalRef = useRef(0);
@@ -388,13 +386,13 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       }
       const sourceKey = activeSourceKeyRef.current;
       const duration = video.duration;
-      const target = playbackSecondsAt(live.current.win.from, playbackOffsetMs.current);
-      // Do not clamp an absolute recording seek into a short/incomplete HLS
-      // duration; wait for the final metadata instead of seeking to its end.
+      const target = Math.min(
+        Math.max(0, playbackSecondsAt(live.current.win.from, playbackOffsetMs.current)),
+        Math.max(0, duration - 0.1),
+      );
       const action = initialSeekAction({
         sourceKey,
         completedSourceKey: initialSeekSourceKeyRef.current,
-        offsetReady: timelineOffsetReadyRef.current,
         duration,
         target,
         currentTime: video.currentTime,
@@ -474,7 +472,6 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     activeSourceKeyRef.current = null;
     initialSeekSourceKeyRef.current = null;
     initialPlaySourceKeyRef.current = null;
-    timelineOffsetReadyRef.current = false;
     video.removeAttribute("src");
     hlsMediaAttachedRef.current = false;
     if (Hls.isSupported()) {
@@ -485,12 +482,11 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
         backBufferLength: 120,
         startPosition: -1,
         xhrSetup: (xhr, requestUrl) => {
-          if (!/\/api\/hls-proxy\/uhd\/.*\.m3u8(?:\?|$)/.test(requestUrl)) return;
+          if (!requestUrl.includes("/api/hls-proxy/uhd/")) return;
           xhr.addEventListener("load", () => {
             const offset = xhr.getResponseHeader("X-Replay-Window-Start-Ms");
             if (offset && /^\d+$/.test(offset)) {
               playbackOffsetMs.current = Number(offset);
-              timelineOffsetReadyRef.current = true;
               emitPlaybackTelemetry("window-offset", { offsetMs: playbackOffsetMs.current });
             }
           }, { once: true });
@@ -516,15 +512,6 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (disposed) return;
-        if (sourceTypeRef.current === "camera-4k-window" && !timelineOffsetReadyRef.current) {
-          emitPlaybackTelemetry("error", {
-            errorType: "missing-window-offset",
-            errorDetail: "Window playlist did not expose X-Replay-Window-Start-Ms",
-            ...mediaStateDetail(),
-          });
-          failSource();
-          return;
-        }
         hls.startLoad(playbackSecondsAt(live.current.win.from, playbackOffsetMs.current));
         seekToWindow();
       });
@@ -579,9 +566,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     };
   }, [emitPlaybackTelemetry, isRec, loadAttempt, mediaStateDetail]);
 
-  // Load a new bounded manifest into the existing HLS instance. Safari's
-  // native-HLS path uses the full playlist because it cannot expose the
-  // window-start response header to the player.
+  // Load a new source into the existing HLS instance.
   useEffect(() => {
     if (!isRec || !sourceChoiceReady) return;
     const source = playbackSources[playbackSourceIndex];
@@ -591,20 +576,13 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     const engine = mediaEngineRef.current === "unknown"
       ? framerPlaybackEngine(Hls.isSupported(), typeof window !== "undefined" && "ManagedMediaSource" in window)
       : mediaEngineRef.current;
-    const resolved = resolveFramerPlaybackSource(source, engine);
-    if (!resolved) {
-      const streamIndex = playbackSources.findIndex((item) => item.kind === "stream");
-      if (streamIndex >= 0 && streamIndex !== playbackSourceIndex) {
-        setPlaybackSourceIndex(streamIndex);
-        return;
-      }
-      failSourceRef.current();
-      return;
-    }
-    const { url, sourceType } = resolved;
+    const useHls = Hls.isSupported();
+    const url = !useHls && source.kind === "camera-4k"
+      ? source.fullUrl ?? source.url
+      : source.url;
+    const sourceType: FramerPlaybackSourceType = source.kind;
     const sourceKey = framerSourceKey(engine, sourceType, url);
     if (activeSourceKeyRef.current === sourceKey) return;
-    const useHls = engine !== "native-hls";
     activeSourceKeyRef.current = sourceKey;
     initialSeekSourceKeyRef.current = null;
     initialPlaySourceKeyRef.current = null;
@@ -612,7 +590,6 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     mediaEngineRef.current = engine;
     pendingSourceRef.current = { source, url, engine, sourceType, key: sourceKey };
     playbackOffsetMs.current = 0;
-    timelineOffsetReadyRef.current = engine === "native-hls" || sourceType !== "camera-4k-window";
     failureHandledRef.current = false;
     video.pause();
     setPlaying(false);
