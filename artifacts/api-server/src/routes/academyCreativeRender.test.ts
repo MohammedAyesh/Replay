@@ -27,6 +27,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 import renderRouter, { tintFromQuery } from "./academyCreativeRender";
 import { clearTintedCache, rescanPlates } from "../lib/creative/renderMedia";
 import { canViewBunnyVideo } from "../lib/publicFootage";
+import { logger } from "../lib/logger";
 
 const tag = Date.now();
 let app: Express;
@@ -139,6 +140,47 @@ describe("GET …/creative/artwork/backgrounds", () => {
   });
 });
 
+describe("POST …/creative/playback-telemetry", () => {
+  const body = {
+    sessionId: `test-session-${tag}`,
+    event: "sample",
+    elapsedMs: 4_000,
+    engine: "native-hls",
+    sourceType: "camera-4k-full",
+    hevcSupported: true,
+    detail: {
+      currentTime: 2701,
+      duration: 5400,
+      readyState: 3,
+      networkState: 2,
+      paused: false,
+      seeking: false,
+      buffered: [[2700, 2704]],
+    },
+  };
+
+  it("accepts bounded diagnostic samples from an academy owner and writes the searchable prefix", async () => {
+    const info = vi.spyOn(logger, "info");
+    try {
+      await request(app).post(url("/playback-telemetry")).send(body).expect(401);
+      await request(app).post(url("/playback-telemetry")).set(auth(coachId)).send(body).expect(403);
+      await request(app).post(url("/playback-telemetry")).set(auth(ownerId)).send(body).expect(204);
+      expect(info).toHaveBeenCalledWith(
+        expect.objectContaining({ academyId, ...body }),
+        "[creative-framer-playback]",
+      );
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it("rejects unknown event data rather than logging arbitrary client payloads", async () => {
+    await request(app).post(url("/playback-telemetry")).set(auth(ownerId))
+      .send({ ...body, event: "unknown", extra: "not allowed" })
+      .expect(400);
+  });
+});
+
 describe("GET …/creative/media for plates and tints", () => {
   const plate = (n = 1) => encodeURIComponent(JSON.stringify({ type: "artwork", key: `bg/broadcast/${n}` }));
 
@@ -167,7 +209,8 @@ describe("GET …/creative/media for plates and tints", () => {
 
     expect(response.body.sources[0]).toEqual({
       kind: "camera-4k",
-      url: `/api/hls-proxy/uhd/${videoId}.m3u8`,
+      url: `/api/hls-proxy/uhd/${videoId}.m3u8?fromMs=2700000&toMs=2715000`,
+      fullUrl: `/api/hls-proxy/uhd/${videoId}.m3u8`,
     });
     expect(response.body.sources.every((item: { url: string }) => item.url.startsWith("/api/hls-proxy/"))).toBe(true);
     expect((await request(app).get(url(`/media?src=${source}&want=video&sources=1`)).set(auth(coachId))).status).toBe(403);

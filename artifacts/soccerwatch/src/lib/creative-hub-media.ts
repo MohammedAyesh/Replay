@@ -53,6 +53,10 @@ export function creativePlaybackSourcesUrl(
   return `${url.slice(0, at)}?${qs.toString()}`;
 }
 
+/** Owner-scoped endpoint that writes compact, non-identifying player diagnostics to API logs. */
+export const creativePlaybackTelemetryUrl = (academyId: number) =>
+  apiUrl(`/academy/console/academies/${academyId}/creative/playback-telemetry`);
+
 /**
  * format: the scene format (a plate's post / story file).
  * tint: recolour the still on the server.

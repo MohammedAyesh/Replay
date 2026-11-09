@@ -103,6 +103,75 @@ const previewBody = z.object({
   timeMs: z.number().min(0).max(180_000).optional(),
 });
 
+const playbackTelemetryBody = z.object({
+  sessionId: z.string().min(8).max(64).regex(/^[a-zA-Z0-9-]+$/),
+  event: z.enum([
+    "opened", "capability", "source-load", "source-clear", "window-offset", "loadstart",
+    "seek", "seeking", "seeked", "loadedmetadata", "playing", "waiting", "stalled",
+    "error", "hls-error", "sample",
+  ]),
+  elapsedMs: z.number().int().min(0).max(86_400_000),
+  engine: z.enum(["native-hls", "hls.js", "mms", "unknown"]),
+  sourceType: z.enum(["camera-4k-window", "camera-4k-full", "stream", "none"]),
+  hevcSupported: z.boolean().nullable(),
+  detail: z.object({
+    fromMs: z.number().finite().min(0).max(86_400_000).optional(),
+    toMs: z.number().finite().min(0).max(86_400_000).optional(),
+    offsetMs: z.number().finite().min(0).max(86_400_000).optional(),
+    targetSec: z.number().finite().min(0).max(86_400).optional(),
+    currentTime: z.number().finite().min(0).max(86_400).optional(),
+    duration: z.number().finite().min(0).max(86_400).optional(),
+    readyState: z.number().int().min(0).max(4).optional(),
+    networkState: z.number().int().min(0).max(3).optional(),
+    paused: z.boolean().optional(),
+    seeking: z.boolean().optional(),
+    buffered: z.array(z.tuple([
+      z.number().finite().min(0).max(86_400),
+      z.number().finite().min(0).max(86_400),
+    ])).max(8).optional(),
+    loadOrdinal: z.number().int().min(1).max(100).optional(),
+    reason: z.enum(["window-start", "window-loop", "play-from-start", "nudge", "record-start", "clip-start"]).optional(),
+    errorType: z.string().max(60).optional(),
+    errorDetail: z.string().max(100).optional(),
+    fatal: z.boolean().optional(),
+    responseCode: z.number().int().min(0).max(999).optional(),
+  }).strict().optional(),
+}).strict();
+
+const playbackTelemetryRate = new Map<string, { startedAt: number; count: number }>();
+
+function allowPlaybackTelemetry(key: string, now = Date.now()): boolean {
+  let entry = playbackTelemetryRate.get(key);
+  if (!entry || now - entry.startedAt >= 60_000) {
+    entry = { startedAt: now, count: 0 };
+    playbackTelemetryRate.set(key, entry);
+  }
+  entry.count++;
+  if (playbackTelemetryRate.size > 10_000) {
+    for (const [candidate, value] of playbackTelemetryRate) {
+      if (now - value.startedAt >= 120_000) playbackTelemetryRate.delete(candidate);
+    }
+  }
+  return entry.count <= 60;
+}
+
+router.post(`${base}/playback-telemetry`, async (req, res): Promise<void> => {
+  const access = await creativeOwner(req, res);
+  if (!access) return;
+  const parsed = playbackTelemetryBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid playback telemetry" });
+    return;
+  }
+  if (!allowPlaybackTelemetry(`${access.academyId}:${parsed.data.sessionId}`)) {
+    res.setHeader("Retry-After", "60");
+    res.status(429).end();
+    return;
+  }
+  logger.info({ academyId: access.academyId, ...parsed.data }, "[creative-framer-playback]");
+  res.status(204).end();
+});
+
 router.post(`${base}/preview`, async (req, res): Promise<void> => {
   const access = await creativeOwner(req, res);
   if (!access) return;

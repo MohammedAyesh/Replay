@@ -93,6 +93,49 @@ describe("camera fMP4 HLS byte ranges", () => {
     }
   });
 
+  it("splits any media range at the pull-zone 5 MiB chunk boundary", async () => {
+    const boundary = 5 * 1024 * 1024;
+    const start = boundary - 10;
+    const body = [
+      "#EXTM3U",
+      '#EXT-X-MAP:URI="4k.mp4",BYTERANGE="4@0"',
+      "#EXTINF:1.000,",
+      `#EXT-X-BYTERANGE:30@${start}`,
+      "4k.mp4",
+      "#EXT-X-ENDLIST",
+    ].join("\n");
+    const plan = parseHlsByteRangePlan(body, "https://storage.example/4k.m3u8", 0, 1, {
+      prerollSeconds: 0,
+      postrollSeconds: 0,
+    });
+    const dir = await mkdtemp(path.join(os.tmpdir(), "uhd-range-boundary-test-"));
+    const outputPath = path.join(dir, "assembled.mp4");
+    const calls: string[] = [];
+    const fetcher = vi.fn(async (_url: string, init?: RequestInit) => {
+      const range = new Headers(init?.headers).get("Range")!;
+      calls.push(range);
+      const [, first, last] = /^bytes=(\d+)-(\d+)$/.exec(range)!;
+      const from = Number(first);
+      const to = Number(last);
+      return new Response(Uint8Array.from({ length: to - from + 1 }, (_, i) => (from + i) % 251), {
+        status: 206,
+        headers: { "Content-Range": `bytes ${from}-${to}/10000000` },
+      });
+    });
+    try {
+      await downloadHlsByteRangePlan(plan, outputPath, "https://replayjo.com/", { fetcher });
+      const contents = await readFile(outputPath);
+      expect(calls).toEqual([
+        "bytes=0-3",
+        `bytes=${start}-${boundary - 1}`,
+        `bytes=${boundary}-${boundary + 19}`,
+      ]);
+      expect([...contents.subarray(4)]).toEqual(Array.from({ length: 30 }, (_, i) => (start + i) % 251));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("keeps the measured container timestamp origin instead of assuming zero", () => {
     expect(calculateSourceTimestampOffset(0.033, 0)).toBeCloseTo(0.033, 3);
     expect(calculateSourceTimestampOffset(146.033, 146)).toBeCloseTo(0.033, 3);

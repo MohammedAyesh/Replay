@@ -20,6 +20,9 @@ export type HlsByteRangePlan = {
   selectedStartTime: number;
 };
 
+/** The pull zone serves large objects in 5 MiB chunks; never span a chunk boundary in one Range request. */
+export const HLS_RANGE_CHUNK_BYTES = 5 * 1024 * 1024;
+
 /** Total source timeline duration in an fMP4 media playlist. */
 export function hlsPlaylistDuration(body: string): number {
   if (!body.trimStart().startsWith("#EXTM3U")) throw new Error("Source is not an HLS playlist");
@@ -192,6 +195,31 @@ async function fetchRange(
   return bytes;
 }
 
+async function fetchRangeWithoutCrossingChunks(
+  range: HlsByteRange,
+  referer: string,
+  fetcher: typeof fetch,
+  timeoutMs: number,
+): Promise<Uint8Array> {
+  const pieces: HlsByteRange[] = [];
+  for (let start = range.start; start <= range.end;) {
+    const nextBoundary = (Math.floor(start / HLS_RANGE_CHUNK_BYTES) + 1) * HLS_RANGE_CHUNK_BYTES;
+    const end = Math.min(range.end, nextBoundary - 1);
+    pieces.push({ ...range, start, end, length: end - start + 1 });
+    start = end + 1;
+  }
+  if (pieces.length === 1) return fetchRange(pieces[0]!, referer, fetcher, timeoutMs);
+
+  const buffers = await Promise.all(pieces.map((piece) => fetchRange(piece, referer, fetcher, timeoutMs)));
+  const combined = new Uint8Array(range.length);
+  let offset = 0;
+  for (const buffer of buffers) {
+    combined.set(buffer, offset);
+    offset += buffer.byteLength;
+  }
+  return combined;
+}
+
 /** Fetch selected ranges in bounded parallel batches and assemble in timeline order. */
 export async function downloadHlsByteRangePlan(
   plan: HlsByteRangePlan,
@@ -209,7 +237,8 @@ export async function downloadHlsByteRangePlan(
     totalBytes += init.byteLength;
     for (let offset = 0; offset < plan.segments.length; offset += concurrency) {
       const batch = plan.segments.slice(offset, offset + concurrency);
-      const buffers = await Promise.all(batch.map((range) => fetchRange(range, referer, fetcher, timeoutMs)));
+      const buffers = await Promise.all(batch.map((range) =>
+        fetchRangeWithoutCrossingChunks(range, referer, fetcher, timeoutMs)));
       for (const bytes of buffers) {
         await fs.appendFile(outputPath, bytes);
         totalBytes += bytes.byteLength;

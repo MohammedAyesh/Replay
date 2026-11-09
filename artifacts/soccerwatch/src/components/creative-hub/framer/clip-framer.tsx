@@ -4,7 +4,20 @@ import Hls from "hls.js";
 import { ballTrailAt, drawBallTrail, framingWindow, trailWidthFor, type BallTrailSample, type Framing, type SceneBranding } from "@workspace/api-zod";
 import { useCreativeFramerCopy } from "@/i18n/creative-framer-strings";
 import { videoUrlFor } from "../library/media";
-import { creativePlaybackSourcesUrl, withCreativePlaybackWindow, type CreativePlaybackSource } from "@/lib/creative-hub-media";
+import {
+  creativePlaybackSourcesUrl,
+  creativePlaybackTelemetryUrl,
+  withCreativePlaybackWindow,
+  type CreativePlaybackSource,
+} from "@/lib/creative-hub-media";
+import {
+  framerPlaybackEngine,
+  framerSourceKey,
+  initialSeekAction,
+  resolveFramerPlaybackSource,
+  type FramerPlaybackEngine,
+  type FramerPlaybackSourceType,
+} from "./playback";
 import {
   DEFAULT_BRANDING, FRAMER_SHAPES, MAX_VIDEO_MS, absPlaybackTimeMs, boxAspectOf, fetchFraming, footageBox,
   playbackSecondsAt, shapeFormat, thin, zoomRange,
@@ -37,6 +50,34 @@ const WIDE = 16 / 9;
 
 type Key = [number, number, number];
 type Mode = "ball" | "manual" | "pitch";
+type PlaybackTelemetryEvent =
+  | "opened" | "capability" | "source-load" | "source-clear" | "window-offset" | "loadstart"
+  | "seek" | "seeking" | "seeked" | "loadedmetadata" | "playing" | "waiting" | "stalled"
+  | "error" | "hls-error" | "sample";
+type PlaybackTelemetryDetail = {
+  fromMs?: number;
+  toMs?: number;
+  offsetMs?: number;
+  targetSec?: number;
+  currentTime?: number;
+  duration?: number;
+  readyState?: number;
+  networkState?: number;
+  paused?: boolean;
+  seeking?: boolean;
+  buffered?: Array<[number, number]>;
+  loadOrdinal?: number;
+  reason?: "window-start" | "window-loop" | "play-from-start" | "nudge" | "record-start" | "clip-start";
+  errorType?: string;
+  errorDetail?: string;
+  fatal?: boolean;
+  responseCode?: number;
+};
+
+function newPlaybackSessionId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 14)}`;
+}
 
 function parsePlaybackSources(value: unknown): CreativePlaybackSource[] {
   if (!value || typeof value !== "object" || !("sources" in value) || !Array.isArray(value.sources)) return [];
@@ -115,8 +156,26 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   const hlsMediaAttachedRef = useRef(false);
-  const pendingSourceRef = useRef<CreativePlaybackSource | null>(null);
+  const loadedSourceKeyRef = useRef<string | null>(null);
+  const initialPlaySourceKeyRef = useRef<string | null>(null);
+  const pendingSourceRef = useRef<{
+    source: CreativePlaybackSource;
+    url: string;
+    engine: FramerPlaybackEngine;
+    sourceType: FramerPlaybackSourceType;
+    key: string;
+  } | null>(null);
   const playbackOffsetMs = useRef(0);
+  const timelineOffsetReadyRef = useRef(false);
+  const activeSourceKeyRef = useRef<string | null>(null);
+  const initialSeekSourceKeyRef = useRef<string | null>(null);
+  const sourceLoadOrdinalRef = useRef(0);
+  const mediaEngineRef = useRef<FramerPlaybackEngine | "unknown">("unknown");
+  const sourceTypeRef = useRef<FramerPlaybackSourceType | "none">("none");
+  const telemetrySessionRef = useRef<string | null>(null);
+  const openedAtRef = useRef(Date.now());
+  const openedTelemetrySentRef = useRef(false);
+  if (!telemetrySessionRef.current) telemetrySessionRef.current = newPlaybackSessionId();
   const playbackSourcesRef = useRef(playbackSources);
   playbackSourcesRef.current = playbackSources;
   const playbackSourceIndexRef = useRef(playbackSourceIndex);
@@ -132,12 +191,55 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   // Steering by hand while it plays (without Record): the path is kept while the finger is down.
   const steerBuf = useRef<Key[]>([]);
   const steering = useRef(false);
+  const loopSeekPendingRef = useRef(false);
   const framed = mode !== "pitch";
   const outAspect = lockedAspect ?? boxAspectOf(shape, framed);
   const range = zoomRange(outAspect);
   const zoom = round3(range.max - closeness * (range.max - range.min));
   const live = useRef({ keys, zoom, mode, win, loaded, recording, outAspect, shape, trail, ball });
   live.current = { keys, zoom, mode, win, loaded, recording, outAspect, shape, trail, ball };
+  const emitPlaybackTelemetry = useCallback((event: PlaybackTelemetryEvent, detail?: PlaybackTelemetryDetail) => {
+    if (!isRec) return;
+    const payload = {
+      sessionId: telemetrySessionRef.current!,
+      event,
+      elapsedMs: Math.max(0, Date.now() - openedAtRef.current),
+      engine: mediaEngineRef.current,
+      sourceType: sourceTypeRef.current,
+      hevcSupported: uhdCapabilityRef.current,
+      ...(detail ? { detail } : {}),
+    };
+    void fetch(creativePlaybackTelemetryUrl(academyId), {
+      method: "POST",
+      credentials: "include",
+      keepalive: true,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    }).catch(() => { /* diagnostics must never interrupt playback */ });
+  }, [academyId, isRec]);
+  const mediaStateDetail = useCallback((): PlaybackTelemetryDetail => {
+    const video = videoRef.current;
+    if (!video) return {};
+    const buffered: Array<[number, number]> = [];
+    for (let i = 0; i < Math.min(video.buffered.length, 8); i++) {
+      buffered.push([video.buffered.start(i), video.buffered.end(i)]);
+    }
+    return {
+      currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0,
+      duration: Number.isFinite(video.duration) ? video.duration : undefined,
+      readyState: video.readyState,
+      networkState: video.networkState,
+      paused: video.paused,
+      seeking: video.seeking,
+      buffered,
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isRec || openedTelemetrySentRef.current) return;
+    openedTelemetrySentRef.current = true;
+    emitPlaybackTelemetry("opened", { fromMs: win.from, toMs: win.to });
+  }, [emitPlaybackTelemetry, isRec, win.from, win.to]);
 
   // ── Footage ───────────────────────────────────────────────────────────────
   const sourcesUrl = start.type === "recording" ? creativePlaybackSourcesUrl(academyId, start) : null;
@@ -147,9 +249,12 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     [academyId, clipId],
   );
   const absAt = (v: HTMLVideoElement) => absPlaybackTimeMs(v.currentTime, isRec ? playbackOffsetMs.current : live.current.loaded.from);
-  const seekAbs = (ms: number) => {
+  const seekAbs = (ms: number, reason: NonNullable<PlaybackTelemetryDetail["reason"]>) => {
     const v = videoRef.current;
-    if (v) v.currentTime = playbackSecondsAt(ms, isRec ? playbackOffsetMs.current : live.current.loaded.from);
+    if (!v) return;
+    const targetSec = playbackSecondsAt(ms, isRec ? playbackOffsetMs.current : live.current.loaded.from);
+    emitPlaybackTelemetry("seek", { targetSec, reason, ...mediaStateDetail() });
+    v.currentTime = targetSec;
   };
 
   // Ask the owner-scoped endpoint for HLS URLs only. Recording moments receive
@@ -228,6 +333,13 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
         supportsUhd = uhdCapabilityRef.current;
       }
       if (cancelled) return;
+      mediaEngineRef.current = framerPlaybackEngine(
+        Hls.isSupported(),
+        typeof window !== "undefined" && "ManagedMediaSource" in window,
+      );
+      if (playbackSources.some((source) => source.kind === "camera-4k")) {
+        emitPlaybackTelemetry("capability");
+      }
       const preferredKind = supportsUhd ? "camera-4k" : "stream";
       let index = playbackSources.findIndex((source) => source.kind === preferredKind);
       if (index < 0 && supportsUhd) {
@@ -241,7 +353,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       setSourceChoiceReady(true);
     })();
     return () => { cancelled = true; };
-  }, [isRec, playbackSources]);
+  }, [emitPlaybackTelemetry, isRec, playbackSources]);
 
   // Keep one HLS instance for the lifetime of this open framer. Fatal errors
   // may switch its source to Stream, but playhead, drag, trail, and resize
@@ -271,20 +383,37 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     };
     const seekToWindow = (): boolean => {
       if (!isRec) {
-        seekAbs(live.current.win.from);
+        seekAbs(live.current.win.from, "clip-start");
         return true;
       }
+      const sourceKey = activeSourceKeyRef.current;
       const duration = video.duration;
-      if (!Number.isFinite(duration) || duration <= 0) return false;
-      const target = Math.min(
-        Math.max(0, playbackSecondsAt(live.current.win.from, playbackOffsetMs.current)),
-        Math.max(0, duration - 0.1),
-      );
+      const target = playbackSecondsAt(live.current.win.from, playbackOffsetMs.current);
+      // Do not clamp an absolute recording seek into a short/incomplete HLS
+      // duration; wait for the final metadata instead of seeking to its end.
+      const action = initialSeekAction({
+        sourceKey,
+        completedSourceKey: initialSeekSourceKeyRef.current,
+        offsetReady: timelineOffsetReadyRef.current,
+        duration,
+        target,
+        currentTime: video.currentTime,
+        seeking: video.seeking,
+      });
+      if (action === "wait") return false;
       try {
-        if (Math.abs(video.currentTime - target) > 0.5) {
+        if (action === "seek") {
+          emitPlaybackTelemetry("seek", {
+            targetSec: target,
+            reason: "window-start",
+            offsetMs: playbackOffsetMs.current,
+            ...mediaStateDetail(),
+          });
           video.currentTime = target;
+          initialSeekSourceKeyRef.current = sourceKey;
           return false;
         }
+        initialSeekSourceKeyRef.current = sourceKey;
         return !video.seeking;
       } catch {
         return false;
@@ -294,21 +423,58 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       if (disposed || !seekToWindow() || video.readyState < 2) return;
       setFailed(false);
       setReady(true);
-      void video.play().catch(() => undefined);
+      const sourceKey = activeSourceKeyRef.current;
+      if (sourceKey && initialPlaySourceKeyRef.current !== sourceKey) {
+        initialPlaySourceKeyRef.current = sourceKey;
+        void video.play().catch(() => undefined);
+      }
     };
     const onMetadata = () => { if (!disposed) seekToWindow(); };
-    const onVideoError = () => failSource();
+    const onVideoError = () => {
+      emitPlaybackTelemetry("error", {
+        errorType: String(video.error?.code ?? "media").slice(0, 60),
+        errorDetail: String(video.error?.message ?? "video element error").slice(0, 100),
+        ...mediaStateDetail(),
+      });
+      failSource();
+    };
+    const onLoadStart = () => emitPlaybackTelemetry("loadstart", mediaStateDetail());
+    const onSeeking = () => emitPlaybackTelemetry("seeking", mediaStateDetail());
+    const onSeeked = () => emitPlaybackTelemetry("seeked", mediaStateDetail());
+    const onLoopSeeked = () => {
+      if (absAt(video) < live.current.win.to) loopSeekPendingRef.current = false;
+    };
+    const onLoadedMetadata = () => emitPlaybackTelemetry("loadedmetadata", mediaStateDetail());
+    const onPlaying = () => emitPlaybackTelemetry("playing", mediaStateDetail());
+    const onWaiting = () => emitPlaybackTelemetry("waiting", mediaStateDetail());
+    const onStalled = () => emitPlaybackTelemetry("stalled", mediaStateDetail());
+    const sampleTimer = window.setInterval(() => {
+      emitPlaybackTelemetry("sample", mediaStateDetail());
+    }, 4_000);
 
     video.addEventListener("loadeddata", onLoadedData);
     video.addEventListener("loadedmetadata", onMetadata);
     video.addEventListener("durationchange", onMetadata);
     video.addEventListener("seeked", onLoadedData);
     video.addEventListener("error", onVideoError);
+    video.addEventListener("loadstart", onLoadStart);
+    video.addEventListener("seeking", onSeeking);
+    video.addEventListener("seeked", onSeeked);
+    video.addEventListener("seeked", onLoopSeeked);
+    video.addEventListener("loadedmetadata", onLoadedMetadata);
+    video.addEventListener("playing", onPlaying);
+    video.addEventListener("waiting", onWaiting);
+    video.addEventListener("stalled", onStalled);
     failSourceRef.current = failSource;
     video.crossOrigin = "anonymous";
     video.muted = mutedRef.current;
     setReady(false);
     setFailed(false);
+    loadedSourceKeyRef.current = null;
+    activeSourceKeyRef.current = null;
+    initialSeekSourceKeyRef.current = null;
+    initialPlaySourceKeyRef.current = null;
+    timelineOffsetReadyRef.current = false;
     video.removeAttribute("src");
     hlsMediaAttachedRef.current = false;
     if (Hls.isSupported()) {
@@ -319,10 +485,14 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
         backBufferLength: 120,
         startPosition: -1,
         xhrSetup: (xhr, requestUrl) => {
-          if (!requestUrl.includes("/api/hls-proxy/uhd/")) return;
+          if (!/\/api\/hls-proxy\/uhd\/.*\.m3u8(?:\?|$)/.test(requestUrl)) return;
           xhr.addEventListener("load", () => {
             const offset = xhr.getResponseHeader("X-Replay-Window-Start-Ms");
-            if (offset && /^\d+$/.test(offset)) playbackOffsetMs.current = Number(offset);
+            if (offset && /^\d+$/.test(offset)) {
+              playbackOffsetMs.current = Number(offset);
+              timelineOffsetReadyRef.current = true;
+              emitPlaybackTelemetry("window-offset", { offsetMs: playbackOffsetMs.current });
+            }
           }, { once: true });
         },
       });
@@ -333,11 +503,28 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
         const pending = pendingSourceRef.current;
         if (pending) {
           pendingSourceRef.current = null;
-          hls.loadSource(pending.url);
+          if (activeSourceKeyRef.current === pending.key && loadedSourceKeyRef.current !== pending.key) {
+            loadedSourceKeyRef.current = pending.key;
+            hls.loadSource(pending.url);
+            emitPlaybackTelemetry("source-load", {
+              loadOrdinal: ++sourceLoadOrdinalRef.current,
+              fromMs: live.current.win.from,
+              toMs: live.current.win.to,
+            });
+          }
         }
       });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         if (disposed) return;
+        if (sourceTypeRef.current === "camera-4k-window" && !timelineOffsetReadyRef.current) {
+          emitPlaybackTelemetry("error", {
+            errorType: "missing-window-offset",
+            errorDetail: "Window playlist did not expose X-Replay-Window-Start-Ms",
+            ...mediaStateDetail(),
+          });
+          failSource();
+          return;
+        }
         hls.startLoad(playbackSecondsAt(live.current.win.from, playbackOffsetMs.current));
         seekToWindow();
       });
@@ -345,6 +532,14 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
         if (!disposed && video.readyState >= 2) onLoadedData();
       });
       hls.on(Hls.Events.ERROR, (_event, data) => {
+        const responseCode = data.response?.code;
+        emitPlaybackTelemetry("hls-error", {
+          errorType: String(data.type ?? "unknown").slice(0, 60),
+          errorDetail: String(data.details ?? "unknown").slice(0, 100),
+          fatal: Boolean(data.fatal),
+          responseCode: Number.isInteger(responseCode) ? responseCode : undefined,
+          ...mediaStateDetail(),
+        });
         if (data.fatal) failSource();
       });
       hls.attachMedia(video);
@@ -354,21 +549,35 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
 
     return () => {
       disposed = true;
+      window.clearInterval(sampleTimer);
       if (failSourceRef.current === failSource) failSourceRef.current = () => {};
       video.removeEventListener("loadeddata", onLoadedData);
       video.removeEventListener("loadedmetadata", onMetadata);
       video.removeEventListener("durationchange", onMetadata);
       video.removeEventListener("seeked", onLoadedData);
       video.removeEventListener("error", onVideoError);
+      video.removeEventListener("loadstart", onLoadStart);
+      video.removeEventListener("seeking", onSeeking);
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("seeked", onLoopSeeked);
+      video.removeEventListener("loadedmetadata", onLoadedMetadata);
+      video.removeEventListener("playing", onPlaying);
+      video.removeEventListener("waiting", onWaiting);
+      video.removeEventListener("stalled", onStalled);
       hlsRef.current?.destroy();
       hlsRef.current = null;
       pendingSourceRef.current = null;
       hlsMediaAttachedRef.current = false;
       video.pause();
+      if (loadedSourceKeyRef.current) {
+        emitPlaybackTelemetry("source-clear", mediaStateDetail());
+      }
+      loadedSourceKeyRef.current = null;
+      activeSourceKeyRef.current = null;
       video.removeAttribute("src");
       video.load();
     };
-  }, [isRec, loadAttempt]);
+  }, [emitPlaybackTelemetry, isRec, loadAttempt, mediaStateDetail]);
 
   // Load a new bounded manifest into the existing HLS instance. Safari's
   // native-HLS path uses the full playlist because it cannot expose the
@@ -379,13 +588,31 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     const video = videoRef.current;
     if (!source || !video) return;
 
-    const useHls = Hls.isSupported();
-    const url = !useHls && source.kind === "camera-4k"
-      ? source.fullUrl ?? source.url
-      : source.url;
-    const activeSource = { ...source, url };
-    pendingSourceRef.current = activeSource;
+    const engine = mediaEngineRef.current === "unknown"
+      ? framerPlaybackEngine(Hls.isSupported(), typeof window !== "undefined" && "ManagedMediaSource" in window)
+      : mediaEngineRef.current;
+    const resolved = resolveFramerPlaybackSource(source, engine);
+    if (!resolved) {
+      const streamIndex = playbackSources.findIndex((item) => item.kind === "stream");
+      if (streamIndex >= 0 && streamIndex !== playbackSourceIndex) {
+        setPlaybackSourceIndex(streamIndex);
+        return;
+      }
+      failSourceRef.current();
+      return;
+    }
+    const { url, sourceType } = resolved;
+    const sourceKey = framerSourceKey(engine, sourceType, url);
+    if (activeSourceKeyRef.current === sourceKey) return;
+    const useHls = engine !== "native-hls";
+    activeSourceKeyRef.current = sourceKey;
+    initialSeekSourceKeyRef.current = null;
+    initialPlaySourceKeyRef.current = null;
+    sourceTypeRef.current = sourceType;
+    mediaEngineRef.current = engine;
+    pendingSourceRef.current = { source, url, engine, sourceType, key: sourceKey };
     playbackOffsetMs.current = 0;
+    timelineOffsetReadyRef.current = engine === "native-hls" || sourceType !== "camera-4k-window";
     failureHandledRef.current = false;
     video.pause();
     setPlaying(false);
@@ -400,8 +627,16 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       }
       if (hlsMediaAttachedRef.current) {
         pendingSourceRef.current = null;
-        hls.stopLoad();
-        hls.loadSource(url);
+        if (loadedSourceKeyRef.current !== sourceKey) {
+          loadedSourceKeyRef.current = sourceKey;
+          hls.stopLoad();
+          hls.loadSource(url);
+          emitPlaybackTelemetry("source-load", {
+            loadOrdinal: ++sourceLoadOrdinalRef.current,
+            fromMs: live.current.win.from,
+            toMs: live.current.win.to,
+          });
+        }
       }
       return;
     }
@@ -410,9 +645,15 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       return;
     }
     pendingSourceRef.current = null;
+    loadedSourceKeyRef.current = sourceKey;
     video.src = url;
     video.load();
-  }, [isRec, sourceChoiceReady, playbackSources, playbackSourceIndex]);
+    emitPlaybackTelemetry("source-load", {
+      loadOrdinal: ++sourceLoadOrdinalRef.current,
+      fromMs: live.current.win.from,
+      toMs: live.current.win.to,
+    });
+  }, [emitPlaybackTelemetry, isRec, sourceChoiceReady, playbackSources, playbackSourceIndex]);
 
   // Saved clips are already short MP4 files; keep their native playback path.
   useEffect(() => {
@@ -510,9 +751,10 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       const s = live.current;
       const abs = absAt(v);
       // Stay inside the clip: loop back to its start.
-      if (!v.paused && abs >= s.win.to) {
+      if (!v.paused && abs >= s.win.to && !loopSeekPendingRef.current) {
+        loopSeekPendingRef.current = true;
         if (s.recording) stopRecording();
-        seekAbs(s.win.from);
+        seekAbs(s.win.from, "window-loop");
       }
       setNowAbs((prev) => (Math.abs(prev - abs) > 80 ? abs : prev));
       const srcAspect = v.videoWidth / v.videoHeight;
@@ -596,7 +838,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     const v = videoRef.current;
     if (!v) return;
     const abs = absAt(v);
-    if (abs < win.from || abs >= win.to - 100) seekAbs(win.from);
+    if (abs < win.from || abs >= win.to - 100) seekAbs(win.from, "play-from-start");
     v.muted = muted;
     void v.play().then(() => setPlaying(true)).catch(() => { v.muted = true; setMuted(true); void v.play().then(() => setPlaying(true)); });
   };
@@ -604,7 +846,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const nudge = (d: number) => {
     const v = videoRef.current;
     if (!v) return;
-    seekAbs(Math.min(win.to - 50, Math.max(win.from, absAt(v) + d)));
+    seekAbs(Math.min(win.to - 50, Math.max(win.from, absAt(v) + d)), "nudge");
   };
 
   const setKeyAt = (abs: number, x: number, y: number) => {
@@ -617,7 +859,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     recBuf.current = [];
     recLast.current = 0;
     if (mode === "pitch") setMode("manual");
-    seekAbs(win.from);
+    seekAbs(win.from, "record-start");
     setRecording(true);
     play();
   };
