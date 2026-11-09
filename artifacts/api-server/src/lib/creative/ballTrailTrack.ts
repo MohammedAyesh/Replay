@@ -51,7 +51,7 @@ function thin(keys: ReadonlyArray<readonly [number, number, number]>, max = 48):
 const even = (n: number) => Math.max(2, Math.trunc(n / 2) * 2);
 
 /**
- * The source rectangle (pixels) the layer shows at `fileSec`, matching
+ * The source rectangle (buffer pixels) the layer shows at `fileSec`, matching
  * framingCrop: w = trunc(min(iw·zoom, ih·A)/2)·2, h = trunc(w/A/2)·2, centred
  * on the keys (piecewise linear on the file's clock) and kept inside.
  * Without framing the overlay goes on the whole source.

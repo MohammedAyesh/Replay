@@ -327,7 +327,7 @@ const CREATIVE_EXPORT_DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
  * Confirm Stream has a real media playlist and at least one retrievable
  * segment. A GUID or a master playlist alone is not proof that it can play.
  */
-async function playableStream(videoId: string): Promise<{ url: string; referer: string } | null> {
+export async function playableStream(videoId: string): Promise<{ url: string; referer: string } | null> {
   if (!isBunnyConfigured() || videoId.startsWith("live:")) return null;
   let masterUrl: string;
   try {
@@ -367,7 +367,10 @@ async function playableStream(videoId: string): Promise<{ url: string; referer: 
   }
 }
 
-async function downloadSavedClip(clip: Awaited<ReturnType<typeof academyClip>>, temps: string[]): Promise<{ path: string; durationMs: number; hasAudio: boolean } | null> {
+export async function downloadSavedClip(
+  clip: { id: number; exportedUrl?: string | null },
+  temps: string[],
+): Promise<{ path: string; durationMs: number; hasAudio: boolean } | null> {
   if (!clip?.exportedUrl) return null;
   const probe = await probeExportObject(clip.exportedUrl);
   if (probe.state !== "exists") return null;
@@ -444,13 +447,13 @@ async function frameFromStream(url: string, referer: string, atSec: number, temp
   return fs.promises.readFile(framePath);
 }
 
-async function bufferStreamClip(
+export async function bufferStreamClip(
   url: string,
   referer: string,
   startSec: number,
   durationSec: number,
   temps: string[],
-): Promise<{ bufferPath: string; bufferedDuration: number }> {
+): Promise<{ bufferPath: string; bufferedDuration: number; bufferDimensions: { width: number; height: number } }> {
   if (!Number.isFinite(startSec) || !Number.isFinite(durationSec) || durationSec <= 0) {
     throw new CreativeRenderError("There is no playable footage in this clip.", 404);
   }
@@ -458,12 +461,12 @@ async function bufferStreamClip(
   temps.push(bufferPath);
   await new Promise<void>((resolve, reject) => {
     execFile("ffmpeg", [
-      "-nostdin", "-hide_banner", "-loglevel", "error", "-threads", "2",
+      "-nostdin", "-hide_banner", "-loglevel", "error", "-filter_threads", "1", "-threads", "1",
       "-headers", `Referer: ${referer}\r\n`,
       "-ss", Math.max(0, startSec).toFixed(3), "-i", url, "-t", durationSec.toFixed(3),
       "-map", "0:v:0", "-map", "0:a?",
       "-vf", "scale=3840:1080:flags=fast_bilinear",
-      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
+      "-threads:v", "1", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18",
       "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-y", bufferPath,
     ], { timeout: STREAM_BUFFER_TIMEOUT_MS }, (error) => error ? reject(error) : resolve());
   });
@@ -471,7 +474,14 @@ async function bufferStreamClip(
   if (!bufferedDuration || bufferedDuration < durationSec * 1000 - 1_500) {
     throw new CreativeRenderError("The playable Stream clip ended before its selected window.", 409);
   }
-  return { bufferPath, bufferedDuration: bufferedDuration / 1000 };
+  const bufferDimensions = await probeVideoDimensions(bufferPath);
+  if (bufferDimensions.width !== 3840 || bufferDimensions.height !== 1080) {
+    throw new CreativeRenderError(
+      `The playable Stream buffer is ${bufferDimensions.width}x${bufferDimensions.height}; expected 3840x1080.`,
+      409,
+    );
+  }
+  return { bufferPath, bufferedDuration: bufferedDuration / 1000, bufferDimensions };
 }
 
 async function bufferCamera4kWindow(
@@ -659,7 +669,7 @@ export function creativeVideoResolver(
             const from = resolved.span.startSec + need.fromMs / 1000;
             const to = Math.min(resolved.span.endSec, resolved.span.startSec + (need.fromMs + span) / 1000);
             const buffered = await bufferStreamClip(resolved.url, resolved.referer, from, to - from, temps);
-            const dimensions = await probeVideoDimensions(buffered.bufferPath);
+            const dimensions = buffered.bufferDimensions;
             await onResolved?.({
               layerId: layer.id,
               sceneSource: src,
@@ -677,7 +687,7 @@ export function creativeVideoResolver(
               zeroAtSec: -need.fromMs / 1000,
               durationMs: Math.round((resolved.span.endSec - resolved.span.startSec) * 1000),
               hasAudio: await hasAudioStream(buffered.bufferPath),
-              sourceDimensions: dimensions,
+              sourceDimensions: buffered.bufferDimensions,
               trailSource: { videoId: clip.videoId, fromSec: from },
             };
           }
@@ -701,7 +711,7 @@ export function creativeVideoResolver(
             zeroAtSec: -need.fromMs / 1000,
             durationMs: Math.round((resolved.span.endSec - resolved.span.startSec) * 1000),
             hasAudio: await hasAudioStream(buffered.bufferPath),
-            sourceDimensions: buffered.sourceDimensions,
+            sourceDimensions: buffered.bufferDimensions,
             trailSource: { videoId: clip.videoId, fromSec: from },
           };
         }
@@ -733,7 +743,7 @@ export function creativeVideoResolver(
               zeroAtSec: -need.fromMs / 1000,
               durationMs: length || null,
               hasAudio: await hasAudioStream(buffered.bufferPath),
-              sourceDimensions: buffered.sourceDimensions,
+              sourceDimensions: buffered.bufferDimensions,
               trailSource: { videoId, fromSec: from },
             };
           } catch (err) {
@@ -741,7 +751,7 @@ export function creativeVideoResolver(
             const stream = await playableStream(videoId);
             if (!stream) throw new CreativeRenderError("This recording is unavailable: neither 4K nor a playable Stream source could be loaded.", 409);
             const buffered = await bufferStreamClip(stream.url, stream.referer, from, to - from, temps);
-            const dimensions = await probeVideoDimensions(buffered.bufferPath);
+            const dimensions = buffered.bufferDimensions;
             await onResolved?.({
               layerId: layer.id,
               sceneSource: src,

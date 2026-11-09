@@ -24,6 +24,7 @@ import {
 import type { CreativeResolvedVideoSource } from "./renderMedia";
 import { encodeCard } from "../clipBranding/backup";
 import { isBunnyStorageConfigured } from "../bunny";
+import { renderQueue } from "../renderQueue";
 
 /**
  * Creative hub engine: render jobs.
@@ -39,7 +40,7 @@ import { isBunnyStorageConfigured } from "../bunny";
  */
 
 const active = new Set<number>();
-const MAX_VIDEO_RENDERS = Math.max(1, Number(process.env.CREATIVE_VIDEO_RENDERS) || 1);
+const MAX_VIDEO_RENDERS = 1;
 /** A bounded cached probe; not a wait for the 4K upload pipeline. */
 export const AUTOPILOT_CAMERA_4K_PROBE_MS = CAMERA_4K_AUTOPILOT_PROBE_MS;
 let runningVideos = 0;
@@ -363,7 +364,7 @@ async function runVideo(
   }, 60_000);
   heartbeat.unref();
   try {
-    await videoSlot(async () => {
+    await renderQueue.runForeground(() => videoSlot(async () => {
       await setStatus(row.id, { renderStatus: "rendering", renderError: null });
       dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "creative-video-"));
       const ctx = await loadCreativeContext(access, temps);
@@ -460,7 +461,7 @@ async function runVideo(
       uncommittedOutput = null;
       if (row.outputPath && row.outputPath !== outputPath) void deleteOutput(row.outputPath, access.academyId);
       logger.info({ projectId: row.id, academyId: access.academyId, ms: Date.now() - started, durationMs: renderResult.durationMs }, "Creative video rendered");
-    });
+    }));
   } catch (err) {
     if (uncommittedOutput) await deleteOutput(uncommittedOutput, access.academyId);
     if (!(err instanceof CreativeRenderError)) logger.error({ err, projectId: row.id, academyId: access.academyId }, "Creative video render failed");

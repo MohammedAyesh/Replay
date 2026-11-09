@@ -10,7 +10,7 @@ import {
 import { renderSceneCanvas } from "./render";
 import {
   DUCK, atempoChain, audioMixFilters, blurFilter, buildFfmpegArgs, entranceXY, fadeFilters, fadeSegments, musicFilters, musicMixFor, overlayIntervals, photoVideoMaxrateKbps, planStack,
-  drawnBox, renderSceneMp4, slowZoomFilter, type MusicMix,
+  drawnBox, FfmpegProcessError, renderSceneMp4, runFfmpegWithSigkillRetry, slowZoomFilter, type MusicMix,
 } from "./renderVideo";
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "creative-video-test-"));
@@ -20,6 +20,31 @@ const BRAND: CreativeBrand = { primary: "#F4CF1F", accent: "#D4FF4F", ink: "#0B0
 
 const rect = (id: string, extra: Partial<SceneLayer> = {}): SceneLayer =>
   ({ id, kind: "shape", shape: "rect", x: 0, y: 0, w: 100, h: 100, fill: "#FFFFFF", ...extra }) as SceneLayer;
+
+describe("FFmpeg SIGKILL recovery", () => {
+  it("retries one SIGKILL once and reports when the retry is also killed", async () => {
+    let attempts = 0;
+    const runner = async () => {
+      attempts++;
+      if (attempts <= 2) throw new FfmpegProcessError(null, "SIGKILL", "", 123);
+    };
+
+    await expect(runFfmpegWithSigkillRetry([], undefined, path.join(work, "killed.mp4"), runner))
+      .rejects.toThrow(/after one automatic retry/);
+    expect(attempts).toBe(2);
+  });
+
+  it("retries a single SIGKILL and succeeds when the second attempt completes", async () => {
+    let attempts = 0;
+    const runner = async () => {
+      attempts++;
+      if (attempts === 1) throw new FfmpegProcessError(null, "SIGKILL", "", 456);
+    };
+
+    await expect(runFfmpegWithSigkillRetry([], undefined, path.join(work, "retried.mp4"), runner)).resolves.toBeUndefined();
+    expect(attempts).toBe(2);
+  });
+});
 
 describe("video overlay intervals", () => {
   it("one interval per change in which layers show, merged and without gaps", () => {

@@ -112,6 +112,10 @@ export class RenderQueue {
   private active = new Set<string>();
   private waiters: Waiter[] = [];
   private yielding = new Set<string>();
+  private foregroundActive = 0;
+  private foregroundWaiting = 0;
+  private backgroundActive = new Set<string>();
+  private backgroundWaiters = new Set<() => void>();
   private readonly isArchiveBusy: () => Promise<boolean>;
   private readonly yieldPollMs: number;
   private readonly maxYieldMs: number;
@@ -192,6 +196,40 @@ export class RenderQueue {
   }
 
   /**
+   * Run user-facing work ahead of background demo renders.
+   *
+   * Foreground jobs do not consume a regular render-queue slot: Creative Hub
+   * has its own one-render-per-process limit. Registering before waiting keeps
+   * an arriving demo from jumping ahead of a queued Creative render.
+   */
+  async runForeground<T>(job: () => Promise<T>): Promise<T> {
+    this.foregroundWaiting++;
+    let admitted = false;
+    try {
+      while (this.backgroundActive.size > 0) {
+        await new Promise<void>((resolve) => this.backgroundWaiters.add(resolve));
+      }
+      this.foregroundWaiting--;
+      this.foregroundActive++;
+      admitted = true;
+    } finally {
+      if (!admitted) this.foregroundWaiting--;
+    }
+
+    try {
+      return await job();
+    } finally {
+      this.foregroundActive--;
+    }
+  }
+
+  private finishBackground(key: string): void {
+    this.backgroundActive.delete(key);
+    for (const wake of this.backgroundWaiters) wake();
+    this.backgroundWaiters.clear();
+  }
+
+  /**
    * Reserve a local slot only when this job would not have to wait.
    *
    * Yielding jobs count as waiting even though they have not reached the FIFO
@@ -207,7 +245,10 @@ export class RenderQueue {
     if (
       snapshot.active >= config.concurrency ||
       snapshot.waiting > 0 ||
-      snapshot.yielding > 0
+      snapshot.yielding > 0 ||
+      this.foregroundActive > 0 ||
+      this.foregroundWaiting > 0 ||
+      this.backgroundActive.size > 0
     ) {
       return { started: false, snapshot };
     }
@@ -215,10 +256,12 @@ export class RenderQueue {
     // the slot unclaimed until it resolves lets concurrent admissions all see
     // the same free capacity and exceed the concurrency limit.
     this.active.add(key);
+    this.backgroundActive.add(key);
     if (config.yieldToArchive) {
       try {
         if (await this.isArchiveBusy()) {
           this.release(key);
+          this.finishBackground(key);
           return { started: false, snapshot };
         }
       } catch (err) {
@@ -231,6 +274,7 @@ export class RenderQueue {
         return await job();
       } finally {
         this.release(key);
+        this.finishBackground(key);
       }
     })();
     return { started: true, snapshot: this.snapshot(), completion };

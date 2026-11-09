@@ -4,8 +4,13 @@ const h = vi.hoisted(() => ({
   stored: new Set<string>(),
   storageDown: false,
   renderFails: null as Error | null,
+  fourKError: null as Error | null,
+  savedAvailable: true,
+  streamAvailable: false,
   renders: 0,
+  sourceAttempts: 0,
   attempts: 0,
+  renderArgs: null as any,
   snapshot: { active: 0, waiting: 0, yielding: 0, concurrency: 2, order: [] as string[] },
 }));
 
@@ -34,9 +39,45 @@ vi.mock("./exportSource", () => {
 });
 vi.mock("./ffmpegExport", () => ({
   bufferRemoteClip: vi.fn(async () => ({ bufferPath: "/tmp/none-buffer.mp4", bufferedDuration: 20, adjustedOffsetSec: 0 })),
+  bufferCameraHlsClip: vi.fn(async () => ({
+    bufferPath: "/tmp/none-camera-buffer.mp4",
+    bufferedDuration: 20,
+    adjustedOffsetSec: 0,
+    sourceDimensions: { width: 4096, height: 1152 },
+    bufferDimensions: { width: 3840, height: 1080 },
+    downloadedBytes: 1,
+  })),
   cleanupTempFile: vi.fn(),
   getOutputDims: () => ({ w: 1920, h: 1080 }),
-  renderClip: vi.fn(async () => { h.renders += 1; return "/tmp/none-render.mp4"; }),
+  probeVideoDimensions: vi.fn(async () => ({ width: 1920, height: 1080 })),
+  renderClip: vi.fn(async (args: any) => {
+    h.renders += 1;
+    h.renderArgs = args;
+    if (h.renderFails) throw h.renderFails;
+    return "/tmp/none-render.mp4";
+  }),
+}));
+vi.mock("./clipExportSource", () => ({
+  waitForCamera4kSource: vi.fn(async () => {
+    h.sourceAttempts += 1;
+    throw h.fourKError ?? new Error("No camera 4K source is available");
+  }),
+}));
+vi.mock("./creative/clipSpan", () => ({
+  clipSpan: vi.fn(async () => h.streamAvailable ? { startSec: 10, endSec: 20, thumbSec: null, videoSeconds: 100 } : null),
+}));
+vi.mock("./creative/renderMedia", () => ({
+  bufferStreamClip: vi.fn(async () => ({
+    bufferPath: "/tmp/none-stream-buffer.mp4",
+    bufferedDuration: 10,
+    bufferDimensions: { width: 3840, height: 1080 },
+  })),
+  downloadSavedClip: vi.fn(async () => h.savedAvailable
+    ? { path: "/tmp/none-saved-export.mp4", durationMs: 5_000, hasAudio: true }
+    : null),
+  playableStream: vi.fn(async () => h.streamAvailable
+    ? { url: "https://cdn.test/stream.m3u8", referer: "https://cdn.test/" }
+    : null),
 }));
 vi.mock("./renderQueue", () => ({
   renderQueue: {
@@ -72,7 +113,6 @@ vi.mock("fs", async (orig) => {
   };
 });
 
-import { BunnyVideoNotFoundError } from "./bunny";
 import {
   demoBrandedReadyIds,
   isDemoBrandedReady,
@@ -87,8 +127,13 @@ beforeEach(() => {
   h.stored.clear();
   h.storageDown = false;
   h.renderFails = null;
+  h.fourKError = null;
+  h.savedAvailable = true;
+  h.streamAvailable = false;
   h.renders = 0;
+  h.sourceAttempts = 0;
   h.attempts = 0;
+  h.renderArgs = null;
   h.snapshot = { active: 0, waiting: 0, yielding: 0, concurrency: 2, order: [] };
   resetDemoBrandedState();
   setDemoIdlePollMs(5);
@@ -139,17 +184,19 @@ describe("demo branded copies", () => {
     expect(h.renders).toBe(1);
   });
 
-  it("never retries a clip whose recording is gone", async () => {
-    h.renderFails = new (BunnyVideoNotFoundError as unknown as new (m: string) => Error)("gone");
-    await demoBrandedReadyIds([clip(5)]);
-    await settle();
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000);
-    h.renderFails = null;
-    await demoBrandedReadyIds([clip(5)]);
-    vi.useRealTimers();
-    await settle();
-    expect(h.attempts).toBe(1);
+  it("retries when camera 4K and fallback sources are temporarily unavailable", async () => {
+    h.fourKError = new Error("No camera 4K source is available");
+    h.savedAvailable = false;
+    let now = Date.now();
+    for (let i = 0; i < 5; i++) {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(now);
+      await demoBrandedReadyIds([clip(5)]);
+      vi.useRealTimers();
+      await settle();
+      now += 31 * 60 * 1000;
+    }
+    expect(h.sourceAttempts).toBe(3);
     expect(h.renders).toBe(0);
   });
 
@@ -164,7 +211,35 @@ describe("demo branded copies", () => {
       await settle();
       now += 31 * 60 * 1000;
     }
-    expect(h.attempts).toBe(3);
+    expect(h.renders).toBe(3);
+  });
+
+  it("uses a saved export before trying Stream when camera 4K is unavailable", async () => {
+    h.streamAvailable = true;
+    await demoBrandedReadyIds([clip(8)]);
+    await settle();
+    expect(h.renders).toBe(1);
+    expect(h.renderArgs).toMatchObject({
+      videoUrl: "/tmp/none-saved-export.mp4",
+      startTime: 0,
+      endTime: 1,
+      cropPath: [],
+      sourceDimensions: { width: 1920, height: 1080 },
+    });
+  });
+
+  it("buffers the selected Stream window when no saved export exists", async () => {
+    h.savedAvailable = false;
+    h.streamAvailable = true;
+    await demoBrandedReadyIds([clip(9)]);
+    await settle();
+    expect(h.renders).toBe(1);
+    expect(h.renderArgs).toMatchObject({
+      videoUrl: "/tmp/none-stream-buffer.mp4",
+      startTime: 0,
+      endTime: 1,
+      sourceDimensions: { width: 3840, height: 1080 },
+    });
   });
 
   it("keeps the academy view's copies apart from the pitch view's", async () => {

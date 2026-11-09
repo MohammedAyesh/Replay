@@ -371,9 +371,8 @@ export function framingCrop(framing: NonNullable<VideoLayer["framing"]>, boxW: n
   const A = boxW / boxH;
   const keys = thinKeys(framing.keys);
   const at = (ms: number) => zeroAtSec + ms / 1000;
-  // Framing keys are normalized on the stored 3840×1080 grid. Multiplying by
-  // FFmpeg's probed iw/ih converts them to the actual camera-original pixels
-  // (e.g. 4096×1152) without assuming every recording has the same dimensions.
+  // Framing keys are normalized on the 3840×1080 grid. Multiplying by FFmpeg's
+  // actual input dimensions keeps the crop aligned with the decoded buffer.
   const cx = piecewise(keys.map((k) => [at(k[0]), k[1]]));
   const cy = piecewise(keys.map((k) => [at(k[0]), k[2]]));
   const w = `trunc(min(iw*${framing.zoom.toFixed(4)},ih*${A.toFixed(6)})/2)*2`;

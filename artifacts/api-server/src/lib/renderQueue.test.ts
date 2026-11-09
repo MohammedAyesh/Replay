@@ -419,4 +419,28 @@ describe("immediate render admission", () => {
     releaseYield();
     await yielding;
   });
+
+  it("keeps background work behind foreground work and lets foreground work pass a demo", async () => {
+    const q = new RenderQueue({ concurrency: 2, liveConfig: async () => ({ yieldToArchive: false }) });
+    const foregroundGate = deferred<void>();
+    const foreground = q.runForeground(() => foregroundGate.promise);
+    await tick();
+    const blockedDemo = await q.tryRunImmediately("demo", async () => {});
+    expect(blockedDemo.started).toBe(false);
+    foregroundGate.resolve();
+    await foreground;
+
+    const demoGate = deferred<void>();
+    const startedDemo = await q.tryRunImmediately("demo", () => demoGate.promise);
+    expect(startedDemo.started).toBe(true);
+    if (!startedDemo.started) throw new Error("expected the demo to start while idle");
+    let foregroundStarted = false;
+    const waitingForeground = q.runForeground(async () => { foregroundStarted = true; });
+    await tick();
+    expect(foregroundStarted).toBe(false);
+    demoGate.resolve();
+    await Promise.all([startedDemo.completion, waitingForeground]);
+    expect(foregroundStarted).toBe(true);
+    expect(q.snapshot()).toMatchObject({ active: 0, waiting: 0 });
+  });
 });

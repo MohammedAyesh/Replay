@@ -34,9 +34,11 @@ import { renderOverlayPng } from "./clipBranding/overlay";
 import { dateLabelFromLocal, publicBase } from "./clipBranding/plan";
 import type { EndScreenJob } from "./clipBranding/endScreenVideo";
 import { waitForCamera4kSource } from "./clipExportSource";
-import { bufferCameraHlsClip, cleanupTempFile, getOutputDims, renderClip } from "./ffmpegExport";
+import { bufferCameraHlsClip, cleanupTempFile, getOutputDims, probeVideoDimensions, renderClip } from "./ffmpegExport";
 import { logger } from "./logger";
 import { renderQueue } from "./renderQueue";
+import { clipSpan } from "./creative/clipSpan";
+import { bufferStreamClip, downloadSavedClip, playableStream } from "./creative/renderMedia";
 
 export const DEMO_BRAND_VERSION = "galaxy-v1";
 /**
@@ -184,7 +186,7 @@ async function whenIdle<T>(key: string, job: () => Promise<T>): Promise<T> {
 }
 
 function isPermanent(err: unknown): boolean {
-  return /no footage|no source content|No camera 4K source/i.test(String((err as Error)?.message ?? ""));
+  return /no footage|no source content/i.test(String((err as Error)?.message ?? ""));
 }
 
 async function renderAndStore(clip: ClipRow, brand: DemoBrand, previousAttempts: number): Promise<void> {
@@ -239,20 +241,63 @@ function exportWindow(startFraction: number, endFraction: number, duration: numb
 async function renderDemoCopy(clip: ClipRow, brand: DemoBrand): Promise<string> {
   const temps: string[] = [];
   try {
-    const source = await waitForCamera4kSource(clip.videoId);
-    const { startSec, clipDuration } = exportWindow(Number(clip.startTime), Number(clip.endTime), source.duration);
-    if (clipDuration <= 0) throw new Error("The clip has no footage");
+    let videoUrl: string;
+    let totalDuration: number;
+    let startTime: number;
+    let endTime: number;
+    let cropPath: ClipRow["cropPath"];
+    let sourceDimensions: { width: number; height: number };
 
-    const sourceReferer = `${new URL(source.url).origin}/`;
-    const buffer = await bufferCameraHlsClip({
-      remoteUrl: source.url,
-      playlist: source.playlist,
-      referer: sourceReferer,
-      startSec,
-      clipDuration,
-      totalDuration: source.duration,
-    });
-    temps.push(buffer.bufferPath);
+    try {
+      // A demo must not wait 45 minutes for camera-original 4K. Probe briefly,
+      // then use the same saved-export/Stream fallback as Creative Hub.
+      const source = await waitForCamera4kSource(clip.videoId, { timeoutMs: 3_000, pollIntervalMs: 1_000 });
+      const { startSec, clipDuration } = exportWindow(Number(clip.startTime), Number(clip.endTime), source.duration);
+      if (clipDuration <= 0) throw new Error("The clip has no footage");
+      const sourceReferer = `${new URL(source.url).origin}/`;
+      const buffer = await bufferCameraHlsClip({
+        remoteUrl: source.url,
+        playlist: source.playlist,
+        referer: sourceReferer,
+        startSec,
+        clipDuration,
+        totalDuration: source.duration,
+      });
+      temps.push(buffer.bufferPath);
+      videoUrl = buffer.bufferPath;
+      totalDuration = buffer.bufferedDuration;
+      startTime = Math.max(0, buffer.adjustedOffsetSec / buffer.bufferedDuration);
+      endTime = Math.min(1, (buffer.adjustedOffsetSec + clipDuration) / buffer.bufferedDuration);
+      cropPath = clip.cropPath;
+      sourceDimensions = buffer.bufferDimensions;
+    } catch (fourKError) {
+      logger.info({ clipId: clip.id, err: fourKError }, "Demo clip has no camera 4K; trying saved export and Stream");
+      const saved = await downloadSavedClip(clip, temps).catch((err) => {
+        logger.debug({ err, clipId: clip.id }, "Demo saved export could not be loaded");
+        return null;
+      });
+      if (saved) {
+        videoUrl = saved.path;
+        totalDuration = saved.durationMs / 1000;
+        startTime = 0;
+        endTime = 1;
+        cropPath = [];
+        sourceDimensions = await probeVideoDimensions(saved.path);
+      } else {
+        const [span, stream] = await Promise.all([clipSpan(clip), playableStream(clip.videoId)]);
+        if (!span || !stream) {
+          throw new Error("No usable footage source is available for this clip");
+        }
+        const duration = span.endSec - span.startSec;
+        const buffered = await bufferStreamClip(stream.url, stream.referer, span.startSec, duration, temps);
+        videoUrl = buffered.bufferPath;
+        totalDuration = buffered.bufferedDuration;
+        startTime = 0;
+        endTime = Math.min(1, duration / buffered.bufferedDuration);
+        cropPath = clip.cropPath;
+        sourceDimensions = buffered.bufferDimensions;
+      }
+    }
 
     const portrait = clip.aspectRatio === "9:16";
     const look = await demoBrandLook({ look: brand, name: "", color: "", persona: brand === "academy" ? "academy" : "pitch" });
@@ -268,14 +313,14 @@ async function renderDemoCopy(clip: ClipRow, brand: DemoBrand): Promise<string> 
       ...CARD,
     };
     return await renderClip({
-      videoUrl: buffer.bufferPath,
-      totalDuration: buffer.bufferedDuration,
-      startTime: Math.max(0, buffer.adjustedOffsetSec / buffer.bufferedDuration),
-      endTime: Math.min(1, (buffer.adjustedOffsetSec + clipDuration) / buffer.bufferedDuration),
-      cropPath: (clip.cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
+      videoUrl,
+      totalDuration,
+      startTime,
+      endTime,
+      cropPath: (cropPath ?? []) as { t: number; x: number; y: number; w: number; h: number }[],
       aspectRatio: clip.aspectRatio,
       title: `demo-${brand}-${clip.id}`,
-      sourceDimensions: buffer.sourceDimensions,
+      sourceDimensions,
       overlayUrl: overlay,
       endScreen,
     });
