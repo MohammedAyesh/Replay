@@ -158,6 +158,7 @@ const strings = {
       saveToMyClips: "Save to My Clips",
       saved: "Saved",
       followBall: "Follow the ball",
+      ballTrail: "Ball trail",
     },
     varPlayer: {
       starting: "Starting VAR — the camera is connecting (up to a minute)",
@@ -1555,6 +1556,7 @@ const strings = {
       saveToMyClips: "احفظ بمقاطعي",
       saved: "انحفظ",
       followBall: "تتبع الكرة",
+      ballTrail: "أثر الكرة",
     },
     varPlayer: {
       starting: "عم نشغّل الـVAR — الكاميرا عم تتصل (لحد دقيقة)",

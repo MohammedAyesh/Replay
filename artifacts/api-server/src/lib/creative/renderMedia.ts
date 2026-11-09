@@ -672,6 +672,8 @@ export function creativeVideoResolver(
               zeroAtSec: -need.fromMs / 1000,
               durationMs: Math.round((resolved.span.endSec - resolved.span.startSec) * 1000),
               hasAudio: await hasAudioStream(buffered.bufferPath),
+              sourceDimensions: dimensions,
+              trailSource: { videoId: clip.videoId, fromSec: from },
             };
           }
           const from = resolved.span.startSec + need.fromMs / 1000;
@@ -695,6 +697,7 @@ export function creativeVideoResolver(
             durationMs: Math.round((resolved.span.endSec - resolved.span.startSec) * 1000),
             hasAudio: await hasAudioStream(buffered.bufferPath),
             sourceDimensions: buffered.sourceDimensions,
+            trailSource: { videoId: clip.videoId, fromSec: from },
           };
         }
         case "recording": {
@@ -726,6 +729,7 @@ export function creativeVideoResolver(
               durationMs: length || null,
               hasAudio: await hasAudioStream(buffered.bufferPath),
               sourceDimensions: buffered.sourceDimensions,
+              trailSource: { videoId, fromSec: from },
             };
           } catch (err) {
             logger.debug({ err, videoId, recordingId: src.recordingId }, "Creative recording 4K unavailable; checking Stream");
@@ -750,6 +754,8 @@ export function creativeVideoResolver(
               zeroAtSec: -need.fromMs / 1000,
               durationMs: length || null,
               hasAudio: await hasAudioStream(buffered.bufferPath),
+              sourceDimensions: dimensions,
+              trailSource: { videoId, fromSec: from },
             };
           }
         }

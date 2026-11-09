@@ -35,6 +35,7 @@ import { MediaPanel } from "./editor/media-panel";
 import { MusicPanel } from "./editor/music-panel";
 import { useMusicPreview, type MusicPreviewSource } from "./editor/use-music-preview";
 import { PreviewDialog } from "./editor/preview-dialog";
+import { useBallTrails } from "@/lib/use-ball-trails";
 import { ShapesPanel } from "./editor/shapes-panel";
 import { StylePanel } from "./editor/style-panel";
 import { TextPanel } from "./editor/text-panel";
@@ -187,6 +188,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
       ...data.academy,
     },
   }), [data, brand, brandInfo, copy.locale]);
+  const ballTrailFor = useBallTrails(academyId, scene, viewData);
 
   const mediaUrl = useCallback((layer: Extract<SceneLayer, { kind: "image" | "video" }>) => {
     const src = resolveSource(layer.src, viewData);
@@ -234,9 +236,9 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
   }, []);
   const ed: EditorApi = {
     academyId, scene, selected, brand, data: viewData, template, fields, mediaUrl, isVideo, timeMs, playing, slots,
-    setSlotVideo: (path, src, playMs, framing) => {
+    setSlotVideo: (path, src, playMs, framing, ballTrail) => {
       setDataState((d) => setPath(d, path, src)); setDataRev((r) => r + 1);
-      dispatch({ type: "setSlotVideo", path, playMs, framing });
+      dispatch({ type: "setSlotVideo", path, playMs, framing, ballTrail });
     },
     select: setSelectedId,
     update,
@@ -338,7 +340,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
           <div ref={fitRef} aria-label={copy.canvasLabel}
             className="flex justify-center rounded-2xl bg-raised/40 p-2 sm:p-4"
             onPointerDown={(e) => { if (e.target === e.currentTarget) setSelectedId(null); }}>
-            <SceneCanvas scene={scene} brand={brand} data={viewData} width={Math.max(160, width - 16)} mediaUrl={mediaUrl}
+            <SceneCanvas scene={scene} brand={brand} data={viewData} width={Math.max(160, width - 16)} mediaUrl={mediaUrl} ballTrailFor={ballTrailFor}
               timeMs={isVideo ? timeMs : undefined} playing={isVideo && playing}
               editable selectedLayerId={selectedId} onSelectLayer={selectFromCanvas} onLayerChange={onLayerChange}
               onTextChange={(id, text) => update(id, { text }, "text")} className="shadow-lg" />
@@ -381,7 +383,7 @@ function EditorWorkspace({ academyId, nav, project, brandInfo }: SectionProps & 
         <LibraryPicker academyId={academyId} accept={picker.accept} initialTab={picker.tab}
           onPick={(src, meta) => { picker.onPick(src, meta); setPicker(null); }} onClose={() => setPicker(null)} />
       ) : null}
-      <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} scene={scene} brand={brand} data={viewData} mediaUrl={mediaUrl} music={musicSource} />
+      <PreviewDialog open={previewOpen} onOpenChange={setPreviewOpen} scene={scene} brand={brand} data={viewData} mediaUrl={mediaUrl} ballTrailFor={ballTrailFor} music={musicSource} />
     </div>
   );
 }

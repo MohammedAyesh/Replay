@@ -85,7 +85,7 @@ export type EditorAction =
    * plays it from its start for `playMs`, and the design's timing ripples so the slot's main
    * segment lasts that long (retimeSlot). `framing`: a camera for all of them; undefined keeps theirs.
    */
-  | { type: "setSlotVideo"; path: string; playMs: number | null; framing?: Framing | null }
+  | { type: "setSlotVideo"; path: string; playMs: number | null; framing?: Framing | null; ballTrail?: boolean }
   | { type: "checkpoint" }
   | { type: "undo" }
   | { type: "redo" };
@@ -187,7 +187,7 @@ export function editorReducer(state: EditorState, action: EditorAction): EditorS
     case "setAutoMusic":
       return JSON.stringify(state.autoMusic) === JSON.stringify(action.music) ? state : { ...state, autoMusic: action.music };
     case "setSlotVideo":
-      return commit(state, slotVideo(state.scene, action.path, action.playMs, action.framing));
+      return commit(state, slotVideo(state.scene, action.path, action.playMs, action.framing, action.ballTrail));
     case "checkpoint":
       return { ...state, lastKey: null };
     case "undo": {
@@ -734,7 +734,7 @@ export function retimeSlot(scene: Scene, path: string, playMs: number): Scene {
 }
 
 /** New footage in a slot: its layers play it from the start for `playMs`, then the design ripples to fit. */
-export function slotVideo(scene: Scene, path: string, playMs: number | null, framing?: Framing | null): Scene {
+export function slotVideo(scene: Scene, path: string, playMs: number | null, framing?: Framing | null, ballTrail?: boolean): Scene {
   const slot = videoSlots(scene).find((s) => s.path === path);
   if (!slot) return scene;
   let next = scene;
@@ -745,6 +745,7 @@ export function slotVideo(scene: Scene, path: string, playMs: number | null, fra
       slowMo: undefined,
       speed: undefined,
       ...(framing !== undefined ? { framing: framing ?? undefined } : {}),
+      ...(ballTrail !== undefined ? { ballTrail: ballTrail || undefined } : {}),
     } as LayerChange);
   }
   return playMs ? retimeSlot(next, path, playMs) : next;

@@ -51,7 +51,7 @@ export function CameraDialog({ ed, layer, open, onOpenChange }: { ed: EditorApi;
     const fillsScene = (layer.startMs ?? 0) === 0 && (layer.endMs === undefined || layer.endMs >= total) && before >= total - 50;
     // A template's footage slot: the clip goes to every part of the design that shows it, and the design follows its length.
     if (layer.src.type === "binding") {
-      ed.setSlotVideo(layer.src.path, value.src, value.durationMs, value.framing ?? null);
+      ed.setSlotVideo(layer.src.path, value.src, value.durationMs, value.framing ?? null, !!value.ballTrail);
       ed.updateScene({ branding: value.branding });
       onOpenChange(false);
       return;
@@ -59,6 +59,7 @@ export function CameraDialog({ ed, layer, open, onOpenChange }: { ed: EditorApi;
     ed.update(layer.id, {
       src: value.src,
       framing: value.framing ?? undefined,
+      ballTrail: value.ballTrail || undefined,
       trimInMs: 0,
       trimOutMs: value.durationMs,
       slowMo: undefined,
@@ -79,6 +80,7 @@ export function CameraDialog({ ed, layer, open, onOpenChange }: { ed: EditorApi;
         ) : (
           <ClipFramer key={JSON.stringify(start)} academyId={ed.academyId} start={start}
             framing={layer.framing}
+            ballTrail={!!layer.ballTrail}
             lockedAspect={layer.w > 0 && layer.h > 0 ? layer.w / layer.h : 16 / 9}
             branding={ed.scene.branding ?? NO_BRANDING}
             actions={(value) => (

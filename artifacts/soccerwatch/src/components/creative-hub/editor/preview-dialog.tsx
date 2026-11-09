@@ -11,8 +11,9 @@ import { formatMs } from "./timeline";
 import { useMusicPreview, type MusicPreviewSource } from "./use-music-preview";
 
 /** The design as it will export: no selection, plays from the start for videos. */
-export function PreviewDialog({ open, onOpenChange, scene, brand, data, mediaUrl, music = null }: {
+export function PreviewDialog({ open, onOpenChange, scene, brand, data, mediaUrl, ballTrailFor, music = null }: {
   open: boolean; onOpenChange: (o: boolean) => void; scene: Scene; brand: CreativeBrand; data: CreativeData; mediaUrl: SceneCanvasProps["mediaUrl"];
+  ballTrailFor?: SceneCanvasProps["ballTrailFor"];
   /** The soundtrack's file, when the scene has music: it plays with the preview. */
   music?: MusicPreviewSource | null;
 }) {
@@ -35,7 +36,7 @@ export function PreviewDialog({ open, onOpenChange, scene, brand, data, mediaUrl
           <DialogDescription>{copy.previewHint}</DialogDescription>
         </DialogHeader>
         <div className="mx-auto overflow-hidden rounded-xl">
-          <SceneCanvas scene={scene} brand={brand} data={data} width={width} mediaUrl={mediaUrl} timeMs={isVideo ? timeMs : undefined} playing={isVideo && playing} />
+          <SceneCanvas scene={scene} brand={brand} data={data} width={width} mediaUrl={mediaUrl} ballTrailFor={ballTrailFor} timeMs={isVideo ? timeMs : undefined} playing={isVideo && playing} />
         </div>
         {isVideo ? (
           <div className="flex items-center gap-3" dir="ltr">

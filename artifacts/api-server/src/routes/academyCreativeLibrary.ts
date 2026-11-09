@@ -7,7 +7,7 @@ import { z } from "zod";
 import { academyAdMediaTable, db, recordingsTable } from "@workspace/db";
 import { academyClip, academyRecording } from "../lib/creative/renderMedia";
 import { clipSpan } from "../lib/creative/clipSpan";
-import { centreFraming, clipFallback, framingFor } from "../lib/creative/framing";
+import { centreFraming, clipFallback, framingFor, recordingBall } from "../lib/creative/framing";
 import { extractBunnyVideoId } from "../lib/publicFootage";
 import { CREATIVE_BASE, creativeOwner, projectIdParam } from "../lib/creative/projects";
 import { parseLibraryFilters } from "../lib/creative/library";
@@ -129,7 +129,7 @@ router.post(`${base}/framing`, async (req, res): Promise<void> => {
       if (src.toMs <= src.fromMs || src.toMs - src.fromMs > 10 * 60_000) { res.status(400).json({ error: "That stretch is too long" }); return; }
       const rec = await academyRecording(access.academyId, src.recordingId);
       if (!rec) { res.status(404).json({ error: "Not found" }); return; }
-      res.json(await framingFor(rec.id, src.fromMs, src.toMs));
+      res.json({ ...(await framingFor(rec.id, src.fromMs, src.toMs)), ball: await ballThrough(rec.id, src.fromMs, src.toMs) });
       return;
     }
     const clip = await academyClip(access.academyId, src.clipId);
@@ -137,10 +137,11 @@ router.post(`${base}/framing`, async (req, res): Promise<void> => {
     const span = await clipSpan(clip);
     if (!span) { res.json({ ...centre(), window: null }); return; }
     const recordingId = clip.sourceRecordingId ?? (await recordingOfVideo(clip.videoId));
-    const answer = await framingFor(recordingId && (await academyRecording(access.academyId, recordingId)) ? recordingId : null,
-      span.startSec * 1000, span.endSec * 1000, clipFallback(clip, span.endSec - span.startSec));
+    const owned = recordingId && (await academyRecording(access.academyId, recordingId)) ? recordingId : null;
+    const answer = await framingFor(owned, span.startSec * 1000, span.endSec * 1000, clipFallback(clip, span.endSec - span.startSec));
     res.json({
       ...answer,
+      ball: owned ? await ballThrough(owned, span.startSec * 1000, span.endSec * 1000) : [],
       // The clip's stretch of its recording: "Make a video" starts from this window, so its start and end can move.
       window: recordingId ? { recordingId, fromMs: Math.round(span.startSec * 1000), toMs: Math.round(span.endSec * 1000) } : null,
     });
@@ -150,6 +151,17 @@ router.post(`${base}/framing`, async (req, res): Promise<void> => {
 });
 
 const centre = () => ({ framing: centreFraming(), source: "centre" as const, coverage: 0 });
+
+/** The ball path through [fromMs, toMs] of a recording, as [seconds from fromMs, x, y], for the framer's red trail preview. */
+async function ballThrough(recordingId: number, fromMs: number, toMs: number): Promise<Array<[number, number, number]>> {
+  const samples = await recordingBall(recordingId).catch(() => null);
+  if (!samples?.length) return [];
+  const from = fromMs / 1000 - 1;
+  const to = toMs / 1000 + 1;
+  return samples
+    .filter((s) => s[0] >= from && s[0] <= to)
+    .map((s) => [Math.round((s[0] - fromMs / 1000) * 100) / 100, s[1], s[2]] as [number, number, number]);
+}
 
 async function recordingOfVideo(videoId: string): Promise<number | null> {
   const rows = await db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl }).from(recordingsTable)

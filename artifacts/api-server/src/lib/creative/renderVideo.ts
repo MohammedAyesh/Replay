@@ -21,7 +21,8 @@ import { logger } from "../logger";
 import { createCanvas, type Canvas } from "@napi-rs/canvas";
 import { renderSceneCanvas, sceneSize, type ConcreteSource, type SceneRenderOptions } from "./render";
 import { ENTER_MS, PUSH_MS, SLIDE_PX, videoParts } from "./renderLayout";
-import { DIP_FADE_MS, hasFades, isFadeEntrance, wipeSpan } from "@workspace/api-zod";
+import { DIP_FADE_MS, hasFades, isFadeEntrance, wipeSpan, type BallTrailSample } from "@workspace/api-zod";
+import { prepareBallTrail, type BallTrailTrack } from "./ballTrailTrack";
 
 /**
  * Creative hub engine: a video scene → MP4 (1080 wide, H.264 + AAC, 30 fps),
@@ -62,6 +63,10 @@ export type VideoSourceFile = {
   durationMs: number | null;
   hasAudio: boolean;
   sourceDimensions?: { width: number; height: number };
+  /** Match footage: its video and the match second at the file's 0, for the ball trail. */
+  trailSource?: { videoId: string; fromSec: number };
+  /** The ball trail laid over this footage (ballTrailTrack.ts), when the layer asks for it. */
+  trail?: BallTrailTrack;
 };
 
 /** Local footage for a video layer, or null to draw it as its still. `need` is source ms. */
@@ -420,6 +425,9 @@ export function buildFfmpegArgs(opts: {
     const { layer, file } = track;
     // Keep HEVC/H.264 decoder worker counts bounded: camera originals are 4K.
     inputs.push("-threads", "1", "-i", file.path);
+    // The ball trail: its frames as a second input, on this file's clock.
+    const trailInput = file.trail ? input++ : -1;
+    if (file.trail) inputs.push("-threads", "1", "-f", "concat", "-safe", "0", "-i", file.trail.list);
     const S = layer.startMs ?? 0;
     const E = Math.min(layer.endMs ?? D, D);
     const parts = videoParts(layer, file.durationMs, E - S);
@@ -432,6 +440,12 @@ export function buildFfmpegArgs(opts: {
     if (layer.framing?.keys.length) {
       filters.push(`${input0}${framingCrop(layer.framing, bw, bh, file.zeroAtSec)}[f${n}]`);
       input0 = `[f${n}]`;
+    }
+    // Over the framed window (or the whole source), before any trim or speed change.
+    if (file.trail && trailInput >= 0) {
+      filters.push(`[${trailInput}:v]scale=${file.trail.w}:${file.trail.h}:flags=bilinear,format=yuva420p[tr${n}]`);
+      filters.push(`${input0}[tr${n}]overlay=x=0:y=0:eof_action=pass:format=yuv420[bt${n}]`);
+      input0 = `[bt${n}]`;
     }
     if (parts.length > 1) filters.push(`${input0}split=${parts.length}${vparts.map((p) => `[${p}in]`).join("")}`);
     parts.forEach((p, i) => {
@@ -539,7 +553,19 @@ export type VideoRenderOptions = Omit<SceneRenderOptions, "t" | "include" | "bac
   signal?: AbortSignal;
   /** The venue's mark over everything, and its sign-off card after the scene (renderBranding). */
   branding?: { overlayPath: string | null; endScreen: EndScreenJob | null } | null;
+  /** A match video's ball path, for layers with the ball trail (tests inject one). */
+  ballSamples?: (videoId: string) => Promise<ReadonlyArray<BallTrailSample> | null>;
 };
+
+/** The ball path of the camera recording a video id belongs to. */
+async function matchBallSamples(videoId: string): Promise<ReadonlyArray<BallTrailSample> | null> {
+  const [{ recordingForVideo }, { recordingBall }] = await Promise.all([
+    import("../venues/igPick"),
+    import("./framing"),
+  ]);
+  const rec = await recordingForVideo(videoId);
+  return rec ? recordingBall(rec.id) : null;
+}
 
 /** The smallest box holding every pixel a still draws (alpha > 0), or null when it draws nothing. */
 export function drawnBox(canvas: Canvas): { x: number; y: number; w: number; h: number } | null {
@@ -580,6 +606,26 @@ export async function renderSceneMp4(opts: VideoRenderOptions): Promise<{ durati
     const span = videoParts(layer, null, E - S);
     const need = { fromMs: span[0]?.srcFrom ?? 0, toMs: span[span.length - 1]?.srcTo ?? (E - S) };
     const file = await opts.videos(layer, src, need);
+    if (file && layer.ballTrail && file.trailSource) {
+      // Branding, not content: a trail that can't be drawn leaves the video without it.
+      try {
+        const samples = await (opts.ballSamples ?? matchBallSamples)(file.trailSource.videoId);
+        const track = samples?.length
+          ? await prepareBallTrail({
+            layer,
+            file,
+            samples,
+            fileStartSec: file.trailSource.fromSec,
+            usedFrom: file.zeroAtSec + need.fromMs / 1000,
+            usedTo: file.zeroAtSec + need.toMs / 1000,
+            workDir: opts.workDir,
+          })
+          : null;
+        if (track) file.trail = track;
+      } catch (error) {
+        logger.warn({ layerId: layer.id, error: (error as Error).message }, "Creative render: ball trail left out");
+      }
+    }
     if (file) footage.set(layer.id, file);
   }
 

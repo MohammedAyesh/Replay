@@ -239,6 +239,13 @@ export const sceneLayerSchema = z.discriminatedUnion("kind", [
      * box at each moment (see framingWindow). Absent: the whole source, by `fit`.
      */
     framing: framingSchema.optional(),
+    /**
+     * Draw the red ball trail (ballTrail.ts) over match footage, from the
+     * match's analysed ball path. Absent or false: no trail. Footage without
+     * a ball path (uploads, saved clip files, unanalysed matches) renders
+     * without it.
+     */
+    ballTrail: z.boolean().optional(),
   }),
   z.object({
     ...baseLayer,
