@@ -21,7 +21,10 @@ describe("camera 4K re-clip batch timing", () => {
       renderer: { name: "camera-original-clip-export", version: "camera-clip-v1" },
       renderedAt: "2026-11-09T00:00:00.000Z",
       source: { kind: "camera-4k", videoId: "video-guid", width: 4096, height: 1152, durationSec: 90 },
-      timeWindow: { startSec: 10, endSec: 20, clipDuration: 10 },
+      timeWindow: {
+        startSec: 10, endSec: 20, clipDuration: 10,
+        bufferedDuration: 60, adjustedOffsetSec: 0, sourceTimeOffsetSec: 0,
+      },
       crop: [],
       output: { mimeType: "video/mp4", width: 1920, height: 1080, durationMs: 10_000 },
       text: { title: "Goal" },

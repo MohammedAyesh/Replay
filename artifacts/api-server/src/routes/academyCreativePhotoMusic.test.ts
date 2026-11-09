@@ -8,9 +8,10 @@ import express, { type Express } from "express";
 import { eq } from "drizzle-orm";
 import {
   academiesTable, academyCreativeProjectsTable, academyMembersTable, academySocialAccountsTable, academySocialPostsTable,
-  creativeMusicTracksTable, creativeTemplateMusicTable, db, fieldsTable, usersTable,
+  creativeMusicTracksTable, creativeTemplateMusicTable, db, fieldsTable, renderSnapshotsTable, usersTable,
 } from "@workspace/db";
-import { buildTemplateScene, type Scene } from "@workspace/api-zod";
+import { buildTemplateScene, type CreativeBrand, type CreativeData, type Scene } from "@workspace/api-zod";
+import { renderSceneMp4 } from "../lib/creative/renderVideo";
 
 /**
  * A still with music goes out as a short video (Instagram takes music only
@@ -44,6 +45,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 const stamp = Date.now();
 const graphCalls: Array<{ path: string; params: Record<string, string> }> = [];
 let seq = 0;
+const createdProjects: number[] = [];
 vi.mock("../lib/meta/graph", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/meta/graph")>();
   return {
@@ -83,7 +85,7 @@ const auth = (id: number) => ({ "x-test-user": String(id) });
 const base = (academyId: number) => `/api/academy/console/academies/${academyId}/creative`;
 
 async function owner(kind: "academy" | "venue", n: number) {
-  const [user] = await db.insert(usersTable).values({ name: `Photo music ${kind} ${stamp}`, email: `photo-music-${kind}-${stamp}@test.local` }).returning({ id: usersTable.id });
+  const [user] = await db.insert(usersTable).values({ name: `Photo music ${kind} ${n} ${stamp}`, email: `photo-music-${kind}-${n}-${stamp}@test.local` }).returning({ id: usersTable.id });
   const [field] = await db.insert(fieldsTable).values({ name: `Photo music field ${kind} ${stamp}`, cameraId: `camera${n}` }).returning({ id: fieldsTable.id });
   const [academy] = await db.insert(academiesTable).values({ name: `Photo Music ${kind} ${stamp}`, fieldId: field.id, kind }).returning({ id: academiesTable.id });
   await db.insert(academyMembersTable).values({ academyId: academy.id, userId: user.id, role: "owner" });
@@ -124,6 +126,13 @@ async function downloadOutput(o: { userId: number; academyId: number }, id: numb
   return { file, type: String(res.headers["content-type"]) };
 }
 
+function frameBytes(file: string, seconds: number): Buffer {
+  return execFileSync("ffmpeg", [
+    "-nostdin", "-loglevel", "error", "-ss", seconds.toFixed(3), "-i", file,
+    "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-",
+  ], { maxBuffer: 16 * 1024 * 1024 });
+}
+
 beforeAll(async () => {
   work = fs.mkdtempSync(path.join(os.tmpdir(), "creative-photo-music-"));
   app = express();
@@ -135,6 +144,9 @@ beforeAll(async () => {
 }, 300_000);
 
 afterAll(async () => {
+  for (const projectId of createdProjects) {
+    await db.delete(renderSnapshotsTable).where(eq(renderSnapshotsTable.artifactKey, `creative_project:${projectId}`));
+  }
   for (const id of created.academies) await db.delete(academiesTable).where(eq(academiesTable.id, id));
   for (const id of created.fields) await db.delete(fieldsTable).where(eq(fieldsTable.id, id));
   for (const id of created.users) await db.delete(usersTable).where(eq(usersTable.id, id));
@@ -142,6 +154,47 @@ afterAll(async () => {
 });
 
 describe("Creative hub: a photo with music goes out as a video", () => {
+  it("saves a video render snapshot and reproduces its duration and frame", async () => {
+    const o = await owner("academy", 3);
+    const scene: Scene = {
+      v: 1, format: "post", durationMs: 2000, background: "#0B0F1A", locale: "en",
+      layers: [
+        { id: "panel", kind: "shape", shape: "rect", x: 80, y: 80, w: 920, h: 1190, fill: "#D4FF4F" },
+        { id: "title", kind: "text", text: "SNAPSHOT REPLAY", font: "display", size: 96, weight: 700, color: "#0B0F1A",
+          align: "center", dir: "auto", x: 80, y: 500, w: 920, h: 180 },
+      ],
+    };
+    const made = await request(app).post(`${base(o.academyId)}/projects`).set(auth(o.userId)).send({ scene }).expect(201);
+    createdProjects.push(made.body.project.id);
+    const row = await renderAndWait(o, made.body.project.id);
+    expect(row).toMatchObject({ renderStatus: "done", outputMime: "video/mp4" });
+    const { file } = await downloadOutput(o, row.id, "snapshot-original.mp4");
+    const [saved] = await db.select().from(renderSnapshotsTable)
+      .where(eq(renderSnapshotsTable.outputLocator, row.outputPath!));
+    expect(saved?.snapshot).toMatchObject({
+      renderKind: "creative_project",
+      output: { mimeType: "video/mp4", width: 1080, height: 1350, durationMs: 2000 },
+      template: { id: null },
+      replayable: true,
+      assets: [],
+    });
+
+    const content = saved.snapshot.content;
+    const replay = path.join(work, "snapshot-replay.mp4");
+    await renderSceneMp4({
+      scene: content.effectiveScene as Scene,
+      brand: content.brand as CreativeBrand,
+      data: content.data as CreativeData,
+      videos: async () => null,
+      workDir: work,
+      out: replay,
+    });
+    const originalInfo = probe(file);
+    const replayInfo = probe(replay);
+    expect(Math.abs(Number(originalInfo.format.duration) - Number(replayInfo.format.duration))).toBeLessThan(0.02);
+    expect(frameBytes(file, 0.6)).toEqual(frameBytes(replay, 0.6));
+  }, 240_000);
+
   it("an academy's line-up post: saved as a video, renders H.264 + AAC with the music, posts as a Reel and a Facebook video, never a feed photo", async () => {
     const o = await owner("academy", 1);
     // From the template it is a still, without music: nothing changes by default.

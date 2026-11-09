@@ -31,6 +31,7 @@ export function isReplayableCamera4kClipSnapshot(
   const snapshot = value as Partial<RenderSnapshotDocument>;
   const source = snapshot.source;
   const window = snapshot.timeWindow;
+  const output = snapshot.output;
   const content = snapshot.content;
   return snapshot.schemaVersion === 1
     && snapshot.renderKind === "user_clip"
@@ -42,7 +43,13 @@ export function isReplayableCamera4kClipSnapshot(
     && Number.isFinite(Number(source.durationSec)) && Number(source.durationSec) > 0
     && Number.isFinite(Number(window?.startSec))
     && Number.isFinite(Number(window?.endSec))
-    && Number.isFinite(Number(window?.clipDuration))
+    && Number(window?.endSec) > Number(window?.startSec)
+    && Number.isFinite(Number(window?.clipDuration)) && Number(window?.clipDuration) > 0
+    && Number.isFinite(Number(window?.bufferedDuration)) && Number(window?.bufferedDuration) > 0
+    && output?.mimeType === "video/mp4"
+    && Number.isFinite(Number(output.width)) && Number(output.width) > 0
+    && Number.isFinite(Number(output.height)) && Number(output.height) > 0
+    && Number.isFinite(Number(output.durationMs)) && Number(output.durationMs) > 0
     && !!content && Array.isArray(content.cropPath)
     && snapshot.assets?.every((asset) => !!asset.locator && !!asset.sha256) === true;
 }

@@ -76,6 +76,7 @@ function creativeSnapshotDocument(input: {
   const endCard = input.branding?.endScreen
     ? {
       kind: input.branding.endScreen.spec.kind,
+      spec: input.branding.endScreen.spec,
       seconds: input.branding.endScreen.seconds,
       blur: input.branding.endScreen.blur,
       dim: input.branding.endScreen.dim,
@@ -108,6 +109,9 @@ function creativeSnapshotDocument(input: {
       sha256: null,
     });
   }
+  const replayable = (input.replayable ?? true)
+    && sourceAssets.every((asset) => !!asset.sha256)
+    && assets.every((asset) => !!asset.locator && !!asset.sha256);
   return {
     schemaVersion: 1,
     renderKind: "creative_project",
@@ -160,8 +164,8 @@ function creativeSnapshotDocument(input: {
       originKey: input.row.originKey,
     },
     assets,
-    replayable: input.replayable ?? true,
-    replayabilityReason: (input.replayable ?? true) ? null : "A render input asset was not durably captured.",
+    replayable,
+    replayabilityReason: replayable ? null : "A source or render input asset was not durably captured with a checksum.",
   };
 }
 

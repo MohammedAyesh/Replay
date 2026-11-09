@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import request from "supertest";
 import express, { type Express } from "express";
 import { and, eq, inArray } from "drizzle-orm";
@@ -15,6 +16,7 @@ import {
   brandingProfilesTable,
   db,
   fieldsTable,
+  renderSnapshotsTable,
   recordingsTable,
   userClipsTable,
   usersTable,
@@ -101,6 +103,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await db.delete(renderSnapshotsTable).where(eq(renderSnapshotsTable.artifactKey, `studio_post:${academyId}`));
   await db.delete(brandingProfilesTable).where(and(eq(brandingProfilesTable.scopeType, "academy"), inArray(brandingProfilesTable.scopeId, [academyId, otherAcademyId])));
 });
 
@@ -159,6 +162,28 @@ describe("studio: data", () => {
 });
 
 describe("studio: render", () => {
+  it("stores the exact full-size Make-a-post render settings", async () => {
+    const res = await request(app).post(url("/render")).set(auth(ownerId))
+      .send({ ...SAMPLES.announcement, format: "post", locale: "en" }).buffer(true).parse(binary);
+    expect(res.status).toBe(200);
+    const bytes = res.body as Buffer;
+    const hash = createHash("sha256").update(bytes).digest("hex");
+    const [saved] = await db.select().from(renderSnapshotsTable).where(and(
+      eq(renderSnapshotsTable.artifactKey, `studio_post:${academyId}`),
+      eq(renderSnapshotsTable.outputLocator, `sha256:${hash}`),
+    ));
+    expect(saved?.snapshot).toMatchObject({
+      renderKind: "studio_post",
+      source: { kind: "academy-studio-template" },
+      output: { mimeType: "image/png", width: STUDIO_FORMATS.post.w, height: STUDIO_FORMATS.post.h },
+      text: { template: "announcement", title: "No training on Friday" },
+      template: { id: "announcement", version: "post-studio-post-v1" },
+      content: { format: "post", locale: "en", renderScale: 1 },
+      assets: [],
+      replayable: true,
+    });
+  });
+
   for (const format of Object.keys(STUDIO_FORMATS) as Array<keyof typeof STUDIO_FORMATS>) {
     for (const [template, sample] of Object.entries(SAMPLES)) {
       it(`draws ${template} as a ${format} PNG of the right size`, async () => {

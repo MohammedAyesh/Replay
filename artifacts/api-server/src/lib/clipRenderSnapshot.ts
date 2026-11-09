@@ -3,6 +3,7 @@ import { isReplayableCamera4kClipSnapshot } from "./camera4kReclipEligibility";
 
 export type BufferedClipSource = {
   bufferPath: string;
+  sourceDurationSec: number;
   bufferedDuration: number;
   adjustedOffsetSec: number;
   sourceTimeOffsetSec: number;
@@ -25,16 +26,18 @@ export function clipRenderOptionsFromSnapshot(
       throw new Error(`The saved ${label} no longer matches the camera-original buffer.`);
     }
   };
-  close(buffer.sourceDimensions.width, snapshot.source.width, "source width");
-  close(buffer.sourceDimensions.height, snapshot.source.height, "source height");
-  close(buffer.bufferedDuration, window.bufferedDuration, "buffer duration");
-  close(buffer.adjustedOffsetSec, window.adjustedOffsetSec, "buffer offset");
-  close(buffer.sourceTimeOffsetSec, window.sourceTimeOffsetSec, "source time offset");
+  close(buffered.sourceDimensions.width, snapshot.source.width, "source width");
+  close(buffered.sourceDimensions.height, snapshot.source.height, "source height");
+  close(buffered.sourceDurationSec, snapshot.source.durationSec, "source duration");
+  close(buffered.bufferedDuration, window.bufferedDuration, "buffer duration");
+  close(buffered.adjustedOffsetSec, window.adjustedOffsetSec, "buffer offset");
+  close(buffered.sourceTimeOffsetSec, window.sourceTimeOffsetSec, "source time offset");
   const startTime = Number(window.bufferStartFraction);
   const endTime = Number(window.bufferEndFraction);
   if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || startTime < 0 || endTime > 1 || endTime <= startTime) {
     throw new Error("The saved clip trim is invalid.");
   }
+  close((endTime - startTime) * buffered.bufferedDuration, window.clipDuration, "clip duration");
   if (!Array.isArray(content.cropPath) || typeof content.title !== "string" || typeof content.aspectRatio !== "string") {
     throw new Error("The saved clip presentation settings are incomplete.");
   }

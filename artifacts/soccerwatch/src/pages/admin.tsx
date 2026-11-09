@@ -815,7 +815,7 @@ function Camera4kReclipBatchPanel() {
           >
             {working ? "Starting…" : batch.paused || batch.status === "paused" ? "Resume batch" : "Start batch"}
           </button>
-        )}
+        ) : null}
       </div>
       {!loaded ? (
         <p className="text-xs text-zinc-500" data-testid="status-camera-4k-batch-loading">Loading batch status…</p>

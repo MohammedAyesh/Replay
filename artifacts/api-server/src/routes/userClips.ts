@@ -124,7 +124,7 @@ import {
   validateCamera4kReclip,
   type Camera4kReclipValidation,
 } from "../lib/camera4kReclipValidation";
-import { contentAddressedHashPrefix, inspectRenderedVideo, sha256File, sha256Text } from "../lib/renderSnapshots";
+import { contentAddressedHashPrefix, inspectRenderedVideo, sha256File } from "../lib/renderSnapshots";
 import { clipRenderOptionsFromSnapshot } from "../lib/clipRenderSnapshot";
 
 const router: IRouter = Router();
@@ -642,7 +642,7 @@ function startBackgroundExport(
       return;
     }
 
-    if (isBackupExportConfigured()) {
+    if (isBackupExportConfigured() && !exportOptions.batchReclip) {
       const handoff = await tryOverflowHandoff(clip, admission.snapshot, exportOptions);
       if (handoff !== "local") {
         if (!localFallbackOwned.has(clipId)) inFlight.delete(clipId);
@@ -1044,7 +1044,7 @@ async function runBackgroundExport(
             (buffered.adjustedOffsetSec + clipDuration) / buffered.bufferedDuration,
           );
           const renderOptions = options.presentationSnapshot
-            ? clipRenderOptionsFromSnapshot(options.presentationSnapshot, videoId, buffered)
+            ? clipRenderOptionsFromSnapshot(options.presentationSnapshot, videoId, { ...buffered, sourceDurationSec: totalDuration })
             : {
               videoUrl: buffered.bufferPath,
               totalDuration: buffered.bufferedDuration,

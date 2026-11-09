@@ -171,6 +171,10 @@ afterAll(async () => {
   if (batchId !== null) {
     await db.delete(camera4kReclipBatchesTable).where(eq(camera4kReclipBatchesTable.id, batchId));
   }
+  if (clipIds.length) {
+    await db.delete(renderSnapshotsTable)
+      .where(inArray(renderSnapshotsTable.artifactKey, clipIds.map((id) => `user_clip:${id}`)));
+  }
   if (clipIds.length) await db.delete(userClipAuditEventsTable).where(inArray(userClipAuditEventsTable.clipId, clipIds));
   if (clipIds.length) await db.delete(userClipsTable).where(inArray(userClipsTable.id, clipIds));
   await db.delete(usersTable).where(inArray(usersTable.id, [adminId, playerId]));
