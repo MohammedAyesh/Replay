@@ -3,8 +3,8 @@ import { useLocale } from "./context";
 /** Creative hub → the clip framer (camera, length and branding of a clip or match moment). Arabic is Ammani. */
 const en = {
   title: "Camera & length",
-  loading: "Cutting the footage…",
-  failed: "The footage didn't load. Try again.",
+  loading: "Loading the footage…",
+  failed: "Couldn't load this footage. Check your connection and try again.",
   retry: "Try again",
   play: "Play",
   pause: "Pause",
@@ -55,8 +55,8 @@ const en = {
 
 const ar: typeof en = {
   title: "الكاميرا والطول",
-  loading: "عم نقص الفيديو…",
-  failed: "الفيديو ما اشتغل. جرّب كمان مرة.",
+  loading: "عم نحمل الفيديو…",
+  failed: "ما قدرنا نحمل الفيديو. تأكد من اتصالك وجرّب كمان مرة.",
   retry: "جرّب كمان مرة",
   play: "شغّل",
   pause: "وقّف",

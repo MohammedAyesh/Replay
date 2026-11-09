@@ -22,6 +22,14 @@ export type FramingSource =
 /** How far past a still the ball is looked for. */
 export const STILL_LOOK_MS = 3000;
 
+/** Convert a media playhead to the framer's absolute timeline (used by drag keys). */
+export const absPlaybackTimeMs = (currentTimeSeconds: number, sourceOffsetMs = 0): number =>
+  sourceOffsetMs + currentTimeSeconds * 1000;
+
+/** Convert an absolute framer timestamp back to media time. */
+export const playbackSecondsAt = (absTimeMs: number, sourceOffsetMs = 0): number =>
+  Math.max(0, (absTimeMs - sourceOffsetMs) / 1000);
+
 export function fetchFraming(academyId: number, src: FramingSource): Promise<FramingAnswer> {
   return call<FramingAnswer>(creativePath(academyId, "/library/framing"), { method: "POST", body: JSON.stringify({ src }) });
 }

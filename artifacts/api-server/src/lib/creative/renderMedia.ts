@@ -46,7 +46,8 @@ import { tintKey, tintPicture } from "./renderTint";
 import { Camera4kNotReadyError, waitForCamera4kSource } from "../clipExportSource";
 import { bufferCameraHlsClip, probeVideoDimensions } from "../ffmpegExport";
 import { fetchExportObject, probeExportObject } from "../backupExport";
-import { getBunnyPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { getBunnyPlaybackUrl, getBunnyProxiedPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { uhdPlaybackUrl } from "../uhdPlayback";
 
 /**
  * Creative hub engine: where a scene's pictures and footage come from.
@@ -254,6 +255,27 @@ export function videoIdOf(url: string | null | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+export type BrowserPlaybackSource = { kind: "camera-4k" | "stream"; url: string };
+
+/** Authorized HLS sources for a recording moment; the client can fall back without waiting for a cut. */
+export async function browserPlaybackSources(
+  access: AcademyOwnerAccess,
+  src: ConcreteSource,
+): Promise<BrowserPlaybackSource[] | null> {
+  if (src.type !== "recording") return null;
+  const rec = await academyRecording(access.academyId, src.recordingId);
+  const videoId = videoIdOf(rec?.videoUrl);
+  if (!rec || !videoId || videoId.startsWith("live:")) return null;
+  const camera4kUrl = uhdPlaybackUrl(videoId);
+  if (!camera4kUrl) return null;
+
+  const sources: BrowserPlaybackSource[] = [{ kind: "camera-4k", url: camera4kUrl }];
+  if (isBunnyConfigured()) {
+    sources.push({ kind: "stream", url: getBunnyProxiedPlaybackUrl(videoId) });
+  }
+  return sources;
 }
 
 const CAMERA_4K_NOT_READY = "The 4K for this match isn't ready yet. Please try again later.";

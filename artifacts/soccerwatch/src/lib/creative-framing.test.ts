@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sceneSchema, framingWindow } from "@workspace/api-zod";
-import { clipVideoScene, footageBox, framedVideoStyle, thin, zoomRange } from "./creative-framing";
+import { absPlaybackTimeMs, clipVideoScene, footageBox, framedVideoStyle, playbackSecondsAt, thin, zoomRange } from "./creative-framing";
 import { changeFormat } from "./creative-editor-state";
 import { framerStartFor } from "@/components/creative-hub/library";
 import type { LibraryClip } from "./creative-hub-library-api";
@@ -17,6 +17,20 @@ describe("picking a clip opens the framer on it", () => {
   it("frames a clip with no recording behind it as it is", () => {
     expect(framerStartFor({ kind: "clip", clip: clip({ window: null }) })).toEqual({ type: "clip", clipId: 7, durationMs: 54_000 });
     expect(framerStartFor({ kind: "clip", clip: clip({ window: null, status: "processing" }) })).toBeNull();
+  });
+});
+
+describe("absolute recording playback time", () => {
+  it("keeps follow-ball drag keys on the full recording timeline", () => {
+    const playheadSeconds = 45 * 60 + 5;
+    const absMs = absPlaybackTimeMs(playheadSeconds, 0);
+    expect(absMs).toBe(2_705_000);
+    expect(playbackSecondsAt(absMs, 0)).toBe(playheadSeconds);
+  });
+
+  it("preserves an offset for clip files that use a local timeline", () => {
+    expect(absPlaybackTimeMs(5, 12_000)).toBe(17_000);
+    expect(playbackSecondsAt(17_000, 12_000)).toBe(5);
   });
 });
 

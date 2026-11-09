@@ -6,7 +6,7 @@ import request from "supertest";
 import express, { type Express } from "express";
 import { eq } from "drizzle-orm";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { academiesTable, academyAdMediaTable, academyMembersTable, db, fieldsTable, usersTable } from "@workspace/db";
+import { academiesTable, academyAdMediaTable, academyMembersTable, academyRecordingsTable, db, fieldsTable, recordingsTable, usersTable } from "@workspace/db";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserId: vi.fn(async (req: { headers: Record<string, string | undefined> }) => {
@@ -26,6 +26,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
 
 import renderRouter, { tintFromQuery } from "./academyCreativeRender";
 import { clearTintedCache, rescanPlates } from "../lib/creative/renderMedia";
+import { canViewBunnyVideo } from "../lib/publicFootage";
 
 const tag = Date.now();
 let app: Express;
@@ -33,6 +34,7 @@ let ownerId: number;
 let coachId: number;
 let academyId: number;
 let otherAcademyId: number;
+let fieldId: number;
 let greyMediaId: number;
 let otherMediaId: number;
 let artDir: string;
@@ -76,12 +78,17 @@ beforeAll(async () => {
   app = express();
   app.use(express.json());
   app.use("/api", renderRouter);
+  app.get("/test/hls-auth/:videoId", async (req, res): Promise<void> => {
+    const videoId = Array.isArray(req.params.videoId) ? req.params.videoId[0] : req.params.videoId;
+    res.status(videoId && await canViewBunnyVideo(req, videoId) ? 200 : 404).end();
+  });
   const users = await db.insert(usersTable).values([
     { name: `Owner ${tag}`, email: `owner-render-${tag}@test.local` },
     { name: `Coach ${tag}`, email: `coach-render-${tag}@test.local` },
   ]).returning({ id: usersTable.id });
   [ownerId, coachId] = users.map((u) => u.id);
   const [field] = await db.insert(fieldsTable).values({ name: `Render field ${tag}`, cameraId: "camera1" }).returning({ id: fieldsTable.id });
+  fieldId = field.id;
   const academies = await db.insert(academiesTable).values([
     { name: `Render Academy ${tag}`, fieldId: field.id },
     { name: `Other Render ${tag}`, fieldId: field.id },
@@ -135,6 +142,37 @@ describe("GET …/creative/artwork/backgrounds", () => {
 describe("GET …/creative/media for plates and tints", () => {
   const plate = (n = 1) => encodeURIComponent(JSON.stringify({ type: "artwork", key: `bg/broadcast/${n}` }));
 
+  it("returns owner-scoped HLS source choices for a recording moment", async () => {
+    const videoId = "123e4567-e89b-12d3-a456-426614174000";
+    const [recording] = await db.insert(recordingsTable).values({
+      fieldId,
+      court: "1",
+      date: "2025-01-02",
+      timeSlot: "18:00",
+      duration: "90:00",
+      videoUrl: videoId,
+    }).returning({ id: recordingsTable.id });
+    await db.insert(academyRecordingsTable).values({ academyId, recordingId: recording.id });
+    const source = encodeURIComponent(JSON.stringify({
+      type: "recording",
+      recordingId: recording.id,
+      fromMs: 2_700_000,
+      toMs: 2_715_000,
+    }));
+
+    const response = await request(app)
+      .get(url(`/media?src=${source}&want=video&sources=1`))
+      .set(auth(ownerId))
+      .expect(200);
+
+    expect(response.body.sources[0]).toEqual({
+      kind: "camera-4k",
+      url: `/api/hls-proxy/uhd/${videoId}.m3u8`,
+    });
+    expect(response.body.sources.every((item: { url: string }) => item.url.startsWith("/api/hls-proxy/"))).toBe(true);
+    expect((await request(app).get(url(`/media?src=${source}&want=video&sources=1`)).set(auth(coachId))).status).toBe(403);
+  });
+
   it("picks the post or story file by format (story falls back to post)", async () => {
     const post = await request(app).get(url(`/media?src=${plate()}&format=post`)).set(auth(ownerId)).buffer(true).parse(binary).expect(200);
     expect((await pixel(post.body, 1, 1)).w).toBe(40);
@@ -182,5 +220,32 @@ describe("GET …/creative/media for plates and tints", () => {
     expect(tintFromQuery({ tint: "@primary" })).toBeNull();
     expect(tintFromQuery({ tint: "C8102E", tintAmount: "0" })).toBeNull();
     expect(tintFromQuery({})).toBeNull();
+  });
+});
+
+describe("private venue recording HLS authorization", () => {
+  it("allows only the owner of the venue attached to a private field recording", async () => {
+    const videoId = "223e4567-e89b-12d3-a456-426614174000";
+    const [venue] = await db.insert(academiesTable).values({
+      name: `HLS Venue ${tag}`,
+      kind: "venue",
+      fieldId,
+    }).returning({ id: academiesTable.id });
+    await db.insert(academyMembersTable).values([
+      { academyId: venue.id, userId: ownerId, role: "owner" },
+      { academyId: venue.id, userId: coachId, role: "coach" },
+    ]);
+    await db.insert(recordingsTable).values({
+      fieldId,
+      court: "1",
+      date: "2025-01-02",
+      timeSlot: "18:00",
+      duration: "90:00",
+      videoUrl: videoId,
+      isVisible: false,
+    });
+
+    await request(app).get(`/test/hls-auth/${videoId}`).set(auth(ownerId)).expect(200);
+    await request(app).get(`/test/hls-auth/${videoId}`).set(auth(coachId)).expect(404);
   });
 });

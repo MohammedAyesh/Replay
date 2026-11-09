@@ -6,7 +6,7 @@ import { CREATIVE_BASE, creativeOwner, loadCreativeProject, publicProject } from
 import { logger } from "../lib/logger";
 import { renderScenePng } from "../lib/creative/render";
 import { isRendering, queueVideoRender, renderStillNow, sweepInterruptedRenders } from "../lib/creative/renderJobs";
-import { backgroundPlates, browserMedia, CreativeRenderError, creativeImageResolver, loadCreativeContext, rescanPlates, serverData, tintedStill } from "../lib/creative/renderMedia";
+import { backgroundPlates, browserMedia, browserPlaybackSources, CreativeRenderError, creativeImageResolver, loadCreativeContext, rescanPlates, serverData, tintedStill } from "../lib/creative/renderMedia";
 import { sendOutput } from "../lib/creative/renderStore";
 import { styleAllowedFor } from "../lib/creative/packs";
 import type { ConcreteSource } from "../lib/creative/render";
@@ -18,8 +18,9 @@ import type { ConcreteSource } from "../lib/creative/render";
  *                                       video: queued    → { project } queued (poll the project)
  *   GET  …/projects/:projectId/output   the stored PNG / MP4 (Range for video; ?download=1 = attachment)
  *   POST …/preview                      { scene, data?, width?, timeMs? } → PNG (thumbnails; ≤ 1080 wide)
- *   GET  …/media?src=<MediaSource JSON>&want=still|video[&format=post|square|story][&tint=<hex>&tintMode=&tintAmount=&size=<px>]
+ *   GET  …/media?src=<MediaSource JSON>&want=still|video[&sources=1][&format=post|square|story][&tint=<hex>&tintMode=&tintAmount=&size=<px>]
  *                                       something the browser can load for a scene source;
+ *                                       sources=1 returns immediate HLS choices for recording moments;
  *                                       format picks a background plate's post/story file;
  *                                       tint returns the still recoloured as the renderer does (PNG)
  *   GET  …/artwork/backgrounds?style=<style>
@@ -157,6 +158,17 @@ router.get(`${base}/media`, async (req, res): Promise<void> => {
   } catch { /* falls through to 400 */ }
   if (!src) { res.status(400).json({ error: "Invalid media source" }); return; }
   const want = req.query.want === "video" ? "video" : "still";
+  if (queryString(req.query.sources) === "1") {
+    if (want !== "video" || src.type !== "recording") {
+      res.status(400).json({ error: "Playback sources are only available for recording video." });
+      return;
+    }
+    const sources = await browserPlaybackSources(access, src);
+    if (!sources) { res.status(404).json({ error: "Recording video not found" }); return; }
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({ sources });
+    return;
+  }
   const format = formatFromQuery(req.query.format);
   const tint = want === "still" ? tintFromQuery(req.query as Record<string, unknown>) : null;
   const temps: string[] = [];

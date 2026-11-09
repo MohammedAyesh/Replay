@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Circle, Crosshair, Loader2, Maximize2, Pause, Play, Rewind, FastForward, Square, Volume2, VolumeX } from "lucide-react";
+import Hls from "hls.js";
 import { framingWindow, type Framing, type SceneBranding } from "@workspace/api-zod";
 import { useCreativeFramerCopy } from "@/i18n/creative-framer-strings";
 import { videoUrlFor } from "../library/media";
+import { creativePlaybackSourcesUrl, type CreativePlaybackSource } from "@/lib/creative-hub-media";
 import {
-  DEFAULT_BRANDING, FRAMER_SHAPES, MAX_VIDEO_MS, boxAspectOf, fetchFraming, footageBox, shapeFormat, thin, zoomRange,
+  DEFAULT_BRANDING, FRAMER_SHAPES, MAX_VIDEO_MS, absPlaybackTimeMs, boxAspectOf, fetchFraming, footageBox,
+  playbackSecondsAt, shapeFormat, thin, zoomRange,
   type FramedClip, type FramerShape,
 } from "@/lib/creative-framing";
 import { Switch } from "@/components/ui/switch";
@@ -13,8 +16,8 @@ import { cn } from "@/lib/utils";
 /**
  * The clip framer: a 16:9 camera on the panorama, following the ball unless
  * the owner moves it, with the clip's start and end movable 5 s at a time and
- * the venue's branding switchable. One <video> plays the footage (a cut of the
- * recording with room either side); two canvases draw from it — the framed
+ * the venue's branding switchable. One <video> plays a clip or streams the
+ * recording directly at its absolute timeline position; two canvases draw from it — the framed
  * view and the whole pitch with the camera's window on it.
  *
  * Times inside are milliseconds of the recording ("abs"); for a fixed clip,
@@ -33,6 +36,20 @@ const WIDE = 16 / 9;
 
 type Key = [number, number, number];
 type Mode = "ball" | "manual" | "pitch";
+
+function parsePlaybackSources(value: unknown): CreativePlaybackSource[] {
+  if (!value || typeof value !== "object" || !("sources" in value) || !Array.isArray(value.sources)) return [];
+  return value.sources.flatMap((item): CreativePlaybackSource[] => {
+    if (!item || typeof item !== "object") return [];
+    const source = item as Record<string, unknown>;
+    if (
+      (source.kind !== "camera-4k" && source.kind !== "stream")
+      || typeof source.url !== "string"
+      || !source.url.startsWith("/api/hls-proxy/")
+    ) return [];
+    return [{ kind: source.kind, url: source.url }];
+  });
+}
 
 const clock = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -74,9 +91,14 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const [muted, setMuted] = useState(true);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [playbackSources, setPlaybackSources] = useState<CreativePlaybackSource[]>([]);
+  const [playbackSourceIndex, setPlaybackSourceIndex] = useState(0);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [recording, setRecording] = useState(false);
   const [nowAbs, setNowAbs] = useState(win.from);
 
+  const mutedRef = useRef(muted);
+  mutedRef.current = muted;
   const videoRef = useRef<HTMLVideoElement>(null);
   const viewRef = useRef<HTMLCanvasElement>(null);
   const stripRef = useRef<HTMLCanvasElement>(null);
@@ -94,15 +116,189 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   live.current = { keys, zoom, mode, win, loaded, recording, outAspect, shape };
 
   // ── Footage ───────────────────────────────────────────────────────────────
-  const url = useMemo(() => isRec
-    ? videoUrlFor(academyId, { type: "recording", recordingId: start.recordingId, fromMs: Math.round(loaded.from), toMs: Math.round(loaded.to) })
-    : videoUrlFor(academyId, { type: "clip", clipId: start.clipId }),
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  [academyId, isRec, loaded.from, loaded.to]);
-  const absAt = (v: HTMLVideoElement) => live.current.loaded.from + v.currentTime * 1000;
-  const seekAbs = (ms: number) => { const v = videoRef.current; if (v) v.currentTime = Math.max(0, (ms - live.current.loaded.from) / 1000); };
+  const sourcesUrl = start.type === "recording" ? creativePlaybackSourcesUrl(academyId, start) : null;
+  const url = useMemo(
+    () => start.type === "clip" ? videoUrlFor(academyId, { type: "clip", clipId: start.clipId }) : null,
+    [academyId, start],
+  );
+  const absAt = (v: HTMLVideoElement) => absPlaybackTimeMs(v.currentTime, isRec ? 0 : live.current.loaded.from);
+  const seekAbs = (ms: number) => {
+    const v = videoRef.current;
+    if (v) v.currentTime = playbackSecondsAt(ms, isRec ? 0 : live.current.loaded.from);
+  };
 
-  useEffect(() => { setReady(false); setFailed(false); }, [url]);
+  // Ask the owner-scoped endpoint for HLS URLs only. This does not cut or
+  // download a second video file; 4K is tried first, then Stream if needed.
+  useEffect(() => {
+    if (!isRec) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8_000);
+    setReady(false);
+    setFailed(false);
+    setPlaybackSources([]);
+    setPlaybackSourceIndex(0);
+    setPlaying(false);
+    if (!sourcesUrl) {
+      window.clearTimeout(timeout);
+      setFailed(true);
+      return () => { cancelled = true; controller.abort(); };
+    }
+    void fetch(sourcesUrl, { credentials: "include", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not load recording sources");
+        return parsePlaybackSources(await response.json());
+      })
+      .then((sources) => {
+        if (cancelled) return;
+        if (!sources.length) throw new Error("No playable recording sources");
+        setPlaybackSources(sources);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setReady(false);
+          setFailed(true);
+        }
+      })
+      .finally(() => window.clearTimeout(timeout));
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [isRec, sourcesUrl, loadAttempt]);
+
+  // Use HLS for full-match recordings, seeking directly to the moment. A slow
+  // 4K manifest/first frame falls back to Stream; every attempt has a timeout.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const source = isRec
+      ? playbackSources[playbackSourceIndex]
+      : url ? { kind: "clip" as const, url } : undefined;
+    if (isRec && !playbackSources.length) return;
+    if (!source) {
+      setReady(false);
+      setFailed(true);
+      return;
+    }
+
+    let disposed = false;
+    let failureHandled = false;
+    let timeout: number | undefined;
+    let hls: Hls | null = null;
+    const clearTimeoutId = () => {
+      if (timeout !== undefined) window.clearTimeout(timeout);
+      timeout = undefined;
+    };
+    const failSource = () => {
+      if (disposed || failureHandled) return;
+      failureHandled = true;
+      clearTimeoutId();
+      video.pause();
+      setPlaying(false);
+      setReady(false);
+      if (isRec && playbackSourceIndex + 1 < playbackSources.length) {
+        setFailed(false);
+        setPlaybackSourceIndex(playbackSourceIndex + 1);
+      } else {
+        setFailed(true);
+      }
+    };
+    const seekToWindow = (): boolean => {
+      if (!isRec) {
+        seekAbs(live.current.win.from);
+        return true;
+      }
+      const duration = video.duration;
+      if (!Number.isFinite(duration) || duration <= 0) return false;
+      const target = Math.min(
+        Math.max(0, live.current.win.from / 1000),
+        Math.max(0, duration - 0.1),
+      );
+      try {
+        if (Math.abs(video.currentTime - target) > 0.5) video.currentTime = target;
+        return !video.seeking;
+      } catch {
+        return false;
+      }
+    };
+    const onLoadedData = () => {
+      if (disposed || !seekToWindow() || video.readyState < 2) return;
+      clearTimeoutId();
+      setFailed(false);
+      setReady(true);
+      void video.play().catch(() => undefined);
+    };
+    const onMetadata = () => { if (!disposed) seekToWindow(); };
+    const onVideoError = () => failSource();
+
+    video.addEventListener("loadeddata", onLoadedData);
+    video.addEventListener("loadedmetadata", onMetadata);
+    video.addEventListener("durationchange", onMetadata);
+    video.addEventListener("seeked", onLoadedData);
+    video.addEventListener("error", onVideoError);
+    video.crossOrigin = "anonymous";
+    video.muted = mutedRef.current;
+    setReady(false);
+    setFailed(false);
+
+    if (isRec) {
+      video.removeAttribute("src");
+      if (Hls.isSupported()) {
+        const startPosition = Math.max(0, live.current.win.from / 1000);
+        hls = new Hls({
+          enableWorker: false,
+          maxBufferLength: 20,
+          backBufferLength: 30,
+          startPosition,
+        });
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          if (!disposed) hls?.loadSource(source.url);
+        });
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (disposed) return;
+          hls?.startLoad(startPosition);
+          seekToWindow();
+        });
+        hls.on(Hls.Events.FRAG_BUFFERED, () => {
+          if (!disposed && video.readyState >= 2) onLoadedData();
+        });
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) failSource();
+        });
+        hls.attachMedia(video);
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = source.url;
+        video.load();
+      } else {
+        failSource();
+      }
+    } else {
+      video.src = source.url;
+      video.load();
+    }
+
+    if (!failureHandled) {
+      timeout = window.setTimeout(
+        failSource,
+        source.kind === "camera-4k" ? 4_000 : isRec ? 8_000 : 12_000,
+      );
+    }
+
+    return () => {
+      disposed = true;
+      clearTimeoutId();
+      video.removeEventListener("loadeddata", onLoadedData);
+      video.removeEventListener("loadedmetadata", onMetadata);
+      video.removeEventListener("durationchange", onMetadata);
+      video.removeEventListener("seeked", onLoadedData);
+      video.removeEventListener("error", onVideoError);
+      hls?.destroy();
+      video.pause();
+      video.removeAttribute("src");
+    };
+  }, [isRec, playbackSources, playbackSourceIndex, url, loadAttempt]);
 
   // The ball through the loaded stretch (or the clip): the camera's default.
   useEffect(() => {
@@ -291,14 +487,16 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     if (ballKeys?.length) setKeys(ballKeys);
   };
 
-  // Moving the start or the end: a new cut is fetched when it leaves the loaded stretch.
+  // Moving an edge outside the tracking window loads more framing data. HLS stays on the full recording.
   const moveEdge = (edge: "from" | "to", d: number) => {
     setWin((w) => {
       let from = w.from, to = w.to;
       if (edge === "from") from = Math.max(0, Math.min(to - MIN_MS, from + d));
       else to = Math.max(from + MIN_MS, to + d);
       if (to - from > MAX_VIDEO_MS) return w;
-      if (from < loaded.from || to > loaded.to) setLoaded({ from: Math.max(0, from - MARGIN_MS), to: to + MARGIN_MS });
+      if (from < loaded.from || to > loaded.to) {
+        setLoaded({ from: Math.max(0, from - MARGIN_MS), to: to + MARGIN_MS });
+      }
       return { from, to };
     });
   };
@@ -336,9 +534,7 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
 
   return (
     <div className="flex flex-col gap-3" data-testid="clip-framer">
-      <video ref={videoRef} src={url ?? undefined} className="hidden" playsInline preload="auto" muted={muted} crossOrigin="anonymous"
-        onLoadedData={() => { setReady(true); seekAbs(win.from); }}
-        onError={() => setFailed(true)}
+      <video ref={videoRef} className="hidden" playsInline preload="auto" muted={muted} crossOrigin="anonymous"
         onPause={() => setPlaying(false)} onPlay={() => setPlaying(true)} />
 
       <div className={cn("relative mx-auto overflow-hidden rounded-xl bg-black", viewTall ? "h-[min(62dvh,560px)]" : "w-full")}
@@ -347,8 +543,22 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
         {!ready && (
           <div className="absolute inset-0 grid place-items-center text-sm text-white/70">
             {failed ? (
-              <button type="button" onClick={() => { setFailed(false); setLoaded((l) => ({ ...l })); }} className="rounded-full border border-white/30 px-4 py-2">{copy.retry}</button>
-            ) : <span className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden />{copy.loading}</span>}
+              <div role="alert" data-testid="status-framer-load-error" className="flex flex-col items-center gap-3 px-5 text-center">
+                <span>{copy.failed}</span>
+                <button
+                  type="button"
+                  data-testid="button-framer-retry"
+                  onClick={() => {
+                    setReady(false);
+                    setFailed(false);
+                    setPlaybackSources([]);
+                    setPlaybackSourceIndex(0);
+                    setLoadAttempt((attempt) => attempt + 1);
+                  }}
+                  className="rounded-full border border-white/30 px-4 py-2"
+                >{copy.retry}</button>
+              </div>
+            ) : <span role="status" data-testid="status-framer-loading" className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden />{copy.loading}</span>}
           </div>
         )}
         {recording && <span className="absolute start-2 top-2 flex items-center gap-1 rounded-md bg-[#FF5A3C] px-2 py-0.5 text-[11px] font-bold text-white"><Circle className="h-2.5 w-2.5 fill-current" aria-hidden />REC</span>}

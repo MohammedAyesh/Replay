@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  canVenueOwnerViewVideo,
   canViewPinnedAcademyRecording,
   isPublicBunnyCollectionVideo,
   type PublicFootageContext,
@@ -105,6 +106,26 @@ describe("public Bunny collection visibility", () => {
       context(),
       [importedRecording()],
     )).toBe(false);
+  });
+});
+
+describe("private venue recording access", () => {
+  const videoId = "123e4567-e89b-12d3-a456-426614174000";
+  const recordings = [
+    { fieldId: 10, videoUrl: `https://vz-example.b-cdn.net/${videoId}/playlist.m3u8` },
+    { fieldId: 12, videoUrl: "another-video-id" },
+  ];
+  const owner: NonNullable<Parameters<typeof canVenueOwnerViewVideo>[0]> = { id: 7, isGuest: false, isDisabled: false };
+
+  it("allows a venue owner to view private footage from an attached field only", () => {
+    expect(canVenueOwnerViewVideo(owner, videoId, recordings, new Set([10]))).toBe(true);
+    expect(canVenueOwnerViewVideo(owner, videoId, recordings, new Set([11]))).toBe(false);
+  });
+
+  it("does not grant private venue footage to guests or disabled accounts", () => {
+    expect(canVenueOwnerViewVideo({ ...owner, isGuest: true }, videoId, recordings, new Set([10]))).toBe(false);
+    expect(canVenueOwnerViewVideo({ ...owner, isDisabled: true }, videoId, recordings, new Set([10]))).toBe(false);
+    expect(canVenueOwnerViewVideo(null, videoId, recordings, new Set([10]))).toBe(false);
   });
 });
 

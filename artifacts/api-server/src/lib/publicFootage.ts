@@ -1,6 +1,7 @@
 import type { Request } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import {
+  academiesTable,
   academyMembersTable,
   academyPlayerGuardiansTable,
   academyPlayersTable,
@@ -11,6 +12,7 @@ import {
   footageRequestsTable,
   recordingSchedulesTable,
   recordingsTable,
+  venuePitchesTable,
 } from "@workspace/db";
 import { getLocalUserRecord } from "./clerkUserBridge";
 import { matchesRecordingSchedule, type RecordingVisibilitySchedule } from "./recordingVisibility";
@@ -116,6 +118,20 @@ export function isPublicRecordingInContext(
   // authoritative, but do not require a second schedule match after an admin
   // has marked the imported recording visible.
   return !field.isHidden && recording.isVisible;
+}
+
+/** A venue owner can view private recordings from the fields attached to their venue. */
+export function canVenueOwnerViewVideo(
+  viewer: Pick<NonNullable<PublicFootageViewer>, "id" | "isGuest" | "isDisabled"> | null,
+  videoId: string,
+  recordings: Array<{ fieldId: number; videoUrl: string | null }>,
+  ownedVenueFieldIds: ReadonlySet<number>,
+): boolean {
+  if (!viewer || viewer.isGuest || viewer.isDisabled) return false;
+  return recordings.some((recording) =>
+    ownedVenueFieldIds.has(recording.fieldId)
+    && extractBunnyVideoId(recording.videoUrl) === videoId,
+  );
 }
 
 export function canViewPinnedAcademyRecording(
@@ -262,6 +278,39 @@ export async function canViewBunnyVideo(req: Request, videoId: string): Promise<
 
   const viewer = context.viewer;
   if (!viewer || viewer.isGuest || viewer.isDisabled) return false;
+
+  const ownedAcademyVideos = await db.select({ videoUrl: recordingsTable.videoUrl })
+    .from(academyRecordingsTable)
+    .innerJoin(recordingsTable, eq(recordingsTable.id, academyRecordingsTable.recordingId))
+    .innerJoin(academyMembersTable, and(
+      eq(academyMembersTable.academyId, academyRecordingsTable.academyId),
+      eq(academyMembersTable.userId, viewer.id),
+      eq(academyMembersTable.role, "owner"),
+    ));
+  if (ownedAcademyVideos.some((row) => extractBunnyVideoId(row.videoUrl) === videoId)) return true;
+
+  const venueRows = await db.select({
+    fieldId: academiesTable.fieldId,
+    pitchFieldId: venuePitchesTable.fieldId,
+  }).from(academiesTable)
+    .innerJoin(academyMembersTable, and(
+      eq(academyMembersTable.academyId, academiesTable.id),
+      eq(academyMembersTable.userId, viewer.id),
+      eq(academyMembersTable.role, "owner"),
+    ))
+    .leftJoin(venuePitchesTable, eq(venuePitchesTable.academyId, academiesTable.id))
+    .where(eq(academiesTable.kind, "venue"));
+  const ownedVenueFieldIds = new Set<number>();
+  for (const row of venueRows) {
+    ownedVenueFieldIds.add(row.fieldId);
+    if (row.pitchFieldId !== null) ownedVenueFieldIds.add(row.pitchFieldId);
+  }
+  if (canVenueOwnerViewVideo(
+    viewer,
+    videoId,
+    recordings.map(({ recording, field }) => ({ fieldId: field.id, videoUrl: recording.videoUrl })),
+    ownedVenueFieldIds,
+  )) return true;
 
   const attachedRecordings = await db
     .select({

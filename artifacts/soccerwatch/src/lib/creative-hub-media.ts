@@ -25,6 +25,22 @@ export function creativeMediaUrl(academyId: number, src: MediaSource, want: "sti
   return variant ? withMediaVariant(url, variant) : url;
 }
 
+export type CreativePlaybackSource = { kind: "camera-4k" | "stream"; url: string };
+
+/** The source list is authorized by the same owner-scoped media route. */
+export function creativePlaybackSourcesUrl(
+  academyId: number,
+  src: Extract<MediaSource, { type: "recording" }>,
+): string | null {
+  const url = creativeMediaUrl(academyId, src, "video");
+  if (!url) return null;
+  const at = url.indexOf("?");
+  if (at < 0) return `${url}?sources=1`;
+  const qs = new URLSearchParams(url.slice(at + 1));
+  qs.set("sources", "1");
+  return `${url.slice(0, at)}?${qs.toString()}`;
+}
+
 /**
  * format: the scene format (a plate's post / story file).
  * tint: recolour the still on the server.
