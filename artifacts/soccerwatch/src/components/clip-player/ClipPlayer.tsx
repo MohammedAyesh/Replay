@@ -13,6 +13,7 @@ import {
   Play,
   MoveHorizontal,
   Settings2,
+  Spline,
   Square,
   X,
 } from "lucide-react";
@@ -42,6 +43,7 @@ import {
   cameraAt, cameraYAt, type CameraPoint,
 } from "@/lib/follow-ball";
 import { computeFollowBallPath } from "@/lib/follow-ball-compute";
+import { BallTrailOverlay } from "./BallTrailOverlay";
 import {
   PLAYBACK_MAX_WIDTH,
   capBelowFailedLevel,
@@ -390,6 +392,14 @@ export function ClipPlayer({
       return saved === null ? null : saved === "true";
     } catch { return null; }
   });
+  // The red ball trail is off until a viewer turns it on; the choice is kept per browser.
+  const [ballTrailOn, setBallTrailOn] = useState<boolean>(() => {
+    try { return localStorage.getItem("replay.ballTrail") === "true"; } catch { return false; }
+  });
+  const setBallTrailPreference = useCallback((enabled: boolean) => {
+    try { localStorage.setItem("replay.ballTrail", String(enabled)); } catch { /* storage can be disabled */ }
+    setBallTrailOn(enabled);
+  }, []);
   const followVideoId = source.kind === "bunny" ? source.videoId : null;
   const ballPathQuery = useQuery({
     queryKey: ["ball-path", followVideoId],
@@ -399,7 +409,7 @@ export function ClipPlayer({
       if (!response.ok) throw new Error(`Ball path unavailable (${response.status})`);
       return response.json();
     },
-    enabled: followVideoId !== null && followSetting,
+    enabled: followVideoId !== null && (followSetting || ballTrailOn),
     staleTime: 60 * 60 * 1000,
     refetchOnMount: false,
     retry: false,
@@ -408,6 +418,9 @@ export function ClipPlayer({
     ? ballPathQuery.data : undefined;
   const [cameraPath, setCameraPath] = useState<CameraPoint[] | null>(null);
   const followAvailable = Boolean(followVideoId && followSetting && ballPath && cameraPath?.length);
+  // Offered wherever the match has been analysed, like Follow the ball.
+  const ballTrailAvailable = Boolean(followVideoId && ballPath?.samples.length);
+  const showBallTrail = ballTrailAvailable && ballTrailOn && !isLive;
   const isFollowingBall = followAvailable && followChoice !== false;
   const followEnabledRef = useRef(false);
   followEnabledRef.current = isFollowingBall;
@@ -1667,6 +1680,7 @@ export function ClipPlayer({
             onLoadedMetadata={onLoadedMetadata}
             onTimeUpdate={(event) => onPositionChangeRef.current?.(event.currentTarget.currentTime)}
           />
+          {showBallTrail && ballPath && <BallTrailOverlay videoRef={videoRef} samples={ballPath.samples} />}
           {stageBadge && (
             <div className="pointer-events-none absolute start-3 top-3 z-20 max-w-[70%]">{stageBadge}</div>
           )}
@@ -1778,6 +1792,25 @@ export function ClipPlayer({
         >
           <CircleDot size={15} aria-hidden="true" />
           <span className="hidden sm:inline">{t.player.followBall}</span>
+        </button>
+      )}
+
+      {ballTrailAvailable && !isLive && (
+        <button
+          type="button"
+          aria-label={t.player.ballTrail}
+          aria-pressed={ballTrailOn}
+          title={t.player.ballTrail}
+          data-testid="button-ball-trail"
+          onClick={() => setBallTrailPreference(!ballTrailOn)}
+          className={cn(
+            "absolute end-[5.5rem] z-[60] flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 text-xs font-bold backdrop-blur-sm",
+            ballTrailOn ? "border-red-400/70 bg-red-600/85 text-white" : "border-white/20 bg-black/70 text-white",
+          )}
+          style={{ top: `calc(env(safe-area-inset-top) + ${followAvailable ? "6.5rem" : "4rem"})` }}
+        >
+          <Spline size={15} aria-hidden="true" />
+          <span className="hidden sm:inline">{t.player.ballTrail}</span>
         </button>
       )}
 

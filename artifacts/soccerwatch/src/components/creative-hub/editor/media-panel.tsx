@@ -92,7 +92,13 @@ export function MediaPanel({ ed }: { ed: EditorApi }) {
             <NumberSlider label={copy.roundness} value={layer.radius ?? 0} min={0} max={300} onChange={(v) => ed.update(layer.id, { radius: v || undefined }, "radius")} />
           </>
         ) : (
-          <Toggle id={`muted-${layer.id}`} label={copy.muted} checked={!!layer.muted} onChange={(v) => ed.update(layer.id, { muted: v })} />
+          <>
+            <Toggle id={`muted-${layer.id}`} label={copy.muted} checked={!!layer.muted} onChange={(v) => ed.update(layer.id, { muted: v })} />
+            {framerFootage(ed, layer) ? (
+              <Toggle id={`trail-${layer.id}`} label={copy.ballTrail} checked={!!layer.ballTrail} testId="editor-ball-trail"
+                onChange={(v) => ed.update(layer.id, { ballTrail: v || undefined })} />
+            ) : null}
+          </>
         )}
       </Section>
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Film, ImageIcon } from "lucide-react";
-import { framingWindow, type SceneLayer } from "@workspace/api-zod";
+import { framingWindow, type BallTrailSample, type SceneLayer } from "@workspace/api-zod";
+import { BallTrailOverlay } from "@/components/clip-player/BallTrailOverlay";
 import { framedVideoStyle } from "@/lib/creative-framing";
 import { sourceTimeAt, videoParts } from "./layout";
 import { roundRectPath } from "./shapes";
@@ -55,7 +56,11 @@ const clampRate = (r: number) => Math.max(0.0625, Math.min(16, r));
  * window, holding the last frame past the trim. Playing, it runs at the part's
  * speed and is pulled back when it drifts; paused, it seeks.
  */
-export function VideoView({ layer, url, timeMs, playing, blurPx = 0 }: { layer: VideoLayer; url: string | null; timeMs: number; playing: boolean; blurPx?: number }) {
+export function VideoView({ layer, url, timeMs, playing, blurPx = 0, trail = null }: {
+  layer: VideoLayer; url: string | null; timeMs: number; playing: boolean; blurPx?: number;
+  /** The ball path on the video's own clock, when the layer shows the red ball trail. */
+  trail?: ReadonlyArray<BallTrailSample> | null;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [sourceMs, setSourceMs] = useState<number | null>(null);
@@ -118,6 +123,7 @@ export function VideoView({ layer, url, timeMs, playing, blurPx = 0 }: { layer: 
         }}
         className={framing ? "pointer-events-none select-none" : "pointer-events-none h-full w-full select-none"}
         style={framing ? { position: "absolute", maxWidth: "none" } : { objectFit: layer.fit ?? "cover", objectPosition: "center" }} />
+      {layer.ballTrail && trail?.length ? <BallTrailOverlay videoRef={ref} samples={trail} fit={framing ? undefined : layer.fit ?? "cover"} /> : null}
     </div>
   );
 }

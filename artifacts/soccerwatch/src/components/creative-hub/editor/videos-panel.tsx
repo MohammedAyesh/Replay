@@ -4,6 +4,7 @@ import { resolveSource } from "@workspace/api-zod";
 import { useCreativeEditorCopy } from "@/i18n/creative-editor-strings";
 import { findLayer, videoPlayMs, type VideoLayer, type VideoSlot } from "@/lib/creative-editor-state";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { CameraDialog, framerFootage } from "./camera-dialog";
 import { formatMs } from "./timeline";
@@ -63,6 +64,13 @@ function SlotCard({ ed, slot }: { ed: EditorApi; slot: VideoSlot }) {
         ) : null}
       </div>
       {src ? <p className="text-[11px] text-muted-text">{copy.videos.editHint}</p> : null}
+      {src && framerFootage(ed, anchor) ? (
+        <label className="flex items-center justify-between gap-3 text-sm text-text">
+          {copy.videos.ballTrail}
+          <Switch checked={!!anchor.ballTrail} data-testid={`editor-video-slot-${slot.n}-trail`}
+            onCheckedChange={(v) => { for (const id of slot.layerIds) ed.update(id, { ballTrail: v || undefined }); }} />
+        </label>
+      ) : null}
       {cameraOpen ? <CameraDialog ed={ed} layer={anchor} open={cameraOpen} onOpenChange={setCameraOpen} /> : null}
     </section>
   );

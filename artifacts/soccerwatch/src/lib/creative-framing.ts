@@ -13,6 +13,8 @@ export type FramingAnswer = {
   coverage: number;
   /** For a clip: its stretch of its recording, when it is on one (so its start and end can move). */
   window?: { recordingId: number; fromMs: number; toMs: number } | null;
+  /** The ball path through the stretch, for the red trail: [seconds from its start, x, y]. */
+  ball?: Array<[number, number, number]>;
 };
 
 export type FramingSource =
@@ -70,6 +72,8 @@ export type FramedClip = {
   framing: Framing | null;
   branding: SceneBranding;
   shape: FramerShape;
+  /** Draw the red ball trail over the footage. */
+  ballTrail?: boolean;
 };
 
 export const MAX_VIDEO_MS = 180_000;
@@ -134,6 +138,7 @@ export function clipVideoScene(clip: FramedClip, locale: "ar" | "en"): Scene {
       speed: 1,
       muted: false,
       ...(clip.framing ? { framing: clip.framing } : {}),
+      ...(clip.ballTrail ? { ballTrail: true } : {}),
     }],
   };
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Circle, Crosshair, Loader2, Maximize2, Pause, Play, Rewind, FastForward, Square, Volume2, VolumeX } from "lucide-react";
-import { framingWindow, type Framing, type SceneBranding } from "@workspace/api-zod";
+import { ballTrailAt, drawBallTrail, framingWindow, trailWidthFor, type BallTrailSample, type Framing, type SceneBranding } from "@workspace/api-zod";
 import { useCreativeFramerCopy } from "@/i18n/creative-framer-strings";
 import { videoUrlFor } from "../library/media";
 import {
@@ -42,7 +42,7 @@ const clock = (ms: number) => {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(r).padStart(2, "0")}` : `${m}:${String(r).padStart(2, "0")}`;
 };
 
-export function ClipFramer({ academyId, start, framing: initialFraming, branding: initialBranding, shape: initialShape, lockedAspect, actions }: {
+export function ClipFramer({ academyId, start, framing: initialFraming, branding: initialBranding, shape: initialShape, lockedAspect, ballTrail: initialTrail, actions }: {
   academyId: number;
   start: FramerStart;
   /** The video's shape; offered as a choice unless lockedAspect is set. */
@@ -52,6 +52,8 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   /** Keys relative to the start's beginning. Absent: follow the ball. */
   framing?: Framing | null;
   branding?: SceneBranding | null;
+  /** The red ball trail starts on. */
+  ballTrail?: boolean;
   /** The buttons under the framer, given what it would hand back now. */
   actions: (value: FramedClip) => ReactNode;
 }) {
@@ -70,6 +72,9 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const [ballKeys, setBallKeys] = useState<Key[] | null>(null);
   const [ballSource, setBallSource] = useState<"ball" | "clip" | "centre" | null>(null);
   const [branding, setBranding] = useState<SceneBranding>(initialBranding ?? DEFAULT_BRANDING);
+  const [trail, setTrail] = useState(!!initialTrail);
+  // The ball path through the loaded stretch, on the framer's own clock (seconds of "abs").
+  const [ball, setBall] = useState<BallTrailSample[]>([]);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [ready, setReady] = useState(false);
@@ -90,8 +95,8 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
   const outAspect = lockedAspect ?? boxAspectOf(shape, framed);
   const range = zoomRange(outAspect);
   const zoom = round3(range.max - closeness * (range.max - range.min));
-  const live = useRef({ keys, zoom, mode, win, loaded, recording, outAspect, shape });
-  live.current = { keys, zoom, mode, win, loaded, recording, outAspect, shape };
+  const live = useRef({ keys, zoom, mode, win, loaded, recording, outAspect, shape, trail, ball });
+  live.current = { keys, zoom, mode, win, loaded, recording, outAspect, shape, trail, ball };
 
   // ── Footage ───────────────────────────────────────────────────────────────
   const url = useMemo(() => isRec
@@ -116,6 +121,8 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
       const abs = a.framing.keys.map((k) => [k[0] + base, k[1], k[2]] as Key);
       setBallKeys(abs);
       setBallSource(a.source);
+      // Only on a recording: a fixed clip may play as its saved file, already framed.
+      setBall(!isRec ? [] : (a.ball ?? []).map(([sec, x, y]) => [(sec * 1000 + base) / 1000, x, y] as BallTrailSample));
       if (!initialFraming) setCloseness(closenessOf(a.framing.zoom, WIDE));
       // Following the ball (or nothing chosen yet): take the new keys.
       if (live.current.mode === "ball" || !live.current.keys.length) setKeys(abs);
@@ -167,11 +174,23 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
             const h = view.width / srcAspect;
             box = { x: 0, y: (view.height - h) / 2, w: view.width, h };
           }
+          const w = f ? framingWindow(f, abs, srcAspect, s.outAspect) : { x: 0, y: 0, w: 1, h: 1 };
           if (f) {
-            const w = framingWindow(f, abs, srcAspect, s.outAspect);
             ctx.drawImage(v, w.x * v.videoWidth, w.y * v.videoHeight, w.w * v.videoWidth, w.h * v.videoHeight, box.x, box.y, box.w, box.h);
           } else {
             ctx.drawImage(v, box.x, box.y, box.w, box.h);
+          }
+          // The red ball trail, as the export draws it.
+          const points = s.trail && s.ball.length ? ballTrailAt(s.ball, abs / 1000) : null;
+          if (points) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(box.x, box.y, box.w, box.h);
+            ctx.clip();
+            drawBallTrail(ctx, points,
+              (x, y) => [box.x + ((x - w.x) / w.w) * box.w, box.y + ((y - w.y) / w.h) * box.h],
+              trailWidthFor(box.h / w.h));
+            ctx.restore();
           }
         }
       }
@@ -317,9 +336,9 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
     const src = isRec
       ? { type: "recording" as const, recordingId: start.recordingId, fromMs: Math.round(win.from), toMs: Math.round(win.to) }
       : { type: "clip" as const, clipId: start.clipId };
-    return { src, durationMs: len, framing, branding, shape };
+    return { src, durationMs: len, framing, branding, shape, ...(trail && ball.length ? { ballTrail: true } : {}) };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRec, win.from, win.to, mode, keys, zoom, branding, len, shape]);
+  }, [isRec, win.from, win.to, mode, keys, zoom, branding, len, shape, trail, ball.length]);
 
   // The preview's own shape: the video's frame, or the editor layer's box.
   const viewAspect = lockedAspect ?? (shape === "wide" ? WIDE : 9 / 16);
@@ -409,6 +428,15 @@ export function ClipFramer({ academyId, start, framing: initialFraming, branding
             : <Pill active={false} onClick={startRecording} disabled={!ready} testId="framer-rerecord"><Circle className="h-3.5 w-3.5 text-[#FF5A3C]" />{copy.rerecord}</Pill>}
         </div>
         {ballSource && ballSource !== "ball" && mode === "ball" && <p className="text-[11px] text-muted-text">{copy.noBall}</p>}
+        {ball.length > 0 && (
+          <label className="flex items-center justify-between gap-3 py-1 text-sm text-text">
+            <span>
+              <span className="block">{copy.ballTrail}</span>
+              <span className="block text-[11px] text-muted-text">{copy.ballTrailHint}</span>
+            </span>
+            <Switch checked={trail} onCheckedChange={setTrail} data-testid="framer-ball-trail" />
+          </label>
+        )}
         {mode !== "pitch" && (
           <label className="flex items-center gap-3 text-xs text-muted-text">
             <span className="w-14 shrink-0 font-semibold">{copy.zoom}</span>

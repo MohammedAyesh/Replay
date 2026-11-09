@@ -40,7 +40,7 @@ export type EditorApi = {
    * Put footage in a slot: the data value, every layer showing it plays it from the start for
    * `playMs`, and the design ripples to fit (one undo step). `framing` sets the camera too.
    */
-  setSlotVideo: (path: string, src: MediaSource, playMs: number | null, framing?: Framing | null) => void;
+  setSlotVideo: (path: string, src: MediaSource, playMs: number | null, framing?: Framing | null, ballTrail?: boolean) => void;
   /** Open the Library picker. */
   pick: (accept: "image" | "video" | "any", onPick: (source: MediaSource, meta: { durationMs?: number; label?: string }) => void, opts?: { tab?: "library" | "players" }) => void;
   /** For SceneCanvas previews inside panels. */

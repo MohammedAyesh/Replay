@@ -12,11 +12,15 @@ import {
   slowZoomAt,
   slowZoomOrigin,
   slowZoomsLayer,
+  type BallTrailSample,
   type CreativeBrand,
   type CreativeData,
+  type MediaSource,
   type Scene,
   type SceneLayer,
 } from "@workspace/api-zod";
+
+type ConcreteSource = Exclude<MediaSource, { type: "binding" }>;
 import { withMediaVariant } from "@/lib/creative-hub-media";
 import { moveBox, resizeBox, rotationTo, tidy, type Box, type Corner, type Snap } from "./canvas/editing";
 import { blurAt, entranceAt } from "./canvas/layout";
@@ -41,6 +45,8 @@ export type SceneCanvasProps = {
   playing?: boolean;
   /** Resolves a media source to a URL the browser can load (thumb for stills, video for clips). */
   mediaUrl?: (layer: Extract<SceneLayer, { kind: "image" | "video" }>) => string | null;
+  /** The ball path for a footage source (on its video's clock), for layers with the red ball trail. */
+  ballTrailFor?: (src: ConcreteSource) => ReadonlyArray<BallTrailSample> | null;
   editable?: boolean;
   selectedLayerId?: string | null;
   onSelectLayer?: (id: string | null) => void;
@@ -93,7 +99,7 @@ const CORNERS: Corner[] = ["nw", "ne", "se", "sw"];
 const boxOfLayer = (l: SceneLayer): Box => ({ x: l.x, y: l.y, w: l.w, h: l.h, rotation: l.rotation ?? 0 });
 
 export function SceneCanvas({
-  scene, brand, data, width, timeMs, playing = false, mediaUrl, editable = false,
+  scene, brand, data, width, timeMs, playing = false, mediaUrl, ballTrailFor, editable = false,
   selectedLayerId = null, onSelectLayer, onLayerChange, onTextChange, className,
 }: SceneCanvasProps) {
   const { w: W, h: H } = CREATIVE_FORMATS[scene.format] ?? CREATIVE_FORMATS.post;
@@ -243,7 +249,8 @@ export function SceneCanvas({
                     </>
                   )
                   : layer.kind === "video" && isFootage(layer) ? (
-                    <VideoView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} timeMs={t ?? 0} playing={playing && video} blurPx={video ? blurAt(layer, t ?? 0) : 0} />
+                    <VideoView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} timeMs={t ?? 0} playing={playing && video} blurPx={video ? blurAt(layer, t ?? 0) : 0}
+                      trail={layer.ballTrail && ballTrailFor ? (() => { const src = resolveSource(layer.src, d); return src ? ballTrailFor(src) : null; })() : null} />
                   )
                   : <ImageView layer={{ ...layer, w: box.w, h: box.h }} url={urlFor(layer)} quiet={isPlate(layer)} />}
               </div>
