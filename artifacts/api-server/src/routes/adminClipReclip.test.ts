@@ -299,11 +299,16 @@ describe("admin clip re-clipping", () => {
     const rows = await db.select().from(userClipsTable)
       .where(and(eq(userClipsTable.id, clip.id), eq(userClipsTable.userId, playerId)));
     expect(rows).toHaveLength(1);
-    const [snapshot] = await db.select().from(renderSnapshotsTable)
+    const findSnapshot = () => db.select().from(renderSnapshotsTable)
       .where(and(
         eq(renderSnapshotsTable.artifactKey, `user_clip:${clip.id}`),
         eq(renderSnapshotsTable.outputLocator, after.exportedUrl!),
       ));
+    let [snapshot] = await findSnapshot();
+    for (let attempt = 0; !snapshot && attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      [snapshot] = await findSnapshot();
+    }
     expect(snapshot?.snapshot).toMatchObject({
       renderKind: "user_clip",
       source: { kind: "camera-4k", videoId: clip.videoId, width: 4096, height: 1152 },

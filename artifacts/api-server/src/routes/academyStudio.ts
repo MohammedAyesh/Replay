@@ -39,7 +39,11 @@ import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } fro
 import { logger } from "../lib/logger";
 import { renderStudioPng, type StudioContent, type StudioLocale } from "../lib/studio/posts";
 import { academyClipStatus } from "../lib/userClipExportState";
-import { inspectRenderedPng } from "../lib/renderSnapshots";
+import {
+  inspectRenderedPng,
+  saveRenderSnapshotBestEffort,
+  withRenderSnapshotTimeout,
+} from "../lib/renderSnapshots";
 
 /**
  * Academy console → Studio (owner only).
@@ -345,7 +349,9 @@ async function persistStudioSnapshotAsset(
   const remotePath = `creative-snapshots/studio/${academyId}/${sha256}.${ext}`;
   if (!isBunnyStorageConfigured()) return { kind, locator: null, sha256 };
   try {
-    const locator = await uploadBufferToBunnyStorage(bytes, remotePath, mime);
+    const locator = await withRenderSnapshotTimeout(
+      () => uploadBufferToBunnyStorage(bytes, remotePath, mime),
+    );
     return { kind, locator: locator || bunnyStorageUrlFor(remotePath), sha256 };
   } catch (err) {
     logger.warn({ err, academyId, kind }, "Studio render snapshot asset could not be stored");
@@ -448,9 +454,11 @@ router.post(`${base}/render`, async (req, res): Promise<void> => {
         assets.push(asset);
         return asset;
       };
-      const backgroundAsset = await storeInput("background", background.bytes, background.mime);
-      const photoAsset = await storeInput("player-photo", photoBytes, photoMime);
-      const logoAsset = look.crest ? await storeInput("academy-logo", studioLogoPng(look.crest), "image/png") : null;
+      const [backgroundAsset, photoAsset, logoAsset] = await Promise.all([
+        storeInput("background", background.bytes, background.mime),
+        storeInput("player-photo", photoBytes, photoMime),
+        look.crest ? storeInput("academy-logo", studioLogoPng(look.crest), "image/png") : Promise.resolve(null),
+      ]);
       const profile = {
         nameEn: look.nameEn,
         nameAr: look.nameAr,
@@ -507,15 +515,18 @@ router.post(`${base}/render`, async (req, res): Promise<void> => {
           : null,
       };
       const outputLocator = `sha256:${facts.sha256}`;
-      await db.insert(renderSnapshotsTable).values({
-        artifactKey: `studio_post:${access.academyId}`,
-        outputLocator,
-        outputSha256: facts.sha256,
-        snapshot,
-      }).onConflictDoUpdate({
-        target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
-        set: { outputSha256: facts.sha256, snapshot, createdAt: new Date() },
-      });
+      saveRenderSnapshotBestEffort(
+        () => db.insert(renderSnapshotsTable).values({
+          artifactKey: `studio_post:${access.academyId}`,
+          outputLocator,
+          outputSha256: facts.sha256,
+          snapshot,
+        }).onConflictDoUpdate({
+          target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
+          set: { outputSha256: facts.sha256, snapshot, createdAt: new Date() },
+        }),
+        (err) => logger.warn({ err, academyId: access.academyId }, "Could not save the Studio post snapshot"),
+      );
     }
     res.setHeader("Cache-Control", "no-store");
     res.type("png").send(png);

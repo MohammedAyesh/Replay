@@ -168,10 +168,15 @@ describe("studio: render", () => {
     expect(res.status).toBe(200);
     const bytes = res.body as Buffer;
     const hash = createHash("sha256").update(bytes).digest("hex");
-    const [saved] = await db.select().from(renderSnapshotsTable).where(and(
+    const findSnapshot = () => db.select().from(renderSnapshotsTable).where(and(
       eq(renderSnapshotsTable.artifactKey, `studio_post:${academyId}`),
       eq(renderSnapshotsTable.outputLocator, `sha256:${hash}`),
     ));
+    let [saved] = await findSnapshot();
+    for (let attempt = 0; !saved && attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      [saved] = await findSnapshot();
+    }
     expect(saved?.snapshot).toMatchObject({
       renderKind: "studio_post",
       source: { kind: "academy-studio-template" },

@@ -76,3 +76,4 @@
 - [Creative render source versions](creative-render-source-versions.md) — versioned output paths prevent older cached renders from bypassing the current source policy.
 - [Source rendition frame comparisons](source-rendition-frame-comparisons.md) — align by production source-time windows; raw TS timestamps and crop bounds can mislead cross-rendition metrics.
 - [VPS1 re-clip replayability](vps1-reclip-replayability.md) — keep worker exports non-replayable until the worker reports the exact selected source and dimensions.
+- [Best-effort render snapshots](snapshot-persistence.md) — completed exports must not depend on snapshot persistence; save asynchronously and log failures.

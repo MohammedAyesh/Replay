@@ -124,7 +124,7 @@ import {
   validateCamera4kReclip,
   type Camera4kReclipValidation,
 } from "../lib/camera4kReclipValidation";
-import { contentAddressedHashPrefix, inspectRenderedVideo, sha256File } from "../lib/renderSnapshots";
+import { contentAddressedHashPrefix, inspectRenderedVideo, saveRenderSnapshotBestEffort, sha256File } from "../lib/renderSnapshots";
 import { clipRenderOptionsFromSnapshot } from "../lib/clipRenderSnapshot";
 
 const router: IRouter = Router();
@@ -1126,29 +1126,25 @@ async function runBackgroundExport(
         ? options.presentationSnapshot.assets
         : [];
       if (!options.presentationSnapshot && lastRenderBrandingApplied) {
-        const addAsset = async (kind: string, locator: string | null | undefined, localPath: string | null | undefined) => {
-          if (!locator && !localPath) return;
-          let sha256 = locator ? contentAddressedHashPrefix(locator) : null;
-          if (localPath) {
-            try { sha256 = await sha256File(localPath); } catch { sha256 = null; }
-          }
-          snapshotAssets.push({ kind, locator: locator ?? null, sha256 });
+        const addAsset = (kind: string, locator: string | null | undefined) => {
+          if (!locator) return;
+          snapshotAssets.push({ kind, locator, sha256: contentAddressedHashPrefix(locator) });
         };
-        await addAsset("intro", introPath ? introUrl : null, introPath);
+        addAsset("intro", introPath ? introUrl : null);
         const overlayLocator = drawn.overlayPath
           ? preparedBranding?.overlayUrl
           : overlayPath ? branding.overlayUrl : null;
-        await addAsset("overlay", overlayLocator, drawn.overlayPath ?? overlayPath);
+        addAsset("overlay", overlayLocator);
         const endCardLocator = drawn.endScreen
           ? preparedBranding?.endScreen?.cardUrl
           : endCardPath ? branding.endCardUrl : null;
-        await addAsset("end_card", endCardLocator, drawn.endScreen ? null : endCardPath);
+        addAsset("end_card", endCardLocator);
       }
       const replayable = options.presentationSnapshot
         ? true
         : !!bufferFacts.width && !!bufferFacts.height
           && (lastRenderBrandingApplied
-            ? snapshotAssets.every((asset) => !!asset.locator && !!asset.sha256)
+            ? snapshotAssets.length > 0 && snapshotAssets.every((asset) => !!asset.locator && !!asset.sha256)
               && preparedBranding?.complete !== false
             : true);
       const snapshot: RenderSnapshotDocument = options.presentationSnapshot
@@ -1240,40 +1236,35 @@ async function runBackgroundExport(
             ? null
             : "One or more generated branding assets were not durably stored with a verifiable checksum.",
         };
-      const [published] = await db.transaction(async (tx) => {
-        const rows = await tx
-          .update(userClipsTable)
-          .set({ exportStatus: "done", exportedUrl })
-          .where(and(
-            eq(userClipsTable.id, clipId),
-            inArray(userClipsTable.exportStatus, [
-              "pending",
-              PENDING_VPS1_OVERFLOW,
-              PENDING_LOCAL_FALLBACK,
-              PENDING_VPS1_AFTER_PRIMARY,
-            ]),
-          ))
-          .returning({ id: userClipsTable.id });
-        if (!rows.length) return [];
-        await tx.insert(renderSnapshotsTable).values({
+      const [published] = await db
+        .update(userClipsTable)
+        .set({ exportStatus: "done", exportedUrl })
+        .where(and(
+          eq(userClipsTable.id, clipId),
+          inArray(userClipsTable.exportStatus, [
+            "pending",
+            PENDING_VPS1_OVERFLOW,
+            PENDING_LOCAL_FALLBACK,
+            PENDING_VPS1_AFTER_PRIMARY,
+          ]),
+        ))
+        .returning({ id: userClipsTable.id });
+      if (!published) {
+        logger.info({ clipId, exportedUrl }, "Primary render finished after another renderer settled the clip");
+        return;
+      }
+      saveRenderSnapshotBestEffort(
+        () => db.insert(renderSnapshotsTable).values({
           artifactKey: `user_clip:${clipId}`,
           outputLocator: exportedUrl,
           outputSha256: outputFacts.sha256,
           snapshot,
         }).onConflictDoUpdate({
           target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
-          set: {
-            outputSha256: outputFacts.sha256,
-            snapshot,
-            createdAt: new Date(),
-          },
-        });
-        return rows;
-      });
-      if (!published) {
-        logger.info({ clipId, exportedUrl }, "Primary render finished after another renderer settled the clip");
-        return;
-      }
+          set: { outputSha256: outputFacts.sha256, snapshot, createdAt: new Date() },
+        }),
+        (err) => logger.warn({ err, clipId, exportedUrl }, "Could not save the clip render snapshot"),
+      );
       // A re-render (new end screen, admin re-clip) supersedes this server's
       // previous file; remove it. vps1's own copies (clips/c<id>-…) are left
       // to vps1, which keeps exports forever.

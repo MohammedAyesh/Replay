@@ -169,8 +169,13 @@ describe("Creative hub: a photo with music goes out as a video", () => {
     const row = await renderAndWait(o, made.body.project.id);
     expect(row).toMatchObject({ renderStatus: "done", outputMime: "video/mp4" });
     const { file } = await downloadOutput(o, row.id, "snapshot-original.mp4");
-    const [saved] = await db.select().from(renderSnapshotsTable)
+    const findSnapshot = () => db.select().from(renderSnapshotsTable)
       .where(eq(renderSnapshotsTable.outputLocator, row.outputPath!));
+    let [saved] = await findSnapshot();
+    for (let attempt = 0; !saved && attempt < 40; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      [saved] = await findSnapshot();
+    }
     expect(saved?.snapshot).toMatchObject({
       renderKind: "creative_project",
       output: { mimeType: "video/mp4", width: 1080, height: 1350, durationMs: 2000 },

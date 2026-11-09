@@ -45,7 +45,7 @@ import {
   PENDING_VPS1_AFTER_PRIMARY,
   PENDING_VPS1_OVERFLOW,
 } from "./userClipExportState";
-import { contentAddressedHashPrefix } from "./renderSnapshots";
+import { contentAddressedHashPrefix, saveRenderSnapshotBestEffort } from "./renderSnapshots";
 
 type ClipRow = typeof userClipsTable.$inferSelect;
 
@@ -323,23 +323,23 @@ async function reconcileUncached(
         replayable: false,
         replayabilityReason: "VPS1 did not report the selected input source or its dimensions.",
       };
-      const updated = await db.transaction(async (tx) => {
-        const rows = await tx
-          .update(userClipsTable)
-          .set({ exportStatus: "done", exportedUrl: url })
-          .where(and(
-            eq(userClipsTable.id, clip.id),
-            inArray(userClipsTable.exportStatus, [
-              "pending",
-              "error",
-              PENDING_VPS1_OVERFLOW,
-              PENDING_LOCAL_FALLBACK,
-              PENDING_VPS1_AFTER_PRIMARY,
-            ]),
-          ))
-          .returning({ id: userClipsTable.id });
-        if (rows.length) {
-          await tx.insert(renderSnapshotsTable).values({
+      const updated = await db
+        .update(userClipsTable)
+        .set({ exportStatus: "done", exportedUrl: url })
+        .where(and(
+          eq(userClipsTable.id, clip.id),
+          inArray(userClipsTable.exportStatus, [
+            "pending",
+            "error",
+            PENDING_VPS1_OVERFLOW,
+            PENDING_LOCAL_FALLBACK,
+            PENDING_VPS1_AFTER_PRIMARY,
+          ]),
+        ))
+        .returning({ id: userClipsTable.id });
+      if (updated.length) {
+        saveRenderSnapshotBestEffort(
+          () => db.insert(renderSnapshotsTable).values({
             artifactKey: `user_clip:${clip.id}`,
             outputLocator: url,
             outputSha256: null,
@@ -347,11 +347,9 @@ async function reconcileUncached(
           }).onConflictDoUpdate({
             target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
             set: { snapshot, createdAt: new Date() },
-          });
-        }
-        return rows;
-      });
-      if (updated.length) {
+          }),
+          (err) => logger.warn({ err, clipId: clip.id, url }, "Could not save the backup clip render snapshot"),
+        );
         logger.info({ clipId: clip.id, job: status.job, output: status.output }, "Clip export completed by the backup renderer (vps1)");
       }
       relaunchCount.delete(clip.id);

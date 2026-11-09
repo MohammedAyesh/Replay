@@ -13,7 +13,14 @@ import { resolveSceneMusic } from "./music";
 import { deleteOutput, storeOutput, storeSnapshotAsset } from "./renderStore";
 import { renderSceneMp4 } from "./renderVideo";
 import { creativeBranding } from "./renderBranding";
-import { inspectRenderedPng, inspectRenderedVideo, sha256Buffer, sha256File } from "../renderSnapshots";
+import {
+  inspectRenderedPng,
+  inspectRenderedVideo,
+  saveRenderSnapshotBestEffort,
+  sha256Buffer,
+  sha256File,
+  withRenderSnapshotTimeout,
+} from "../renderSnapshots";
 import type { CreativeResolvedVideoSource } from "./renderMedia";
 import { encodeCard } from "../clipBranding/backup";
 import { isBunnyStorageConfigured } from "../bunny";
@@ -181,12 +188,14 @@ async function storeSnapshotBytes(
 ): Promise<RenderSnapshotDocument["assets"][number]> {
   const sha256 = sha256Buffer(bytes);
   const file = path.join(dir, `snapshot-${kind}-${sha256}.${ext}`);
-  await fs.promises.writeFile(file, bytes);
   temps.push(file);
   try {
+    await fs.promises.writeFile(file, bytes);
     return {
       kind,
-      locator: await storeSnapshotAsset(academyId, projectId, file, sha256, ext),
+      locator: await withRenderSnapshotTimeout(
+        () => storeSnapshotAsset(academyId, projectId, file, sha256, ext),
+      ),
       sha256,
     };
   } catch (err) {
@@ -202,11 +211,14 @@ async function storeSnapshotFile(
   kind: string,
   ext: string,
 ): Promise<RenderSnapshotDocument["assets"][number]> {
-  const sha256 = await sha256File(file);
+  let sha256: string | null = null;
   try {
+    sha256 = await sha256File(file);
     return {
       kind,
-      locator: await storeSnapshotAsset(academyId, projectId, file, sha256, ext),
+      locator: await withRenderSnapshotTimeout(
+        () => storeSnapshotAsset(academyId, projectId, file, sha256!, ext),
+      ),
       sha256,
     };
   } catch (err) {
@@ -290,25 +302,23 @@ export async function renderStillNow(
       replayable,
     });
     const renderedAt = new Date();
-    const [done] = await db.transaction(async (tx) => {
-      const rows = await tx.update(academyCreativeProjectsTable)
-        .set({ outputPath, outputMime: "image/png", renderStatus: "done", renderError: null, renderedAt, updatedAt: renderedAt })
-        .where(eq(academyCreativeProjectsTable.id, row.id))
-        .returning();
-      if (rows.length) {
-        await tx.insert(renderSnapshotsTable).values({
-          artifactKey: `creative_project:${row.id}`,
-          outputLocator: outputPath,
-          outputSha256: facts.sha256,
-          snapshot,
-        }).onConflictDoUpdate({
-          target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
-          set: { outputSha256: facts.sha256, snapshot, createdAt: renderedAt },
-        });
-      }
-      return rows;
-    });
-    if (!done) throw new Error("Creative project disappeared before its render snapshot was saved.");
+    const [done] = await db.update(academyCreativeProjectsTable)
+      .set({ outputPath, outputMime: "image/png", renderStatus: "done", renderError: null, renderedAt, updatedAt: renderedAt })
+      .where(eq(academyCreativeProjectsTable.id, row.id))
+      .returning();
+    if (!done) throw new Error("Creative project disappeared before its render was saved.");
+    saveRenderSnapshotBestEffort(
+      () => db.insert(renderSnapshotsTable).values({
+        artifactKey: `creative_project:${row.id}`,
+        outputLocator: outputPath,
+        outputSha256: facts.sha256,
+        snapshot,
+      }).onConflictDoUpdate({
+        target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
+        set: { outputSha256: facts.sha256, snapshot, createdAt: renderedAt },
+      }),
+      (err) => logger.warn({ err, projectId: row.id, academyId: access.academyId }, "Could not save the Creative still snapshot"),
+    );
     uncommittedOutput = null;
     if (row.outputPath && row.outputPath !== outputPath) void deleteOutput(row.outputPath, access.academyId);
     return done;
@@ -430,25 +440,23 @@ async function runVideo(
         },
       });
       const renderedAt = new Date();
-      const [done] = await db.transaction(async (tx) => {
-        const rows = await tx.update(academyCreativeProjectsTable)
-          .set({ outputPath, outputMime: "video/mp4", renderStatus: "done", renderError: null, renderedAt, updatedAt: renderedAt })
-          .where(eq(academyCreativeProjectsTable.id, row.id))
-          .returning();
-        if (rows.length) {
-          await tx.insert(renderSnapshotsTable).values({
-            artifactKey: `creative_project:${row.id}`,
-            outputLocator: outputPath,
-            outputSha256: facts.sha256,
-            snapshot,
-          }).onConflictDoUpdate({
-            target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
-            set: { outputSha256: facts.sha256, snapshot, createdAt: renderedAt },
-          });
-        }
-        return rows;
-      });
-      if (!done) throw new Error("Creative project disappeared before its render snapshot was saved.");
+      const [done] = await db.update(academyCreativeProjectsTable)
+        .set({ outputPath, outputMime: "video/mp4", renderStatus: "done", renderError: null, renderedAt, updatedAt: renderedAt })
+        .where(eq(academyCreativeProjectsTable.id, row.id))
+        .returning();
+      if (!done) throw new Error("Creative project disappeared before its render was saved.");
+      saveRenderSnapshotBestEffort(
+        () => db.insert(renderSnapshotsTable).values({
+          artifactKey: `creative_project:${row.id}`,
+          outputLocator: outputPath,
+          outputSha256: facts.sha256,
+          snapshot,
+        }).onConflictDoUpdate({
+          target: [renderSnapshotsTable.artifactKey, renderSnapshotsTable.outputLocator],
+          set: { outputSha256: facts.sha256, snapshot, createdAt: renderedAt },
+        }),
+        (err) => logger.warn({ err, projectId: row.id, academyId: access.academyId }, "Could not save the Creative video snapshot"),
+      );
       uncommittedOutput = null;
       if (row.outputPath && row.outputPath !== outputPath) void deleteOutput(row.outputPath, access.academyId);
       logger.info({ projectId: row.id, academyId: access.academyId, ms: Date.now() - started, durationMs: renderResult.durationMs }, "Creative video rendered");

@@ -2,6 +2,36 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { probeVideoDimensions, probeVideoTiming } from "./ffmpegExport";
 
+export function saveRenderSnapshotBestEffort(
+  save: () => Promise<unknown>,
+  onError: (error: unknown) => void,
+): void {
+  void Promise.resolve()
+    .then(save)
+    .catch((error) => {
+      try { onError(error); } catch { /* snapshot logging must not affect the render */ }
+    });
+}
+
+export async function withRenderSnapshotTimeout<T>(
+  operation: () => Promise<T>,
+  timeoutMs = 2500,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const work = Promise.resolve().then(operation);
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Snapshot asset storage exceeded ${timeoutMs}ms.`)), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function sha256File(filePath: string): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk as Buffer);
