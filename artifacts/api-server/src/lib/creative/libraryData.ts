@@ -593,6 +593,7 @@ export async function libraryPlayerMedia(academyId: number, playerId: number, sh
     name: academyPlayersTable.name,
     number: academyPlayersTable.jerseyNumber,
     position: academyPlayersTable.position,
+    dateOfBirth: academyPlayersTable.dateOfBirth,
     squadId: academyPlayersTable.squadId,
     squad: academySquadsTable.name,
     userId: academyPlayersTable.userId,
@@ -650,12 +651,22 @@ export async function libraryPlayerMedia(academyId: number, playerId: number, sh
 
   return {
     showNames,
-    player: { playerId: p.id, squadId: p.squadId, ...libraryPlayer(p, showNames), position: p.position ?? null },
+    player: { playerId: p.id, squadId: p.squadId, ...libraryPlayer(p, showNames), position: p.position ?? null, age: ageOn(p.dateOfBirth, new Date()) },
     hasAvatar: showNames && Boolean(p.userId && p.avatarPath),
     photos,
     clips,
     moments,
   };
+}
+
+/** Whole years old on `today` (Amman calendar) from a YYYY-MM-DD birth date; null when unknown or implausible. */
+export function ageOn(dateOfBirth: string | null | undefined, today: Date): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOfBirth ?? "");
+  if (!m) return null;
+  const [y, mo, d] = ammanDate(today).split("-").map(Number);
+  let age = y - Number(m[1]);
+  if (mo < Number(m[2]) || (mo === Number(m[2]) && d < Number(m[3]))) age -= 1;
+  return age >= 3 && age <= 80 ? age : null;
 }
 
 const EVERYTHING: LibraryFilters = { squadId: null, playerNumber: null, types: [], from: null, until: null, kind: null, sessionType: null, offset: 0, limit: 1000 };

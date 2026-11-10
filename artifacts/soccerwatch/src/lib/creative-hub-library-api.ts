@@ -139,7 +139,7 @@ export type LibraryPlayers = {
 /** GET …/creative/library/players/:playerId/media: the Player picker's gallery. */
 export type LibraryPlayerMedia = {
   showNames: boolean;
-  player: LibraryPlayer & { playerId: number; squadId: number | null; position: string | null };
+  player: LibraryPlayer & { playerId: number; squadId: number | null; position: string | null; age?: number | null };
   /** his linked account has an avatar (used when he has no photo) */
   hasAvatar: boolean;
   /** empty unless the academy shows names */

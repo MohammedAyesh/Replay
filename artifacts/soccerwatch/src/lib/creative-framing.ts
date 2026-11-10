@@ -9,6 +9,7 @@ import { creativePath } from "@/lib/creative-hub-api";
 
 export type FramingAnswer = {
   framing: Framing;
+  /** Also "player" at run time when fetchFraming was asked to follow one (followPlayerId); callers that ask compare as a string. */
   source: "ball" | "clip" | "centre";
   coverage: number;
   /** For a clip: its stretch of its recording, when it is on one (so its start and end can move). */
@@ -32,8 +33,9 @@ export const absPlaybackTimeMs = (currentTimeSeconds: number, sourceOffsetMs = 0
 export const playbackSecondsAt = (absTimeMs: number, sourceOffsetMs = 0): number =>
   Math.max(0, (absTimeMs - sourceOffsetMs) / 1000);
 
-export function fetchFraming(academyId: number, src: FramingSource): Promise<FramingAnswer> {
-  return call<FramingAnswer>(creativePath(academyId, "/library/framing"), { method: "POST", body: JSON.stringify({ src }) });
+/** `followPlayerId`: follow that academy player's match track where the analysis has him (else the ball). */
+export function fetchFraming(academyId: number, src: FramingSource, followPlayerId?: number): Promise<FramingAnswer> {
+  return call<FramingAnswer>(creativePath(academyId, "/library/framing"), { method: "POST", body: JSON.stringify(followPlayerId ? { src, followPlayerId } : { src }) });
 }
 
 /**

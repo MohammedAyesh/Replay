@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { Clapperboard, ImagePlus, LayoutTemplate, Library, PenTool, Send, Sparkles, Users } from "lucide-react";
+import { Clapperboard, Film, ImagePlus, LayoutTemplate, Library, PenTool, Send, Sparkles, Users } from "lucide-react";
+import { useReelCopy } from "@/i18n/creative-reel-strings";
+import { CreativePlayerReel } from "./player-reel";
 import { useFavoriteCopy } from "@/i18n/favorite-strings";
 import { StudioClipsPanel, StudioQuickPosts } from "@/components/academy-console/studio-section";
 import { useCreativeCopy } from "@/i18n/creative-strings";
@@ -13,11 +15,12 @@ import { CreativeEditor } from "./editor";
 import { CreativePublish } from "./publish";
 import type { HubNav, TemplateSeed } from "./types";
 
-export type HubTab = "forYou" | "squad" | "library" | "clips" | "templates" | "quick" | "editor" | "publish";
+export type HubTab = "forYou" | "squad" | "reel" | "library" | "clips" | "templates" | "quick" | "editor" | "publish";
 type Tab = HubTab;
 const TABS: Array<{ id: Tab; icon: typeof Sparkles }> = [
   { id: "forYou", icon: Sparkles },
   { id: "squad", icon: Users },
+  { id: "reel", icon: Film },
   { id: "library", icon: Library },
   // Clips and Quick posts were the Studio section's two tabs.
   { id: "clips", icon: Clapperboard },
@@ -59,7 +62,8 @@ export function AcademyCreativeHub({ academyId, initialTab }: { academyId: numbe
   const copy = useCreativeCopy();
   const featured = useFeaturedCopy();
   const fav = useFavoriteCopy();
-  const tabLabel = (id: Tab) => (id === "squad" ? featured.squad.tab : id === "clips" || id === "quick" ? fav.tabs[id] : copy.tabs[id]);
+  const reel = useReelCopy();
+  const tabLabel = (id: Tab) => (id === "squad" ? featured.squad.tab : id === "reel" ? reel.tab : id === "clips" || id === "quick" ? fav.tabs[id] : copy.tabs[id]);
   const [memo] = useState(() => rememberedHub(academyId));
   const [tab, setTab] = useState<Tab>(initialTab ?? (typeof window === "undefined" ? null : tabFromUrl(window.location.search)) ?? memo.tab ?? "forYou");
   const [projectId, setProjectId] = useState<number | null>(memo.projectId);
@@ -92,6 +96,7 @@ export function AcademyCreativeHub({ academyId, initialTab }: { academyId: numbe
       <div className="min-h-0 flex-1">
         {tab === "forYou" ? <CreativeForYou academyId={academyId} nav={nav} />
           : tab === "squad" ? <CreativeSquad academyId={academyId} />
+          : tab === "reel" ? <CreativePlayerReel academyId={academyId} nav={nav} />
           : tab === "library" ? <CreativeLibrary academyId={academyId} nav={nav} />
           : tab === "clips" ? <StudioClipsPanel academyId={academyId} onMakePost={(clipId) => nav.openTemplates({ type: "clip", clipId })} />
           : tab === "quick" ? <StudioQuickPosts academyId={academyId} />
