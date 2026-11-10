@@ -422,7 +422,10 @@ export function useUploadAdMedia(academyId: number) {
       form.append("file", file, name || "upload");
       return call<AdMedia>(`${adsBase(academyId)}/media`, { method: "POST", body: form });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["academy-ad-media", academyId] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["academy-ad-media", academyId] });
+      void qc.invalidateQueries({ queryKey: ["academy-social", academyId, "media"] });
+    },
   });
 }
 

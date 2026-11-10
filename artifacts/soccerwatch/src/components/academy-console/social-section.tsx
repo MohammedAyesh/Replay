@@ -31,6 +31,7 @@ import {
   type SocialPost,
 } from "@/lib/academy-social-api";
 import { facebookBusinessLogin, resizeImage } from "@/lib/facebook-sdk";
+import { useUploadAdMedia } from "@/lib/meta-ads-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -461,17 +462,21 @@ function Posts({ academyId, canManage, data }: { academyId: number; canManage: b
 function Composer({ academyId, hasInstagram, hasFacebook, onDone }: { academyId: number; hasInstagram: boolean; hasFacebook: boolean; onDone: () => void }) {
   const copy = useSocialCopy();
   const media = useSocialMedia(academyId, true);
-  const upload = useUploadSocialPhoto(academyId);
+  const uploadPhoto = useUploadSocialPhoto(academyId);
+  const uploadVideo = useUploadAdMedia(academyId);
   const create = useCreatePost(academyId);
   const file = useRef<HTMLInputElement>(null);
   const [targets, setTargets] = useState<Array<"instagram" | "facebook">>(hasInstagram ? (hasFacebook ? ["instagram", "facebook"] : ["instagram"]) : (hasFacebook ? ["facebook"] : []));
-  const [format, setFormat] = useState<"image" | "carousel" | "reel" | "story">("image");
+  const [format, setFormat] = useState<"image" | "carousel" | "video" | "reel" | "story">("image");
   const [caption, setCaption] = useState("");
   const [picked, setPicked] = useState<number[]>([]);
   const [later, setLater] = useState(false);
   const [when, setWhen] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const ready = (media.data ?? []).filter((m) => m.status === "ready" && (format === "reel" ? m.kind === "video" : format === "image" ? m.kind === "image" : true));
+  const uploading = uploadPhoto.isPending || uploadVideo.isPending;
+  const ready = (media.data ?? []).filter((m) => m.status === "ready" && (
+    format === "video" || format === "reel" ? m.kind === "video" : format === "image" ? m.kind === "image" : true
+  ));
   const many = format === "carousel";
   const toggle = (id: number) => setPicked((cur) => (many ? (cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id].slice(0, 10)) : [id]));
   const effectiveTargets = format === "story" ? targets.filter((t) => t === "instagram") : targets;
@@ -481,8 +486,23 @@ function Composer({ academyId, hasInstagram, hasFacebook, onDone }: { academyId:
     if (!f) return;
     setError(null);
     try {
-      const dataUrl = await resizeImage(f, 1440, 0.88);
-      const res = await upload.mutateAsync({ dataUrl, name: f.name });
+      let res: { id: number };
+      if (f.type.startsWith("video/")) {
+        res = await uploadVideo.mutateAsync({ file: f, name: f.name });
+        if (format === "image") {
+          setFormat("video");
+          setPicked([]);
+        }
+      } else if (f.type.startsWith("image/")) {
+        const dataUrl = await resizeImage(f, 1440, 0.88);
+        res = await uploadPhoto.mutateAsync({ dataUrl, name: f.name });
+        if (format === "video" || format === "reel") {
+          setFormat("image");
+          setPicked([]);
+        }
+      } else {
+        throw new Error(copy.posts.unsupportedMedia);
+      }
       toggle(res.id);
     } catch (e) {
       setError((e as Error).message);
@@ -493,7 +513,7 @@ function Composer({ academyId, hasInstagram, hasFacebook, onDone }: { academyId:
     setError(null);
     create.mutate({
       targets: effectiveTargets,
-      format: format === "image" && ready.find((m) => m.id === picked[0])?.kind === "video" ? "video" : format,
+      format,
       caption,
       mediaIds: picked,
       scheduledFor: later && when ? new Date(when).toISOString() : null,
@@ -516,7 +536,7 @@ function Composer({ academyId, hasInstagram, hasFacebook, onDone }: { academyId:
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-text">{copy.posts.format}</span>
-        {(["image", "carousel", "reel", "story"] as const).filter((f) => f !== "story" || hasInstagram).map((f) => (
+        {(["image", "video", "carousel", "reel", "story"] as const).filter((f) => f !== "story" || hasInstagram).map((f) => (
           <button key={f} type="button" onClick={() => { setFormat(f); setPicked([]); }} className={cn("min-h-8 rounded-full px-3 text-xs font-semibold", format === f ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")}>{copy.posts.formats[f]}</button>
         ))}
         {format === "story" && <span className="text-xs text-muted-text">{copy.posts.storyIgOnly}</span>}
@@ -524,14 +544,10 @@ function Composer({ academyId, hasInstagram, hasFacebook, onDone }: { academyId:
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
           <p className="text-sm font-semibold text-text">{copy.posts.media} <span className="text-xs font-normal text-muted-text">· {many ? copy.posts.pickMany : copy.posts.pickOne}</span></p>
-          {format !== "reel" && (
-            <>
-              <input ref={file} type="file" accept="image/*" className="hidden" onChange={(e) => void onFile(e.target.files?.[0])} />
-              <Button type="button" size="sm" variant="ghost" className="border border-line" disabled={upload.isPending} onClick={() => file.current?.click()}>
-                {upload.isPending ? <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="me-1.5 h-4 w-4" aria-hidden="true" />}{copy.posts.upload}
-              </Button>
-            </>
-          )}
+          <input ref={file} type="file" accept="image/*,video/*" className="hidden" onChange={(e) => { const selected = e.target.files?.[0]; e.target.value = ""; void onFile(selected); }} />
+          <Button type="button" size="sm" variant="ghost" className="border border-line" disabled={uploading} onClick={() => file.current?.click()}>
+            {uploading ? <Loader2 className="me-1.5 h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="me-1.5 h-4 w-4" aria-hidden="true" />}{copy.posts.upload}
+          </Button>
         </div>
         <div className="grid max-h-72 grid-cols-4 gap-2 overflow-y-auto sm:grid-cols-6">
           {ready.map((m) => {
