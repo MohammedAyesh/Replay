@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import express, { type Express } from "express";
+import request from "supertest";
 import {
   analysisJobsTable,
   db,
@@ -15,7 +17,8 @@ vi.mock("../lib/clerkUserBridge", () => ({
   unauthenticatedResponse: vi.fn(),
 }));
 
-import { refreshOwnerRequest, startCameraJob } from "./owner";
+import { getLocalUserRecord } from "../lib/clerkUserBridge";
+import ownerRouter, { refreshOwnerRequest, startCameraJob } from "./owner";
 import { courtFromCamera } from "../lib/liveAnalysis";
 import { invalidateSettingsCache } from "../lib/settings";
 
@@ -25,12 +28,18 @@ import { invalidateSettingsCache } from "../lib/settings";
 const TAG = `live_${Date.now()}`;
 const GUID_ON = "0f0e0d0c-0b0a-4908-8706-050403020100";
 const GUID_OFF = "1f1e1d1c-1b1a-4918-8716-151413121110";
+const GUID_REUSE_AUTO = "2f2e2d2c-2b2a-4928-8726-252423222120";
+const GUID_REUSE_ADMIN = "3f3e3d3c-3b3a-4938-8736-353433323130";
 let userId: number;
+let adminId: number;
 let fieldId: number;
 let requestIds: number[] = [];
+let extraRecordingIds: number[] = [];
+let extraJobIds: number[] = [];
 let videoForJob = new Map<string, string>();
 let realFetch: typeof fetch;
 let recordPosts: string[] = [];
+let app: Express;
 
 async function setLive(on: boolean) {
   await db.delete(settingsRulesTable).where(and(eq(settingsRulesTable.scopeType, "field"),
@@ -42,7 +51,7 @@ async function setLive(on: boolean) {
   invalidateSettingsCache();
 }
 
-async function booking(vpsJobId: string) {
+async function booking(vpsJobId: string, status: "recording" | "failed" = "recording") {
   const [row] = await db.insert(footageRequestsTable).values({
     fieldId,
     cameraId: "cam1",
@@ -50,12 +59,37 @@ async function booking(vpsJobId: string) {
     startLocal: "2020-01-02 22:00",
     endLocal: "2020-01-02 23:00",
     requestedSeconds: 3600,
-    status: "recording",
+    status,
     vpsJobId,
     rateFils: 0,
   }).returning();
   requestIds.push(row.id);
   return row;
+}
+
+async function existingAnalysis(
+  row: Awaited<ReturnType<typeof booking>>,
+  videoId: string,
+  params: Record<string, unknown>,
+) {
+  const [recording] = await db.insert(recordingsTable).values({
+    fieldId,
+    court: "cam1",
+    date: "2020-01-02",
+    timeSlot: "22:00",
+    duration: "60:00",
+    videoUrl: `https://cdn.example.test/${videoId}/playlist.m3u8`,
+    isVisible: true,
+  }).returning();
+  extraRecordingIds.push(recording.id);
+  const [job] = await db.insert(analysisJobsTable).values({
+    recordingId: recording.id,
+    sourceRecordingIds: [recording.id],
+    status: "succeeded",
+    params,
+  }).returning();
+  extraJobIds.push(job.id);
+  return { recording, job };
 }
 
 async function jobsFor(guid: string) {
@@ -72,9 +106,15 @@ beforeAll(async () => {
   const [u] = await db.insert(usersTable).values({ name: `Booker ${TAG}`, email: `${TAG}@test.local`,
     profileComplete: true }).returning({ id: usersTable.id });
   userId = u.id;
+  const [admin] = await db.insert(usersTable).values({ name: `Admin ${TAG}`, email: `${TAG}-admin@test.local`,
+    isAdmin: true, profileComplete: true }).returning({ id: usersTable.id });
+  adminId = admin.id;
   const [f] = await db.insert(fieldsTable).values({ name: `Live Field ${TAG}`, location: "Test",
     cameraId: `live-camera-${TAG}` }).returning({ id: fieldsTable.id });
   fieldId = f.id;
+  app = express();
+  app.use(express.json());
+  app.use("/api", ownerRouter);
   realFetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
@@ -96,6 +136,11 @@ beforeAll(async () => {
 beforeEach(() => {
   videoForJob = new Map();
   recordPosts = [];
+  vi.mocked(getLocalUserRecord).mockResolvedValue({
+    id: adminId,
+    isGuest: false,
+    isAdmin: true,
+  } as Awaited<ReturnType<typeof getLocalUserRecord>>);
 });
 
 afterAll(async () => {
@@ -106,11 +151,13 @@ afterAll(async () => {
       await db.delete(recordingsTable).where(inArray(recordingsTable.id, recs.map((r) => r.id)));
     }
   }
+  if (extraJobIds.length) await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.id, extraJobIds));
+  if (extraRecordingIds.length) await db.delete(recordingsTable).where(inArray(recordingsTable.id, extraRecordingIds));
   if (requestIds.length) await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds));
   await db.delete(settingsRulesTable).where(and(eq(settingsRulesTable.scopeType, "field"), eq(settingsRulesTable.scopeId, fieldId)));
   invalidateSettingsCache();
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
-  await db.delete(usersTable).where(eq(usersTable.id, userId));
+  await db.delete(usersTable).where(inArray(usersTable.id, [userId, adminId]));
   vi.restoreAllMocks();
 });
 
@@ -141,6 +188,49 @@ describe("analysing bookings during the match", () => {
     // a later refresh of the same (already ready) booking queues nothing more
     await refreshOwnerRequest({ ...row, status: "ready" }, "cam1");
     expect((await jobsFor(GUID_ON)).jobs).toHaveLength(1);
+  });
+
+  it("reuses and links an existing succeeded analysis during automatic recovery", async () => {
+    await setLive(true);
+    const vpsJobId = `existing-auto-${TAG}`;
+    const row = await booking(vpsJobId, "failed");
+    videoForJob.set(vpsJobId, GUID_REUSE_AUTO);
+    const { recording, job } = await existingAnalysis(row, GUID_REUSE_AUTO, { footageRequestId: row.id });
+
+    await refreshOwnerRequest(row, "cam1", Date.now(), true);
+
+    const [completed] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, row.id));
+    const { jobs } = await jobsFor(GUID_REUSE_AUTO);
+    expect(completed.status).toBe("ready");
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      id: job.id,
+      status: "succeeded",
+      recordingId: recording.id,
+      params: { footageRequestId: row.id },
+    });
+  });
+
+  it("reuses a live analysis from the admin re-check instead of queueing another", async () => {
+    await setLive(true);
+    const vpsJobId = `existing-admin-${TAG}`;
+    const row = await booking(vpsJobId, "failed");
+    videoForJob.set(vpsJobId, GUID_REUSE_ADMIN);
+    const { recording, job } = await existingAnalysis(row, GUID_REUSE_ADMIN, { liveJob: vpsJobId });
+
+    const response = await request(app)
+      .post(`/api/admin/footage-requests/${row.id}/recheck`)
+      .expect(200);
+
+    const { jobs } = await jobsFor(GUID_REUSE_ADMIN);
+    expect(response.body).toMatchObject({ status: "ready", changed: true });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      id: job.id,
+      status: "succeeded",
+      recordingId: recording.id,
+      params: { liveJob: vpsJobId, footageRequestId: row.id },
+    });
   });
 
   it("asks the VPS to analyse a future booking live only when the setting is on", async () => {

@@ -1,6 +1,5 @@
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, desc, eq, like, notInArray, or, sql } from "drizzle-orm";
 import { analysisJobsTable, db, recordingsTable, type FootageRequest } from "@workspace/db";
-import { ACTIVE_STATUSES } from "./analysisJobs";
 import { BUNNY_CDN_HOSTNAME } from "./bunny";
 import { logger } from "./logger";
 import { getSettingValue } from "./settings";
@@ -70,21 +69,106 @@ export async function liveAnalysisEnabled(fieldId: number): Promise<boolean> {
   }
 }
 
+async function recordingsForBooking(row: FootageRequest, videoId: string | null) {
+  const conditions = [
+    ...(videoId ? [like(recordingsTable.videoUrl, `%/${videoId}/%`)] : []),
+    ...(row.vpsJobId ? [like(recordingsTable.videoUrl, `%${row.vpsJobId}%`)] : []),
+  ];
+  if (!conditions.length) return [];
+  return db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl })
+    .from(recordingsTable)
+    .where(or(...conditions));
+}
+
+async function existingAnalysisForBooking(row: FootageRequest, recordingIds: number[]) {
+  const associations = [
+    sql`${analysisJobsTable.params} ->> 'footageRequestId' = ${String(row.id)}`,
+  ];
+  if (row.vpsJobId) {
+    associations.push(sql`${analysisJobsTable.params} ->> 'liveJob' = ${row.vpsJobId}`);
+  }
+  for (const recordingId of recordingIds) {
+    associations.push(
+      sql`${analysisJobsTable.recordingId} = ${recordingId}`,
+      sql`${analysisJobsTable.sourceRecordingIds} @> ${JSON.stringify([recordingId])}::jsonb`,
+      sql`${analysisJobsTable.bundleRecordingIds} @> ${JSON.stringify([recordingId])}::jsonb`,
+    );
+  }
+  const [job] = await db.select().from(analysisJobsTable)
+    .where(and(
+      notInArray(analysisJobsTable.status, ["failed", "cancelled"]),
+      or(...associations),
+    ))
+    .orderBy(
+      sql`CASE WHEN ${analysisJobsTable.status} = 'succeeded' THEN 0 ELSE 1 END`,
+      desc(analysisJobsTable.createdAt),
+    )
+    .limit(1);
+  return job ?? null;
+}
+
+async function linkExistingAnalysisToBooking(
+  row: FootageRequest,
+  job: typeof analysisJobsTable.$inferSelect,
+  recordingId?: number,
+): Promise<number> {
+  const linkedRecordingId = recordingId ?? job.recordingId;
+  await db.update(analysisJobsTable)
+    .set({
+      recordingId: linkedRecordingId,
+      params: { ...job.params, footageRequestId: row.id },
+      updatedAt: new Date(),
+    })
+    .where(eq(analysisJobsTable.id, job.id));
+  logger.info({
+    analysisJobId: job.id,
+    footageRequestId: row.id,
+    recordingId: linkedRecordingId,
+    status: job.status,
+  }, "Linked existing analysis to completed footage booking");
+  return linkedRecordingId;
+}
+
 export async function queueLiveAnalysisForBooking(
   row: FootageRequest,
   videoId: string | null,
   deliveredSeconds: number | null,
 ): Promise<LiveAnalysisOutcome> {
+  const matchedRecordings = await recordingsForBooking(row, videoId);
+  const videoRecording = videoId
+    ? matchedRecordings.find((recording) => recording.videoUrl.includes(`/${videoId}/`))
+    : undefined;
+  const relatedRecordingIds = [...new Set(matchedRecordings.map((recording) => recording.id))];
+  let recordingId = videoRecording?.id;
+
+  const existing = await existingAnalysisForBooking(row, relatedRecordingIds);
+  if (existing) {
+    if (!recordingId && videoId) {
+      recordingId = await ensureRecordingForVideo(row, videoId, deliveredSeconds ?? row.requestedSeconds);
+    }
+    const linkedRecordingId = await linkExistingAnalysisToBooking(row, existing, recordingId);
+    return {
+      queued: false,
+      reason: `existing analysis job #${existing.id} linked`,
+      recordingId: linkedRecordingId,
+    };
+  }
+
   if (!videoId || !row.vpsJobId) return { queued: false, reason: "no video or no VPS job" };
   if (!(await liveAnalysisEnabled(row.fieldId))) return { queued: false, reason: "setting off for this field" };
 
-  const recordingId = await ensureRecordingForVideo(row, videoId, deliveredSeconds ?? row.requestedSeconds);
-  const [active] = await db
-    .select({ id: analysisJobsTable.id })
-    .from(analysisJobsTable)
-    .where(and(eq(analysisJobsTable.recordingId, recordingId), inArray(analysisJobsTable.status, ACTIVE_STATUSES)))
-    .limit(1);
-  if (active) return { queued: false, reason: `analysis job #${active.id} already active`, recordingId };
+  recordingId ??= await ensureRecordingForVideo(row, videoId, deliveredSeconds ?? row.requestedSeconds);
+  // Recheck after resolving/creating the canonical video recording, so a job
+  // linked through that recording is reused instead of being duplicated.
+  const existingAfterRecording = await existingAnalysisForBooking(row, [...new Set([...relatedRecordingIds, recordingId])]);
+  if (existingAfterRecording) {
+    const linkedRecordingId = await linkExistingAnalysisToBooking(row, existingAfterRecording, recordingId);
+    return {
+      queued: false,
+      reason: `existing analysis job #${existingAfterRecording.id} linked`,
+      recordingId: linkedRecordingId,
+    };
+  }
 
   const [job] = await db
     .insert(analysisJobsTable)
