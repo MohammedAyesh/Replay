@@ -627,6 +627,30 @@ export interface AdminFootageBilling {
   totalBalanceFils: number;
 }
 
+export interface AdminFailedFootageRequest {
+  id: number;
+  fieldId: number;
+  fieldName: string;
+  /** @nullable */
+  ownerName: string | null;
+  /** @nullable */
+  ownerEmail: string | null;
+  /** @nullable */
+  academyName: string | null;
+  cameraId: string;
+  startLocal: string;
+  endLocal: string;
+  /** @nullable */
+  message: string | null;
+  updatedAt: string;
+}
+
+export interface AdminFootageRecheckResult {
+  id: number;
+  status: string;
+  changed: boolean;
+}
+
 export interface Field {
   id: number;
   name: string;

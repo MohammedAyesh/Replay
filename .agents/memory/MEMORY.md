@@ -41,6 +41,7 @@
 - [Public clip sharing](public-clip-sharing.md) — share pages stay outside `/api`; deterministic HMAC tokens and server-side media proxies protect private exports while remaining crawler-friendly.
 - [Reviewer sign-in domain](reviewer-sign-in-domain.md) — reviewer links must use `publicBaseUrl()` so they land on the site configured for production Clerk.
 - [Owner footage console](owner-footage-console.md) — owner links use `/w/<32-hex-token>` and `/w/<token>/manifest.m3u8`, with 14-day expiry and one-time billing.
+- [Owner footage failed-job recovery](owner-footage-failed-job-recovery.md) — recent failed jobs use a process-local 10-minute poll throttle; only ready/partial can recover, while admins may bypass the throttle.
 - [Public footage access](public-footage-access.md) — explicit per-recording visibility overrides schedules, but hidden fields and hidden recordings remain private.
 - [Replay 4K fallback boundaries](replay-4k-fallback-boundaries.md) — keep original 4K to recorded playback, admin previews, and token-gated owner shares.
 - [SoccerWatch build environment](soccerwatch-build-environment.md) — direct Vite builds require both PORT and BASE_PATH; the workflow supplies them automatically.

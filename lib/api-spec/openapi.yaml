@@ -892,6 +892,54 @@ paths:
         "403":
           description: Admin access required
 
+  /admin/footage-requests:
+    get:
+      operationId: listAdminFootageRequests
+      tags: [admin]
+      summary: List recent failed footage requests that can be recovered
+      security:
+        - clerkSession: []
+      responses:
+        "200":
+          description: Recent failed footage requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminFailedFootageRequest"
+        "403":
+          description: Admin access required
+
+  /admin/footage-requests/{id}/recheck:
+    post:
+      operationId: recheckAdminFootageRequest
+      tags: [admin]
+      summary: Re-check a recent failed footage request
+      security:
+        - clerkSession: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Current footage request status after the re-check
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminFootageRecheckResult"
+        "400":
+          description: Invalid footage request id
+        "403":
+          description: Admin access required
+        "404":
+          description: Footage request not found
+        "409":
+          description: Request is not eligible for recovery
+
   /admin/footage-cancellation-requests:
     get:
       operationId: listAdminFootageCancellationRequests
@@ -6118,6 +6166,46 @@ components:
           type: integer
         totalBalanceFils:
           type: integer
+
+    AdminFailedFootageRequest:
+      type: object
+      required: [id, fieldId, fieldName, ownerName, ownerEmail, academyName, cameraId, startLocal, endLocal, message, updatedAt]
+      properties:
+        id:
+          type: integer
+        fieldId:
+          type: integer
+        fieldName:
+          type: string
+        ownerName:
+          type: ["string", "null"]
+        ownerEmail:
+          type: ["string", "null"]
+          format: email
+        academyName:
+          type: ["string", "null"]
+        cameraId:
+          type: string
+        startLocal:
+          type: string
+        endLocal:
+          type: string
+        message:
+          type: ["string", "null"]
+        updatedAt:
+          type: string
+          format: date-time
+
+    AdminFootageRecheckResult:
+      type: object
+      required: [id, status, changed]
+      properties:
+        id:
+          type: integer
+        status:
+          type: string
+        changed:
+          type: boolean
 
     Field:
       type: object

@@ -845,6 +845,39 @@ export const GetAdminFootageBillingResponse = zod.object({
 
 
 /**
+ * @summary List recent failed footage requests that can be recovered
+ */
+export const ListAdminFootageRequestsResponseItem = zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "ownerName": zod.string().nullable(),
+  "ownerEmail": zod.string().email().nullable(),
+  "academyName": zod.string().nullable(),
+  "cameraId": zod.string(),
+  "startLocal": zod.string(),
+  "endLocal": zod.string(),
+  "message": zod.string().nullable(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListAdminFootageRequestsResponse = zod.array(ListAdminFootageRequestsResponseItem)
+
+
+/**
+ * @summary Re-check a recent failed footage request
+ */
+export const RecheckAdminFootageRequestParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const RecheckAdminFootageRequestResponse = zod.object({
+  "id": zod.number(),
+  "status": zod.string(),
+  "changed": zod.boolean()
+})
+
+
+/**
  * @summary List owner delivered-footage cancellation requests
  */
 export const ListAdminFootageCancellationRequestsResponseItem = zod.object({

@@ -2,7 +2,7 @@ import { bookingPriceFils, loadCommerce } from "../lib/commerce";
 import crypto from "node:crypto";
 import { Readable } from "node:stream";
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import {
   academiesTable,
   db,
@@ -37,6 +37,8 @@ const AMMAN_TIME_ZONE = "Asia/Amman";
 const SHARE_LIFETIME_MS = 14 * 24 * 60 * 60 * 1000;
 const AVAILABILITY_CACHE_MS = 2 * 60 * 1000;
 const REQUEST_REFRESH_MS = 10 * 1000;
+const FAILED_REQUEST_RECOVERY_AGE_MS = 3 * 24 * 60 * 60 * 1000;
+const FAILED_REQUEST_RECOVERY_THROTTLE_MS = 10 * 60 * 1000;
 const MAX_UNFINISHED_REQUESTS = 2;
 const MAX_SCHEDULED_REQUESTS = 10;
 const ACTIVE_REQUEST_STATUSES = ["queued", "running", "scheduled", "recording"] as const;
@@ -60,6 +62,7 @@ const varMarkBodySchema = z.object({
 
 const availabilityCache = new Map<string, { expiresAt: number; body: Availability }>();
 const requestRefreshAt = new Map<number, number>();
+const failedRequestPollAt = new Map<number, number>();
 const syncState = new Map<number, {
   remoteUpdatedAt: string | null;
   remoteChangedAt: number;
@@ -629,7 +632,20 @@ async function failRequest(id: number, message: string): Promise<void> {
     .where(eq(footageRequestsTable.id, id));
 }
 
-async function completeRequest(row: FootageRequest, body: unknown, status: "ready" | "partial"): Promise<void> {
+function isRecoverableFailedRequest(row: FootageRequest, now: number): boolean {
+  const updatedAt = row.updatedAt.getTime();
+  return row.status === "failed"
+    && Boolean(row.vpsJobId?.trim())
+    && updatedAt <= now
+    && updatedAt >= now - FAILED_REQUEST_RECOVERY_AGE_MS;
+}
+
+async function completeRequest(
+  row: FootageRequest,
+  body: unknown,
+  status: "ready" | "partial",
+  allowFailed = false,
+): Promise<boolean> {
   const now = new Date();
   const deliveredSeconds = status === "partial"
     ? Math.max(0, bodyNumber(body, "durationSeconds", "duration_seconds", "deliveredSeconds", "delivered_seconds") ?? 0)
@@ -658,11 +674,16 @@ async function completeRequest(row: FootageRequest, body: unknown, status: "read
     })
     .where(and(
       eq(footageRequestsTable.id, row.id),
-      inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES),
+      inArray(
+        footageRequestsTable.status,
+        allowFailed ? [...ACTIVE_REQUEST_STATUSES, "failed"] : ACTIVE_REQUEST_STATUSES,
+      ),
     )).returning({ id: footageRequestsTable.id });
 
+  if (completed.length === 0) return false;
+
   // Only the call that actually completed the request queues its analysis.
-  if (completed.length > 0 && row.academyId === null) {
+  if (row.academyId === null) {
     try {
       await queueLiveAnalysisForBooking(row, videoId, deliveredSeconds);
     } catch (error) {
@@ -674,14 +695,17 @@ async function completeRequest(row: FootageRequest, body: unknown, status: "read
   } catch (error) {
     logger.warn({ requestId: row.id, error }, "Could not attach completed footage to academy sessions");
   }
+  return true;
 }
 
 export async function refreshOwnerRequest(
   row: FootageRequest,
   camera: string,
   now = Date.now(),
+  failedRecovery = false,
 ): Promise<void> {
   if (!row.vpsJobId) {
+    if (failedRecovery && row.status === "failed") return;
     await failRequest(row.id, "The camera pull did not return a job id");
     return;
   }
@@ -699,6 +723,7 @@ export async function refreshOwnerRequest(
   }
 
   if (!result.ok) {
+    if (failedRecovery && row.status === "failed") return;
     if (
       result.status === 404
       && (row.status === "queued" || row.status === "running")
@@ -710,6 +735,14 @@ export async function refreshOwnerRequest(
   }
 
   const next = mappedStatus(result.body);
+  if (failedRecovery) {
+    if (row.status !== "failed" || (next !== "ready" && next !== "partial")) return;
+    const completed = await completeRequest(row, result.body, next, true);
+    if (completed) syncState.delete(row.id);
+    return;
+  }
+  if (row.status === "failed") return;
+
   const nextVarState = varStateFromJob(result.body);
   await db.update(footageRequestsTable)
     .set({ varState: nextVarState, updatedAt: new Date() })
@@ -771,6 +804,19 @@ export async function refreshOwnerRequest(
     ));
 }
 
+async function recheckFailedOwnerRequest(
+  row: FootageRequest,
+  camera: string,
+  now = Date.now(),
+  ignoreThrottle = false,
+): Promise<void> {
+  if (!isRecoverableFailedRequest(row, now)) return;
+  const lastPoll = failedRequestPollAt.get(row.id);
+  if (!ignoreThrottle && lastPoll !== undefined && now - lastPoll < FAILED_REQUEST_RECOVERY_THROTTLE_MS) return;
+  failedRequestPollAt.set(row.id, now);
+  await refreshOwnerRequest(row, camera, now, true);
+}
+
 async function expireOwnerShares(now = new Date()): Promise<void> {
   await db.update(footageRequestsTable)
     .set({ status: "expired", updatedAt: now })
@@ -788,15 +834,33 @@ export async function runOwnerStatusSync(): Promise<void> {
   if (syncInProgress) return;
   syncInProgress = true;
   try {
-    const rows = await db
-      .select({ request: footageRequestsTable, camera: fieldsTable.cameraId })
-      .from(footageRequestsTable)
-      .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
-      .where(inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES));
+    const now = Date.now();
+    const [rows, failedRows] = await Promise.all([
+      db
+        .select({ request: footageRequestsTable, camera: fieldsTable.cameraId })
+        .from(footageRequestsTable)
+        .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
+        .where(inArray(footageRequestsTable.status, ACTIVE_REQUEST_STATUSES)),
+      db
+        .select({ request: footageRequestsTable, camera: fieldsTable.cameraId })
+        .from(footageRequestsTable)
+        .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
+        .where(and(
+          eq(footageRequestsTable.status, "failed"),
+          isNotNull(footageRequestsTable.vpsJobId),
+          gte(footageRequestsTable.updatedAt, new Date(now - FAILED_REQUEST_RECOVERY_AGE_MS)),
+          lte(footageRequestsTable.updatedAt, new Date(now)),
+        )),
+    ]);
     await Promise.allSettled(
-      rows
-        .filter(({ camera }) => Boolean(camera))
-        .map(({ request, camera }) => refreshOwnerRequest(request, camera!)),
+      [
+        ...rows
+          .filter(({ camera }) => Boolean(camera))
+          .map(({ request, camera }) => refreshOwnerRequest(request, camera!, now)),
+        ...failedRows
+          .filter(({ camera }) => Boolean(camera))
+          .map(({ request, camera }) => recheckFailedOwnerRequest(request, camera!, now)),
+      ],
     );
     await expireOwnerShares();
     await lapseUnpaidBookings().catch((error) => logger.warn({ error }, "Lapsing unpaid bookings failed"));
@@ -978,6 +1042,77 @@ router.get("/admin/footage-billing", async (req, res): Promise<void> => {
     totalPaidFils: balances.reduce((sum, field) => sum + field.paidFils, 0),
     totalBalanceFils: balances.reduce((sum, field) => sum + field.balanceFils, 0),
   });
+});
+
+router.get("/admin/footage-requests", async (req, res): Promise<void> => {
+  if (!await requireAdminUser(req, res)) return;
+  const now = Date.now();
+  const rows = await db.select({
+    request: footageRequestsTable,
+    fieldName: fieldsTable.name,
+    ownerName: usersTable.name,
+    ownerEmail: usersTable.email,
+    academyName: academiesTable.name,
+  })
+    .from(footageRequestsTable)
+    .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
+    .innerJoin(usersTable, eq(usersTable.id, footageRequestsTable.requestedBy))
+    .leftJoin(academiesTable, eq(academiesTable.id, footageRequestsTable.academyId))
+    .where(and(
+      eq(footageRequestsTable.status, "failed"),
+      isNotNull(footageRequestsTable.vpsJobId),
+      gte(footageRequestsTable.updatedAt, new Date(now - FAILED_REQUEST_RECOVERY_AGE_MS)),
+      lte(footageRequestsTable.updatedAt, new Date(now)),
+    ))
+    .orderBy(desc(footageRequestsTable.updatedAt))
+    .limit(50);
+  res.json(rows
+    .filter(({ request: row }) => isRecoverableFailedRequest(row, now))
+    .map(({ request: row, fieldName, ownerName, ownerEmail, academyName }) => ({
+      id: row.id,
+      fieldId: row.fieldId,
+      fieldName,
+      ownerName,
+      ownerEmail,
+      academyName,
+      cameraId: row.cameraId,
+      startLocal: row.startLocal,
+      endLocal: row.endLocal,
+      message: row.message,
+      updatedAt: row.updatedAt.toISOString(),
+    })));
+});
+
+router.post("/admin/footage-requests/:id/recheck", async (req, res): Promise<void> => {
+  if (!await requireAdminUser(req, res)) return;
+  const id = parseId(req.params.id);
+  if (!id) {
+    res.status(400).json({ error: "Invalid footage request id" });
+    return;
+  }
+  const [found] = await db.select({
+    request: footageRequestsTable,
+    camera: fieldsTable.cameraId,
+  })
+    .from(footageRequestsTable)
+    .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
+    .where(eq(footageRequestsTable.id, id));
+  if (!found) {
+    res.status(404).json({ error: "Footage request not found" });
+    return;
+  }
+  const now = Date.now();
+  if (!found.camera || !isRecoverableFailedRequest(found.request, now)) {
+    res.status(409).json({ error: "Only recent failed requests with a server job can be re-checked" });
+    return;
+  }
+
+  await recheckFailedOwnerRequest(found.request, found.camera, now, true);
+  const [updated] = await db.select({
+    status: footageRequestsTable.status,
+  }).from(footageRequestsTable).where(eq(footageRequestsTable.id, id));
+  const status = updated?.status ?? found.request.status;
+  res.json({ id, status, changed: status !== found.request.status });
 });
 
 router.get("/admin/footage-cancellation-requests", async (req, res): Promise<void> => {

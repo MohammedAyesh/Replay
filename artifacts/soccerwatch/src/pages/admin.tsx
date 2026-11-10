@@ -231,6 +231,20 @@ interface FootageCancellationRequest {
   reviewedAt: string | null;
 }
 
+interface AdminFailedFootageRequest {
+  id: number;
+  fieldId: number;
+  fieldName: string;
+  ownerName: string | null;
+  ownerEmail: string | null;
+  academyName: string | null;
+  cameraId: string;
+  startLocal: string;
+  endLocal: string;
+  message: string | null;
+  updatedAt: string;
+}
+
 /**
  * The camera-to-pitch calibration, as the server summarises it.
  *
@@ -6993,7 +7007,11 @@ function OwnersBillingTab() {
   const [billingFields, setBillingFields] = useState<FootageBillingField[]>([]);
   const [payments, setPayments] = useState<FootagePayment[]>([]);
   const [cancellations, setCancellations] = useState<FootageCancellationRequest[]>([]);
+  const [failedFootageRequests, setFailedFootageRequests] = useState<AdminFailedFootageRequest[]>([]);
   const [cancellationError, setCancellationError] = useState<string | null>(null);
+  const [failedFootageError, setFailedFootageError] = useState<string | null>(null);
+  const [failedFootageNotice, setFailedFootageNotice] = useState<string | null>(null);
+  const [recheckingFootageId, setRecheckingFootageId] = useState<number | null>(null);
   const [totals, setTotals] = useState({ totalChargedFils: 0, totalPaidFils: 0, totalBalanceFils: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -7010,6 +7028,7 @@ function OwnersBillingTab() {
     setLoading(true);
     setError(null);
     setCancellationError(null);
+    setFailedFootageError(null);
 
     const ownerRequest = apiFetch("/admin/footage-owners") as Promise<FootageOwnerAssignment[]>;
     const billingRequest = apiFetch("/admin/footage-billing") as Promise<{
@@ -7020,10 +7039,12 @@ function OwnersBillingTab() {
       totalBalanceFils: number;
     }>;
     const cancellationRequest = apiFetch("/admin/footage-cancellation-requests") as Promise<FootageCancellationRequest[]>;
-    const [ownerResult, billingResult, cancellationResult] = await Promise.allSettled([
+    const failedFootageRequest = apiFetch("/admin/footage-requests") as Promise<AdminFailedFootageRequest[]>;
+    const [ownerResult, billingResult, cancellationResult, failedFootageResult] = await Promise.allSettled([
       ownerRequest,
       billingRequest,
       cancellationRequest,
+      failedFootageRequest,
     ]);
 
     const sectionErrors: string[] = [];
@@ -7052,6 +7073,12 @@ function OwnersBillingTab() {
       setCancellations(cancellationResult.value);
     } else {
       setCancellationError("Refund requests are temporarily unavailable. Owners and billing data are still shown.");
+    }
+
+    if (failedFootageResult.status === "fulfilled") {
+      setFailedFootageRequests(failedFootageResult.value);
+    } else {
+      setFailedFootageError("Failed footage requests are temporarily unavailable.");
     }
 
     setError(sectionErrors.length > 0 ? sectionErrors.join(" · ") : null);
@@ -7146,6 +7173,25 @@ function OwnersBillingTab() {
       await load();
     } catch (err) {
       setError(adminRequestErrorMessage(err, "Could not review refund request"));
+    }
+  };
+
+  const recheckFailedFootage = async (request: AdminFailedFootageRequest) => {
+    setRecheckingFootageId(request.id);
+    setFailedFootageError(null);
+    setFailedFootageNotice(null);
+    try {
+      const result = await apiFetch(`/admin/footage-requests/${request.id}/recheck`, {
+        method: "POST",
+      }) as { id: number; status: string; changed: boolean };
+      setFailedFootageNotice(result.changed
+        ? `Request ${result.id} recovered as ${result.status}.`
+        : `Request ${result.id} remains failed; no request data was changed.`);
+      await load();
+    } catch (err) {
+      setFailedFootageError(adminRequestErrorMessage(err, "Could not re-check footage request"));
+    } finally {
+      setRecheckingFootageId(null);
     }
   };
 
@@ -7313,6 +7359,42 @@ function OwnersBillingTab() {
                       <button type="button" onClick={() => void reviewCancellation(item, "declined")} className="rounded-lg bg-red-500/15 px-3 py-2 text-xs font-semibold text-red-300 hover:bg-red-500/25">Decline / رفض</button>
                     </div>
                   )}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4" data-testid="admin-failed-footage-requests">
+            <div>
+              <h2 className="text-sm font-semibold text-white">Recent failed footage requests</h2>
+              <p className="mt-1 text-xs text-zinc-500">Re-check failed camera jobs from the last three days.</p>
+            </div>
+            {failedFootageNotice && <p className="mt-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200" role="status">{failedFootageNotice}</p>}
+            {failedFootageError && <p className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-200" role="alert">{failedFootageError}</p>}
+            <div className="mt-3 space-y-2">
+              {failedFootageRequests.length === 0 ? (
+                <p className="text-xs text-zinc-600">No recent failed footage requests.</p>
+              ) : failedFootageRequests.map((request) => (
+                <div key={request.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-white">
+                      {request.fieldName} · {request.ownerEmail ?? request.ownerName ?? `Request ${request.id}`}
+                      {request.academyName && <span className="ml-2 text-violet-300">· {request.academyName}</span>}
+                    </p>
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      {request.cameraId} · {request.startLocal} → {request.endLocal} · Updated {new Date(request.updatedAt).toLocaleString()}
+                    </p>
+                    {request.message && <p className="mt-1 text-[11px] text-zinc-400">{request.message}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    data-testid={`button-recheck-footage-${request.id}`}
+                    onClick={() => void recheckFailedFootage(request)}
+                    disabled={recheckingFootageId !== null}
+                    className="shrink-0 rounded-lg border border-primary/30 bg-primary/10 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/20 disabled:opacity-50"
+                  >
+                    {recheckingFootageId === request.id ? "Re-checking…" : "Re-check"}
+                  </button>
                 </div>
               ))}
             </div>

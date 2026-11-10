@@ -92,6 +92,7 @@ import type {
   AdminClipPlaybackNotReady,
   AdminClipReclipResult,
   AdminClipSourceCheckResult,
+  AdminFailedFootageRequest,
   AdminFootageBilling,
   AdminFootageCancellationRequest,
   AdminFootageCancellationReview,
@@ -99,6 +100,7 @@ import type {
   AdminFootageOwnerInput,
   AdminFootagePayment,
   AdminFootagePaymentInput,
+  AdminFootageRecheckResult,
   AdminMatchWindowBody,
   AdminMatchWindowResponse,
   AdminRecordingPlayerMetricsResponse,
@@ -2682,6 +2684,153 @@ export function useGetAdminFootageBilling<TData = Awaited<ReturnType<typeof getA
 
 
 
+
+export const getListAdminFootageRequestsUrl = () => {
+
+
+
+
+  return `/api/admin/footage-requests`
+}
+
+/**
+ * @summary List recent failed footage requests that can be recovered
+ */
+export const listAdminFootageRequests = async ( options?: RequestInit): Promise<AdminFailedFootageRequest[]> => {
+
+  return customFetch<AdminFailedFootageRequest[]>(getListAdminFootageRequestsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminFootageRequestsQueryKey = () => {
+    return [
+    `/api/admin/footage-requests`
+    ] as const;
+    }
+
+
+export const getListAdminFootageRequestsQueryOptions = <TData = Awaited<ReturnType<typeof listAdminFootageRequests>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminFootageRequestsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminFootageRequests>>> = ({ signal }) => listAdminFootageRequests({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageRequests>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminFootageRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminFootageRequests>>>
+export type ListAdminFootageRequestsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List recent failed footage requests that can be recovered
+ */
+
+export function useListAdminFootageRequests<TData = Awaited<ReturnType<typeof listAdminFootageRequests>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminFootageRequests>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminFootageRequestsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getRecheckAdminFootageRequestUrl = (id: number,) => {
+
+
+
+
+  return `/api/admin/footage-requests/${id}/recheck`
+}
+
+/**
+ * @summary Re-check a recent failed footage request
+ */
+export const recheckAdminFootageRequest = async (id: number, options?: RequestInit): Promise<AdminFootageRecheckResult> => {
+
+  return customFetch<AdminFootageRecheckResult>(getRecheckAdminFootageRequestUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getRecheckAdminFootageRequestMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recheckAdminFootageRequest>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof recheckAdminFootageRequest>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['recheckAdminFootageRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof recheckAdminFootageRequest>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  recheckAdminFootageRequest(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RecheckAdminFootageRequestMutationResult = NonNullable<Awaited<ReturnType<typeof recheckAdminFootageRequest>>>
+
+    export type RecheckAdminFootageRequestMutationError = ErrorType<void>
+
+    /**
+ * @summary Re-check a recent failed footage request
+ */
+export const useRecheckAdminFootageRequest = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof recheckAdminFootageRequest>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof recheckAdminFootageRequest>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getRecheckAdminFootageRequestMutationOptions(options));
+    }
 
 export const getListAdminFootageCancellationRequestsUrl = () => {
 
