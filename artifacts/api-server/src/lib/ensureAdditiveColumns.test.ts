@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS, FAVORITES_STATEMENTS, MY_TEMPLATES_STATEMENTS, PUSH_STATEMENTS, PUSH_KEYS_STATEMENTS, ACADEMY_IG_STATEMENTS, LIBRARY_TEMPLATES_STATEMENTS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS, FAVORITES_STATEMENTS, MY_TEMPLATES_STATEMENTS, PUSH_STATEMENTS, PUSH_KEYS_STATEMENTS, ACADEMY_IG_STATEMENTS, LIBRARY_TEMPLATES_STATEMENTS, COACH_NOTES_STATEMENTS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -143,6 +143,14 @@ describe("ensureAdditiveColumns", () => {
     expect(await ensureAdditiveColumns(pool)).toBe(1);
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0078_creative_library_templates.sql", import.meta.url), "utf8");
     for (const statement of LIBRARY_TEMPLATES_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates academy_coach_notes (0080), as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "academy_coach_notes"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(1);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0080_academy_coach_notes.sql", import.meta.url), "utf8");
+    for (const statement of COACH_NOTES_STATEMENTS) expect(migration).toContain(`${statement};`);
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 

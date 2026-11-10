@@ -695,7 +695,7 @@ async function playerStatsRows(academyId: number, playerIds: number[] | null, pu
 
 // ─── Family (parents and players) ────────────────────────────────────────────
 
-async function familyViewer(req: Request, res: Response) {
+export async function familyViewer(req: Request, res: Response) {
   const user = await getLocalUserRecord(req);
   if (!user || user.isGuest || user.isDisabled) {
     unauthenticatedResponse(res, req);
@@ -714,7 +714,7 @@ async function familyViewer(req: Request, res: Response) {
   };
 }
 
-async function familyCanSee(viewer: NonNullable<Awaited<ReturnType<typeof familyViewer>>>, session: SessionRow): Promise<boolean> {
+export async function familyCanSee(viewer: NonNullable<Awaited<ReturnType<typeof familyViewer>>>, session: SessionRow): Promise<boolean> {
   const players = await db.select({
     id: academyPlayersTable.id,
     academyId: academyPlayersTable.academyId,

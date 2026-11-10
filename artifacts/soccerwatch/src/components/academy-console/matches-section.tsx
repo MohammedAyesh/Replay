@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { CoachMatchView, CoachViewButton } from "@/components/coach-board/CoachViews";
 import { PrivateClipsCard } from "@/components/academy-console/private-clips-card";
 import { PhoneMediaCard } from "@/components/academy-console/phone-media-card";
 import { PhoneReviewCard } from "@/components/academy-console/phone-review-card";
@@ -135,6 +136,7 @@ function MatchList({ academyId, copy, onOpen }: { academyId: number; copy: Copy;
 
 function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack, focus }: { academyId: number; sessionId: number; isOwner: boolean; copy: Copy; onBack: () => void; focus?: string | null }) {
   const detail = useAcademyMatch(academyId, sessionId);
+  const [coaching, setCoaching] = useState(false);
   const loaded = Boolean(detail.data);
   useEffect(() => {
     if (!loaded || focus !== "who") return;
@@ -158,8 +160,12 @@ function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack, focus }:
           <h1 className="font-display text-4xl font-bold tracking-tight text-text" dir="auto">{sessionTitle(data.session, copy)}</h1>
           <p className="mt-1 text-sm text-muted-text">{[sessionDate(data.session, copy.locale), data.session.squadName, data.session.location].filter(Boolean).join(" · ")}</p>
         </div>
-        {score && <span className="rounded-2xl bg-raised px-5 py-2 font-display text-3xl font-bold tabular-nums text-text" dir="ltr">{score}</span>}
+        <div className="flex flex-wrap items-center gap-3">
+          {data.recordings.length > 0 && <CoachViewButton onClick={() => setCoaching(true)} />}
+          {score && <span className="rounded-2xl bg-raised px-5 py-2 font-display text-3xl font-bold tabular-nums text-text" dir="ltr">{score}</span>}
+        </div>
       </header>
+      {coaching && <CoachMatchView academyId={academyId} sessionId={sessionId} onClose={() => setCoaching(false)} />}
       <VideoCard academyId={academyId} data={data} isOwner={isOwner} copy={copy} />
       <LineupCard academyId={academyId} data={data} copy={copy} />
       <WhoCard academyId={academyId} data={data} copy={copy} />

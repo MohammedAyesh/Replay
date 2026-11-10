@@ -23,6 +23,7 @@ import { getRecordingViewInput } from "@/lib/recording-view-tracking";
 import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
 import { fetchFamilyScreens } from "@/lib/academy-team-api";
 import { FamilySendVideo } from "@/components/academy-family/send-video";
+import { FamilyCoachNoteView, FamilyCoachNotesCard } from "@/components/coach-board/CoachViews";
 
 function dateOnly(date: Date): string {
   const year = date.getFullYear();
@@ -170,6 +171,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
     getRecordingViewInput(playing?.recording),
   );
   const [liveSession, setLiveSession] = useState<{ id: number; title: string } | null>(null);
+  const [coachNoteId, setCoachNoteId] = useState<number | null>(null);
   const claim = useClaimAcademyFamily();
   const attemptedToken = useRef<string | null>(null);
   const [claimAttempt, setClaimAttempt] = useState(0);
@@ -501,6 +503,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
                   </article>);
                 })}</div> : <div className="fp-empty" data-testid="family-session-footage-empty">{labels.noFootage}</div>}
               </section>}
+              {user && !isGuest && <FamilyCoachNotesCard onOpen={setCoachNoteId} />}
               {shows("matches") && (familyMatches.data?.length ?? 0) > 0 && <section className="fp-card" data-testid="family-match-pages">
                 <div className="fp-card-head"><div><h2 className="fp-card-title">{matchesCopy.family.matchPages}</h2><p className="fp-card-sub">{matchesCopy.family.matchPagesHint}</p></div><span className="fp-count">{familyMatches.data!.length}</span></div>
                 <div className="fp-sessions">{familyMatches.data!.slice(0, 8).map((match) => {
@@ -604,6 +607,7 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
           }}
         />
       </AnimatePresence>}
+      {coachNoteId !== null && <FamilyCoachNoteView noteId={coachNoteId} onClose={() => setCoachNoteId(null)} />}
       {liveSession && <AcademyLiveOverlay
         statusUrl={`/api/academy/family/sessions/${liveSession.id}/live/status`}
         title={`${family?.academy.name ?? "Academy"} · ${liveSession.title}`}

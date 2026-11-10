@@ -7,7 +7,8 @@ import { z } from "zod";
 import { academyAdMediaTable, db, recordingsTable } from "@workspace/db";
 import { academyClip, academyRecording } from "../lib/creative/renderMedia";
 import { clipSpan } from "../lib/creative/clipSpan";
-import { centreFraming, clipFallback, framingFor, recordingBall } from "../lib/creative/framing";
+import { centreFraming, clipFallback, framingFor, recordingBall, type FramingAnswer } from "../lib/creative/framing";
+import { playerFollowFraming } from "../lib/creative/playerFraming";
 import { extractBunnyVideoId } from "../lib/publicFootage";
 import { CREATIVE_BASE, creativeOwner, projectIdParam } from "../lib/creative/projects";
 import { parseLibraryFilters } from "../lib/creative/library";
@@ -110,10 +111,28 @@ const framingBody = z.object({
     z.object({ type: z.literal("recording"), recordingId: z.number().int().positive(), fromMs: z.number().min(0), toMs: z.number().min(0) }),
     z.object({ type: z.literal("clip"), clipId: z.number().int().positive() }),
   ]),
+  /** Follow this academy player (his match track) instead of the ball, where the analysis has him. */
+  followPlayerId: z.number().int().positive().optional(),
 });
 
+/** Follow the player when asked and he is in sight, else the ball (or the fallback). */
+async function framingWith(
+  academyId: number,
+  recordingId: number | null,
+  fromMs: number,
+  toMs: number,
+  followPlayerId: number | undefined,
+  fallback?: Parameters<typeof framingFor>[3],
+): Promise<FramingAnswer | (Omit<FramingAnswer, "source"> & { source: "player" })> {
+  if (recordingId && followPlayerId) {
+    const followed = await playerFollowFraming(academyId, recordingId, followPlayerId, fromMs, toMs);
+    if (followed) return { framing: followed.framing, source: "player", coverage: followed.coverage };
+  }
+  return framingFor(recordingId, fromMs, toMs, fallback);
+}
+
 /**
- * POST …/creative/library/framing  { src: recording window | clip }
+ * POST …/creative/library/framing  { src: recording window | clip, followPlayerId? }
  * A camera following the ball through it (keys relative to the source's start),
  * else the clip's own camera path, else the middle. Also says where a clip sits
  * in its recording, so the editor can move its start and end.
@@ -129,7 +148,7 @@ router.post(`${base}/framing`, async (req, res): Promise<void> => {
       if (src.toMs <= src.fromMs || src.toMs - src.fromMs > 10 * 60_000) { res.status(400).json({ error: "That stretch is too long" }); return; }
       const rec = await academyRecording(access.academyId, src.recordingId);
       if (!rec) { res.status(404).json({ error: "Not found" }); return; }
-      res.json({ ...(await framingFor(rec.id, src.fromMs, src.toMs)), ball: await ballThrough(rec.id, src.fromMs, src.toMs) });
+      res.json({ ...(await framingWith(access.academyId, rec.id, src.fromMs, src.toMs, body.data.followPlayerId)), ball: await ballThrough(rec.id, src.fromMs, src.toMs) });
       return;
     }
     const clip = await academyClip(access.academyId, src.clipId);
@@ -138,7 +157,7 @@ router.post(`${base}/framing`, async (req, res): Promise<void> => {
     if (!span) { res.json({ ...centre(), window: null }); return; }
     const recordingId = clip.sourceRecordingId ?? (await recordingOfVideo(clip.videoId));
     const owned = recordingId && (await academyRecording(access.academyId, recordingId)) ? recordingId : null;
-    const answer = await framingFor(owned, span.startSec * 1000, span.endSec * 1000, clipFallback(clip, span.endSec - span.startSec));
+    const answer = await framingWith(access.academyId, owned, span.startSec * 1000, span.endSec * 1000, body.data.followPlayerId, clipFallback(clip, span.endSec - span.startSec));
     res.json({
       ...answer,
       ball: owned ? await ballThrough(owned, span.startSec * 1000, span.endSec * 1000) : [],
