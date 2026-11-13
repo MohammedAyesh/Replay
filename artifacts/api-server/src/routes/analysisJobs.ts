@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import multer from "multer";
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, like, sql } from "drizzle-orm";
 import {
   db,
   analysisJobsTable,
@@ -15,6 +15,8 @@ import {
   type AnalysisJobStatus,
 } from "@workspace/db";
 import {
+  BUNNY_API_KEY,
+  BUNNY_LIBRARY_ID,
   BUNNY_STORAGE_API_KEY,
   BUNNY_STORAGE_HOSTNAME,
   BUNNY_STORAGE_ZONE,
@@ -31,6 +33,7 @@ import {
   ACTIVE_STATUSES,
   MAX_ATTEMPTS,
   STALE_HEARTBEAT_MS,
+  bunnyGuidFromUrl,
   canTransition,
   describeSource,
   isWorkerOnline,
@@ -275,6 +278,7 @@ async function loadSources(ids: number[]) {
     .select({
       id: recordingsTable.id,
       court: recordingsTable.court,
+      displayTitle: recordingsTable.displayTitle,
       date: recordingsTable.date,
       timeSlot: recordingsTable.timeSlot,
       duration: recordingsTable.duration,
@@ -398,7 +402,7 @@ async function viewJobs(rows: AnalysisJobRow[]): Promise<JobView[]> {
         .filter((found): found is NonNullable<typeof found> => !!found)
         .map(describeSource),
       queuePosition: queuePosition(row, queuedOldestFirst),
-      recordingLabel: target ? `${target.court} ${target.date} ${target.timeSlot}`.trim() : null,
+      recordingLabel: target ? `${target.displayTitle || target.court} ${target.date} ${target.timeSlot}`.trim() : null,
       rosterHints: hints[index] ?? null,
       matchRosterSummary,
     };
@@ -573,6 +577,7 @@ router.get("/admin/analysis-jobs/recordings", async (req, res): Promise<void> =>
       fieldId: recordingsTable.fieldId,
       fieldName: fieldsTable.name,
       court: recordingsTable.court,
+      displayTitle: recordingsTable.displayTitle,
       date: recordingsTable.date,
       timeSlot: recordingsTable.timeSlot,
       duration: recordingsTable.duration,
@@ -583,6 +588,92 @@ router.get("/admin/analysis-jobs/recordings", async (req, res): Promise<void> =>
     .orderBy(desc(recordingsTable.date), desc(recordingsTable.timeSlot))
     .limit(400);
   res.json(rows.filter((row) => !!row.videoUrl));
+});
+
+/** PATCH /admin/analysis-jobs/recordings/:id/title — rename the Bunny file and save a durable app title. */
+router.patch("/admin/analysis-jobs/recordings/:id/title", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { unauthenticatedResponse(res, req); return; }
+
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid recording id" }); return; }
+
+  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+  if (!title || title.length > 200) {
+    res.status(400).json({ error: "Title must contain 1 to 200 characters" });
+    return;
+  }
+  if (!BUNNY_API_KEY || !BUNNY_LIBRARY_ID) {
+    res.status(503).json({ error: "Bunny Stream is not configured" });
+    return;
+  }
+
+  const [recording] = await db.select({
+    id: recordingsTable.id,
+    videoUrl: recordingsTable.videoUrl,
+  }).from(recordingsTable).where(eq(recordingsTable.id, id));
+  if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
+
+  const videoGuid = bunnyGuidFromUrl(recording.videoUrl);
+  if (!videoGuid) {
+    res.status(400).json({ error: "Recording is not linked to a Bunny Stream video" });
+    return;
+  }
+
+  let bunnyResponse: Response;
+  try {
+    bunnyResponse = await fetch(
+      `https://video.bunnycdn.com/library/${encodeURIComponent(BUNNY_LIBRARY_ID)}/videos/${encodeURIComponent(videoGuid)}`,
+      {
+        method: "POST",
+        headers: { AccessKey: BUNNY_API_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+        signal: AbortSignal.timeout(20_000),
+      },
+    );
+  } catch (error) {
+    req.log?.error({ err: error, recordingId: id, videoGuid }, "Bunny title update request failed");
+    res.status(502).json({ error: "Could not reach Bunny Stream to rename the video" });
+    return;
+  }
+
+  if (!bunnyResponse.ok) {
+    req.log?.warn({ status: bunnyResponse.status, recordingId: id, videoGuid }, "Bunny rejected a video title update");
+    res.status(bunnyResponse.status === 404 ? 404 : 502).json({
+      error: bunnyResponse.status === 404 ? "Bunny video not found" : "Bunny Stream rejected the title update",
+    });
+    return;
+  }
+
+  const bunnyResult = await bunnyResponse.json().catch(() => null) as { success?: unknown } | null;
+  if (bunnyResult?.success === false) {
+    req.log?.warn({ recordingId: id, videoGuid }, "Bunny returned an unsuccessful video title update");
+    res.status(502).json({ error: "Bunny Stream rejected the title update" });
+    return;
+  }
+
+  try {
+    const linkedRows = await db.select({
+      id: recordingsTable.id,
+      videoUrl: recordingsTable.videoUrl,
+    }).from(recordingsTable).where(like(recordingsTable.videoUrl, `%${videoGuid}%`));
+    const linkedIds = linkedRows
+      .filter((row) => bunnyGuidFromUrl(row.videoUrl) === videoGuid)
+      .map((row) => row.id);
+    if (!linkedIds.includes(id)) linkedIds.push(id);
+    const [updated] = await db.update(recordingsTable)
+      .set({ displayTitle: title })
+      .where(inArray(recordingsTable.id, linkedIds))
+      .returning({ id: recordingsTable.id, displayTitle: recordingsTable.displayTitle });
+    if (!updated) {
+      res.status(404).json({ error: "Recording not found after Bunny title update" });
+      return;
+    }
+    res.json(updated);
+  } catch (error) {
+    req.log?.error({ err: error, recordingId: id, videoGuid }, "Bunny video was renamed but local title could not be saved");
+    res.status(500).json({ error: "The Bunny title changed, but the Analysis title could not be saved. Retry the rename." });
+  }
 });
 
 async function adminSetStatus(

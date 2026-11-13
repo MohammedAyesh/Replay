@@ -127,6 +127,7 @@ export function workerKeyMatches(expected: string, provided: unknown): boolean {
 export type SourceRecordingInput = {
   id: number;
   court: string | null;
+  displayTitle?: string | null;
   date: string | null;
   timeSlot: string | null;
   duration: string | null;
@@ -139,9 +140,8 @@ export type SourceDescriptor = {
   videoGuid: string | null;
   videoUrl: string;
   /**
-   * The Bunny Stream title this recording was imported under, rebuilt from the
-   * columns the import wrote it from. The workstation's existing fetch path
-   * takes a title, so handing it one keeps that path unchanged.
+   * The Bunny Stream title to fetch. Renamed recordings use their saved title;
+   * otherwise it is rebuilt from the metadata columns.
    */
   title: string | null;
   durationSeconds: number | null;
@@ -178,7 +178,7 @@ export function describeSource(recording: SourceRecordingInput): SourceDescripto
     recordingId: recording.id,
     videoGuid: bunnyGuidFromUrl(recording.videoUrl),
     videoUrl: recording.videoUrl ?? "",
-    title: bunnyTitleFor(recording),
+    title: recording.displayTitle?.trim() || bunnyTitleFor(recording),
     durationSeconds: durationToSeconds(recording.duration),
   };
 }

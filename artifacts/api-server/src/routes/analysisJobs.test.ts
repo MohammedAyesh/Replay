@@ -41,6 +41,8 @@ vi.mock("../lib/claimMatchStorage", () => ({
 }));
 
 vi.mock("../lib/bunny", () => ({
+  BUNNY_API_KEY: "test-bunny-stream-key",
+  BUNNY_LIBRARY_ID: "test-bunny-library",
   BUNNY_STORAGE_API_KEY: "test-bunny-storage-key",
   BUNNY_STORAGE_HOSTNAME: "storage.bunnycdn.com",
   BUNNY_STORAGE_ZONE: "galaxyfield",
@@ -186,6 +188,10 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
+afterEach(async () => {
+  await db.update(recordingsTable).set({ displayTitle: null }).where(inArray(recordingsTable.id, [recA, recB]));
+});
+
 const asWorker = (path: string, worker = "w1") =>
   request(app).post(path).set("x-worker-key", KEY).send({ workerId: worker });
 
@@ -259,6 +265,62 @@ function queueJob(body: Record<string, unknown> = {}) {
     ...body,
   });
 }
+
+describe("renaming analysis recordings", () => {
+  it("renames the Bunny video and saves the title without changing recording metadata", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await request(app)
+      .patch(`/api/admin/analysis-jobs/recordings/${recA}/title`)
+      .send({ title: "ArabiGaming vs Al Ahli" })
+      .expect(200);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `https://video.bunnycdn.com/library/test-bunny-library/videos/${guid(1)}`,
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ AccessKey: "test-bunny-stream-key" }),
+        body: JSON.stringify({ title: "ArabiGaming vs Al Ahli" }),
+      }),
+    );
+    expect(response.body).toEqual({ id: recA, displayTitle: "ArabiGaming vs Al Ahli" });
+    const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, recA));
+    expect(recording).toMatchObject({
+      court: "cam1",
+      date: "2026-09-01",
+      timeSlot: "20:00",
+      displayTitle: "ArabiGaming vs Al Ahli",
+    });
+    const listed = await request(app).get("/api/admin/analysis-jobs/recordings").expect(200);
+    expect(listed.body.find((item: { id: number }) => item.id === recA).displayTitle)
+      .toBe("ArabiGaming vs Al Ahli");
+    const queued = await queueJob().expect(201);
+    expect(queued.body.sources.find((source: { recordingId: number }) => source.recordingId === recA).title)
+      .toBe("ArabiGaming vs Al Ahli");
+  });
+
+  it("rejects a blank title before contacting Bunny", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await request(app)
+      .patch(`/api/admin/analysis-jobs/recordings/${recA}/title`)
+      .send({ title: "   " })
+      .expect(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the rename endpoint admin-only", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    mockedGetLocalUserId.mockResolvedValue(plainId);
+    await request(app)
+      .patch(`/api/admin/analysis-jobs/recordings/${recA}/title`)
+      .send({ title: "Unauthorized rename" })
+      .expect(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
 
 describe("analysis quote proxy", () => {
   beforeEach(() => {

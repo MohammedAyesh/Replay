@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Check, Pencil, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatStartTime, parseStartTime } from "@/lib/analysisStart";
 
@@ -87,6 +88,7 @@ interface RecordingOption {
   id: number;
   fieldName: string | null;
   court: string;
+  displayTitle: string | null;
   date: string;
   timeSlot: string;
   duration: string;
@@ -371,7 +373,7 @@ const STATUS_STYLE: Record<JobStatus, string> = {
 };
 
 function recordingLabel(option: RecordingOption): string {
-  return [option.fieldName, option.court, option.date, option.timeSlot]
+  return [option.fieldName, option.displayTitle || option.court, option.date, option.timeSlot]
     .filter(Boolean)
     .join(" · ");
 }
@@ -431,6 +433,10 @@ export default function AnalysisTab() {
   const [schemaNotice, setSchemaNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [filter, setFilter] = useState("");
+  const [renameId, setRenameId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -533,6 +539,36 @@ export default function AnalysisTab() {
     setSelected((current) =>
       current.includes(id) ? current.filter((value) => value !== id) : [...current, id],
     );
+  }
+
+  function beginRename(option: RecordingOption) {
+    setRenameId(option.id);
+    setRenameValue(option.displayTitle || [option.court, option.date, option.timeSlot].filter(Boolean).join("_"));
+    setRenameError(null);
+  }
+
+  async function saveRename(event: FormEvent, option: RecordingOption) {
+    event.preventDefault();
+    const title = renameValue.trim();
+    if (!title) {
+      setRenameError("Enter a file name.");
+      return;
+    }
+    setRenameBusy(true);
+    setRenameError(null);
+    try {
+      await api(`/admin/analysis-jobs/recordings/${option.id}/title`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      });
+      setOptions((current) => current.map((item) => item.id === option.id ? { ...item, displayTitle: title } : item));
+      setRenameId(null);
+      setNotice(`Bunny video renamed to “${title}”.`);
+    } catch (e) {
+      setRenameError((e as Error).message);
+    } finally {
+      setRenameBusy(false);
+    }
   }
 
   function move(index: number, delta: number) {
@@ -720,17 +756,49 @@ export default function AnalysisTab() {
         />
         <div className="max-h-56 overflow-y-auto rounded border border-zinc-800 divide-y divide-zinc-800/70">
           {visibleOptions.map((option) => (
-            <button
-              key={option.id}
-              onClick={() => toggle(option.id)}
-              className={cn(
-                "w-full text-left px-2.5 py-1.5 text-xs flex items-center justify-between",
-                selected.includes(option.id) ? "bg-sky-950/40 text-sky-200" : "text-zinc-400 hover:bg-zinc-900",
+            <div key={option.id} className="px-2.5 py-1.5">
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => toggle(option.id)}
+                  className={cn(
+                    "min-w-0 flex-1 text-left text-xs flex items-center justify-between rounded px-1.5 py-1",
+                    selected.includes(option.id) ? "bg-sky-950/40 text-sky-200" : "text-zinc-400 hover:bg-zinc-900",
+                  )}
+                >
+                  <span className="truncate">{recordingLabel(option)}</span>
+                  <span className="text-zinc-600 ml-2 flex-shrink-0">{option.duration}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => beginRename(option)}
+                  aria-label={`Rename ${recordingLabel(option)}`}
+                  title="Rename Bunny video file"
+                  className="rounded p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-200"
+                >
+                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </div>
+              {renameId === option.id && (
+                <form className="mt-2 flex flex-wrap items-center gap-1.5" onSubmit={(event) => void saveRename(event, option)}>
+                  <input
+                    value={renameValue}
+                    onChange={(event) => setRenameValue(event.target.value)}
+                    maxLength={200}
+                    autoFocus
+                    aria-label="New Bunny video title"
+                    className="min-w-0 flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-sky-500"
+                  />
+                  <button type="submit" disabled={renameBusy || !renameValue.trim()} className="rounded bg-sky-700 p-1.5 text-white disabled:opacity-50" aria-label="Save file name">
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  <button type="button" disabled={renameBusy} onClick={() => setRenameId(null)} className="rounded p-1.5 text-zinc-400 hover:bg-zinc-800" aria-label="Cancel rename">
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                  {renameError && <p className="w-full text-[11px] text-red-400" role="alert">{renameError}</p>}
+                </form>
               )}
-            >
-              <span className="truncate">{recordingLabel(option)}</span>
-              <span className="text-zinc-600 ml-2 flex-shrink-0">{option.duration}</span>
-            </button>
+            </div>
           ))}
           {visibleOptions.length === 0 && (
             <p className="text-zinc-600 text-xs px-2.5 py-3">No recordings match that.</p>

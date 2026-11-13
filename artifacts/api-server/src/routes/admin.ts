@@ -1945,10 +1945,16 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
       } else {
         for (const existing of matches) {
           recordingIds.push(existing.id);
+          // A custom Bunny title no longer carries the machine-readable camera,
+          // date, and time fields. Keep those imported values stable on future
+          // syncs while still refreshing the field, duration, and playback URL.
+          const nextCourt = existing.displayTitle ? existing.court : remote.court;
+          const nextDate = existing.displayTitle ? existing.date : remote.date;
+          const nextTimeSlot = existing.displayTitle ? existing.timeSlot : remote.timeSlot;
           const changed = existing.fieldId !== remote.fieldId
-            || existing.court !== remote.court
-            || existing.date !== remote.date
-            || existing.timeSlot !== remote.timeSlot
+            || existing.court !== nextCourt
+            || existing.date !== nextDate
+            || existing.timeSlot !== nextTimeSlot
             || existing.duration !== remote.duration
             || existing.videoUrl !== remote.videoUrl;
           if (!changed) continue;
@@ -1956,9 +1962,9 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
           await tx.update(recordingsTable)
             .set({
               fieldId: remote.fieldId,
-              court: remote.court,
-              date: remote.date,
-              timeSlot: remote.timeSlot,
+              court: nextCourt,
+              date: nextDate,
+              timeSlot: nextTimeSlot,
               duration: remote.duration,
               videoUrl: remote.videoUrl,
             })
