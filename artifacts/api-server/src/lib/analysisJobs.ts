@@ -127,7 +127,6 @@ export function workerKeyMatches(expected: string, provided: unknown): boolean {
 export type SourceRecordingInput = {
   id: number;
   court: string | null;
-  displayTitle?: string | null;
   date: string | null;
   timeSlot: string | null;
   duration: string | null;
@@ -139,10 +138,7 @@ export type SourceDescriptor = {
   /** Bunny Stream video guid, pulled out of the playback URL. */
   videoGuid: string | null;
   videoUrl: string;
-  /**
-   * The Bunny Stream title to fetch. Renamed recordings use their saved title;
-   * otherwise it is rebuilt from the metadata columns.
-   */
+  /** The stable filename parsed from the recording metadata. */
   title: string | null;
   durationSeconds: number | null;
 };
@@ -178,7 +174,7 @@ export function describeSource(recording: SourceRecordingInput): SourceDescripto
     recordingId: recording.id,
     videoGuid: bunnyGuidFromUrl(recording.videoUrl),
     videoUrl: recording.videoUrl ?? "",
-    title: recording.displayTitle?.trim() || bunnyTitleFor(recording),
+    title: bunnyTitleFor(recording),
     durationSeconds: durationToSeconds(recording.duration),
   };
 }

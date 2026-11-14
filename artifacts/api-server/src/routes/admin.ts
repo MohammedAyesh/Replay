@@ -1749,8 +1749,9 @@ router.patch("/admin/recordings/:id", async (req, res): Promise<void> => {
 /**
  * POST /admin/recordings/import
  * Reconciles all videos from every synced Bunny collection with the recordings
- * table. The Bunny video GUID is the durable identity: titles, URLs, dates,
- * times, and durations are refreshed without changing admin visibility.
+ * table. The Bunny video GUID is the durable identity. Human-renamed titles do
+ * not carry camera/date/time metadata, so existing metadata is retained when
+ * a Bunny title no longer contains a recognizable recording timestamp.
  */
 router.post("/admin/recordings/import", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);
@@ -1846,6 +1847,8 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
       court,
       date,
       timeSlot,
+      hasFilenameMetadata: !!camMatch
+        && /(\d{4}-\d{2}-\d{2})_(\d{1,2}:\d{2})|(\d{8})(\d{6})/.test(title),
       duration: `${mins}:${String(secs).padStart(2, "0")}`,
       videoUrl: `https://${BUNNY_CDN_HOSTNAME}/${guid}/playlist.m3u8`,
       isVisibleByDefault: isOwnerRequestedRecordingTitle(title),
@@ -1948,9 +1951,9 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
           // A custom Bunny title no longer carries the machine-readable camera,
           // date, and time fields. Keep those imported values stable on future
           // syncs while still refreshing the field, duration, and playback URL.
-          const nextCourt = existing.displayTitle ? existing.court : remote.court;
-          const nextDate = existing.displayTitle ? existing.date : remote.date;
-          const nextTimeSlot = existing.displayTitle ? existing.timeSlot : remote.timeSlot;
+          const nextCourt = remote.hasFilenameMetadata ? remote.court : existing.court;
+          const nextDate = remote.hasFilenameMetadata ? remote.date : existing.date;
+          const nextTimeSlot = remote.hasFilenameMetadata ? remote.timeSlot : existing.timeSlot;
           const changed = existing.fieldId !== remote.fieldId
             || existing.court !== nextCourt
             || existing.date !== nextDate

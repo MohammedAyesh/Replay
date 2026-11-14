@@ -89,6 +89,7 @@ interface RecordingOption {
   fieldName: string | null;
   court: string;
   displayTitle: string | null;
+  videoUrl: string;
   date: string;
   timeSlot: string;
   duration: string;
@@ -378,6 +379,14 @@ function recordingLabel(option: RecordingOption): string {
     .join(" · ");
 }
 
+function videoGuidFromUrl(videoUrl: string): string | null {
+  try {
+    return new URL(videoUrl).pathname.split("/").filter(Boolean)[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 const COLOR_NAMES: Record<string, string> = {
   "#F2F4F8": "white",
   "#FF6B1A": "orange",
@@ -452,7 +461,26 @@ export default function AnalysisTab() {
 
   useEffect(() => {
     load();
-    api("/admin/analysis-jobs/recordings").then(setOptions).catch(() => undefined);
+    void (async () => {
+      try {
+        const recordings = await api("/admin/analysis-jobs/recordings");
+        let bunnyVideos: Array<{ guid: string; title: string }> = [];
+        try {
+          bunnyVideos = await api("/bunny/all-videos");
+        } catch {
+          // Keep the filename-based labels available if Bunny's title list is
+          // temporarily unavailable; renaming itself still reports errors.
+        }
+        const titleByGuid = new Map(bunnyVideos.map((video) => [video.guid, video.title]));
+        setOptions(recordings.map((recording: RecordingOption) => ({
+          ...recording,
+          displayTitle: titleByGuid.get(videoGuidFromUrl(recording.videoUrl) ?? "") ?? null,
+        })));
+      } catch {
+        // The admin queue has its own visible error state; this picker can
+        // safely stay empty if its recordings request fails.
+      }
+    })();
   }, [load]);
 
   // A job's whole life is measured in hours, so this is deliberately slow. It

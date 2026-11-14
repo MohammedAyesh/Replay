@@ -188,10 +188,6 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-afterEach(async () => {
-  await db.update(recordingsTable).set({ displayTitle: null }).where(inArray(recordingsTable.id, [recA, recB]));
-});
-
 const asWorker = (path: string, worker = "w1") =>
   request(app).post(path).set("x-worker-key", KEY).send({ workerId: worker });
 
@@ -267,7 +263,7 @@ function queueJob(body: Record<string, unknown> = {}) {
 }
 
 describe("renaming analysis recordings", () => {
-  it("renames the Bunny video and saves the title without changing recording metadata", async () => {
+  it("renames the Bunny video without requiring a recording schema change", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -284,20 +280,18 @@ describe("renaming analysis recordings", () => {
         body: JSON.stringify({ title: "ArabiGaming vs Al Ahli" }),
       }),
     );
-    expect(response.body).toEqual({ id: recA, displayTitle: "ArabiGaming vs Al Ahli" });
+    expect(response.body).toEqual({ id: recA, title: "ArabiGaming vs Al Ahli" });
     const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, recA));
     expect(recording).toMatchObject({
       court: "cam1",
       date: "2026-09-01",
       timeSlot: "20:00",
-      displayTitle: "ArabiGaming vs Al Ahli",
     });
     const listed = await request(app).get("/api/admin/analysis-jobs/recordings").expect(200);
-    expect(listed.body.find((item: { id: number }) => item.id === recA).displayTitle)
-      .toBe("ArabiGaming vs Al Ahli");
+    expect(listed.body.find((item: { id: number }) => item.id === recA)).not.toHaveProperty("displayTitle");
     const queued = await queueJob().expect(201);
     expect(queued.body.sources.find((source: { recordingId: number }) => source.recordingId === recA).title)
-      .toBe("ArabiGaming vs Al Ahli");
+      .toBe("cam1_2026-09-01_20:00");
   });
 
   it("rejects a blank title before contacting Bunny", async () => {

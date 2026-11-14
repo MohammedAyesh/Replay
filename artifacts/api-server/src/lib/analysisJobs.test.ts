@@ -129,9 +129,8 @@ describe("describing a source for the worker", () => {
     expect(bunnyTitleFor(source(1, { timeSlot: "" }))).toBeNull();
   });
 
-  it("uses a renamed Bunny title when preparing the source for analysis", () => {
-    expect(describeSource(source(1, { displayTitle: "ArabiGaming vs Al Ahli" })).title)
-      .toBe("ArabiGaming vs Al Ahli");
+  it("continues to derive the analysis source title from stable recording metadata", () => {
+    expect(describeSource(source(1)).title).toBe("cam1_2026-09-01_20:00");
   });
 
   it("reads both duration shapes and refuses nonsense", () => {

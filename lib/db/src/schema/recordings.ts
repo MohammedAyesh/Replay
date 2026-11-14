@@ -7,7 +7,6 @@ export const recordingsTable = pgTable("recordings", {
   id: serial("id").primaryKey(),
   fieldId: integer("field_id").notNull().references(() => fieldsTable.id),
   court: text("court").notNull(),
-  displayTitle: text("display_title"),
   date: date("date", { mode: "string" }).notNull(),
   timeSlot: text("time_slot").notNull(),
   duration: text("duration").notNull(),

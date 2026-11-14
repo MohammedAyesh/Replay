@@ -20,3 +20,9 @@ Publishing compares the live development database with the live production datab
 **Why:** An empty development-to-production diff only means those databases match each other, not that either matches the application schema.
 
 **How to apply:** Check the source schema and both databases when runtime errors report missing columns. Apply the approved additive change to development first, then re-check the diff and publish.
+
+Before rollout, never ship ORM schema references to a newly added column until every target database has it. Drizzle selects against a table can include every declared column, so one missing field can break unrelated read and import endpoints.
+
+**Why:** The recording-title change caused production recording queries and Bunny imports to fail because the published database lacked the new column.
+
+**How to apply:** Use a backward-compatible rollout or confirm the schema is present before deploying code that references it; do not rely on matching development and production schemas to source code.
