@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, type FormEvent, type ReactNode } from "react";
 import { FieldConsolesTab } from "@/components/admin/field-consoles-tab";
 import { ReviewerSignInLinksPanel } from "@/components/admin/ReviewerSignInLinksPanel";
 import { useAuth } from "@/lib/auth";
@@ -298,6 +298,7 @@ interface AdminRecording {
   duration: string;
   score: string | null;
   videoUrl: string;
+  bunnyTitle?: string | null;
   uhdPlaybackUrl?: string | null;
   hasUhdPlayback?: boolean;
   isVisible: boolean;
@@ -417,6 +418,14 @@ interface FieldVideo {
   thumbnailUrl: string;
   playbackUrl: string;
   duration: number; // seconds
+}
+
+function bunnyGuidFromRecordingUrl(videoUrl: string): string | null {
+  try {
+    return new URL(videoUrl).pathname.split("/").filter(Boolean)[0] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function AdminClipPlayer({
@@ -6355,8 +6364,81 @@ function ReplaceVideoAction({
   );
 }
 
+function RenameRecordingAction({
+  recording,
+  onRenamed,
+}: {
+  recording: AdminRecording;
+  onRenamed: (recordingId: number, title: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const begin = () => {
+    setTitle(recording.bunnyTitle || [recording.court, recording.date, recording.timeSlot].filter(Boolean).join("_"));
+    setError("");
+    setEditing(true);
+  };
+
+  const save = async (event: FormEvent) => {
+    event.preventDefault();
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      setError("Enter a video name.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await apiFetch(`/admin/analysis-jobs/recordings/${recording.id}/title`, {
+        method: "PATCH",
+        body: JSON.stringify({ title: nextTitle }),
+      });
+      onRenamed(recording.id, nextTitle);
+      setEditing(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not rename the Bunny video.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return editing ? (
+    <form onSubmit={(event) => void save(event)} className="mt-1 flex flex-wrap items-center gap-1.5">
+      <input
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        maxLength={200}
+        autoFocus
+        aria-label="New Bunny video title"
+        className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-100 outline-none focus:border-primary"
+      />
+      <button type="submit" disabled={busy || !title.trim()} aria-label="Save video name" className="rounded-lg p-1.5 text-emerald-300 hover:bg-emerald-950/40 disabled:opacity-50">
+        <Check className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+      <button type="button" disabled={busy} onClick={() => setEditing(false)} aria-label="Cancel rename" className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-800 disabled:opacity-50">
+        <X className="h-3.5 w-3.5" aria-hidden="true" />
+      </button>
+      {error && <p role="alert" className="w-full text-[11px] text-red-400">{error}</p>}
+    </form>
+  ) : (
+    <button
+      type="button"
+      onClick={begin}
+      aria-label={`Rename ${recording.bunnyTitle || `recording ${recording.id}`}`}
+      data-testid={`button-rename-recording-${recording.id}`}
+      className="mt-1 inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2 py-1 text-[11px] font-semibold text-zinc-300 hover:border-primary/50 hover:text-white"
+    >
+      <Pencil className="h-3 w-3" aria-hidden="true" />
+      Rename Bunny video
+    </button>
+  );
+}
+
 function FieldScheduleSection({
-  fieldId, fieldName, recordings, schedules, onSchedulesChange, onVisibilityChange, onVideoReplaced,
+  fieldId, fieldName, recordings, schedules, onSchedulesChange, onVisibilityChange, onVideoReplaced, onTitleChanged,
 }: {
   fieldId: number;
   fieldName: string;
@@ -6365,6 +6447,7 @@ function FieldScheduleSection({
   onSchedulesChange: (updated: AdminSchedule[]) => void;
   onVisibilityChange: (recordingId: number, isVisible: boolean) => Promise<void>;
   onVideoReplaced: (recordingId: number, videoUrl: string) => void;
+  onTitleChanged: (recordingId: number, title: string) => void;
 }) {
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [month, setMonth] = useState(() => {
@@ -6437,6 +6520,12 @@ function FieldScheduleSection({
           </p>
           {recordings.map((recording) => (
             <div key={recording.id}>
+              <div className="mb-1 rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+                <p className="break-all text-xs font-medium text-zinc-200">
+                  {recording.bunnyTitle || [recording.court, recording.date, recording.timeSlot].filter(Boolean).join("_")}
+                </p>
+                <RenameRecordingAction recording={recording} onRenamed={onTitleChanged} />
+              </div>
               <TrackingBundleUpload recording={recording} onVisibilityChange={onVisibilityChange} />
               <ReplaceVideoAction recording={recording} onApplied={onVideoReplaced} />
               <RecordingViewers recordingId={recording.id} />
@@ -6598,7 +6687,17 @@ function RecordingsTab() {
         apiFetch("/admin/schedules") as Promise<AdminSchedule[]>,
         apiFetch("/admin/fields") as Promise<AdminField[]>,
       ]);
-      setRecordings(recs);
+      let bunnyVideos: FieldVideo[] = [];
+      try {
+        bunnyVideos = await apiFetch("/bunny/all-videos") as FieldVideo[];
+      } catch {
+        // Keep filename-based names available if Bunny's title list is down.
+      }
+      const titlesByGuid = new Map(bunnyVideos.map((video) => [video.guid, video.title]));
+      setRecordings(recs.map((recording) => ({
+        ...recording,
+        bunnyTitle: titlesByGuid.get(bunnyGuidFromRecordingUrl(recording.videoUrl) ?? "") ?? null,
+      })));
       setSchedules(scheds);
       setFields(fieldRows);
     } catch { /* silent */ }
@@ -6660,6 +6759,12 @@ function RecordingsTab() {
         queryClient.invalidateQueries({ queryKey: getGetFieldRecordingsQueryKey(recording.fieldId) }),
       ]);
     }
+  };
+
+  const updateRecordingTitle = (recordingId: number, bunnyTitle: string) => {
+    setRecordings((current) => current.map((item) =>
+      item.id === recordingId ? { ...item, bunnyTitle } : item,
+    ));
   };
 
   const fieldGroups = useMemo(() => {
@@ -6748,6 +6853,7 @@ function RecordingsTab() {
             schedules={schedulesByField.get(fieldId) ?? []}
             onVisibilityChange={updateRecordingVisibility}
             onVideoReplaced={updateRecordingVideo}
+            onTitleChanged={updateRecordingTitle}
             onSchedulesChange={(updated) =>
               setSchedules((prev) => [
                 ...prev.filter((s) => s.fieldId !== fieldId),
