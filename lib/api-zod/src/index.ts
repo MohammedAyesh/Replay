@@ -42,4 +42,5 @@ export * from "./creativeMusic";
 export * from "./phoneCapture";
 export * from "./ballTrail";
 export * from "./coachBoard";
+export * from "./coachPitch";
 export * from "./playerReel";

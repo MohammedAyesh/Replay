@@ -24,6 +24,9 @@ const point = z.tuple([share, share]);
 const color = z.string().regex(/^#[0-9A-Fa-f]{6}$/);
 const width = z.number().min(1).max(12);
 const common = { id: z.string().min(1).max(40), color, atMs: z.number().int().min(0).max(24 * 3600_000) };
+/** A point on the pitch in metres (X along the pitch, Y across), as the camera's pitch model gives it. */
+const metres = z.tuple([z.number().min(-30).max(150), z.number().min(-30).max(150)]);
+const rosterId = z.string().min(1).max(64);
 
 export const coachShapeSchema = z.discriminatedUnion("kind", [
   z.object({ ...common, kind: z.literal("pen"), width, points: z.array(point).min(2).max(400) }),
@@ -34,6 +37,18 @@ export const coachShapeSchema = z.discriminatedUnion("kind", [
   /** A filled translucent area (a lasso): the space to attack, the zone to hold. */
   z.object({ ...common, kind: z.literal("zone"), points: z.array(point).min(3).max(400) }),
   z.object({ ...common, kind: z.literal("text"), at: point, text: z.string().min(1).max(120), size: z.number().min(10).max(48).optional() }),
+  /**
+   * Freeze-frame: where a tracked player should have been. `from` is his feet as
+   * tracked at atMs, `to` the spot the coach dragged him to; `size` his box then
+   * (shares), so the ghost at `to` can be drawn at the right scale.
+   */
+  z.object({ ...common, kind: z.literal("move"), rosterId: z.string().min(1).max(64), from: point, to: point, size: z.tuple([share, share]).optional() }),
+  /**
+   * A drill area: a rectangle on the pitch, corners in pitch metres (the camera's
+   * pitch model), so it is drawn in perspective and its size is real. Pinned areas
+   * show for the whole video, not only around atMs.
+   */
+  z.object({ ...common, kind: z.literal("area"), a: metres, b: metres, pinned: z.boolean().optional(), label: z.string().max(40).optional() }),
 ]);
 export type CoachShape = z.infer<typeof coachShapeSchema>;
 export type CoachShapeKind = CoachShape["kind"];
@@ -56,6 +71,35 @@ export const coachViewSchema = z.object({
 });
 export type CoachView = z.infer<typeof coachViewSchema>;
 
+export const COACH_MAX_OFFSIDE = 2;
+export const COACH_MAX_UNITS = 8;
+export const COACH_MAX_UNIT_PLAYERS = 6;
+
+export const coachOffsideSchema = z.object({ rosterId, color });
+export type CoachOffside = z.infer<typeof coachOffsideSchema>;
+
+/**
+ * Tracked players joined on the pitch: "shape" closes them into a triangle (or
+ * more), "lanes" draws a passing lane from the first to each of the others.
+ */
+export const coachUnitSchema = z.object({
+  id: z.string().min(1).max(40),
+  kind: z.enum(["shape", "lanes"]),
+  rosterIds: z.array(rosterId).min(2).max(COACH_MAX_UNIT_PLAYERS),
+  color,
+});
+export type CoachUnit = z.infer<typeof coachUnitSchema>;
+
+/** Which side's lines: a kit side (0 = the first kit, ours when we know) or a training group. */
+export const coachTeamLinesSchema = z.object({
+  side: z.union([z.literal(0), z.literal(1)]).optional(),
+  group: z.string().min(1).max(40).optional(),
+  /** leave the goalkeeper out of the lines, width and depth (default true) */
+  keeper: z.boolean().optional(),
+  color: color.optional(),
+});
+export type CoachTeamLines = z.infer<typeof coachTeamLinesSchema>;
+
 export const coachBoardSchema = z.object({
   v: z.literal(1),
   shapes: z.array(coachShapeSchema).max(COACH_MAX_SHAPES),
@@ -65,8 +109,27 @@ export const coachBoardSchema = z.object({
   /** show the ball and its last second */
   ball: z.boolean().optional(),
   view: coachViewSchema.optional(),
+  /** an offside line across the pitch through each of these players, following him */
+  offside: z.array(coachOffsideSchema).max(COACH_MAX_OFFSIDE).optional(),
+  /** triangles and passing lanes between tracked players, with live distances in metres */
+  units: z.array(coachUnitSchema).max(COACH_MAX_UNITS).optional(),
+  /** back, middle and front lines, width and depth of one side */
+  teamLines: coachTeamLinesSchema.optional(),
+  /** training: only this group's players (the analysis' per-track group) */
+  group: z.string().min(1).max(40).optional(),
+  /** show the adults (coaches) the analysis flagged; hidden by default */
+  showAdults: z.boolean().optional(),
 });
 export type CoachBoard = z.infer<typeof coachBoardSchema>;
+
+/** Every tracked player a board points at: spotlights, offside lines, units and moved players. */
+export function coachBoardRosterIds(board: Pick<CoachBoard, "spotlights" | "offside" | "units" | "shapes">): Set<string> {
+  const ids = new Set(board.spotlights.map((s) => s.rosterId));
+  for (const o of board.offside ?? []) ids.add(o.rosterId);
+  for (const u of board.units ?? []) for (const id of u.rosterIds) ids.add(id);
+  for (const s of board.shapes) if (s.kind === "move") ids.add(s.rosterId);
+  return ids;
+}
 
 export const EMPTY_COACH_BOARD: CoachBoard = { v: 1, shapes: [], spotlights: [] };
 

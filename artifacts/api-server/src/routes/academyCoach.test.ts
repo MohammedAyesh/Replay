@@ -184,6 +184,55 @@ describe("coach board (staff)", () => {
   });
 });
 
+describe("coach analysis tools", () => {
+  it("gives staff every player's analysis, and no pitch when the camera has no model", async () => {
+    const res = await request(app).get(`${base()}/analysis`).set(auth(coachId));
+    expect(res.status).toBe(200);
+    expect(res.body.pitch).toBeNull();
+    expect(Object.keys(res.body.players).sort()).toEqual(["p1", "p2", "p3"]);
+    expect(res.body.players.p1).toEqual({ side: null, kit: null, group: null, adult: null });
+    expect(res.body.attackHigh).toEqual([]);
+    expect((await request(app).get(`${base()}/analysis`).set(auth(strangerId))).status).toBe(403);
+  });
+
+  it("keeps offside lines, units and moved players only for players the analysis has", async () => {
+    const res = await request(app).post(`${base()}/notes`).set(auth(coachId)).send({
+      atMs: 7000,
+      board: board({
+        spotlights: [],
+        offside: [{ rosterId: "p2", color: "#FF5A3C" }, { rosterId: "nobody", color: "#FFFFFF" }],
+        units: [{ id: "u1", kind: "shape", rosterIds: ["p1", "p2", "p3"], color: "#D4FF4F" }, { id: "u2", kind: "lanes", rosterIds: ["p1", "nobody"], color: "#D4FF4F" }],
+        teamLines: { side: 0 },
+        shapes: [
+          { id: "m1", kind: "move", color: "#FFFFFF", atMs: 7000, rosterId: "p3", from: [0.8, 0.55], to: [0.7, 0.6], size: [0.01, 0.09] },
+          { id: "z1", kind: "area", color: "#FFC23C", atMs: 7000, a: [10, 4], b: [22, 14], pinned: true },
+        ],
+      }),
+      playerIds: [ali],
+      shared: true,
+    });
+    expect(res.status).toBe(201);
+    const b = res.body.note.board;
+    expect(b.offside).toEqual([{ rosterId: "p2", color: "#FF5A3C" }]);
+    expect(b.units.map((u: { id: string }) => u.id)).toEqual(["u1"]);
+    expect(b.shapes.map((s: { kind: string }) => s.kind)).toEqual(["move", "area"]);
+    expect(b.teamLines).toEqual({ side: 0 });
+
+    // A family sees the players the note points at (not only spotlights), and their analysis only.
+    const id = res.body.note.id;
+    const one = await request(app).get(`/api/academy/family/coach-notes/${id}`).set(auth(parentId));
+    expect(one.body.players.map((p: { rosterId: string }) => p.rosterId).sort()).toEqual(["p1", "p2", "p3"]);
+    const tracks = await request(app).get(`/api/academy/family/coach-notes/${id}/tracks?from=4&to=12`).set(auth(parentId));
+    expect(Object.keys(tracks.body.players).sort()).toEqual(["p1", "p2", "p3"]);
+    const analysis = await request(app).get(`/api/academy/family/coach-notes/${id}/analysis`).set(auth(parentId));
+    expect(analysis.status).toBe(200);
+    expect(Object.keys(analysis.body.players).sort()).toEqual(["p1", "p2", "p3"]);
+    expect(analysis.body.groups).toEqual([]);
+    expect((await request(app).get(`/api/academy/family/coach-notes/${id}/analysis`).set(auth(strangerId))).status).toBe(404);
+    await request(app).delete(`${base()}/notes/${id}`).set(auth(coachId));
+  });
+});
+
 describe("coach notes", () => {
   let noteId: number;
 

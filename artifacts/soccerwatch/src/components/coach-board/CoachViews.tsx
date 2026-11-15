@@ -1,8 +1,11 @@
 import { useMemo } from "react";
+import { coachBoardRosterIds, type CoachBoard } from "@workspace/api-zod";
 import { Clapperboard, Loader2 } from "lucide-react";
 import { useCoachCopy } from "@/i18n/coach-strings";
 import {
+  coachAnalysisLoader,
   coachTracksLoader,
+  familyAnalysisLoader,
   familyTracksLoader,
   useCoachMatch,
   useDeleteCoachNote,
@@ -24,6 +27,9 @@ function matchTitle(s: CoachSession, locale: "ar" | "en"): { title: string; subt
   };
 }
 
+/** A family's note needs the pitch model only for the tools that measure or draw on the pitch. */
+const needsAnalysis = (b: CoachBoard) => Boolean(b.offside?.length || b.units?.length || b.teamLines || b.shapes.some((s) => s.kind === "move" || s.kind === "area"));
+
 function Shell({ children }: { children: React.ReactNode }) {
   return <div className="fixed inset-0 z-[80] grid place-items-center bg-void p-6 text-center text-sm text-muted-text">{children}</div>;
 }
@@ -35,6 +41,7 @@ export function CoachMatchView({ academyId, sessionId, onClose }: { academyId: n
   const save = useSaveCoachNote(academyId, sessionId);
   const remove = useDeleteCoachNote(academyId, sessionId);
   const loadTracks = useMemo(() => coachTracksLoader(academyId, sessionId), [academyId, sessionId]);
+  const loadAnalysis = useMemo(() => coachAnalysisLoader(academyId, sessionId), [academyId, sessionId]);
 
   if (match.isLoading) return <Shell><Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" aria-hidden />{copy.loading}</Shell>;
   if (match.isError || !match.data) {
@@ -53,6 +60,7 @@ export function CoachMatchView({ academyId, sessionId, onClose }: { academyId: n
       players={data.players}
       analysed={data.analysed}
       loadTracks={loadTracks}
+      loadAnalysis={loadAnalysis}
       onClose={onClose}
       notes={data.notes}
       lineup={data.lineup}
@@ -79,6 +87,7 @@ export function FamilyCoachNoteView({ noteId, onClose }: { noteId: number; onClo
   const copy = useCoachCopy();
   const detail = useFamilyCoachNote(noteId);
   const loadTracks = useMemo(() => familyTracksLoader(noteId), [noteId]);
+  const loadAnalysis = useMemo(() => familyAnalysisLoader(noteId), [noteId]);
   if (detail.isLoading) return <Shell><Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" aria-hidden />{copy.loading}</Shell>;
   if (detail.isError || !detail.data?.video) {
     return <Shell><p role="alert">{copy.notFound}</p><button type="button" className="mt-3 rounded-xl bg-raised px-4 py-2 font-semibold text-text" onClick={onClose}>{copy.close}</button></Shell>;
@@ -91,8 +100,9 @@ export function FamilyCoachNoteView({ noteId, onClose }: { noteId: number; onClo
       subtitle={d.note.title ? `${title} · ${subtitle}` : subtitle}
       video={d.video!}
       players={d.players}
-      analysed={d.note.board.spotlights.length > 0}
+      analysed={coachBoardRosterIds(d.note.board).size > 0 || Boolean(d.note.board.teamLines)}
       loadTracks={loadTracks}
+      loadAnalysis={needsAnalysis(d.note.board) ? loadAnalysis : undefined}
       onClose={onClose}
       readOnly
       initialNote={d.note}

@@ -97,6 +97,28 @@ export type Lab = [number, number, number];
  */
 export const kitDistance = (p: Lab, q: Lab) => Math.hypot((p[0] - q[0]) / 2, p[1] - q[1], p[2] - q[2]);
 
+/** OpenCV 8-bit Lab (L 0-255, a/b offset by 128) back to #rrggbb; the inverse of matchPlay.hexToLab. */
+export function labToHex(lab: Lab): string {
+  const L = (lab[0] * 100) / 255;
+  const a = lab[1] - 128;
+  const b = lab[2] - 128;
+  const fy = (L + 16) / 116;
+  const fx = fy + a / 500;
+  const fz = fy - b / 200;
+  const inv = (t: number) => (t ** 3 > 0.008856 ? t ** 3 : (t - 16 / 116) / 7.787);
+  const X = inv(fx) * 0.95047;
+  const Y = inv(fy);
+  const Z = inv(fz) * 1.08883;
+  const R = 3.2406 * X - 1.5372 * Y - 0.4986 * Z;
+  const G = -0.9689 * X + 1.8758 * Y + 0.0415 * Z;
+  const B = 0.0557 * X - 0.204 * Y + 1.057 * Z;
+  const gamma = (c: number) => {
+    const v = c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055;
+    return Math.round(Math.max(0, Math.min(1, v)) * 255);
+  };
+  return `#${[R, G, B].map((c) => gamma(c).toString(16).padStart(2, "0")).join("")}`;
+}
+
 export function hexToLab(hex: string): Lab | null {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return null;

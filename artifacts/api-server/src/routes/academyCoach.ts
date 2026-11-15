@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 
-import { coachBoardSchema, coachNoteInputSchema, type CoachBoard, type CoachNote } from "@workspace/api-zod";
+import { coachBoardRosterIds, coachBoardSchema, coachNoteInputSchema, type CoachNote } from "@workspace/api-zod";
 import {
   academiesTable,
   academyCoachNotesTable,
@@ -13,6 +13,7 @@ import {
   type AcademyCoachNote,
 } from "@workspace/db";
 import { resolveBindings } from "../lib/academyMatchStats";
+import { boardForRoster, buildCoachAnalysis, familyRosterIds } from "../lib/coachAnalysis";
 import { ballInWindow, rosterBoxes, trackIndex } from "../lib/coachTracks";
 import { recordingBall } from "../lib/creative/framing";
 import { logger } from "../lib/logger";
@@ -33,6 +34,7 @@ import {
  * Staff (owner, managers, coaches who see Matches):
  *   GET    …/matches/:sessionId/coach                  the video, every tracked player (named when bound), notes
  *   GET    …/matches/:sessionId/coach/tracks?from&to   players' boxes and the ball through ≤ 120 s of video
+ *   GET    …/matches/:sessionId/coach/analysis         the camera's pitch model, sides, ends, training flags
  *   POST   …/matches/:sessionId/coach/notes            save a moment (drawings, spotlights, comment)
  *   PATCH  …/matches/:sessionId/coach/notes/:noteId    change it (its author or the owner)
  *   DELETE …/matches/:sessionId/coach/notes/:noteId    remove it (its author or the owner)
@@ -40,7 +42,8 @@ import {
  * Families (a parent, or the player himself):
  *   GET /academy/family/coach-notes                              shared notes about the viewer's children
  *   GET /academy/family/coach-notes/:noteId                      one, with its match's video
- *   GET /academy/family/coach-notes/:noteId/tracks?from&to       the spotlighted players only, inside the note
+ *   GET /academy/family/coach-notes/:noteId/tracks?from&to       the players the note points at only, inside the note
+ *   GET /academy/family/coach-notes/:noteId/analysis             the pitch model, and sides for those players
  *
  * A note reaches a family only when the coach shares it AND tags one of their
  * children; the video is the session's own recording (canViewPinnedAcademyRecording).
@@ -173,12 +176,6 @@ async function academyPlayerIds(academyId: number, ids: number[]): Promise<numbe
   return [...new Set(ids)].filter((id) => ok.has(id));
 }
 
-/** Spotlights must name players the analysis tracked in this match. */
-function boardForRoster(board: CoachBoard, ctx: MatchContext): CoachBoard {
-  const known = new Set(ctx.roster?.players.map((p) => p.id) ?? []);
-  return { ...board, spotlights: board.spotlights.filter((s) => known.has(s.rosterId)) };
-}
-
 router.get(base, async (req, res): Promise<void> => {
   const found = await consoleSession(req, res);
   if (!found) return;
@@ -219,6 +216,15 @@ async function tracksFor(ctx: MatchContext, from: number, to: number, only?: Rea
   return { from, to, players, ball };
 }
 
+/** The coach tools' analysis: the pitch model, every player's side and training flags. */
+async function analysisFor(ctx: MatchContext, only?: ReadonlySet<string>) {
+  if (!ctx.recordingId || !ctx.roster) return null;
+  const play = await loadRecordingPlay(ctx.recordingId, { keepSegments: true });
+  if (!play) return null;
+  const bound = new Set(resolveBindings(ctx.lineup, ctx.roster).map((b) => b.rosterPlayerId));
+  return buildCoachAnalysis(play, ctx.roster, bound, { only });
+}
+
 function windowParams(req: Request, res: Response, max: number): { from: number; to: number } | null {
   const from = secondsParam(req.query.from);
   const to = secondsParam(req.query.to);
@@ -242,6 +248,20 @@ router.get(`${base}/tracks`, async (req, res): Promise<void> => {
     res.json(out);
   } catch (error) {
     failed(res, error, "Coach board: tracks failed");
+  }
+});
+
+router.get(`${base}/analysis`, async (req, res): Promise<void> => {
+  const found = await consoleSession(req, res);
+  if (!found) return;
+  try {
+    const ctx = await loadContext(found.session);
+    const out = await analysisFor(ctx);
+    if (!out) { res.status(404).json({ error: "This match has not been analysed" }); return; }
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.json(out);
+  } catch (error) {
+    failed(res, error, "Coach board: analysis failed");
   }
 });
 
@@ -399,7 +419,8 @@ router.get("/academy/family/coach-notes/:noteId", async (req, res): Promise<void
     const found = await familyNote(viewer, intParam(req.params.noteId));
     if (!found) { res.status(404).json({ error: "Note not found" }); return; }
     const ctx = await loadContext(found.session);
-    const spotlit = new Set(coachBoardSchema.safeParse(found.row.board).data?.spotlights.map((s) => s.rosterId) ?? []);
+    const parsed = coachBoardSchema.safeParse(found.row.board);
+    const spotlit = parsed.success ? coachBoardRosterIds(parsed.data) : new Set<string>();
     const [author] = found.row.createdBy ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, found.row.createdBy)) : [];
     res.json({
       note: noteView({ ...found.row, authorName: author?.name ?? null }, null),
@@ -427,9 +448,11 @@ router.get("/academy/family/coach-notes/:noteId/tracks", async (req, res): Promi
     const from = Math.max(window.from, lo);
     const to = Math.min(window.to, hi, lo + FAMILY_LEAD_SECONDS + FAMILY_MAX_SECONDS);
     const board = coachBoardSchema.safeParse(found.row.board);
-    const spotlit = new Set(board.success ? board.data.spotlights.map((s) => s.rosterId) : []);
-    if (to <= from || !spotlit.size) { res.json({ from: window.from, to: window.to, players: {}, ball: [] }); return; }
+    if (to <= from || !board.success) { res.json({ from: window.from, to: window.to, players: {}, ball: [] }); return; }
     const ctx = await loadContext(found.session);
+    const sides = board.data.teamLines ? (await analysisFor(ctx))?.players ?? null : null;
+    const spotlit = familyRosterIds(board.data, sides);
+    if (!spotlit.size) { res.json({ from: window.from, to: window.to, players: {}, ball: [] }); return; }
     const out = await tracksFor(ctx, from, to, spotlit);
     res.setHeader("Cache-Control", "private, max-age=300");
     res.json(out ? { ...out, ball: board.success && board.data.ball ? out.ball : [] } : { from, to, players: {}, ball: [] });
@@ -438,5 +461,25 @@ router.get("/academy/family/coach-notes/:noteId/tracks", async (req, res): Promi
   }
 });
 
+
+router.get("/academy/family/coach-notes/:noteId/analysis", async (req, res): Promise<void> => {
+  const viewer = await familyViewer(req, res);
+  if (!viewer) return;
+  try {
+    const found = await familyNote(viewer, intParam(req.params.noteId));
+    if (!found) { res.status(404).json({ error: "Note not found" }); return; }
+    const board = coachBoardSchema.safeParse(found.row.board);
+    const ctx = await loadContext(found.session);
+    const all = board.success ? await analysisFor(ctx) : null;
+    if (!all || !board.success) { res.status(404).json({ error: "This match has not been analysed" }); return; }
+    // Only the players the note shows, and no training flags beyond theirs.
+    const ids = familyRosterIds(board.data, all.players);
+    const players = Object.fromEntries(Object.entries(all.players).filter(([id]) => ids.has(id)));
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.json({ ...all, players, groups: [] });
+  } catch (error) {
+    failed(res, error, "Coach board: family analysis failed");
+  }
+});
 
 export default router;

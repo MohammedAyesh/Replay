@@ -2,6 +2,7 @@ import {
   coachBoxAt,
   coachFeet,
   coachShapeVisible,
+  type CoachAnalysis,
   type CoachBall,
   type CoachBoard,
   type CoachBox,
@@ -9,7 +10,10 @@ import {
   type CoachSpotlight,
   type CoachTracks,
   type CoachView,
+  type PitchMapper,
+  type TeamShape,
 } from "@workspace/api-zod";
+import { drawAnalysis, drawArea, drawMove, type AnalysisDrawInput } from "./coach-analysis";
 
 /**
  * Coach board geometry and drawing (components/coach-board). The camera frame
@@ -206,6 +210,24 @@ export type DrawInput = {
   label: PlayerLabel;
   /** dim the picture around spotlighted players */
   dim?: boolean;
+  /** the camera's pitch model: offside lines, team lines, metres (null: those tools are off) */
+  map?: PitchMapper | null;
+  analysis?: CoachAnalysis | null;
+  /** players shown (adults and other training groups can be hidden) */
+  visible?: (rosterId: string) => boolean;
+  /** a unit being picked */
+  pending?: AnalysisDrawInput["pending"];
+  copy?: AnalysisDrawInput["copy"];
+};
+
+/** Whether a drawing shows at tMs: pinned drill areas always do, the rest around their moment. */
+export function shapeShows(s: CoachShape, tMs: number): boolean {
+  if (s.kind === "area" && s.pinned !== false) return true;
+  return coachShapeVisible(s, tMs);
+}
+
+const DEFAULT_COPY: AnalysisDrawInput["copy"] = {
+  offside: "Offside", width: "Width", depth: "Depth", keeper: "GK", lines: { back: "Back", mid: "Middle", front: "Front" },
 };
 
 const rgba = (hex: string, a: number) => {
@@ -219,8 +241,16 @@ function strokePath(ctx: CanvasRenderingContext2D, pts: Pt[], close = false) {
   if (close) ctx.closePath();
 }
 
-function drawShape(ctx: CanvasRenderingContext2D, s: CoachShape, rect: Rect, dpr: number, alpha = 1) {
+function drawShape(ctx: CanvasRenderingContext2D, s: CoachShape, rect: Rect, dpr: number, alpha = 1, map: PitchMapper | null = null, label: PlayerLabel = () => "", unit = "m") {
   const S = (p: Pt): Pt => { const [x, y] = toScreen(rect, p); return [x * dpr, y * dpr]; };
+  if (s.kind === "move" || s.kind === "area") {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    if (s.kind === "move") drawMove(ctx, s, rect, dpr, map, label(s.rosterId), unit);
+    else drawArea(ctx, s, rect, dpr, map, unit);
+    ctx.restore();
+    return;
+  }
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.lineCap = "round";
@@ -291,12 +321,15 @@ function drawShape(ctx: CanvasRenderingContext2D, s: CoachShape, rect: Rect, dpr
 }
 
 /** Draw the whole board over the video for time `t`. The canvas is the stage, in device pixels. */
-export function drawBoard(ctx: CanvasRenderingContext2D, d: DrawInput) {
+export function drawBoard(ctx: CanvasRenderingContext2D, d: DrawInput): { shape: (TeamShape & { formation: string }) | null } {
   const { rect, dpr, t, board, store } = d;
   const tMs = t * 1000;
   const S = (p: Pt): Pt => { const [x, y] = toScreen(rect, p); return [x * dpr, y * dpr]; };
-  const spotIds = new Set(board.spotlights.map((s) => s.rosterId));
-  const boxes = spotIds.size ? boxesAt(store, t, spotIds) : new Map<string, [number, number, number, number]>();
+  const visible = d.visible ?? (() => true);
+  const spotIds = new Set(board.spotlights.map((s) => s.rosterId).filter(visible));
+  const needsAll = Boolean(board.teamLines || board.offside?.length || board.units?.length || d.pending?.ids.length);
+  const all = needsAll ? boxesAt(store, t) : null;
+  const boxes = all ? new Map([...all].filter(([id]) => spotIds.has(id))) : spotIds.size ? boxesAt(store, t, spotIds) : new Map<string, [number, number, number, number]>();
 
   // Spotlights: the picture dimmed around them, then a ring at each one's feet and his name.
   if (boxes.size && d.dim !== false) {
@@ -319,6 +352,11 @@ export function drawBoard(ctx: CanvasRenderingContext2D, d: DrawInput) {
     }
     ctx.restore();
   }
+
+  // Offside lines, units and a side's lines (coach-analysis), under the spotlight rings.
+  const analysis = all
+    ? drawAnalysis(ctx, { rect, dpr, t, board, boxes: all, map: d.map ?? null, analysis: d.analysis ?? null, visible, label: d.label, pending: d.pending, copy: d.copy ?? DEFAULT_COPY })
+    : { shape: null };
 
   // Lines between spotlighted players, in the order they were picked.
   if (board.connect && boxes.size >= 2) {
@@ -365,11 +403,13 @@ export function drawBoard(ctx: CanvasRenderingContext2D, d: DrawInput) {
 
   // Drawings: while paused near their moment they are solid; playing through they fade out.
   for (const s of board.shapes) {
-    if (!coachShapeVisible(s, tMs)) continue;
+    if (!shapeShows(s, tMs)) continue;
     const away = Math.abs(tMs - s.atMs);
-    drawShape(ctx, s, rect, dpr, d.paused ? 1 : Math.max(0.15, 1 - away / 900));
+    const pinned = s.kind === "area" && s.pinned !== false;
+    drawShape(ctx, s, rect, dpr, d.paused || pinned ? 1 : Math.max(0.15, 1 - away / 900), d.map ?? null, d.label, d.copy?.unit);
   }
-  if (d.draft) drawShape(ctx, d.draft, rect, dpr, 0.9);
+  if (d.draft) drawShape(ctx, d.draft, rect, dpr, 0.9, d.map ?? null, d.label, d.copy?.unit);
+  return analysis;
 }
 
 function drawSpotlight(
@@ -443,7 +483,8 @@ export function playerLabel(p: { number: string | null; name: string | null; shi
  * opens on what was drawn.
  */
 export function noteMoment(board: Pick<CoachBoard, "shapes">, nowMs: number): number {
-  if (!board.shapes.length || board.shapes.some((s) => coachShapeVisible(s, nowMs))) return nowMs;
-  return Math.max(...board.shapes.map((s) => s.atMs));
+  const moments = board.shapes.filter((s) => !(s.kind === "area" && s.pinned !== false));
+  if (!moments.length || moments.some((s) => coachShapeVisible(s, nowMs))) return nowMs;
+  return Math.max(...moments.map((s) => s.atMs));
 }
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CoachNote, CoachNoteInput, CoachTracks } from "@workspace/api-zod";
+import type { CoachAnalysis, CoachNote, CoachNoteInput, CoachTracks } from "@workspace/api-zod";
 
 /** Coach board: hand-written client for routes/academyCoach.ts. */
 
@@ -81,6 +81,10 @@ export function useCoachMatch(academyId: number, sessionId: number | null) {
 export const coachTracksLoader = (academyId: number, sessionId: number) =>
   (from: number, to: number) => call<CoachTracks>(coachPath(academyId, sessionId, `/tracks?from=${from.toFixed(1)}&to=${to.toFixed(1)}`));
 
+/** The coach tools' analysis (pitch model, sides, training flags); fetched once per match. */
+export const coachAnalysisLoader = (academyId: number, sessionId: number) =>
+  () => call<CoachAnalysis>(coachPath(academyId, sessionId, "/analysis"));
+
 export function useSaveCoachNote(academyId: number, sessionId: number) {
   const qc = useQueryClient();
   return useMutation({
@@ -142,3 +146,6 @@ export function useFamilyCoachNote(noteId: number | null) {
 
 export const familyTracksLoader = (noteId: number) =>
   (from: number, to: number) => call<CoachTracks>(`/academy/family/coach-notes/${noteId}/tracks?from=${from.toFixed(1)}&to=${to.toFixed(1)}`);
+
+export const familyAnalysisLoader = (noteId: number) =>
+  () => call<CoachAnalysis>(`/academy/family/coach-notes/${noteId}/analysis`);

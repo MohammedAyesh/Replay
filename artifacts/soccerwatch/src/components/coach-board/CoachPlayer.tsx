@@ -26,15 +26,28 @@ import {
   Goal,
   Share2,
   StickyNote,
+  Flag,
+  Triangle,
+  Move,
+  SquareDashed,
+  Rows3,
+  Check,
 } from "lucide-react";
 import {
   COACH_COLORS,
+  COACH_MAX_OFFSIDE,
   COACH_MAX_SHAPES,
   COACH_MAX_SPOTLIGHTS,
+  COACH_MAX_UNITS,
+  COACH_MAX_UNIT_PLAYERS,
   COACH_WIDTHS,
   EMPTY_COACH_BOARD,
   coachBoxAt,
+  coachFeet,
+  pitchMapper,
+  type CoachAnalysis,
   type CoachBoard,
+  type CoachUnit,
   type CoachNote,
   type CoachNoteInput,
   type CoachShape,
@@ -65,12 +78,17 @@ import {
   type Pt,
   type TrackStore,
 } from "@/lib/coach-board";
+import { LINE_COLORS, metresLabel } from "@/lib/coach-analysis";
 import { cn } from "@/lib/utils";
 import { useCoachVideo } from "./use-coach-video";
 
-export type CoachTool = "spotlight" | "pen" | "arrow" | "line" | "circle" | "zone" | "text";
+export type CoachTool = "spotlight" | "offside" | "unit" | "move" | "area" | "pen" | "arrow" | "line" | "circle" | "zone" | "text";
 const TOOLS: Array<{ id: CoachTool; icon: typeof Crosshair }> = [
   { id: "spotlight", icon: Crosshair },
+  { id: "offside", icon: Flag },
+  { id: "unit", icon: Triangle },
+  { id: "move", icon: Move },
+  { id: "area", icon: SquareDashed },
   { id: "pen", icon: PenLine },
   { id: "arrow", icon: ArrowUpRight },
   { id: "line", icon: Slash },
@@ -78,6 +96,10 @@ const TOOLS: Array<{ id: CoachTool; icon: typeof Crosshair }> = [
   { id: "zone", icon: Shapes },
   { id: "text", icon: Type },
 ];
+/** Tools that pick a tracked player with a tap. */
+const PICK_TOOLS: ReadonlySet<CoachTool> = new Set(["spotlight", "offside", "unit"]);
+/** Tools that need the camera's pitch model. */
+const PITCH_TOOLS: ReadonlySet<CoachTool> = new Set(["offside", "area"]);
 const SPEEDS = [0.25, 0.5, 1, 1.5, 2];
 const PLAY_FOR = [4, 8, 12, 20];
 
@@ -88,6 +110,8 @@ export type CoachPlayerProps = {
   players: RosterPlayer[];
   analysed: boolean;
   loadTracks: (from: number, to: number) => Promise<CoachTracks>;
+  /** the pitch model, sides and training flags for the analysis tools */
+  loadAnalysis?: () => Promise<CoachAnalysis>;
   onClose: () => void;
   /** a family's view of one shared note: no tools, the note's own board, stops at its end */
   readOnly?: boolean;
@@ -108,6 +132,7 @@ const clock = (s: number) => {
   const sec = v % 60;
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 };
+const round1 = (n: number) => Math.round(n * 10) / 10;
 let idSeq = 0;
 const newId = () => `s${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 
@@ -138,7 +163,8 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const followRef = useRef(follow);
   followRef.current = follow;
   const [tool, setTool] = useState<CoachTool>("spotlight");
-  const [color, setColor] = useState<string>(COACH_COLORS[0]);
+  const [color, setColorState] = useState<string>(COACH_COLORS[0]);
+  const setColor = (c: string) => { colorRef.current = c; setColorState(c); };
   const [width, setWidth] = useState<number>(COACH_WIDTHS[1]);
   const [dashed, setDashed] = useState(false);
   const [paused, setPaused] = useState(true);
@@ -157,6 +183,37 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const [, setTracksVersion] = useState(0);
   const loading = useRef(false);
 
+  // ── Analysis: the camera's pitch model, sides and training flags ──────────
+  const [analysis, setAnalysis] = useState<CoachAnalysis | null>(null);
+  useEffect(() => {
+    if (!props.analysed || !props.loadAnalysis) return;
+    let stopped = false;
+    props.loadAnalysis().then((a) => { if (!stopped) setAnalysis(a); }).catch(() => undefined);
+    return () => { stopped = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.analysed, props.loadAnalysis]);
+  const map = useMemo(() => (analysis?.pitch ? pitchMapper(analysis.pitch) : null), [analysis]);
+  const analysisRef = useRef(analysis);
+  analysisRef.current = analysis;
+  const mapRef = useRef(map);
+  mapRef.current = map;
+  /** Adults are hidden unless shown; a training group filter hides the other groups. */
+  const visible = useCallback((rosterId: string) => {
+    const p = analysis?.players[rosterId];
+    if (!p) return true;
+    if (p.adult && !board.showAdults) return false;
+    if (board.group && p.group !== board.group) return false;
+    return true;
+  }, [analysis, board.showAdults, board.group]);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const [pending, setPendingState] = useState<{ ids: string[]; kind: CoachUnit["kind"] } | null>(null);
+  const pendingRef = useRef(pending);
+  const setPending = useCallback((next: { ids: string[]; kind: CoachUnit["kind"] } | null) => { pendingRef.current = next; setPendingState(next); }, []);
+  const colorRef = useRef(COACH_COLORS[0] as string);
+  const [hud, setHud] = useState<{ formation: string; width: number; depth: number; lines: number } | null>(null);
+  const [linesOpen, setLinesOpen] = useState(false);
+
   const byRoster = useMemo(() => new Map(props.players.map((p) => [p.rosterId, p])), [props.players]);
   const unknownIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -170,6 +227,9 @@ export function CoachPlayer(props: CoachPlayerProps) {
   }, [byRoster, copy, unknownIndex]);
   const labelRef = useRef(label);
   labelRef.current = label;
+  const drawCopy = useMemo(() => ({ offside: copy.analysis.offside, width: copy.analysis.width, depth: copy.analysis.depth, keeper: copy.analysis.keeper, lines: copy.analysis.lines, unit: copy.analysis.unit }), [copy]);
+  const drawCopyRef = useRef(drawCopy);
+  drawCopyRef.current = drawCopy;
 
   // ── Tracks: keep the next half-minute loaded around the playhead ──────────
   useEffect(() => {
@@ -244,9 +304,20 @@ export function CoachPlayer(props: CoachPlayerProps) {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.clearRect(0, 0, cw, ch);
-      drawBoard(ctx, { rect, dpr, t, paused: video.paused, board: boardRef.current, draft: draft.current, store: store.current, label: labelRef.current });
+      const pend = pendingRef.current;
+      const drawn = drawBoard(ctx, {
+        rect, dpr, t, paused: video.paused, board: boardRef.current, draft: draft.current, store: store.current, label: labelRef.current,
+        map: mapRef.current, analysis: analysisRef.current, visible: visibleRef.current, copy: drawCopyRef.current,
+        pending: pend ? { ids: pend.ids, kind: pend.kind, color: colorRef.current } : null,
+      });
       if (now - lastUi > 200) {
         lastUi = now;
+        const sh = drawn.shape;
+        setHud((prev) => {
+          if (!sh) return prev ? null : prev;
+          const next = { formation: sh.formation, width: Math.round(sh.width * 10) / 10, depth: Math.round(sh.depth * 10) / 10, lines: sh.lines.length };
+          return prev && prev.formation === next.formation && prev.width === next.width && prev.depth === next.depth ? prev : next;
+        });
         setTime(t);
         if (Number.isFinite(video.duration) && video.duration > 0) setDuration(video.duration);
       }
@@ -300,6 +371,32 @@ export function CoachPlayer(props: CoachPlayerProps) {
     if (b.spotlights.length >= COACH_MAX_SPOTLIGHTS) return;
     setBoard({ ...b, spotlights: [...b.spotlights, { rosterId, color: nextSpotColor(b.spotlights.map((s) => s.color), COACH_COLORS) }] });
   }, [setBoard]);
+  const toggleOffside = useCallback((rosterId: string) => {
+    const b = boardRef.current;
+    const list = b.offside ?? [];
+    if (list.some((o) => o.rosterId === rosterId)) { setBoard({ ...b, offside: list.filter((o) => o.rosterId !== rosterId) }); return; }
+    const kept = list.length >= COACH_MAX_OFFSIDE ? list.slice(1) : list;
+    setBoard({ ...b, offside: [...kept, { rosterId, color: colorRef.current }] });
+  }, [setBoard]);
+  const pickForUnit = useCallback((rosterId: string) => {
+    const cur = pendingRef.current ?? { ids: [], kind: "shape" as const };
+    if (cur.ids.includes(rosterId)) { setPending({ ...cur, ids: cur.ids.filter((id) => id !== rosterId) }); return; }
+    if (cur.ids.length >= COACH_MAX_UNIT_PLAYERS) return;
+    setPending({ ...cur, ids: [...cur.ids, rosterId] });
+  }, [setPending]);
+  const finishUnit = useCallback(() => {
+    const cur = pendingRef.current;
+    setPending(null);
+    if (!cur || cur.ids.length < 2) return;
+    const b = boardRef.current;
+    setBoard({ ...b, units: [...(b.units ?? []), { id: newId(), kind: cur.kind, rosterIds: cur.ids, color: colorRef.current }].slice(-COACH_MAX_UNITS) });
+  }, [setBoard, setPending]);
+  const chooseTool = useCallback((next: CoachTool) => {
+    if (PITCH_TOOLS.has(next) && !mapRef.current) return;
+    if (next !== "unit" && pendingRef.current) finishUnit();
+    setTool(next);
+  }, [finishUnit]);
+  const toolDisabled = useCallback((id: CoachTool) => PITCH_TOOLS.has(id) && !map, [map]);
   const addShape = useCallback((shape: CoachShape) => {
     const b = boardRef.current;
     setBoard({ ...b, shapes: [...b.shapes, shape].slice(-COACH_MAX_SHAPES) });
@@ -310,9 +407,12 @@ export function CoachPlayer(props: CoachPlayerProps) {
   }, []);
   const clearShapes = useCallback(() => setBoard({ ...boardRef.current, shapes: [] }), [setBoard]);
   const clearAll = useCallback(() => {
-    setBoard({ ...EMPTY_COACH_BOARD });
+    const b = boardRef.current;
+    // The training filters are a view, not a drawing: they stay.
+    setBoard({ ...EMPTY_COACH_BOARD, ...(b.group ? { group: b.group } : {}), ...(b.showAdults ? { showAdults: true } : {}) });
+    setPending(null);
     setActiveNote(null);
-  }, [setBoard]);
+  }, [setBoard, setPending]);
 
   // ── Pointer: spotlight taps, pan and pinch, drawing ───────────────────────
   const pointers = useRef(new Map<number, { x: number; y: number }>());
@@ -321,6 +421,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
     const r = stageRef.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
+  const visibleBoxes = (t: number) => new Map([...boxesAt(store.current, t)].filter(([id]) => visible(id)));
   const currentRect = () => {
     const s = stageRef.current!;
     return frameRect(s.clientWidth, s.clientHeight, aspect, viewRef.current);
@@ -337,17 +438,37 @@ export function CoachPlayer(props: CoachPlayerProps) {
       draft.current = null;
       return;
     }
-    if (readOnly || tool === "spotlight") { gesture.current = { kind: "tap", x0: p.x, y0: p.y, moved: false }; return; }
-    if (tool === "text") { gesture.current = { kind: "tap", x0: p.x, y0: p.y, moved: false }; return; }
-    videoRef.current?.pause();
+    if (readOnly || PICK_TOOLS.has(tool) || tool === "text") { gesture.current = { kind: "tap", x0: p.x, y0: p.y, moved: false }; return; }
     const share = toShare(currentRect(), p.x, p.y);
     const atMs = Math.round((videoRef.current?.currentTime ?? 0) * 1000);
+    if (tool === "move") {
+      // Freeze-frame: grab a tracked player and drag him to where he should have been.
+      const t = videoRef.current?.currentTime ?? 0;
+      const hit = hitPlayer(visibleBoxes(t), share);
+      const b = hit ? store.current.players.get(hit) : null;
+      const box = b ? coachBoxAt(b, t) : null;
+      if (!hit || !box) { gesture.current = { kind: "tap", x0: p.x, y0: p.y, moved: false }; return; }
+      videoRef.current?.pause();
+      const feet = coachFeet(box);
+      gesture.current = { kind: "draw", x0: p.x, y0: p.y, moved: false, points: [[p.x, p.y]] };
+      draft.current = { id: newId(), kind: "move", color, atMs, rosterId: hit, from: feet, to: feet, size: [box[2], box[3]] };
+      return;
+    }
+    if (tool === "area") {
+      if (!map) { gesture.current = { kind: "tap", x0: p.x, y0: p.y, moved: false }; return; }
+      videoRef.current?.pause();
+      const at = map.toPitch(share[0], share[1]);
+      gesture.current = { kind: "draw", x0: p.x, y0: p.y, moved: false, points: [[p.x, p.y]] };
+      draft.current = { id: newId(), kind: "area", color, atMs, a: at, b: at, pinned: true };
+      return;
+    }
+    videoRef.current?.pause();
     gesture.current = { kind: "draw", x0: p.x, y0: p.y, moved: false, points: [[p.x, p.y]] };
     const base = { id: newId(), color, atMs };
     draft.current = tool === "pen" ? { ...base, kind: "pen", width, points: [share, share] }
       : tool === "zone" ? { ...base, kind: "zone", points: [share, share, share] }
       : tool === "circle" ? { ...base, kind: "circle", width, from: share, to: share }
-      : { ...base, kind: tool, width, from: share, to: share, dashed };
+      : { ...base, kind: tool === "line" ? "line" : "arrow", width, from: share, to: share, dashed };
   };
 
   const onPointerMove = (e: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -378,8 +499,10 @@ export function CoachPlayer(props: CoachPlayerProps) {
         g.points!.push([p.x, p.y]);
         const rect = currentRect();
         draft.current = { ...d, points: thinStroke(g.points!, 3).map(([x, y]) => toShare(rect, x, y)) } as CoachShape;
-      } else if (d.kind === "arrow" || d.kind === "line" || d.kind === "circle") {
+      } else if (d.kind === "arrow" || d.kind === "line" || d.kind === "circle" || d.kind === "move") {
         draft.current = { ...d, to: share };
+      } else if (d.kind === "area" && map) {
+        draft.current = { ...d, b: map.toPitch(share[0], share[1]) };
       }
     }
   };
@@ -401,8 +524,11 @@ export function CoachPlayer(props: CoachPlayerProps) {
       }
       if (readOnly) { togglePlay(); return; }
       const t = videoRef.current?.currentTime ?? 0;
-      const hit = hitPlayer(boxesAt(store.current, t), share);
-      if (hit) toggleSpot(hit);
+      const hit = hitPlayer(visibleBoxes(t), share);
+      if (!hit) return;
+      if (tool === "offside") { if (map) toggleOffside(hit); return; }
+      if (tool === "unit") { pickForUnit(hit); return; }
+      if (tool === "spotlight") toggleSpot(hit);
       return;
     }
     if (g.kind === "draw" && draft.current) {
@@ -410,8 +536,11 @@ export function CoachPlayer(props: CoachPlayerProps) {
       draft.current = null;
       const rect = currentRect();
       const big = (a: Pt, b: Pt) => { const [ax, ay] = toScreen(rect, a); const [bx, by] = toScreen(rect, b); return Math.hypot(ax - bx, ay - by) > 8; };
+      const bigArea = d.kind === "area" && Math.abs(d.a[0] - d.b[0]) >= 1 && Math.abs(d.a[1] - d.b[1]) >= 1;
       if ((d.kind === "pen" && d.points.length >= 2) || (d.kind === "zone" && d.points.length >= 3)
-        || ((d.kind === "arrow" || d.kind === "line" || d.kind === "circle") && big(d.from, d.to))) addShape(d);
+        || ((d.kind === "arrow" || d.kind === "line" || d.kind === "circle" || d.kind === "move") && big(d.from, d.to)) || bigArea) {
+        addShape(d.kind === "area" ? { ...d, a: [round1(d.a[0]), round1(d.a[1])], b: [round1(d.b[0]), round1(d.b[1])] } : d);
+      }
     }
   };
 
@@ -441,12 +570,14 @@ export function CoachPlayer(props: CoachPlayerProps) {
       if (readOnly) return;
       if ((e.key === "z" || e.key === "Z") && !e.shiftKey) { undo(); return; }
       if (e.key === "f" || e.key === "F") { setFollow((f) => !f); return; }
+      if (e.key === "Enter" && pendingRef.current) { finishUnit(); return; }
       const n = Number(e.key);
-      if (n >= 1 && n <= TOOLS.length) setTool(TOOLS[n - 1].id);
+      if (n >= 1 && n <= Math.min(9, TOOLS.length)) chooseTool(TOOLS[n - 1].id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [props, readOnly, saveOpen, seek, step, textAt, togglePlay, undo]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props, readOnly, saveOpen, seek, step, textAt, togglePlay, undo, finishUnit, map]);
 
   // ── Notes ─────────────────────────────────────────────────────────────────
   const openNote = (note: CoachNote) => {
@@ -464,8 +595,14 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const total = duration || v.duration || 0;
   const spotRosterIds = new Set(board.spotlights.map((s) => s.rosterId));
   const tracked = props.analysed ? boxesAt(store.current, time) : new Map();
-  const ours = props.players.filter((p) => p.playerId !== null);
-  const others = props.players.filter((p) => p.playerId === null);
+  // On camera now first, so a 200-player training roster starts with who can be tapped.
+  const shown = props.players.filter((p) => visible(p.rosterId))
+    .map((p, i) => ({ p, i, on: tracked.has(p.rosterId) }))
+    .sort((a, b) => Number(b.on) - Number(a.on) || a.i - b.i)
+    .map((x) => x.p);
+  const ours = shown.filter((p) => p.playerId !== null);
+  const others = shown.filter((p) => p.playerId === null);
+  const hiddenAdults = analysis?.hasAdults && !board.showAdults ? props.players.filter((p) => analysis.players[p.rosterId]?.adult).length : 0;
 
   const playerRow = (p: RosterPlayer) => {
     const spot = board.spotlights.find((s) => s.rosterId === p.rosterId);
@@ -475,6 +612,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
         className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-start text-sm transition-colors", spot ? "bg-raised text-text" : "text-muted-text hover:bg-raised/60 hover:text-text")}
         data-testid={`coach-player-${p.rosterId}`}>
         <span className="h-3 w-3 shrink-0 rounded-full border border-line" style={spot ? { background: spot.color, borderColor: spot.color } : undefined} />
+        {analysis?.players[p.rosterId]?.kit && <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: analysis.players[p.rosterId].kit! }} title={analysis.players[p.rosterId].group ?? undefined} />}
         <span className="min-w-0 flex-1 truncate font-semibold" dir="auto">{label(p.rosterId)}</span>
         <span className={cn("shrink-0 text-[11px]", visible ? "text-turf" : "text-muted-text/60")}>{visible ? copy.minutes(p.minutes) : copy.notOnCamera}</span>
       </button>
@@ -510,7 +648,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
       <div className="flex min-h-0 flex-1">
         {!readOnly && (
           <aside className="hidden w-14 shrink-0 flex-col items-center gap-1 border-e border-line py-2 md:flex" aria-label="tools">
-            <ToolButtons tool={tool} setTool={setTool} copy={copy} vertical />
+            <ToolButtons tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} vertical />
           </aside>
         )}
 
@@ -530,6 +668,21 @@ export function CoachPlayer(props: CoachPlayerProps) {
               <input name="text" autoFocus aria-label={copy.textPrompt} placeholder={copy.textPrompt} className="w-48 rounded-lg bg-raised px-2 text-sm text-text outline-none" dir="auto" />
               <button type="submit" className="rounded-lg bg-floodlight px-2.5 text-sm font-bold text-void">{copy.addText}</button>
             </form>
+          )}
+          {pending && !readOnly && (
+            <div className="absolute inset-x-0 bottom-3 z-10 mx-auto flex w-fit max-w-[92%] flex-wrap items-center gap-1.5 rounded-2xl border border-line bg-void/90 p-1.5 text-xs backdrop-blur" data-testid="coach-unit-bar">
+              <span className="px-2 font-semibold text-text">{copy.analysis.picked(pending.ids.length)}</span>
+              <Chip on={pending.kind === "shape"} onClick={() => setPending({ ...pending, kind: "shape" })}><Triangle className="h-3.5 w-3.5" />{copy.analysis.shape}</Chip>
+              <Chip on={pending.kind === "lanes"} onClick={() => setPending({ ...pending, kind: "lanes" })}><Share2 className="h-3.5 w-3.5" />{copy.analysis.lanes}</Chip>
+              <button type="button" onClick={finishUnit} disabled={pending.ids.length < 2} className="inline-flex h-8 items-center gap-1 rounded-lg bg-floodlight px-3 font-bold text-void disabled:opacity-40" data-testid="coach-unit-done"><Check className="h-3.5 w-3.5" />{copy.analysis.done}</button>
+              <button type="button" onClick={() => setPending(null)} className="h-8 rounded-lg px-2 font-semibold text-muted-text hover:text-text">{copy.cancel}</button>
+            </div>
+          )}
+          {hud && board.teamLines && (
+            <div className="pointer-events-none absolute end-3 top-3 z-10 rounded-2xl border border-line bg-void/85 px-3 py-2 text-xs backdrop-blur" data-testid="coach-team-hud">
+              <p className="font-display text-lg font-bold leading-none text-text" dir="ltr">{hud.formation}</p>
+              <p className="mt-1 text-muted-text">{copy.analysis.width} <span className="font-semibold text-text">{metresLabel(hud.width, copy.analysis.unit)}</span> · {copy.analysis.depth} <span className="font-semibold text-text">{metresLabel(hud.depth, copy.analysis.unit)}</span></p>
+            </div>
           )}
           {videoError && <p className="absolute inset-x-0 top-1/2 mx-auto w-fit -translate-y-1/2 rounded-xl bg-surface px-4 py-3 text-sm text-text" role="alert">{copy.videoError}</p>}
           {!readOnly && !props.analysed && <p className="absolute inset-x-3 top-3 mx-auto w-fit rounded-xl bg-surface/90 px-3 py-2 text-xs text-muted-text">{copy.notAnalysed}</p>}
@@ -557,6 +710,22 @@ export function CoachPlayer(props: CoachPlayerProps) {
             {panel === "players" ? (
               <div className="space-y-3">
                 {!props.analysed && <p className="text-xs text-muted-text">{copy.notAnalysed}</p>}
+                {analysis && (analysis.groups.length > 0 || analysis.hasAdults) && (
+                  <section className="space-y-1.5 border-b border-line pb-3" data-testid="coach-training-filters">
+                    {analysis.groups.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        <Chip on={!board.group} onClick={() => setBoard({ ...board, group: undefined }, false)}>{copy.analysis.allGroups}</Chip>
+                        {analysis.groups.map((g) => <Chip key={g} on={board.group === g} onClick={() => setBoard({ ...board, group: board.group === g ? undefined : g }, false)}>{copy.analysis.group(g)}</Chip>)}
+                      </div>
+                    )}
+                    {analysis.hasAdults && (
+                      <Chip on={Boolean(board.showAdults)} onClick={() => setBoard({ ...board, showAdults: board.showAdults ? undefined : true }, false)}>
+                        {board.showAdults ? copy.analysis.adultsShown : copy.analysis.adultsHidden(hiddenAdults)}
+                      </Chip>
+                    )}
+                  </section>
+                )}
+                {analysis && !map && <p className="px-2 text-xs text-muted-text">{copy.analysis.needsPitch}</p>}
                 {ours.length > 0 && <section><h3 className="mb-1 px-2 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.ours}</h3>{ours.map(playerRow)}</section>}
                 {others.length > 0 && <section><h3 className="mb-1 px-2 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.others}</h3>{others.map(playerRow)}</section>}
               </div>
@@ -568,10 +737,35 @@ export function CoachPlayer(props: CoachPlayerProps) {
         )}
       </div>
 
+      {linesOpen && analysis && !board.teamLines && (
+        <div className="fixed inset-x-0 bottom-28 z-[90] mx-auto w-[min(92vw,22rem)] rounded-2xl border border-line bg-surface p-3 shadow-2xl" data-testid="coach-lines-picker">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.analysis.whichSide}</p>
+          <div className="flex flex-wrap gap-1.5">
+            {analysis.kits && ([0, 1] as const).map((side) => (
+              <button key={side} type="button" onClick={() => { setBoard({ ...board, teamLines: { side } }); setLinesOpen(false); }}
+                className="inline-flex h-9 items-center gap-2 rounded-xl bg-raised px-3 text-sm font-semibold text-text hover:bg-raised/70" data-testid={`coach-lines-side-${side}`}>
+                <span className="h-4 w-4 rounded-full border border-line" style={{ background: analysis.kits![side] }} />
+                {analysis.oursKnown ? (side === 0 ? copy.analysis.ours : copy.analysis.theirs) : copy.analysis.kit(side + 1)}
+              </button>
+            ))}
+            {analysis.groups.map((g) => (
+              <button key={g} type="button" onClick={() => { setBoard({ ...board, teamLines: { group: g } }); setLinesOpen(false); }}
+                className="inline-flex h-9 items-center gap-2 rounded-xl bg-raised px-3 text-sm font-semibold text-text hover:bg-raised/70" dir="auto">
+                {copy.analysis.group(g)}
+              </button>
+            ))}
+            {!analysis.kits && !analysis.groups.length && <p className="text-sm text-muted-text">{copy.analysis.noSides}</p>}
+          </div>
+          <div className="mt-2 flex gap-3 text-[11px] text-muted-text">
+            {(["back", "mid", "front"] as const).map((k) => <span key={k} className="inline-flex items-center gap-1"><span className="h-2 w-4 rounded-full" style={{ background: LINE_COLORS[k] }} />{copy.analysis.lines[k]}</span>)}
+          </div>
+        </div>
+      )}
+
       <footer className="border-t border-line bg-void px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
         {!readOnly && (
           <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1">
-            <div className="flex gap-1 md:hidden"><ToolButtons tool={tool} setTool={setTool} copy={copy} /></div>
+            <div className="flex gap-1 md:hidden"><ToolButtons tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} /></div>
             <span className="mx-1 h-6 w-px shrink-0 bg-line md:hidden" />
             {COACH_COLORS.map((c) => (
               <button key={c} type="button" onClick={() => setColor(c)} aria-label={c} aria-pressed={color === c}
@@ -589,6 +783,16 @@ export function CoachPlayer(props: CoachPlayerProps) {
             <Chip on={Boolean(board.connect)} onClick={() => setBoard({ ...board, connect: !board.connect }, false)} title={copy.connectHint}><Link2 className="h-3.5 w-3.5" />{copy.connect}</Chip>
             <Chip on={Boolean(board.ball)} onClick={() => setBoard({ ...board, ball: !board.ball }, false)}><Goal className="h-3.5 w-3.5" />{copy.ball}</Chip>
             <Chip on={follow} onClick={() => { const next = !follow; setFollow(next); if (next && viewRef.current.zoom < 1.5) zoomBy(2.2); }} title={copy.followHint}><Crosshair className="h-3.5 w-3.5" />{copy.follow}</Chip>
+            {analysis && (
+              <span className="relative shrink-0">
+                <Chip on={Boolean(board.teamLines)} onClick={() => (board.teamLines ? setBoard({ ...board, teamLines: undefined }, false) : setLinesOpen((o) => !o))} title={map ? copy.analysis.linesHint : copy.analysis.needsPitch} disabled={!map}>
+                  <Rows3 className="h-3.5 w-3.5" />{copy.analysis.teamLines}
+                </Chip>
+              </span>
+            )}
+            {board.teamLines && (
+              <Chip on={board.teamLines.keeper !== false} onClick={() => setBoard({ ...board, teamLines: { ...board.teamLines!, keeper: board.teamLines!.keeper === false ? undefined : false } }, false)} title={copy.analysis.keeperHint}>{copy.analysis.leaveKeeperOut}</Chip>
+            )}
             <span className="mx-1 h-6 w-px shrink-0 bg-line" />
             <Chip onClick={undo}><Undo2 className="h-3.5 w-3.5" />{copy.undo}</Chip>
             <Chip onClick={clearShapes}><Eraser className="h-3.5 w-3.5" />{copy.clear}</Chip>
@@ -647,12 +851,13 @@ export function CoachPlayer(props: CoachPlayerProps) {
   );
 }
 
-function ToolButtons({ tool, setTool, copy, vertical }: { tool: CoachTool; setTool: (t: CoachTool) => void; copy: ReturnType<typeof useCoachCopy>; vertical?: boolean }) {
+function ToolButtons({ tool, setTool, copy, vertical, disabled }: { tool: CoachTool; setTool: (t: CoachTool) => void; copy: ReturnType<typeof useCoachCopy>; vertical?: boolean; disabled?: (t: CoachTool) => boolean }) {
   return (
     <>
       {TOOLS.map(({ id, icon: Icon }, i) => (
-        <button key={id} type="button" onClick={() => setTool(id)} aria-pressed={tool === id} title={`${copy.tools[id]} (${i + 1})`}
-          className={cn("grid shrink-0 place-items-center rounded-xl transition-colors", vertical ? "h-11 w-11" : "h-9 w-9", tool === id ? "bg-floodlight text-void" : "text-muted-text hover:bg-raised hover:text-text")}
+        <button key={id} type="button" onClick={() => setTool(id)} aria-pressed={tool === id} disabled={disabled?.(id)}
+          title={disabled?.(id) ? `${copy.tools[id]} · ${copy.analysis.needsPitch}` : `${copy.tools[id]}${i < 9 ? ` (${i + 1})` : ""}`}
+          className={cn("grid shrink-0 place-items-center rounded-xl transition-colors disabled:opacity-35", vertical ? "h-10 w-11" : "h-9 w-9", tool === id ? "bg-floodlight text-void" : "text-muted-text hover:bg-raised hover:text-text")}
           data-testid={`coach-tool-${id}`}>
           <Icon className="h-5 w-5" aria-hidden /><span className="sr-only">{copy.tools[id]}</span>
         </button>
@@ -670,10 +875,10 @@ function IconButton({ label, onClick, children }: { label: string; onClick: () =
   );
 }
 
-function Chip({ on, onClick, children, title }: { on?: boolean; onClick: () => void; children: React.ReactNode; title?: string }) {
+function Chip({ on, onClick, children, title, disabled }: { on?: boolean; onClick: () => void; children: React.ReactNode; title?: string; disabled?: boolean }) {
   return (
-    <button type="button" onClick={onClick} aria-pressed={on} title={title}
-      className={cn("inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold", on ? "bg-turf text-void" : "text-muted-text hover:bg-raised hover:text-text")}>
+    <button type="button" onClick={onClick} aria-pressed={on} title={title} disabled={disabled}
+      className={cn("inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold disabled:opacity-40", on ? "bg-turf text-void" : "text-muted-text hover:bg-raised hover:text-text")}>
       {children}
     </button>
   );
