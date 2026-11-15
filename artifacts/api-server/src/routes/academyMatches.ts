@@ -33,8 +33,11 @@ import {
 import { ACTIVE_STATUSES } from "../lib/analysisJobs";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { logger } from "../lib/logger";
+import { labToHex } from "../lib/matchPlay";
+import { loadRecordingPlay, type RecordingPlay } from "../lib/matchPlayLoad";
+import { trainingRosterFlags } from "../lib/coachAnalysis";
 import { canViewPinnedAcademyRecording } from "../lib/publicFootage";
-import type { MatchRoster } from "../lib/matchRoster";
+import { matchTrainingGroups, type MatchRoster } from "../lib/matchRoster";
 import { rosterInsideMatchWindow, rosterPlayersWithPhotos } from "./claimMatch";
 
 const router: IRouter = Router();
@@ -222,10 +225,17 @@ type StatsView = {
 };
 
 /** Cached numbers while nothing they depend on changed; recomputed otherwise. */
-export async function statsFor(ctx: MatchContext, force = false): Promise<StatsView | null> {
+export async function statsFor(ctx: MatchContext, force = false, preloadedPlay?: RecordingPlay | null): Promise<StatsView | null> {
   if (!ctx.recordingId || !ctx.bundle || !ctx.roster) return null;
-  const bindings = resolveBindings(ctx.lineup, ctx.roster);
-  const fingerprint = statsFingerprint(ctx.bundle.id, bindings, await goalVoteCount(ctx.recordingId));
+  let recordingPlay = preloadedPlay;
+  if (ctx.roster.training && recordingPlay === undefined) {
+    recordingPlay = await loadRecordingPlay(ctx.recordingId, { keepSegments: true });
+  }
+  const trainingAdultIds = recordingPlay && ctx.roster.training
+    ? new Set([...trainingRosterFlags(recordingPlay, ctx.roster).entries()].filter(([, flags]) => flags.adult === true).map(([id]) => id))
+    : new Set<string>();
+  const bindings = resolveBindings(ctx.lineup, ctx.roster, trainingAdultIds);
+  const fingerprint = statsFingerprint(ctx.bundle.id, bindings, await goalVoteCount(ctx.recordingId), ctx.roster);
   if (!force && ctx.page.statsFingerprint === fingerprint) {
     const rows = await db.select().from(academyMatchPlayerStatsTable).where(eq(academyMatchPlayerStatsTable.sessionId, ctx.session.id));
     const team = ctx.page.teamStats as (AcademyTeamStats & { hasBall?: boolean }) | null;
@@ -236,7 +246,7 @@ export async function statsFor(ctx: MatchContext, force = false): Promise<StatsV
       computedAt: ctx.page.statsComputedAt?.toISOString() ?? null,
     };
   }
-  const result = await computeAcademyMatchStats(ctx.recordingId, ctx.roster, bindings);
+  const result = await computeAcademyMatchStats(ctx.recordingId, ctx.roster, bindings, recordingPlay);
   const now = new Date();
   await db.transaction(async (tx) => {
     await tx.delete(academyMatchPlayerStatsTable).where(eq(academyMatchPlayerStatsTable.sessionId, ctx.session.id));
@@ -396,8 +406,18 @@ router.get("/academy/console/academies/:academyId/matches/:sessionId", async (re
   const ctx = await loadContext(found.session);
   const job = ctx.recordingId ? await latestJob(ctx.recordingId) : null;
   let stats: StatsView | null = null;
+  let trainingPlay: RecordingPlay | null | undefined;
+  let trainingFlags = new Map<string, { group: string | null; adult: boolean | null }>();
+  if (ctx.roster?.training && ctx.recordingId) {
+    try {
+      trainingPlay = await loadRecordingPlay(ctx.recordingId, { keepSegments: true });
+      if (trainingPlay) trainingFlags = trainingRosterFlags(trainingPlay, ctx.roster);
+    } catch (error) {
+      logger.warn({ sessionId: found.session.id, error: (error as Error).message }, "Academy match training flags unavailable");
+    }
+  }
   try {
-    stats = await statsFor(ctx);
+    stats = await statsFor(ctx, false, trainingPlay);
   } catch (error) {
     logger.warn({ sessionId: found.session.id, error: (error as Error).message }, "Academy match stats failed");
   }
@@ -406,8 +426,11 @@ router.get("/academy/console/academies/:academyId/matches/:sessionId", async (re
     try {
       detected = (await rosterPlayersWithPhotos(ctx.bundle.manifest, ctx.roster)).map((p) => ({
         id: p.id,
-        number: p.number,
-        numberCandidate: p.numberCandidate ?? null,
+        number: p.numberDropped ? null : p.number,
+        numberCandidate: p.numberDropped ? null : p.numberCandidate ?? null,
+        adult: trainingFlags.get(p.id)?.adult ?? p.adult ?? null,
+        group: trainingFlags.get(p.id)?.group ?? (p.group == null ? null : String(p.group)),
+        numberDropped: Boolean(p.numberDropped),
         minutes: Math.round(p.minutes * 10) / 10,
         photos: p.photos.slice(0, 3).map((photo) => photo.jpeg),
       }));
@@ -415,7 +438,29 @@ router.get("/academy/console/academies/:academyId/matches/:sessionId", async (re
       logger.warn({ sessionId: found.session.id, error: (error as Error).message }, "Academy match roster photos failed");
     }
   }
-  const bindings = resolveBindings(ctx.lineup, ctx.roster);
+  const trainingAdultIds = new Set([...trainingFlags.entries()].filter(([, flags]) => flags.adult === true).map(([id]) => id));
+  const bindings = resolveBindings(ctx.lineup, ctx.roster, trainingAdultIds);
+  const training = ctx.roster?.training
+    ? (() => {
+        const groups = matchTrainingGroups(ctx.roster!);
+        const known = new Set(groups.map((group) => group.id));
+        for (const player of ctx.roster!.players) {
+          const id = trainingFlags.get(player.id)?.group ?? (player.group == null ? null : String(player.group));
+          if (id && !known.has(id)) {
+            known.add(id);
+            groups.push({ id, name: id });
+          }
+        }
+        return {
+          groups: groups.map((group) => ({
+            id: group.id,
+            name: group.name,
+            color: group.torso ? labToHex(group.torso) : null,
+          })),
+          timeline: ctx.roster!.training!.timeline ?? [],
+        };
+      })()
+    : null;
   res.json({
     session: sessionView(ctx.session),
     role: found.isOwner ? "owner" : "coach",
@@ -435,6 +480,7 @@ router.get("/academy/console/academies/:academyId/matches/:sessionId", async (re
     }),
     detected,
     stats,
+    training,
   });
 });
 
@@ -648,7 +694,12 @@ router.post("/academy/console/academies/:academyId/matches/:sessionId/analyse", 
     recordingId: ctx.recordingId,
     sourceRecordingIds: [ctx.recordingId],
     matchStartSeconds: 0,
-    params: { academyId: found.academyId, academySessionId: found.session.id, rosterHints },
+    params: {
+      academyId: found.academyId,
+      academySessionId: found.session.id,
+      ...(found.session.type === "training" ? { training: true } : {}),
+      rosterHints,
+    },
     createdBy: found.user.id,
   }).returning({ id: analysisJobsTable.id });
   await savePage(found.session, { recordingId: ctx.recordingId });
@@ -691,6 +742,12 @@ async function playerStatsRows(academyId: number, playerIds: number[] | null, pu
     ))
     .orderBy(desc(academySessionsTable.startsAt));
   return rows.map((r) => ({ ...r, squadName: r.squadName ?? null, published: r.published ?? false, stats: r.stats as AcademyPlayerStats }));
+}
+
+function familyStats(stats: AcademyPlayerStats | null | undefined): AcademyPlayerStats | null {
+  if (!stats) return null;
+  const { groupId: _groupId, ...visibleStats } = stats;
+  return visibleStats;
 }
 
 // ─── Family (parents and players) ────────────────────────────────────────────
@@ -818,7 +875,7 @@ router.get("/academy/family/matches/:sessionId", async (req, res): Promise<void>
         name: p.name,
         shirtNumber: p.shirtNumber,
         mine: viewer.familyPlayerIds.has(p.playerId),
-        stats: statsByPlayer.get(p.playerId) ?? null,
+        stats: familyStats(statsByPlayer.get(p.playerId)),
       })),
   });
 });
@@ -854,8 +911,10 @@ router.get("/academy/family/players/:playerId/match-stats", async (req, res): Pr
       opponent: m.opponent,
       ownScore: m.ownScore,
       opponentScore: m.opponentScore,
-      stats: m.stats,
-      squad: others.filter((o) => o.sessionId === m.sessionId).map((o) => o.stats as AcademyPlayerStats),
+      stats: familyStats(m.stats),
+      squad: others.filter((o) => o.sessionId === m.sessionId)
+        .map((o) => familyStats(o.stats as AcademyPlayerStats))
+        .filter((stats): stats is AcademyPlayerStats => stats !== null),
     })),
   });
 });

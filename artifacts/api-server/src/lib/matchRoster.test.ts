@@ -179,4 +179,46 @@ describe("voteMatchRosterShirtNumber", () => {
     }, segments);
     expect(roster?.players[0].numberCandidate).toBe("11");
   });
+
+  it("keeps training metadata and player flags unchanged while excluding dropped numbers from summaries", () => {
+    const training = {
+      mode: "training",
+      groups: [{ id: "red", name: "Red group", torso: [54, 28, 19], trackMinutes: 8.5, source: "pipeline" }],
+      adultRule: { threshold: 1.78, unit: "m" },
+      adultStature: 1.82,
+      adultShare: 0.3,
+      logoGroups: ["red"],
+      numbersDropped: 2,
+      timeline: [{ t: 0, groups: { red: 4 }, adults: 1 }],
+    };
+    const roster = parseMatchRoster({
+      training,
+      players: [{
+        id: "training-player",
+        name: null,
+        number: "7",
+        number_cand: "17",
+        number_dropped: { number: "7", why: "low confidence", evidence: 3 },
+        adult: true,
+        group: "red",
+        minutes: 5,
+        parts: [["second-half", "t41"]],
+      }],
+    }, segments)!;
+
+    expect(roster.training).toEqual(training);
+    expect(roster.players[0]).toMatchObject({
+      number: "7",
+      numberCandidate: "17",
+      numberDropped: { number: "7", why: "low confidence", evidence: 3 },
+      adult: true,
+      group: "red",
+    });
+    expect(summarizeMatchRoster(roster).numberedPlayerCount).toBe(0);
+  });
+
+  it("keeps an empty-player roster when it carries a training block", () => {
+    expect(parseMatchRoster({ training: { mode: "training", timeline: [] } }, segments))
+      .toEqual({ v: 1, players: [], training: { mode: "training", timeline: [] } });
+  });
 });

@@ -53,6 +53,10 @@ export type CoachAnalysis = {
   players: Record<string, CoachPlayerAnalysis>;
   /** training groups present, most-seen first */
   groups: string[];
+  /** Named training groups, with a hex swatch derived from the group's torso Lab colour. */
+  groupDetails: Array<{ id: string; name: string; color: string | null }>;
+  /** True only when people/match.json contains a training block. */
+  isTraining: boolean;
   hasAdults: boolean;
 };
 

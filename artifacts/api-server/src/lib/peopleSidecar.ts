@@ -16,6 +16,9 @@ export type PeoplePiece = {
   hr: number;
   nr: number;
   kit: number;
+  stature?: number;
+  adult?: boolean;
+  group?: string | number | null;
 };
 
 export type PeopleJunction = { a: string; b: string; gap: number; dm: number; d: number; ask: boolean };
@@ -32,7 +35,12 @@ export type PeopleGroup = {
   nb: Array<[number, string]>;
 };
 
-export type PeopleSidecar = { v: 1; pieces: Record<string, PeoplePiece>; groups: PeopleGroup[] };
+export type PeopleSidecar = {
+  v: 1;
+  pieces: Record<string, PeoplePiece>;
+  groups: PeopleGroup[];
+  training?: true;
+};
 
 const num = (v: unknown, d = 0) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 const triple = (v: unknown): [number, number, number] | null =>
@@ -54,6 +62,9 @@ export function parsePeopleSidecar(input: unknown, segmentIndex: number): People
       const p = value as Record<string, unknown>;
       const to = triple(p?.to);
       if (!to || !Array.isArray(p.hi) || p.hi.length !== 32) continue;
+      const group = typeof p.group === "string" || typeof p.group === "number" || p.group === null
+        ? p.group
+        : undefined;
       pieces[ns(id)] = {
         to,
         sh: triple(p.sh) ?? [0, 0, 0],
@@ -61,6 +72,9 @@ export function parsePeopleSidecar(input: unknown, segmentIndex: number): People
         hr: num(p.hr, 1) > 0 ? num(p.hr, 1) : 1,
         nr: Math.max(0, Math.round(num(p.nr))),
         kit: Math.round(num(p.kit, -1)),
+        ...(typeof p.stature === "number" && Number.isFinite(p.stature) ? { stature: p.stature } : {}),
+        ...(typeof p.adult === "boolean" ? { adult: p.adult } : {}),
+        ...(group !== undefined ? { group } : {}),
       };
     }
   }
@@ -96,6 +110,6 @@ export function parsePeopleSidecar(input: unknown, segmentIndex: number): People
         .map((x) => [num(x[0]), ns(x[1])] as [number, string]),
     });
   }
-  if (!groups.length) return null;
-  return { v: 1, pieces, groups };
+  if (!groups.length && !Object.keys(pieces).length && raw.training !== true) return null;
+  return { v: 1, pieces, groups, ...(raw.training === true ? { training: true } : {}) };
 }

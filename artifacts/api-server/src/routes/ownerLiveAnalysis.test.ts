@@ -2,6 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import express, { type Express } from "express";
 import request from "supertest";
 import {
+  academiesTable,
+  academySessionsTable,
   analysisJobsTable,
   db,
   fieldsTable,
@@ -30,10 +32,14 @@ const GUID_ON = "0f0e0d0c-0b0a-4908-8706-050403020100";
 const GUID_OFF = "1f1e1d1c-1b1a-4918-8716-151413121110";
 const GUID_REUSE_AUTO = "2f2e2d2c-2b2a-4928-8726-252423222120";
 const GUID_REUSE_ADMIN = "3f3e3d3c-3b3a-4938-8736-353433323130";
+const GUID_TRAINING = "4f4e4d4c-4b4a-4948-8746-454443424140";
+const GUID_ACADEMY_MATCH = "5f5e5d5c-5b5a-4958-8756-555453525150";
 let userId: number;
 let adminId: number;
 let fieldId: number;
+let academyId: number;
 let requestIds: number[] = [];
+let sessionIds: number[] = [];
 let extraRecordingIds: number[] = [];
 let extraJobIds: number[] = [];
 let videoForJob = new Map<string, string>();
@@ -51,7 +57,7 @@ async function setLive(on: boolean) {
   invalidateSettingsCache();
 }
 
-async function booking(vpsJobId: string, status: "recording" | "failed" = "recording") {
+async function booking(vpsJobId: string, status: "recording" | "failed" = "recording", academy = false) {
   const [row] = await db.insert(footageRequestsTable).values({
     fieldId,
     cameraId: "cam1",
@@ -62,9 +68,22 @@ async function booking(vpsJobId: string, status: "recording" | "failed" = "recor
     status,
     vpsJobId,
     rateFils: 0,
+    ...(academy ? { academyId } : {}),
   }).returning();
   requestIds.push(row.id);
   return row;
+}
+
+async function academySession(row: Awaited<ReturnType<typeof booking>>, type: "training" | "match") {
+  const [session] = await db.insert(academySessionsTable).values({
+    academyId,
+    type,
+    startsAt: new Date("2020-01-02T22:00:00Z"),
+    endsAt: new Date("2020-01-02T23:00:00Z"),
+    location: "Test pitch",
+    footageRequestId: row.id,
+  }).returning({ id: academySessionsTable.id });
+  sessionIds.push(session.id);
 }
 
 async function existingAnalysis(
@@ -112,6 +131,9 @@ beforeAll(async () => {
   const [f] = await db.insert(fieldsTable).values({ name: `Live Field ${TAG}`, location: "Test",
     cameraId: `live-camera-${TAG}` }).returning({ id: fieldsTable.id });
   fieldId = f.id;
+  const [academy] = await db.insert(academiesTable).values({ name: `Live Academy ${TAG}`, fieldId })
+    .returning({ id: academiesTable.id });
+  academyId = academy.id;
   app = express();
   app.use(express.json());
   app.use("/api", ownerRouter);
@@ -144,7 +166,7 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
-  for (const guid of [GUID_ON, GUID_OFF]) {
+  for (const guid of [GUID_ON, GUID_OFF, GUID_TRAINING, GUID_ACADEMY_MATCH]) {
     const { recs } = await jobsFor(guid);
     if (recs.length) {
       await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.recordingId, recs.map((r) => r.id)));
@@ -153,9 +175,11 @@ afterAll(async () => {
   }
   if (extraJobIds.length) await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.id, extraJobIds));
   if (extraRecordingIds.length) await db.delete(recordingsTable).where(inArray(recordingsTable.id, extraRecordingIds));
+  if (sessionIds.length) await db.delete(academySessionsTable).where(inArray(academySessionsTable.id, sessionIds));
   if (requestIds.length) await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds));
   await db.delete(settingsRulesTable).where(and(eq(settingsRulesTable.scopeType, "field"), eq(settingsRulesTable.scopeId, fieldId)));
   invalidateSettingsCache();
+  if (academyId) await db.delete(academiesTable).where(eq(academiesTable.id, academyId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
   await db.delete(usersTable).where(inArray(usersTable.id, [userId, adminId]));
   vi.restoreAllMocks();
@@ -184,10 +208,30 @@ describe("analysing bookings during the match", () => {
     expect(jobs[0]).toMatchObject({ recordingId: recs[0].id, status: "queued", matchStartSeconds: 0 });
     expect(jobs[0].sourceRecordingIds).toEqual([recs[0].id]);
     expect(jobs[0].params).toMatchObject({ liveJob: row.vpsJobId, footageRequestId: row.id });
+    expect(jobs[0].params).not.toHaveProperty("training");
 
     // a later refresh of the same (already ready) booking queues nothing more
     await refreshOwnerRequest({ ...row, status: "ready" }, "cam1");
     expect((await jobsFor(GUID_ON)).jobs).toHaveLength(1);
+  });
+
+  it("enables training mode for academy training footage but not academy matches", async () => {
+    await setLive(true);
+    const training = await booking(`academy-training-${TAG}`, "recording", true);
+    await academySession(training, "training");
+    videoForJob.set(training.vpsJobId!, GUID_TRAINING);
+    await refreshOwnerRequest(training, "cam1");
+    const trainingJobs = (await jobsFor(GUID_TRAINING)).jobs;
+    expect(trainingJobs).toHaveLength(1);
+    expect(trainingJobs[0].params).toMatchObject({ training: true, footageRequestId: training.id });
+
+    const match = await booking(`academy-match-${TAG}`, "recording", true);
+    await academySession(match, "match");
+    videoForJob.set(match.vpsJobId!, GUID_ACADEMY_MATCH);
+    await refreshOwnerRequest(match, "cam1");
+    const matchJobs = (await jobsFor(GUID_ACADEMY_MATCH)).jobs;
+    expect(matchJobs).toHaveLength(1);
+    expect(matchJobs[0].params).not.toHaveProperty("training");
   });
 
   it("reuses and links an existing succeeded analysis during automatic recovery", async () => {

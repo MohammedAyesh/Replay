@@ -90,6 +90,28 @@ describe("sidecars", () => {
     expect(p.groups[0].nb).toEqual([[1.2, "s3:t9"]]);
   });
 
+  it("keeps training piece fields and training mode even without grouping data", () => {
+    const p = parsePeopleSidecar({
+      training: true,
+      pieces: {
+        t1: {
+          to: [1, 2, 3],
+          sh: [0, 0, 0],
+          hi: new Array(32).fill(1 / 32),
+          hr: 1,
+          nr: 40,
+          kit: 1,
+          stature: 1.72,
+          adult: true,
+          group: "coaches",
+        },
+      },
+      groups: [],
+    }, 3)!;
+    expect(p.training).toBe(true);
+    expect(p.pieces["s3:t1"]).toMatchObject({ stature: 1.72, adult: true, group: "coaches" });
+  });
+
   it("offers the kits on the pitch and seeds yours against the most contrasting", () => {
     const sc: BallSidecar = { v: 1, fps: 20, touches: [], ball: [], kits: { "s0:t1": [200, 128, 128, 400], "s0:t2": [20, 128, 128, 300], "s0:t3": [100, 150, 128, 70] } };
     const options = kitOptions([sc]);

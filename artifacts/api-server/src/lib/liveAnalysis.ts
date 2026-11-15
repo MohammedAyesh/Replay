@@ -1,5 +1,5 @@
 import { and, desc, eq, like, notInArray, or, sql } from "drizzle-orm";
-import { analysisJobsTable, db, recordingsTable, type FootageRequest } from "@workspace/db";
+import { academySessionsTable, analysisJobsTable, db, recordingsTable, type FootageRequest } from "@workspace/db";
 import { BUNNY_CDN_HOSTNAME } from "./bunny";
 import { logger } from "./logger";
 import { getSettingValue } from "./settings";
@@ -67,6 +67,20 @@ export async function liveAnalysisEnabled(fieldId: number): Promise<boolean> {
     logger.warn({ fieldId, error }, "Could not read the live analysis setting; treating it as off");
     return false;
   }
+}
+
+async function trainingModeForBooking(row: FootageRequest): Promise<boolean> {
+  if (row.academyId === null) return false;
+  const [session] = await db.select({ type: academySessionsTable.type })
+    .from(academySessionsTable)
+    .where(and(
+      eq(academySessionsTable.footageRequestId, row.id),
+      eq(academySessionsTable.academyId, row.academyId),
+    ))
+    .limit(1);
+  // An explicit match session stays in match mode. Academy footage without a
+  // linked session is training footage; non-academy bookings never opt in.
+  return session ? session.type === "training" : true;
 }
 
 async function recordingsForBooking(row: FootageRequest, videoId: string | null) {
@@ -176,7 +190,11 @@ export async function queueLiveAnalysisForBooking(
       recordingId,
       sourceRecordingIds: [recordingId],
       matchStartSeconds: 0,
-      params: { liveJob: row.vpsJobId, footageRequestId: row.id },
+      params: {
+        liveJob: row.vpsJobId,
+        footageRequestId: row.id,
+        ...(await trainingModeForBooking(row) ? { training: true } : {}),
+      },
       createdBy: row.requestedBy,
     })
     .returning({ id: analysisJobsTable.id });

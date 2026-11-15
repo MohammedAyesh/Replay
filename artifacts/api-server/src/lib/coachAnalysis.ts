@@ -14,7 +14,7 @@ import {
   type TeamPick,
 } from "./matchPlay";
 import type { RecordingPlay } from "./matchPlayLoad";
-import type { MatchRoster } from "./matchRoster";
+import { matchTrainingGroups, type MatchRoster } from "./matchRoster";
 import { hasUsablePitchModel } from "./pitchModel";
 
 /**
@@ -152,25 +152,60 @@ export function attackHighSamples(play: RecordingPlay, pick: TeamPick | null, st
   return out;
 }
 
+/** Effective training flags, preferring explicit match-roster values over track metadata. */
+export function trainingRosterFlags(play: RecordingPlay, roster: MatchRoster): Map<string, TrackFlags> {
+  if (!roster.training) return new Map();
+  const index = trackFlagIndex(play.manifest, play.segments);
+  const out = new Map<string, TrackFlags>();
+  for (const player of roster.players) {
+    const trackFlags = playerFlags(player.parts, index);
+    out.set(player.id, {
+      group: player.group !== undefined ? flagGroup(player.group) : trackFlags.group,
+      adult: player.adult !== undefined ? flagAdult(player.adult) : trackFlags.adult,
+    });
+  }
+  return out;
+}
+
 export function buildCoachAnalysis(
   play: RecordingPlay,
   roster: MatchRoster,
   boundRosterIds: ReadonlySet<string>,
   opts: { only?: ReadonlySet<string> } = {},
 ): CoachAnalysis {
+  const isTraining = roster.training !== undefined;
   const ourParts = roster.players.filter((p) => boundRosterIds.has(p.id)).flatMap((p) => p.parts);
   const { pick, oursKnown } = coachTeamPick(play, ourParts);
-  const flags = trackFlagIndex(play.manifest, play.segments);
+  const rosterFlags = trainingRosterFlags(play, roster);
   const players: Record<string, CoachPlayerAnalysis> = {};
   const groupFrames = new Map<string, number>();
+  const metadataGroups = matchTrainingGroups(roster);
+  const groupDetailsById = new Map(metadataGroups.map((group) => [group.id, {
+    id: group.id,
+    name: group.name,
+    color: group.torso ? labToHex(group.torso) : null,
+  }]));
   let hasAdults = false;
   for (const p of roster.players) {
     const kit = play.hasKits ? kitOfParts(p.parts, play.sidecars, play.fps) : null;
-    const f = playerFlags(p.parts, flags);
-    if (f.adult) hasAdults = true;
+    const f = rosterFlags.get(p.id) ?? { group: null, adult: null };
+    if (f.adult === true) hasAdults = true;
     if (f.group) groupFrames.set(f.group, (groupFrames.get(f.group) ?? 0) + p.minutes);
     if (opts.only && !opts.only.has(p.id)) continue;
     players[p.id] = { side: sideOfKit(kit, pick), kit: kit ? labToHex(kit) : null, group: f.group, adult: f.adult };
+  }
+  const metadataGroupIds = metadataGroups.map((group) => group.id);
+  const groupOrder = new Map(metadataGroupIds.map((id, index) => [id, index]));
+  const groupWeights = new Map(metadataGroups.map((group) => [group.id, group.trackMinutes ?? 0]));
+  for (const [id, minutes] of groupFrames) groupWeights.set(id, minutes);
+  const groups = [...new Set([...metadataGroupIds, ...groupFrames.keys()])]
+    .sort((a, b) => (
+      (groupWeights.get(b) ?? 0) - (groupWeights.get(a) ?? 0)
+      || (groupOrder.get(a) ?? Number.MAX_SAFE_INTEGER) - (groupOrder.get(b) ?? Number.MAX_SAFE_INTEGER)
+      || a.localeCompare(b)
+    ));
+  for (const id of groups) {
+    if (!groupDetailsById.has(id)) groupDetailsById.set(id, { id, name: id, color: null });
   }
   return {
     pitch: coachPitch(play.manifest),
@@ -178,8 +213,10 @@ export function buildCoachAnalysis(
     oursKnown,
     attackHigh: attackHighSamples(play, pick),
     players,
-    groups: [...groupFrames.entries()].sort((a, b) => b[1] - a[1]).map(([g]) => g),
-    hasAdults,
+    groups,
+    groupDetails: groups.map((id) => groupDetailsById.get(id)!),
+    isTraining,
+    hasAdults: isTraining && hasAdults,
   };
 }
 

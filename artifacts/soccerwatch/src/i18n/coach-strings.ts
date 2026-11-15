@@ -111,8 +111,9 @@ const en = {
     leaveKeeperOut: "Without GK",
     keeperHint: "Leave the goalkeeper out of the lines, width and depth",
     allGroups: "All groups",
-    adultsHidden: (n: number) => (n ? `Coaches hidden (${n})` : "Coaches hidden"),
-    adultsShown: "Coaches shown",
+    ungrouped: "Unassigned",
+    adultsHidden: (_n: number) => "Show coaches & adults",
+    adultsShown: "Hide coaches & adults",
   },
   matchStart: "Kick-off",
   // Family view
@@ -238,8 +239,9 @@ const ar: CoachStrings = {
     leaveKeeperOut: "بدون الحارس",
     keeperHint: "طلّع الحارس من الخطوط والعرض والعمق",
     allGroups: "كل المجموعات",
-    adultsHidden: (n: number) => (n ? `المدربين مخفيين (${n})` : "المدربين مخفيين"),
-    adultsShown: "المدربين ظاهرين",
+    ungrouped: "بدون مجموعة",
+    adultsHidden: (_n: number) => "إظهار المدربين والبالغين",
+    adultsShown: "إخفاء المدربين والبالغين",
   },
   matchStart: "بداية المباراة",
   family: {

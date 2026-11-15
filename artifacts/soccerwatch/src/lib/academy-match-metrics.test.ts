@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { combine, METRICS, ratingsFor } from "@/lib/academy-match-metrics";
+import { combine, METRICS, ratingsFor, trainingTimelineBuckets } from "@/lib/academy-match-metrics";
 import { aggregatePlayers } from "@/components/academy-console/matches-section";
 import { seasonVsSquad } from "@/pages/academy-match";
 import type { AcademyPlayerStats, PlayerStatsRow } from "@/lib/academy-matches-api";
@@ -39,6 +39,17 @@ describe("academy match metrics", () => {
     const ratings = ratingsFor(three);
     expect(ratings.size).toBe(3);
     expect(ratings.get(3)!).toBeGreaterThan(ratings.get(1)!);
+  });
+
+  it("averages timeline headcounts into five-minute group and adult stacks", () => {
+    expect(trainingTimelineBuckets([
+      { t: 0, groups: { red: 2, blue: 1 }, adults: 1 },
+      { t: 60, groups: { red: 4, blue: 3 }, adults: 2 },
+      { minute: 5, groups: { red: 3, blue: 2 }, adults: 2 },
+    ])).toEqual([
+      { seconds: 0, groups: { red: 3, blue: 2 }, adults: 2 },
+      { seconds: 300, groups: { red: 3, blue: 2 }, adults: 2 },
+    ]);
   });
 
   it("aggregates each player across matches: minutes and goals summed, top speed is the best", () => {

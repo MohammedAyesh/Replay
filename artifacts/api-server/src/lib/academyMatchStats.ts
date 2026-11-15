@@ -25,10 +25,11 @@ import {
   type Lab,
   type TeamPick,
 } from "./matchPlay";
-import { loadRecordingPlay } from "./matchPlayLoad";
+import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { clipRangeToMatchWindow } from "./matchWindow";
 import type { MatchRoster, MatchRosterPlayer } from "./matchRoster";
 import { buildPlayerMetrics } from "./playerMetrics";
+import { trainingRosterFlags } from "./coachAnalysis";
 
 /**
  * Academy match stats.
@@ -44,6 +45,7 @@ import { buildPlayerMetrics } from "./playerMetrics";
 export type AcademyPlayerStats = {
   playerId: number;
   rosterPlayerId: string;
+  groupId?: string | null;
   minutes: number | null;
   distanceKm: number | null;
   topSpeedKmh: number | null;
@@ -111,23 +113,27 @@ export async function loadMatchRoster(manifest: TrackingManifest): Promise<Match
 export function resolveBindings(
   lineup: Array<{ playerId: number; shirtNumber: number | null; inSquad: boolean; rosterPlayerId: string | null; boundBy: string | null }>,
   roster: MatchRoster | null,
+  trainingAdultIds: ReadonlySet<string> = new Set(),
 ): Array<RosterBinding & { how: "owner" | "number" }> {
   if (!roster) return [];
   const known = new Set(roster.players.map((p) => p.id));
+  const trainingAdults = new Set(roster.training
+    ? [...roster.players.filter((player) => player.adult === true).map((player) => player.id), ...trainingAdultIds]
+    : []);
   const out: Array<RosterBinding & { how: "owner" | "number" }> = [];
   const taken = new Set<string>();
   const decided = new Set<number>();
   for (const row of lineup) {
     if (row.boundBy !== "owner") continue;
     decided.add(row.playerId);
-    if (row.rosterPlayerId && known.has(row.rosterPlayerId) && !taken.has(row.rosterPlayerId)) {
+    if (row.rosterPlayerId && known.has(row.rosterPlayerId) && !trainingAdults.has(row.rosterPlayerId) && !taken.has(row.rosterPlayerId)) {
       out.push({ playerId: row.playerId, rosterPlayerId: row.rosterPlayerId, how: "owner" });
       taken.add(row.rosterPlayerId);
     }
   }
   const byNumber = new Map<string, MatchRosterPlayer[]>();
   for (const p of roster.players) {
-    if (!p.number || taken.has(p.id)) continue;
+    if (!p.number || p.numberDropped || trainingAdults.has(p.id) || taken.has(p.id)) continue;
     byNumber.set(p.number, [...(byNumber.get(p.number) ?? []), p]);
   }
   const lineupByNumber = new Map<number, number[]>();
@@ -144,9 +150,20 @@ export function resolveBindings(
   return out;
 }
 
-export function statsFingerprint(bundleId: number, bindings: RosterBinding[], votes: number): string {
+export function statsFingerprint(bundleId: number, bindings: RosterBinding[], votes: number, roster?: MatchRoster | null): string {
   const key = bindings.map((b) => `${b.playerId}=${b.rosterPlayerId}`).sort().join(",");
-  return createHash("sha1").update(`v1|${bundleId}|${key}|${votes}`).digest("hex");
+  const base = `${bundleId}|${key}|${votes}`;
+  if (!roster?.training) return createHash("sha1").update(`v1|${base}`).digest("hex");
+  const trainingKey = JSON.stringify({
+    training: roster.training,
+    players: roster.players.map((player) => [
+      player.id,
+      player.adult ?? null,
+      player.group ?? null,
+      player.numberDropped ?? null,
+    ]),
+  });
+  return createHash("sha1").update(`v2|${base}|${trainingKey}`).digest("hex");
 }
 
 export async function goalVoteCount(recordingId: number): Promise<number> {
@@ -169,30 +186,49 @@ export async function computeAcademyMatchStats(
   recordingId: number,
   roster: MatchRoster,
   bindings: RosterBinding[],
+  preloadedPlay?: RecordingPlay | null,
 ): Promise<AcademyMatchStatsResult> {
-  const play = await loadRecordingPlay(recordingId, { keepSegments: true });
+  const play = preloadedPlay === undefined
+    ? await loadRecordingPlay(recordingId, { keepSegments: true })
+    : preloadedPlay;
   if (!play) return { available: false, hasBall: false, hasPitch: false, team: null, players: [] };
   const window = clipRangeToMatchWindow(0, play.manifest.duration, play.manifest)
     ?? { fromSeconds: 0, toSeconds: play.manifest.duration };
   const within = (t: number) => t >= window.fromSeconds && t < window.toSeconds;
-  const touches = play.touches.filter((t) => within(t.t));
-  const dribbles = play.dribbles.filter((d) => within(d.t0));
+  const trainingFlags = trainingRosterFlags(play, roster);
+  const isTrainingAdult = (player: MatchRosterPlayer) => roster.training && (
+    trainingFlags.get(player.id)?.adult ?? player.adult
+  ) === true;
+  const adultTracks = roster.training
+    ? new Set(roster.players.filter(isTrainingAdult).flatMap((player) => player.parts.map((part) => part.trackId)))
+    : new Set<string>();
+  const touches = play.touches.filter((t) => within(t.t) && !adultTracks.has(t.trackId));
+  const dribbles = play.dribbles.filter((d) => (
+    within(d.t0) && !adultTracks.has((d as { trackId?: string }).trackId ?? "")
+  ));
   const votes = (await goalVotesFor([recordingId])).get(recordingId) ?? [];
   const goals = play.hasBall ? reviewedGoalsOf(play, votes).filter((g) => g.status === "confirmed" && within(g.t)) : [];
   const shots = detectedShots(play.events.filter((e) => within(e.t)), touches, pitchSizeOf(play.manifest), shotContext(play));
 
   const rosterById = new Map(roster.players.map((p) => [p.id, p]));
-  const partsByPlayer = new Map<number, { rosterPlayerId: string; parts: ClaimedPart[] }>();
+  const partsByPlayer = new Map<number, { rosterPlayerId: string; parts: ClaimedPart[]; groupId: string | null }>();
   for (const binding of bindings) {
     const rosterPlayer = rosterById.get(binding.rosterPlayerId);
     if (!rosterPlayer) continue;
+    if (isTrainingAdult(rosterPlayer)) continue;
     const parts = clip(
       rosterPlayer.parts.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
       window.fromSeconds,
       window.toSeconds,
       play.fps,
     );
-    if (parts.length) partsByPlayer.set(binding.playerId, { rosterPlayerId: binding.rosterPlayerId, parts });
+    if (parts.length) partsByPlayer.set(binding.playerId, {
+      rosterPlayerId: binding.rosterPlayerId,
+      parts,
+      groupId: roster.training
+        ? trainingFlags.get(rosterPlayer.id)?.group ?? (rosterPlayer.group == null ? null : String(rosterPlayer.group))
+        : null,
+    });
   }
 
   // Our shirt is what our players were seen wearing; theirs is the other shirt on the pitch.
@@ -216,7 +252,7 @@ export async function computeAcademyMatchStats(
 
   const events = passEvents(touches, pick);
   let team: AcademyTeamStats | null = null;
-  if (pick) {
+  if (pick && !roster.training) {
     const played = playedOnly(play);
     const teamTouches = touches.filter((t) => played(t.t));
     const teamEvents = teamTouches.length === touches.length ? events : passEvents(teamTouches, pick);
@@ -247,12 +283,13 @@ export async function computeAcademyMatchStats(
   }
 
   const players: AcademyPlayerStats[] = [];
-  for (const [playerId, { rosterPlayerId, parts }] of partsByPlayer) {
+  for (const [playerId, { rosterPlayerId, parts, groupId }] of partsByPlayer) {
     const seconds = mergeSpans(parts.map((x) => [x.fromFrame / play.fps, x.toFrame / play.fps] as [number, number]))
       .reduce((s, [a, b]) => s + (b - a), 0);
     const row: AcademyPlayerStats = {
       playerId,
       rosterPlayerId,
+      ...(roster.training ? { groupId } : {}),
       minutes: Math.round((seconds / 60) * 10) / 10,
       distanceKm: null,
       topSpeedKmh: null,

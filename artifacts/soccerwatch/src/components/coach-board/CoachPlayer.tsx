@@ -201,8 +201,8 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const visible = useCallback((rosterId: string) => {
     const p = analysis?.players[rosterId];
     if (!p) return true;
-    if (p.adult && !board.showAdults) return false;
-    if (board.group && p.group !== board.group) return false;
+    if (analysis?.isTraining && p.adult && !board.showAdults) return false;
+    if (analysis?.isTraining && board.group && p.group !== board.group) return false;
     return true;
   }, [analysis, board.showAdults, board.group]);
   const visibleRef = useRef(visible);
@@ -602,7 +602,26 @@ export function CoachPlayer(props: CoachPlayerProps) {
     .map((x) => x.p);
   const ours = shown.filter((p) => p.playerId !== null);
   const others = shown.filter((p) => p.playerId === null);
-  const hiddenAdults = analysis?.hasAdults && !board.showAdults ? props.players.filter((p) => analysis.players[p.rosterId]?.adult).length : 0;
+  const trainingSections = analysis?.isTraining
+    ? [
+        ...analysis.groupDetails.map((group) => ({
+          id: group.id,
+          title: group.name,
+          color: group.color,
+          players: shown.filter((player) => analysis.players[player.rosterId]?.group === group.id),
+        })),
+        {
+          id: "__unassigned",
+          title: copy.analysis.ungrouped,
+          color: null,
+          players: shown.filter((player) => !analysis.players[player.rosterId]?.group),
+        },
+      ].filter((section) => section.players.length > 0)
+    : [];
+  const hiddenAdults = analysis?.isTraining && analysis.hasAdults && !board.showAdults
+    ? props.players.filter((p) => analysis.players[p.rosterId]?.adult).length
+    : 0;
+  const groupLabel = (id: string) => analysis?.groupDetails.find((group) => group.id === id)?.name ?? copy.analysis.group(id);
 
   const playerRow = (p: RosterPlayer) => {
     const spot = board.spotlights.find((s) => s.rosterId === p.rosterId);
@@ -710,12 +729,20 @@ export function CoachPlayer(props: CoachPlayerProps) {
             {panel === "players" ? (
               <div className="space-y-3">
                 {!props.analysed && <p className="text-xs text-muted-text">{copy.notAnalysed}</p>}
-                {analysis && (analysis.groups.length > 0 || analysis.hasAdults) && (
+                {analysis?.isTraining && (analysis.groups.length > 0 || analysis.hasAdults) && (
                   <section className="space-y-1.5 border-b border-line pb-3" data-testid="coach-training-filters">
                     {analysis.groups.length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         <Chip on={!board.group} onClick={() => setBoard({ ...board, group: undefined }, false)}>{copy.analysis.allGroups}</Chip>
-                        {analysis.groups.map((g) => <Chip key={g} on={board.group === g} onClick={() => setBoard({ ...board, group: board.group === g ? undefined : g }, false)}>{copy.analysis.group(g)}</Chip>)}
+                        {analysis.groups.map((g) => {
+                          const detail = analysis.groupDetails.find((group) => group.id === g);
+                          return (
+                            <Chip key={g} on={board.group === g} onClick={() => setBoard({ ...board, group: board.group === g ? undefined : g }, false)}>
+                              {detail?.color && <span className="h-2.5 w-2.5 rounded-sm border border-line" style={{ background: detail.color }} />}
+                              {groupLabel(g)}
+                            </Chip>
+                          );
+                        })}
                       </div>
                     )}
                     {analysis.hasAdults && (
@@ -726,8 +753,22 @@ export function CoachPlayer(props: CoachPlayerProps) {
                   </section>
                 )}
                 {analysis && !map && <p className="px-2 text-xs text-muted-text">{copy.analysis.needsPitch}</p>}
-                {ours.length > 0 && <section><h3 className="mb-1 px-2 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.ours}</h3>{ours.map(playerRow)}</section>}
-                {others.length > 0 && <section><h3 className="mb-1 px-2 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.others}</h3>{others.map(playerRow)}</section>}
+                {analysis?.isTraining ? (
+                  trainingSections.map((section) => (
+                    <section key={section.id} data-testid={`coach-group-${section.id}`}>
+                      <h3 className="mb-1 flex items-center gap-1.5 px-2 text-xs font-bold uppercase tracking-wide text-muted-text">
+                        {section.color && <span className="h-2.5 w-2.5 rounded-sm border border-line" style={{ background: section.color }} />}
+                        {section.title}
+                      </h3>
+                      {section.players.map(playerRow)}
+                    </section>
+                  ))
+                ) : (
+                  <>
+                    {ours.length > 0 && <section><h3 className="mb-1 px-2 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.ours}</h3>{ours.map(playerRow)}</section>}
+                    {others.length > 0 && <section><h3 className="mb-1 px-2 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.others}</h3>{others.map(playerRow)}</section>}
+                  </>
+                )}
               </div>
             ) : (
               <NotesList notes={props.notes ?? []} copy={copy} clockOf={(ms) => clockOf(ms / 1000)} activeId={activeNote?.id ?? null}
@@ -748,10 +789,13 @@ export function CoachPlayer(props: CoachPlayerProps) {
                 {analysis.oursKnown ? (side === 0 ? copy.analysis.ours : copy.analysis.theirs) : copy.analysis.kit(side + 1)}
               </button>
             ))}
-            {analysis.groups.map((g) => (
+            {analysis.isTraining && analysis.groups.map((g) => (
               <button key={g} type="button" onClick={() => { setBoard({ ...board, teamLines: { group: g } }); setLinesOpen(false); }}
                 className="inline-flex h-9 items-center gap-2 rounded-xl bg-raised px-3 text-sm font-semibold text-text hover:bg-raised/70" dir="auto">
-                {copy.analysis.group(g)}
+                {analysis.groupDetails.find((group) => group.id === g)?.color && (
+                  <span className="h-3 w-3 rounded-sm border border-line" style={{ background: analysis.groupDetails.find((group) => group.id === g)!.color! }} />
+                )}
+                {groupLabel(g)}
               </button>
             ))}
             {!analysis.kits && !analysis.groups.length && <p className="text-sm text-muted-text">{copy.analysis.noSides}</p>}

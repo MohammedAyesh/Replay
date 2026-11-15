@@ -16,11 +16,29 @@ export type MatchRosterPlayer = {
   number: string | null;
   /** The pipeline's best reading when it declined to name one (people/match.json number_cand). */
   numberCandidate?: string | null;
+  /** A rejected reading is retained for auditability, but must never be shown or used to bind a player. */
+  numberDropped?: { number?: string | number; why?: string; [key: string]: unknown };
+  adult?: boolean;
+  group?: string | number | null;
   minutes: number;
   parts: MatchRosterPart[];
 };
 
-export type MatchRoster = { v: 1; players: MatchRosterPlayer[] };
+export type MatchTrainingGroup = {
+  id: string;
+  name: string;
+  torso?: [number, number, number];
+  trackMinutes?: number;
+};
+
+export type MatchTraining = {
+  mode?: unknown;
+  groups?: unknown;
+  timeline?: unknown;
+  [key: string]: unknown;
+};
+
+export type MatchRoster = { v: 1; players: MatchRosterPlayer[]; training?: MatchTraining };
 
 export type MatchRosterSummary = {
   playerCount: number;
@@ -109,6 +127,30 @@ function rosterId(value: unknown): string | null {
   return null;
 }
 
+/** A safe display view of groups; the stored training object itself is untouched. */
+export function matchTrainingGroups(roster: MatchRoster | null | undefined): MatchTrainingGroup[] {
+  const rawGroups = roster?.training?.groups;
+  if (!Array.isArray(rawGroups)) return [];
+  return rawGroups.flatMap((value): MatchTrainingGroup[] => {
+    const raw = asRecord(value);
+    const id = rosterId(raw.id);
+    if (!id) return [];
+    const name = firstString(raw.name)?.trim().slice(0, 120) || id;
+    const torso = Array.isArray(raw.torso)
+      && raw.torso.length >= 3
+      && raw.torso.slice(0, 3).every((part) => typeof part === "number" && Number.isFinite(part))
+      ? raw.torso.slice(0, 3) as [number, number, number]
+      : undefined;
+    const trackMinutes = firstNumber(raw.trackMinutes ?? raw.track_minutes);
+    return [{
+      id,
+      name,
+      ...(torso ? { torso } : {}),
+      ...(trackMinutes !== undefined ? { trackMinutes } : {}),
+    }];
+  });
+}
+
 function shirtNumber(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) return value.trim().slice(0, 24);
   if (typeof value === "number" && Number.isFinite(value) && Number.isInteger(value)) return String(value);
@@ -131,14 +173,16 @@ export function parseMatchRoster(
   trackingSegments: TrackingSegmentPayload[],
 ): MatchRoster | null {
   const raw = asRecord(input);
-  if (!Array.isArray(raw.players)) return null;
+  const rawTraining = asRecord(raw.training);
+  const hasTraining = Boolean(raw.training && typeof raw.training === "object" && !Array.isArray(raw.training));
+  if (!Array.isArray(raw.players) && !hasTraining) return null;
 
   const segmentByName = new Map(trackingSegments.map((segment) => [segment.name, segment]));
   const seenPlayerIds = new Set<string>();
   const assignedTracks = new Set<string>();
   const players: MatchRosterPlayer[] = [];
 
-  for (const value of raw.players.slice(0, MAX_MATCH_ROSTER_PLAYERS)) {
+  for (const value of (Array.isArray(raw.players) ? raw.players : []).slice(0, MAX_MATCH_ROSTER_PLAYERS)) {
     const player = asRecord(value);
     const id = rosterId(player.id ?? player.playerId ?? player.player_id ?? player.pid);
     if (!id || seenPlayerIds.has(id) || !Array.isArray(player.parts)) continue;
@@ -183,23 +227,32 @@ export function parseMatchRoster(
     const name = firstString(player.name);
     const numberCandidate = shirtNumber(player.number_cand ?? player.numberCandidate);
     const minutes = firstNumber(player.minutes);
+    const dropped = asRecord(player.number_dropped ?? player.numberDropped);
+    const adult = typeof player.adult === "boolean" ? player.adult : undefined;
+    const group = typeof player.group === "string" || typeof player.group === "number" || player.group === null
+      ? player.group
+      : undefined;
     players.push({
       id,
       name: name?.trim().slice(0, 120) || null,
       number: shirtNumber(player.number),
       ...(numberCandidate ? { numberCandidate } : {}),
+      ...(Object.keys(dropped).length ? { numberDropped: dropped as MatchRosterPlayer["numberDropped"] } : {}),
+      ...(adult !== undefined ? { adult } : {}),
+      ...(group !== undefined ? { group } : {}),
       minutes: minutes !== undefined && minutes >= 0 ? minutes : 0,
       parts: parts.sort((a, b) => a.segmentIndex - b.segmentIndex || a.fromFrame - b.fromFrame),
     });
   }
 
-  return players.length ? { v: 1, players } : null;
+  if (!players.length && !hasTraining) return null;
+  return { v: 1, players, ...(hasTraining ? { training: rawTraining as MatchTraining } : {}) };
 }
 
 export function summarizeMatchRoster(roster: MatchRoster): MatchRosterSummary {
   return {
     playerCount: roster.players.length,
-    numberedPlayerCount: roster.players.filter((player) => player.number !== null).length,
+    numberedPlayerCount: roster.players.filter((player) => player.number !== null && !player.numberDropped).length,
     playerMinutes: Math.round(roster.players.reduce((sum, player) => sum + player.minutes, 0) * 10) / 10,
   };
 }

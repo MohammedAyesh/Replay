@@ -17,11 +17,12 @@ import {
   type DetectedPlayer,
   type LineupPlayer,
   type MatchDetail,
+  type MatchTraining,
   type MatchListItem,
   type MatchSession,
   type PlayerStatsRow,
 } from "@/lib/academy-matches-api";
-import { METRICS, combine, ratingsFor, type MetricKey } from "@/lib/academy-match-metrics";
+import { METRICS, combine, ratingsFor, trainingTimelineBuckets, type MetricKey } from "@/lib/academy-match-metrics";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -327,9 +328,16 @@ function Photo({ jpeg, className }: { jpeg: string | undefined; className?: stri
 function WhoCard({ academyId, data, copy }: { academyId: number; data: MatchDetail; copy: Copy }) {
   const bind = useBindPlayer(academyId, data.session.id);
   const [picking, setPicking] = useState<LineupPlayer | null>(null);
+  const [showAdults, setShowAdults] = useState(false);
+  const [activeGroup, setActiveGroup] = useState<string | null>(null);
   const squad = data.lineup.filter((p) => p.inSquad);
   const byId = new Map(data.detected.map((d) => [d.id, d]));
   const takenBy = new Map(data.lineup.filter((p) => p.boundTo).map((p) => [p.boundTo!, p]));
+  const hasAdults = Boolean(data.training && data.detected.some((player) => player.adult === true));
+  const visibleDetected = data.detected.filter((player) => (
+    !data.training
+    || ((showAdults || player.adult !== true) && (activeGroup === null || player.group === activeGroup))
+  ));
 
   return (
     <Card title={copy.steps.whoIsWho} step={3} testId="match-who"
@@ -367,10 +375,36 @@ function WhoCard({ academyId, data, copy }: { academyId: number; data: MatchDeta
             <DialogTitle dir="auto">{picking ? copy.who.pickTitle(picking.name) : ""}</DialogTitle>
             <DialogDescription>{copy.who.pickHint}</DialogDescription>
           </DialogHeader>
+          {data.training && (data.training.groups.length > 0 || hasAdults) && (
+            <div className="space-y-2 border-b border-line pb-3" data-testid="match-training-filters">
+              {data.training.groups.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <button type="button" onClick={() => setActiveGroup(null)} aria-pressed={activeGroup === null}
+                    className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold", activeGroup === null ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")}>
+                    {copy.trainingStats.allGroups}
+                  </button>
+                  {data.training.groups.map((group) => (
+                    <button key={group.id} type="button" onClick={() => setActiveGroup(activeGroup === group.id ? null : group.id)} aria-pressed={activeGroup === group.id}
+                      className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-full px-3 text-xs font-semibold", activeGroup === group.id ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")}>
+                      {group.color && <span className="h-2.5 w-2.5 rounded-sm border border-line" style={{ background: group.color }} />}
+                      {group.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {hasAdults && (
+                <button type="button" onClick={() => setShowAdults((visible) => !visible)}
+                  className="min-h-8 rounded-full bg-raised px-3 text-xs font-semibold text-muted-text">
+                  {showAdults ? copy.trainingStats.hideAdults : copy.trainingStats.showAdults}
+                </button>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-            {[...data.detected].sort((a, b) => b.minutes - a.minutes).map((d: DetectedPlayer) => {
+            {[...visibleDetected].sort((a, b) => b.minutes - a.minutes).map((d: DetectedPlayer) => {
               const owner = takenBy.get(d.id);
               const current = picking?.boundTo === d.id;
+              const number = d.numberDropped ? null : d.number ?? d.numberCandidate;
               return (
                 <button key={d.id} type="button" disabled={bind.isPending}
                   onClick={() => picking && bind.mutate({ playerId: picking.playerId, rosterPlayerId: d.id }, { onSuccess: () => setPicking(null) })}
@@ -380,7 +414,7 @@ function WhoCard({ academyId, data, copy }: { academyId: number; data: MatchDeta
                     {(d.photos.length ? d.photos : [undefined]).slice(0, 3).map((photo, i) => <Photo key={i} jpeg={photo} className="h-full min-w-0 flex-1" />)}
                   </span>
                   <span className="block p-2 text-xs">
-                    <span className="font-display text-base font-bold tabular-nums text-text">{d.number ?? d.numberCandidate ?? copy.who.noNumber}</span>
+                    <span className="font-display text-base font-bold tabular-nums text-text">{number ?? copy.who.noNumber}</span>
                     <span className="ms-1.5 text-muted-text">{copy.who.minutes(Math.round(d.minutes))}</span>
                     {owner && owner.playerId !== picking?.playerId && <span className="mt-0.5 block truncate text-amber-200" dir="auto">{owner.name}</span>}
                   </span>
@@ -402,12 +436,47 @@ function StatsCard({ academyId, data, copy }: { academyId: number; data: MatchDe
   const refresh = useRefreshMatchStats(academyId, data.session.id);
   const [selected, setSelected] = useState<number[]>([]);
   const names = new Map(data.lineup.map((p) => [p.playerId, p]));
+  const adultRosterIds = useMemo(
+    () => new Set(data.detected.filter((player) => player.adult === true).map((player) => player.id)),
+    [data.detected],
+  );
   const players = useMemo(
-    () => (data.stats?.players ?? []).map((s) => ({ playerId: s.playerId, name: names.get(s.playerId)?.name ?? `#${s.playerId}`, shirtNumber: names.get(s.playerId)?.shirtNumber ?? null, stats: s })),
+    () => (data.stats?.players ?? [])
+      .filter((stats) => !data.training || !adultRosterIds.has(stats.rosterPlayerId))
+      .map((stats) => ({
+        playerId: stats.playerId,
+        name: names.get(stats.playerId)?.name ?? `#${stats.playerId}`,
+        shirtNumber: names.get(stats.playerId)?.shirtNumber ?? null,
+        stats,
+      })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data.stats, data.lineup],
+    [data.stats, data.lineup, data.training, adultRosterIds],
   );
   const ratings = useMemo(() => ratingsFor(players), [players]);
+  const trainingSections = useMemo(() => {
+    if (!data.training) return [];
+    const groups = new Map(data.training.groups.map((group) => [group.id, {
+      id: group.id,
+      name: group.name,
+      color: group.color,
+      players: [] as typeof players,
+    }]));
+    const unassigned: typeof players = [];
+    for (const player of players) {
+      const id = player.stats.groupId;
+      if (!id) {
+        unassigned.push(player);
+        continue;
+      }
+      const section = groups.get(id) ?? { id, name: id, color: null, players: [] as typeof players };
+      section.players.push(player);
+      groups.set(id, section);
+    }
+    return [
+      ...[...groups.values()].filter((group) => group.players.length > 0),
+      ...(unassigned.length ? [{ id: "__unassigned", name: copy.trainingStats.unassigned, color: null, players: unassigned }] : []),
+    ];
+  }, [data.training, players, copy.trainingStats.unassigned]);
   const toggle = (id: number) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : s.length >= 3 ? [...s.slice(1), id] : [...s, id]));
   const compare: ComparePlayer[] = selected.map((id) => players.find((p) => p.playerId === id)).filter((p): p is (typeof players)[number] => Boolean(p))
     .map((p) => ({ id: p.playerId, name: p.name, values: matchValues(p.stats, ratings.get(p.playerId) ?? null) }));
@@ -415,21 +484,114 @@ function StatsCard({ academyId, data, copy }: { academyId: number; data: MatchDe
   return (
     <Card title={copy.steps.stats} step={4} testId="match-stats"
       action={data.analysis.analysed ? <Button type="button" size="sm" variant="ghost" disabled={refresh.isPending} onClick={() => refresh.mutate()}><RefreshCw className={cn("me-1.5 h-4 w-4", refresh.isPending && "animate-spin")} aria-hidden="true" />{copy.stats.refresh}</Button> : undefined}>
-      {!players.length ? <p className="text-sm text-muted-text">{data.analysis.analysed ? copy.stats.none : copy.family.notAnalysed}</p> : (
+      {!players.length ? (
+        <div className="space-y-4">
+          {data.training && <SessionTimelineChart training={data.training} copy={copy} />}
+          <p className="text-sm text-muted-text">
+            {data.analysis.analysed
+              ? data.training ? copy.trainingStats.noStats : copy.stats.none
+              : copy.family.notAnalysed}
+          </p>
+        </div>
+      ) : (
         <div className="space-y-5">
-          {data.stats?.team && (
+          {data.training && <SessionTimelineChart training={data.training} copy={copy} />}
+          {!data.training && data.stats?.team && (
             <div className="rounded-xl bg-raised/50 p-4">
               <p className="mb-3 text-xs font-bold uppercase tracking-wide text-muted-text">{copy.stats.team}</p>
               <TeamStatsBars team={data.stats.team} hasBall={data.stats.hasBall} copy={copy} />
             </div>
           )}
-          <PlayerStatsTable players={players} copy={copy} selected={selected} onToggle={toggle} />
+          {data.training ? trainingSections.map((group) => (
+            <section key={group.id} className="space-y-2" data-testid={`training-stats-group-${group.id}`}>
+              <h3 className="flex items-center gap-2 text-sm font-bold text-text" dir="auto">
+                {group.color && <span className="h-3 w-3 rounded-sm border border-line" style={{ background: group.color }} />}
+                {group.name}
+              </h3>
+              <PlayerStatsTable players={group.players} copy={copy} selected={selected} onToggle={toggle} />
+            </section>
+          )) : (
+            <PlayerStatsTable players={players} copy={copy} selected={selected} onToggle={toggle} />
+          )}
           {compare.length >= 2 ? <div className="rounded-xl bg-raised/50 p-4"><CompareBars players={compare} copy={copy} /></div>
             : <p className="text-xs text-muted-text">{copy.stats.compareHint}</p>}
           <p className="text-xs text-muted-text">{copy.stats.goalsNote}</p>
         </div>
       )}
     </Card>
+  );
+}
+
+function SessionTimelineChart({ training, copy }: { training: MatchTraining; copy: Copy }) {
+  const buckets = useMemo(() => trainingTimelineBuckets(training.timeline), [training.timeline]);
+  const groupById = new Map(training.groups.map((group) => [group.id, group]));
+  const ids = [...new Set([
+    ...training.groups.map((group) => group.id),
+    ...buckets.flatMap((bucket) => Object.keys(bucket.groups)),
+  ])];
+  const groups = ids.map((id, index) => ({
+    id,
+    name: groupById.get(id)?.name ?? id,
+    color: groupById.get(id)?.color ?? ["#61A9BD", "#CED14E", "#DD83C9", "#1F74AD", "#E98E2E"][index % 5],
+  }));
+  const hasAdults = buckets.some((bucket) => bucket.adults > 0);
+  const totals = buckets.map((bucket) => (
+    Object.values(bucket.groups).reduce((sum, value) => sum + value, 0) + bucket.adults
+  ));
+  const maxTotal = Math.max(1, ...totals);
+  if (!buckets.length) return null;
+  const accessibleSummary = buckets.map((bucket) => {
+    const time = `${Math.round(bucket.seconds / 60)} ${copy.trainingStats.minute}`;
+    const counts = groups.map((group) => `${group.name}: ${bucket.groups[group.id] ?? 0}`);
+    if (hasAdults) counts.push(`${copy.trainingStats.adults}: ${bucket.adults}`);
+    return `${time}: ${counts.join(", ")}`;
+  }).join("; ");
+
+  return (
+    <figure className="rounded-xl bg-raised/50 p-4" data-testid="training-session-chart" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
+      <figcaption className="mb-3 font-display text-base font-bold text-text">{copy.trainingStats.session}</figcaption>
+      <div className="overflow-x-auto pb-1" role="img" aria-label={`${copy.trainingStats.session}: ${accessibleSummary}`}>
+        <div className="flex min-w-max items-end gap-2">
+          {buckets.map((bucket, index) => {
+            const total = totals[index];
+            return (
+              <div key={bucket.seconds} className="flex w-9 flex-col items-center justify-end gap-1">
+                <div className="flex h-28 w-6 items-end">
+                  <div className="flex w-full flex-col-reverse overflow-hidden rounded-t-sm"
+                    style={{ height: `${(total / maxTotal) * 100}%` }}
+                    title={[
+                      ...groups.map((group) => `${group.name}: ${bucket.groups[group.id] ?? 0}`),
+                      ...(hasAdults ? [`${copy.trainingStats.adults}: ${bucket.adults}`] : []),
+                    ].join(" · ")}>
+                    {groups.map((group) => {
+                      const amount = bucket.groups[group.id] ?? 0;
+                      return amount > 0
+                        ? <span key={group.id} className="block min-h-0 w-full" style={{ flexGrow: amount, background: group.color }} />
+                        : null;
+                    })}
+                    {bucket.adults > 0 && <span className="block min-h-0 w-full bg-zinc-500" style={{ flexGrow: bucket.adults }} />}
+                  </div>
+                </div>
+                <span className="text-[10px] tabular-nums text-muted-text">{Math.round(bucket.seconds / 60)}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <p className="mt-1 text-end text-[10px] text-muted-text">{copy.trainingStats.minute}</p>
+      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1.5">
+        {groups.map((group) => (
+          <span key={group.id} className="inline-flex items-center gap-1.5 text-[11px] text-muted-text" dir="auto">
+            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: group.color }} />{group.name}
+          </span>
+        ))}
+        {hasAdults && (
+          <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-text">
+            <span className="h-2.5 w-2.5 rounded-sm bg-zinc-500" />{copy.trainingStats.adults}
+          </span>
+        )}
+      </div>
+    </figure>
   );
 }
 

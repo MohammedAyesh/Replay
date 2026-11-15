@@ -28,16 +28,19 @@ import {
   recordingTrackingSegmentsTable,
 } from "@workspace/db";
 
+const storedClaimObjects = vi.hoisted(() => new Map<string, string>());
+
 // The bundle store is Replit object storage; there is none here. Everything
 // this file cares about happens before and after the bytes are written.
 vi.mock("../lib/claimMatchStorage", () => ({
   deleteClaimSegment: vi.fn(),
-  readClaimSegment: vi.fn(),
+  readClaimSegment: vi.fn(async (objectPath: string) => Buffer.from(storedClaimObjects.get(objectPath) ?? "{}")),
   readCompressedClaimSegment: vi.fn(),
-  writeClaimSegment: vi.fn(async (relativePath: string) => ({
-    objectPath: `/objects/claim-match/${relativePath}`,
-    compressedBytes: 128,
-  })),
+  writeClaimSegment: vi.fn(async (relativePath: string, value: unknown) => {
+    const objectPath = `/objects/claim-match/${relativePath}`;
+    storedClaimObjects.set(objectPath, JSON.stringify(value));
+    return { objectPath, compressedBytes: 128 };
+  }),
 }));
 
 vi.mock("../lib/bunny", () => ({
@@ -61,13 +64,21 @@ vi.mock("./contabo", () => ({
   controlFetch: vi.fn(),
 }));
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { loadMatchRoster } from "../lib/academyMatchStats";
+import { readClaimSegment } from "../lib/claimMatchStorage";
 import { controlFetch } from "./contabo";
 import * as rosterHintsModule from "../lib/rosterHints";
 import { buildRosterHintsForRecording } from "../lib/rosterHints";
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
 /** The smallest bundle the validator accepts: one segment, frames 0..1. */
-function bundleZip(videoStartSeconds = 0): Buffer {
+function bundleZip(
+  videoStartSeconds = 0,
+  trainingBundle?: {
+    roster: Record<string, unknown>;
+    people: Record<string, unknown>;
+  },
+): Buffer {
   const segment = {
     version: 1,
     segmentIndex: 0,
@@ -76,7 +87,7 @@ function bundleZip(videoStartSeconds = 0): Buffer {
     endFrame: 1,
     startSeconds: 0,
     endSeconds: 0.08,
-    tracks: [],
+    tracks: trainingBundle ? [{ id: "t1", startFrame: 0, endFrame: 1, boxes: [] }] : [],
     crossings: [],
     inPlaySpans: [],
     events: [],
@@ -100,6 +111,10 @@ function bundleZip(videoStartSeconds = 0): Buffer {
   return Buffer.from(zipSync({
     "manifest.json": strToU8(JSON.stringify(manifest)),
     "segments/one.json": strToU8(JSON.stringify(segment)),
+    ...(trainingBundle ? {
+      "people/match.json": strToU8(JSON.stringify(trainingBundle.roster)),
+      "people/one.json": strToU8(JSON.stringify(trainingBundle.people)),
+    } : {}),
   }));
 }
 
@@ -455,6 +470,11 @@ describe("queueing a job", () => {
     };
     const res = await queueJob({ params }).expect(201);
     expect(res.body.params).toEqual(params);
+  });
+
+  it("keeps the training mode flag in the queued worker parameters", async () => {
+    const res = await queueJob({ params: { training: true } }).expect(201);
+    expect(res.body.params).toEqual({ training: true });
   });
 
   it("accepts the maximum GPU count and 64-character values", async () => {
@@ -1093,6 +1113,78 @@ describe("the bundle the worker sends back", () => {
     const segments = await db.select().from(recordingTrackingSegmentsTable)
       .where(eq(recordingTrackingSegmentsTable.bundleId, bundle.id));
     expect(segments).toHaveLength(1);
+  });
+
+  it("round-trips training metadata through bundle upload and the roster loader", async () => {
+    const id = await claimAJob();
+    const training = {
+      mode: "training",
+      groups: [{ id: "red", name: "Red group", torso: [54, 28, 19], trackMinutes: 8 }],
+      adultRule: { threshold: 1.78 },
+      adultStature: 1.82,
+      adultShare: 0.3,
+      logoGroups: ["red"],
+      numbersDropped: 1,
+      timeline: [{ t: 0, groups: { red: 4 }, adults: 1 }],
+    };
+    const zip = bundleZip(0, {
+      roster: {
+        players: [{
+          id: "p1",
+          number: "7",
+          number_cand: "17",
+          number_dropped: { number: "7", why: "low confidence" },
+          adult: false,
+          group: "red",
+          minutes: 5,
+          parts: [["one", "t1"]],
+        }],
+        training,
+      },
+      people: {
+        training: true,
+        pieces: {
+          t1: {
+            to: [54, 28, 19],
+            sh: [0, 0, 0],
+            hi: new Array(32).fill(1 / 32),
+            hr: 1,
+            nr: 40,
+            kit: 1,
+            stature: 1.72,
+            adult: false,
+            group: "red",
+          },
+        },
+        groups: [],
+      },
+    });
+
+    await request(app).put(`/api/worker/analysis/${id}/bundle`)
+      .set("x-worker-key", KEY)
+      .field("workerId", "w1")
+      .field("recordingId", String(recA))
+      .field("videoStartSeconds", "0")
+      .attach("bundle", zip, "training.zip")
+      .expect(200);
+
+    const [bundle] = await db.select().from(recordingTrackingBundlesTable)
+      .where(eq(recordingTrackingBundlesTable.recordingId, recA));
+    const roster = await loadMatchRoster(bundle.manifest as never);
+    expect(roster?.training).toEqual(training);
+    expect(roster?.players[0]).toMatchObject({
+      numberDropped: { number: "7", why: "low confidence" },
+      adult: false,
+      group: "red",
+    });
+
+    const peoplePath = bundle.manifest.segments[0].peoplePath;
+    expect(peoplePath).toBeTruthy();
+    const people = JSON.parse((await readClaimSegment(peoplePath!)).toString("utf8"));
+    expect(people).toMatchObject({
+      training: true,
+      pieces: { "s0:t1": { stature: 1.72, adult: false, group: "red" } },
+    });
   });
 });
 

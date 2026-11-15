@@ -67,6 +67,8 @@ const analysis: CoachAnalysis = {
     coach: { side: 0, kit: "#ffffff", group: null, adult: true },
   },
   groups: [],
+  groupDetails: [],
+  isTraining: true,
   hasAdults: true,
 };
 const boxes = new Map([

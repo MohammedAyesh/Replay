@@ -683,12 +683,10 @@ async function completeRequest(
   if (completed.length === 0) return false;
 
   // Only the call that actually completed the request queues its analysis.
-  if (row.academyId === null) {
-    try {
-      await queueLiveAnalysisForBooking(row, videoId, deliveredSeconds);
-    } catch (error) {
-      logger.warn({ requestId: row.id, error }, "Could not queue the booking's analysis");
-    }
+  try {
+    await queueLiveAnalysisForBooking(row, videoId, deliveredSeconds);
+  } catch (error) {
+    logger.warn({ requestId: row.id, error }, "Could not queue the booking's analysis");
   }
   try {
     await attachAcademyRecordingsForFootageRequest(row, videoId, deliveredSeconds);

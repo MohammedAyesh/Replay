@@ -29,6 +29,10 @@ const manifest = (extra: Partial<TrackingManifest> & Record<string, unknown> = {
 const part = (trackId: string, fromFrame: number, toFrame: number) => ({ segmentIndex: 0, segmentName: "c0", trackId, fromFrame, toFrame });
 const ROSTER: MatchRoster = {
   v: 1,
+  training: {
+    mode: "training",
+    groups: [{ id: "white", name: "White group", torso: [200, 128, 128], trackMinutes: 8 }],
+  },
   players: [
     { id: "p1", name: null, number: "7", minutes: 9, parts: [part("s0:t1", 0, 9000)] },
     { id: "p2", name: null, number: "9", minutes: 9, parts: [part("s0:t2", 0, 9000)] },
@@ -145,10 +149,35 @@ describe("buildCoachAnalysis", () => {
 
   it("carries training flags and lists the groups", () => {
     const out = buildCoachAnalysis(play(), ROSTER, new Set());
+    expect(out.isTraining).toBe(true);
     expect(out.hasAdults).toBe(true);
     expect(out.players.coach.adult).toBe(true);
     expect(out.players.p3.group).toBe("white");
     expect(out.groups).toEqual(["white"]);
+    expect(out.groupDetails[0]).toMatchObject({ id: "white", name: "White group", color: expect.any(String) });
+  });
+
+  it("does not apply training visibility flags to a standard match", () => {
+    const { training: _training, ...standardMatch } = ROSTER;
+    const out = buildCoachAnalysis(play(), standardMatch, new Set());
+    expect(out.isTraining).toBe(false);
+    expect(out.hasAdults).toBe(false);
+    expect(out.players.coach.adult).toBeNull();
+    expect(out.players.p3.group).toBeNull();
+    expect(out.groups).toEqual([]);
+  });
+
+  it("uses adult and group fields from the match roster", () => {
+    const roster: MatchRoster = {
+      ...ROSTER,
+      players: ROSTER.players.map((player) => player.id === "p1"
+        ? { ...player, adult: true, group: "red" }
+        : player),
+    };
+    const out = buildCoachAnalysis(play(), roster, new Set());
+    expect(out.players.p1).toMatchObject({ adult: true, group: "red" });
+    expect(out.hasAdults).toBe(true);
+    expect(out.groupDetails.map((group) => group.id)).toEqual(["red", "white"]);
   });
 
   it("samples which side attacks the far goal through the video, on the video clock", () => {

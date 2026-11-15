@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Check, Pencil, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatStartTime, parseStartTime } from "@/lib/analysisStart";
+import { useLocale } from "@/i18n/context";
 
 /**
  * The analysis queue.
@@ -62,6 +63,7 @@ interface Job {
     gpus?: string[];
     cards?: "auto" | number;
     fleetTargetMin?: FleetTargetMin;
+    training?: boolean;
   };
   status: JobStatus;
   stage: string | null;
@@ -424,11 +426,13 @@ function matchRosterSummaryLine(summary: MatchRosterSummary | null): string | nu
 }
 
 export default function AnalysisTab() {
+  const { locale } = useLocale();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [options, setOptions] = useState<RecordingOption[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [startInput, setStartInput] = useState("0:00");
+  const [trainingMode, setTrainingMode] = useState(false);
   const [queueMode, setQueueMode] = useState<"finish" | "advanced">("finish");
   const [fleetTargetMin, setFleetTargetMin] = useState<FleetTargetMin>(120);
   const [cardCount, setCardCount] = useState(1);
@@ -651,6 +655,7 @@ export default function AnalysisTab() {
       const params = queueMode === "finish"
         ? buildAnalysisJobParams("finish", gpuCards, fleetCardCount, fleetTargetMin)
         : buildAnalysisJobParams(gpuMode, gpuCards, fleetCardCount);
+      if (trainingMode) params.training = true;
       await api("/admin/analysis-jobs", {
         method: "POST",
         body: JSON.stringify({
@@ -661,6 +666,7 @@ export default function AnalysisTab() {
         }),
       });
       setSelected([]);
+      setTrainingMode(false);
       setQueueMode("finish");
       setFleetTargetMin(120);
       setCardCount(1);
@@ -921,6 +927,25 @@ export default function AnalysisTab() {
                 : `${formatStartTime(startSeconds)} into the first recording`}
             </p>
           </div>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2" dir={locale === "ar" ? "rtl" : "ltr"}>
+            <input
+              type="checkbox"
+              checked={trainingMode}
+              onChange={(event) => setTrainingMode(event.target.checked)}
+              className="h-4 w-4 accent-sky-500"
+              data-testid="analysis-training-mode"
+            />
+            <span>
+              <span className="block text-xs font-semibold text-zinc-200">
+                {locale === "ar" ? "جلسة تدريبية" : "Training session"}
+              </span>
+              <span className="block text-[11px] text-zinc-500">
+                {locale === "ar"
+                  ? "فعّل تقسيم المجموعات واستبعاد المدربين من إحصاءات اللاعبين."
+                  : "Enable group splits and keep coaches out of player stats."}
+              </span>
+            </span>
+          </label>
           {queueMode === "advanced" && <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <div className="w-20 shrink-0">

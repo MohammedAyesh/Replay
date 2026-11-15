@@ -65,4 +65,91 @@ export function ratingsFor(players: Array<{ playerId: number; name: string; stat
   return out;
 }
 
+export type TrainingTimelineBucket = {
+  seconds: number;
+  groups: Record<string, number>;
+  adults: number;
+};
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function count(value: unknown): number {
+  const raw = record(value);
+  const scalar = value && typeof value === "object" ? raw.count ?? raw.visible ?? raw.players ?? raw.n : value;
+  const numeric = typeof scalar === "number" ? scalar : Number(scalar);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function clockSeconds(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
+  if (typeof value !== "string") return null;
+  const parts = value.trim().split(":").map(Number);
+  if (parts.length < 2 || parts.length > 3 || parts.some((part) => !Number.isFinite(part))) return null;
+  return parts.length === 2
+    ? Math.max(0, parts[0] * 60 + parts[1])
+    : Math.max(0, parts[0] * 3600 + parts[1] * 60 + parts[2]);
+}
+
+function timelineRows(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.slice(0, 5000);
+  const raw = record(value);
+  return Object.entries(raw).slice(0, 5000).flatMap(([key, row]) => {
+    const seconds = clockSeconds(key);
+    return seconds === null ? [] : [{ ...record(row), seconds }];
+  });
+}
+
+function groupCounts(value: unknown): Record<string, number> {
+  const out: Record<string, number> = {};
+  const rows = Array.isArray(value)
+    ? value.map((item) => {
+        const row = record(item);
+        return [row.id ?? row.group ?? row.name, row.count ?? row.visible ?? row.players ?? row.n];
+      })
+    : Object.entries(record(value));
+  for (const [key, raw] of rows) {
+    if (typeof key !== "string" && typeof key !== "number") continue;
+    const groupId = String(key);
+    const row = record(raw);
+    const value = raw && typeof raw === "object"
+      ? row.count ?? row.visible ?? row.players ?? row.n
+      : raw;
+    if (groupId && groupId !== "adults" && groupId !== "adult") out[groupId] = count(value);
+  }
+  return out;
+}
+
+/** Reduce pipeline timeline samples to five-minute average headcounts. */
+export function trainingTimelineBuckets(input: unknown): TrainingTimelineBucket[] {
+  const bins = new Map<number, { groups: Map<string, number>; adults: number[]; samples: number }>();
+  for (const value of timelineRows(input)) {
+    const row: Record<string, unknown> = Array.isArray(value)
+      ? { t: value[0], groups: value[1], adults: value[2] }
+      : record(value);
+    const minuteValue = row.minute ?? row.minutes ?? row.atMinute;
+    const secondsValue = row.seconds ?? row.second ?? row.startSeconds ?? row.timeSeconds ?? row.secondsFromStart;
+    const timeValue = row.t ?? row.start ?? row.time ?? row.at;
+    const timeSeconds = typeof minuteValue === "number" && Number.isFinite(minuteValue)
+      ? Math.max(0, minuteValue * 60)
+      : clockSeconds(secondsValue ?? timeValue ?? row.seconds);
+    if (timeSeconds === null) continue;
+    const bucketSeconds = Math.floor(timeSeconds / 300) * 300;
+    const bucket = bins.get(bucketSeconds) ?? { groups: new Map<string, number>(), adults: [], samples: 0 };
+    const groups = groupCounts(row.groups ?? row.kids ?? row.children ?? row.byGroup ?? row.by_group);
+    for (const [group, amount] of Object.entries(groups)) {
+      bucket.groups.set(group, (bucket.groups.get(group) ?? 0) + amount);
+    }
+    bucket.adults.push(count(row.adults ?? row.adult ?? row.coaches));
+    bucket.samples += 1;
+    bins.set(bucketSeconds, bucket);
+  }
+  return [...bins.entries()].sort(([a], [b]) => a - b).map(([seconds, bucket]) => ({
+    seconds,
+    groups: Object.fromEntries([...bucket.groups.entries()].map(([id, total]) => [id, Math.round(total / bucket.samples)])),
+    adults: Math.round(bucket.adults.reduce((sum, amount) => sum + amount, 0) / bucket.samples),
+  }));
+}
+
 export const COMPARE_COLOURS = ["#D4FF4F", "#2FD8C4", "#7B5CFF"];

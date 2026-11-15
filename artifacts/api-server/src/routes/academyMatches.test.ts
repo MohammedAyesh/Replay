@@ -44,13 +44,14 @@ const ROSTER = {
   ],
 };
 let analysed = false;
+let suppliedRoster: unknown = ROSTER;
 
 vi.mock("../lib/academyMatchStats", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/academyMatchStats")>();
   return {
     ...actual,
     latestBundle: vi.fn(async () => (analysed ? { id: 99, manifest: { matchRosterPath: "x", segments: [], duration: 3600 } } : null)),
-    loadMatchRoster: vi.fn(async () => (analysed ? ROSTER : null)),
+    loadMatchRoster: vi.fn(async () => (analysed ? suppliedRoster : null)),
     goalVoteCount: vi.fn(async () => 0),
     computeAcademyMatchStats: vi.fn(async (_recordingId: number, _roster: unknown, bindings: Array<{ playerId: number; rosterPlayerId: string }>) => ({
       available: true,
@@ -66,7 +67,7 @@ vi.mock("../lib/academyMatchStats", async (importOriginal) => {
 });
 vi.mock("./claimMatch", () => ({
   rosterInsideMatchWindow: (roster: unknown) => roster,
-  rosterPlayersWithPhotos: async (_m: unknown, roster: typeof ROSTER) => roster.players.map((p) => ({ ...p, photos: [] })),
+  rosterPlayersWithPhotos: async (_m: unknown, roster: { players: Array<Record<string, unknown>> }) => roster.players.map((p) => ({ ...p, photos: [] })),
 }));
 
 import matchesRouter from "./academyMatches";
@@ -131,7 +132,7 @@ beforeAll(async () => {
   await db.insert(academyRecordingsTable).values({ academyId, recordingId, sessionId });
 });
 
-beforeEach(() => { analysed = false; });
+beforeEach(() => { analysed = false; suppliedRoster = ROSTER; });
 
 afterAll(async () => {
   if (recordingId) await db.delete(analysisJobsTable).where(eq(analysisJobsTable.recordingId, recordingId));
@@ -157,6 +158,22 @@ describe("resolveBindings", () => {
     expect(resolveBindings([row(1, 7), row(2, 7)], ROSTER)).toEqual([]);
     // Benched players are not matched by number.
     expect(resolveBindings([row(1, 7, { inSquad: false })], ROSTER)).toEqual([]);
+  });
+
+  it("does not auto-bind training adults or dropped shirt numbers", () => {
+    const trainingRoster = {
+      ...ROSTER,
+      training: { mode: "training" },
+      players: ROSTER.players.map((player) => player.id === "p1"
+        ? { ...player, adult: true }
+        : player.id === "p2"
+          ? { ...player, numberDropped: { number: "10", why: "uncertain" } }
+          : player),
+    };
+    expect(resolveBindings([row(1, 7), row(2, 10)], trainingRoster)).toEqual([]);
+    // A deliberate visual pick can still bind a dropped-number player.
+    expect(resolveBindings([row(2, null, { rosterPlayerId: "p2", boundBy: "owner" })], trainingRoster))
+      .toEqual([{ playerId: 2, rosterPlayerId: "p2", how: "owner" }]);
   });
 });
 
@@ -188,11 +205,19 @@ describe("academy matches", () => {
     const queued = await request(app).post(`${base()}/analyse`).set(auth(ownerId)).send({}).expect(201);
     const [job] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, queued.body.jobId));
     expect(job).toMatchObject({ recordingId, status: "queued" });
+    expect(job.params).not.toHaveProperty("training");
     const hints = (job.params as { rosterHints: { teams: Array<{ shirtNumbers: number[]; name: string | null }> } }).rosterHints;
     expect(hints.teams[0].shirtNumbers).toEqual([4, 7, 10]);
     expect(hints.teams[1].name).toBe("Rivals");
     await request(app).post(`${base()}/analyse`).set(auth(ownerId)).send({}).expect(409);
     await db.update(analysisJobsTable).set({ status: "succeeded" }).where(eq(analysisJobsTable.id, job.id));
+
+    await db.update(academySessionsTable).set({ type: "training" }).where(eq(academySessionsTable.id, sessionId));
+    const trainingQueued = await request(app).post(`${base()}/analyse`).set(auth(ownerId)).send({}).expect(201);
+    const [trainingJob] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, trainingQueued.body.jobId));
+    expect(trainingJob.params).toMatchObject({ training: true, academySessionId: sessionId });
+    await db.update(analysisJobsTable).set({ status: "succeeded" }).where(eq(analysisJobsTable.id, trainingJob.id));
+    await db.update(academySessionsTable).set({ type: "match" }).where(eq(academySessionsTable.id, sessionId));
   });
 
   it("matches detected players by number, takes hand picks, and keeps per-player stats", async () => {
@@ -211,6 +236,34 @@ describe("academy matches", () => {
 
     const compare = await request(app).get(`/api/academy/console/academies/${academyId}/player-stats`).set(auth(coachId)).expect(200);
     expect(compare.body.filter((r: { playerId: number }) => r.playerId === zaid)[0].stats).toMatchObject({ rosterPlayerId: "p3" });
+  });
+
+  it("returns training group metadata and never exposes dropped numbers", async () => {
+    const trainingRoster = {
+      ...ROSTER,
+      training: {
+        mode: "training",
+        groups: [{ id: "red", name: "Red group", torso: [54, 28, 19] }],
+        timeline: [{ t: 0, groups: { red: 2 }, adults: 1 }],
+      },
+      players: ROSTER.players.map((player) => player.id === "p1"
+        ? { ...player, adult: true, group: "red" }
+        : player.id === "p3"
+          ? { ...player, number: "8", numberCandidate: "8", numberDropped: { number: "8", why: "uncertain" } }
+          : player),
+    };
+    suppliedRoster = trainingRoster;
+    analysed = true;
+    const detail = await request(app).get(base()).set(auth(ownerId)).expect(200);
+    expect(detail.body.training).toMatchObject({
+      groups: [{ id: "red", name: "Red group", color: expect.any(String) }],
+      timeline: [{ t: 0, groups: { red: 2 }, adults: 1 }],
+    });
+    expect(detail.body.detected.find((player: { id: string }) => player.id === "p1"))
+      .toMatchObject({ adult: true, group: "red" });
+    expect(detail.body.detected.find((player: { id: string }) => player.id === "p3"))
+      .toMatchObject({ number: null, numberCandidate: null, numberDropped: true });
+    expect(detail.body.lineup.find((player: { playerId: number }) => player.playerId === ali).boundTo).toBeNull();
   });
 
   it("shows parents the page only once published, and only their academy's families", async () => {

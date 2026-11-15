@@ -23,6 +23,7 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 export type AcademyPlayerStats = {
   playerId: number;
   rosterPlayerId: string;
+  groupId?: string | null;
   minutes: number | null;
   distanceKm: number | null;
   topSpeedKmh: number | null;
@@ -83,7 +84,21 @@ export type LineupPlayer = {
   boundHow: "owner" | "number" | null;
 };
 
-export type DetectedPlayer = { id: string; number: string | null; numberCandidate: string | null; minutes: number; photos: string[] };
+export type DetectedPlayer = {
+  id: string;
+  number: string | null;
+  numberCandidate: string | null;
+  adult: boolean | null;
+  group: string | null;
+  numberDropped: boolean;
+  minutes: number;
+  photos: string[];
+};
+
+export type MatchTraining = {
+  groups: Array<{ id: string; name: string; color: string | null }>;
+  timeline: unknown;
+};
 
 export type MatchDetail = {
   session: MatchSession;
@@ -107,6 +122,7 @@ export type MatchDetail = {
   lineup: LineupPlayer[];
   detected: DetectedPlayer[];
   stats: { team: AcademyTeamStats | null; players: AcademyPlayerStats[]; hasBall: boolean; computedAt: string | null } | null;
+  training: MatchTraining | null;
 };
 
 export type PlayerStatsRow = {

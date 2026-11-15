@@ -13,7 +13,7 @@ import {
   type AcademyCoachNote,
 } from "@workspace/db";
 import { resolveBindings } from "../lib/academyMatchStats";
-import { boardForRoster, buildCoachAnalysis, familyRosterIds } from "../lib/coachAnalysis";
+import { boardForRoster, buildCoachAnalysis, familyRosterIds, trainingRosterFlags } from "../lib/coachAnalysis";
 import { ballInWindow, rosterBoxes, trackIndex } from "../lib/coachTracks";
 import { recordingBall } from "../lib/creative/framing";
 import { logger } from "../lib/logger";
@@ -115,9 +115,9 @@ export type CoachPlayerView = {
 };
 
 /** Every tracked player, ours first (named, by shirt number), then the rest by time on camera. */
-export function coachPlayers(ctx: Pick<MatchContext, "roster" | "lineup">): CoachPlayerView[] {
+export function coachPlayers(ctx: Pick<MatchContext, "roster" | "lineup">, trainingAdultIds: ReadonlySet<string> = new Set()): CoachPlayerView[] {
   if (!ctx.roster) return [];
-  const bindings = resolveBindings(ctx.lineup, ctx.roster);
+  const bindings = resolveBindings(ctx.lineup, ctx.roster, trainingAdultIds);
   const byRoster = new Map(bindings.map((b) => [b.rosterPlayerId, b.playerId]));
   const lineup = new Map(ctx.lineup.map((l) => [l.playerId, l]));
   const out = ctx.roster.players.map((p) => {
@@ -125,11 +125,11 @@ export function coachPlayers(ctx: Pick<MatchContext, "roster" | "lineup">): Coac
     const entry = playerId ? lineup.get(playerId) : undefined;
     return {
       rosterId: p.id,
-      number: p.number ?? p.numberCandidate ?? null,
+      number: p.numberDropped ? null : p.number ?? p.numberCandidate ?? null,
       minutes: Math.round(p.minutes * 10) / 10,
       playerId,
       name: entry?.name ?? null,
-      shirtNumber: entry?.shirtNumber ?? null,
+      shirtNumber: p.numberDropped ? null : entry?.shirtNumber ?? null,
     };
   });
   return out.sort((a, b) => {
@@ -181,6 +181,19 @@ router.get(base, async (req, res): Promise<void> => {
   if (!found) return;
   try {
     const ctx = await loadContext(found.session);
+    let trainingAdultIds = new Set<string>();
+    if (ctx.roster?.training && ctx.recordingId) {
+      try {
+        const play = await loadRecordingPlay(ctx.recordingId, { keepSegments: true });
+        if (play) {
+          trainingAdultIds = new Set([...trainingRosterFlags(play, ctx.roster).entries()]
+            .filter(([, flags]) => flags.adult === true)
+            .map(([id]) => id));
+        }
+      } catch (error) {
+        logger.warn({ sessionId: found.session.id, error: (error as Error).message }, "Coach board training flags unavailable");
+      }
+    }
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
       session: {
@@ -196,7 +209,7 @@ router.get(base, async (req, res): Promise<void> => {
       role: found.isOwner ? "owner" : "staff",
       video: videoView(ctx),
       analysed: Boolean(ctx.bundle && ctx.roster),
-      players: coachPlayers(ctx),
+      players: coachPlayers(ctx, trainingAdultIds),
       lineup: ctx.lineup.filter((l) => l.inSquad).map((l) => ({ playerId: l.playerId, name: l.name, shirtNumber: l.shirtNumber })),
       notes: await notesFor(found.session.id, found.user.id),
     });
@@ -221,7 +234,10 @@ async function analysisFor(ctx: MatchContext, only?: ReadonlySet<string>) {
   if (!ctx.recordingId || !ctx.roster) return null;
   const play = await loadRecordingPlay(ctx.recordingId, { keepSegments: true });
   if (!play) return null;
-  const bound = new Set(resolveBindings(ctx.lineup, ctx.roster).map((b) => b.rosterPlayerId));
+  const trainingAdultIds = new Set([...trainingRosterFlags(play, ctx.roster).entries()]
+    .filter(([, flags]) => flags.adult === true)
+    .map(([id]) => id));
+  const bound = new Set(resolveBindings(ctx.lineup, ctx.roster, trainingAdultIds).map((b) => b.rosterPlayerId));
   return buildCoachAnalysis(play, ctx.roster, bound, { only });
 }
 
@@ -476,7 +492,7 @@ router.get("/academy/family/coach-notes/:noteId/analysis", async (req, res): Pro
     const ids = familyRosterIds(board.data, all.players);
     const players = Object.fromEntries(Object.entries(all.players).filter(([id]) => ids.has(id)));
     res.setHeader("Cache-Control", "private, max-age=300");
-    res.json({ ...all, players, groups: [] });
+    res.json({ ...all, players, groups: [], groupDetails: [], isTraining: false, hasAdults: false });
   } catch (error) {
     failed(res, error, "Coach board: family analysis failed");
   }

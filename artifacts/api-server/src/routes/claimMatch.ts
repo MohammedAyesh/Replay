@@ -2954,9 +2954,12 @@ export async function rosterPlayersWithPhotos(
       });
     return {
       ...player,
-      number: allJerseyFilesAvailable
-        ? voteMatchRosterShirtNumber(player.number, jerseyReads, player.numberCandidate ?? null)
-        : player.number,
+      number: player.numberDropped
+        ? null
+        : allJerseyFilesAvailable
+          ? voteMatchRosterShirtNumber(player.number, jerseyReads, player.numberCandidate ?? null)
+          : player.number,
+      ...(player.numberDropped ? { numberCandidate: null } : {}),
       photos,
     };
   });
