@@ -206,7 +206,8 @@ describe("academy matches", () => {
     const [job] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, queued.body.jobId));
     expect(job).toMatchObject({ recordingId, status: "queued" });
     expect(job.params).not.toHaveProperty("training");
-    const hints = (job.params as { rosterHints: { teams: Array<{ shirtNumbers: number[]; name: string | null }> } }).rosterHints;
+    const hints = (job.params as { rosterHints: { numbers: string[]; teams: Array<{ shirtNumbers: number[]; name: string | null }> } }).rosterHints;
+    expect(hints.numbers).toEqual(["4", "7", "10"]);
     expect(hints.teams[0].shirtNumbers).toEqual([4, 7, 10]);
     expect(hints.teams[1].name).toBe("Rivals");
     await request(app).post(`${base()}/analyse`).set(auth(ownerId)).send({}).expect(409);
@@ -215,7 +216,11 @@ describe("academy matches", () => {
     await db.update(academySessionsTable).set({ type: "training" }).where(eq(academySessionsTable.id, sessionId));
     const trainingQueued = await request(app).post(`${base()}/analyse`).set(auth(ownerId)).send({}).expect(201);
     const [trainingJob] = await db.select().from(analysisJobsTable).where(eq(analysisJobsTable.id, trainingQueued.body.jobId));
-    expect(trainingJob.params).toMatchObject({ training: true, academySessionId: sessionId });
+    expect(trainingJob.params).toMatchObject({
+      training: true,
+      academySessionId: sessionId,
+      rosterHints: { numbers: ["4", "7", "10"] },
+    });
     await db.update(analysisJobsTable).set({ status: "succeeded" }).where(eq(analysisJobsTable.id, trainingJob.id));
     await db.update(academySessionsTable).set({ type: "match" }).where(eq(academySessionsTable.id, sessionId));
   });
@@ -245,6 +250,17 @@ describe("academy matches", () => {
         mode: "training",
         groups: [{ id: "red", name: "Red group", torso: [54, 28, 19] }],
         timeline: [{ t: 0, groups: { red: 2 }, adults: 1 }],
+        segments: [{ start: 0, end: 240, label: "warm-up" }, { start: 240, end: 900, label: "game" }],
+        games: [{
+          start: 240,
+          end: 900,
+          teams: ["red", "blue"],
+          teamNames: ["Red", "Blue"],
+          resting: [],
+          players: [{ number: 7, team: "red", minutes: 10, distance: 800, mPerMin: 80, topKmh: 22, sprints: 2, touches: 14, keeper: false, shared: false }],
+          teamTotals: { red: { minutes: 20, distance: 1600, touches: 30, numberedShare: 0.8 } },
+        }],
+        ground: "approximate: no calibration",
       },
       players: ROSTER.players.map((player) => player.id === "p1"
         ? { ...player, adult: true, group: "red" }
@@ -258,6 +274,13 @@ describe("academy matches", () => {
     expect(detail.body.training).toMatchObject({
       groups: [{ id: "red", name: "Red group", color: expect.any(String) }],
       timeline: [{ t: 0, groups: { red: 2 }, adults: 1 }],
+      segments: [{ start: 0, end: 240, label: "warm-up" }, { start: 240, end: 900, label: "game" }],
+      games: [expect.objectContaining({
+        teams: ["red", "blue"],
+        teamNames: ["Red", "Blue"],
+        players: [expect.objectContaining({ number: 7, team: "red", minutes: 10 })],
+      })],
+      ground: "approximate: no calibration",
     });
     expect(detail.body.detected.find((player: { id: string }) => player.id === "p1"))
       .toMatchObject({ adult: true, group: "red" });

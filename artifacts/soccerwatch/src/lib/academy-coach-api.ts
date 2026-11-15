@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CoachAnalysis, CoachNote, CoachNoteInput, CoachTracks } from "@workspace/api-zod";
+import { parseTrainingSession, type TrainingSessionData } from "@/lib/academy-training";
 
 /** Coach board: hand-written client for routes/academyCoach.ts. */
 
@@ -58,8 +59,22 @@ export type CoachMatch = {
   analysed: boolean;
   players: CoachPlayer[];
   lineup: Array<{ playerId: number; name: string; shirtNumber: number | null }>;
+  training: CoachTraining | null;
   notes: CoachNote[];
 };
+
+export type CoachTraining = TrainingSessionData & { recordingDate: string | null; recordingTimeSlot: string | null };
+
+type CoachTrainingPayload = {
+  groups?: unknown;
+  segments?: unknown;
+  games?: unknown;
+  ground?: unknown;
+  recordingDate?: unknown;
+  recordingTimeSlot?: unknown;
+};
+
+type CoachMatchPayload = Omit<CoachMatch, "training"> & { training: CoachTrainingPayload | null };
 
 const coachPath = (academyId: number, sessionId: number, rest = "") =>
   `/academy/console/academies/${academyId}/matches/${sessionId}/coach${rest}`;
@@ -74,7 +89,17 @@ export function useCoachMatch(academyId: number, sessionId: number | null) {
     queryKey: coachKeys.match(academyId, sessionId ?? 0),
     enabled: sessionId !== null,
     staleTime: 30_000,
-    queryFn: () => call<CoachMatch>(coachPath(academyId, sessionId!)),
+    queryFn: async () => {
+      const data = await call<CoachMatchPayload>(coachPath(academyId, sessionId!));
+      const training = data.training
+        ? {
+            ...parseTrainingSession(data.training),
+            recordingDate: typeof data.training.recordingDate === "string" ? data.training.recordingDate : null,
+            recordingTimeSlot: typeof data.training.recordingTimeSlot === "string" ? data.training.recordingTimeSlot : null,
+          }
+        : null;
+      return { ...data, training };
+    },
   });
 }
 

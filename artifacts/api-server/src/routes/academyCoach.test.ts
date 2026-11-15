@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import { eq } from "drizzle-orm";
@@ -42,6 +42,7 @@ const ROSTER = {
   ],
 };
 const MANIFEST = { matchRosterPath: "x", segments: [], duration: 3600, videoStartSeconds: 1.5, width: 3840, height: 1080, frameRate: 20 };
+let suppliedRoster: unknown = ROSTER;
 const boxesFor = (x: number) => Array.from({ length: 200 }, (_, f) => ({ frame: f * 5, x: x + f, y: 500, w: 40, h: 100 }));
 const SEGMENTS = [{ tracks: [
   { id: "s0:t1", boxes: boxesFor(1000) },
@@ -54,7 +55,7 @@ vi.mock("../lib/academyMatchStats", async (importOriginal) => {
   return {
     ...actual,
     latestBundle: vi.fn(async () => ({ id: 99, manifest: MANIFEST })),
-    loadMatchRoster: vi.fn(async () => ROSTER),
+    loadMatchRoster: vi.fn(async () => suppliedRoster),
     goalVoteCount: vi.fn(async () => 0),
   };
 });
@@ -70,6 +71,8 @@ vi.mock("../lib/creative/framing", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/creative/framing")>();
   return { ...actual, recordingBall: vi.fn(async () => [[2, 0.5, 0.5], [3, 0.6, 0.5], [50, 0.1, 0.1]] as Array<[number, number, number]>) };
 });
+
+beforeEach(() => { suppliedRoster = ROSTER; });
 
 import coachRouter from "./academyCoach";
 
@@ -165,6 +168,27 @@ describe("coach board (staff)", () => {
   it("refuses someone outside the academy", async () => {
     expect((await request(app).get(base()).set(auth(strangerId))).status).toBe(403);
     expect((await request(app).get(base()).set(auth(parentId))).status).toBe(403);
+  });
+
+  it("returns training timeline and game metadata with the recording clock", async () => {
+    suppliedRoster = {
+      ...ROSTER,
+      training: {
+        groups: [{ id: "red", name: "Red group", torso: [54, 28, 19] }],
+        segments: [{ start: 10, end: 50, label: "game" }],
+        games: [{ start: 10, end: 50, teams: ["red"], teamNames: ["Red"], resting: [], players: [], teamTotals: {} }],
+        ground: "approximate: no calibration",
+      },
+    };
+    const res = await request(app).get(base()).set(auth(coachId)).expect(200);
+    expect(res.body.training).toMatchObject({
+      groups: [{ id: "red", name: "Red group", color: expect.stringMatching(/^#[0-9a-f]{6}$/i) }],
+      segments: [{ start: 10, end: 50, label: "game" }],
+      games: [{ teams: ["red"], teamNames: ["Red"] }],
+      ground: "approximate: no calibration",
+      recordingDate: "2026-11-01",
+      recordingTimeSlot: "17:00–18:00",
+    });
   });
 
   it("serves players' boxes as shares on the video's clock, with the ball, for at most two minutes", async () => {

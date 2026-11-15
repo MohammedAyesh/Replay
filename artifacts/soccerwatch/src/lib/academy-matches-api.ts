@@ -98,6 +98,9 @@ export type DetectedPlayer = {
 export type MatchTraining = {
   groups: Array<{ id: string; name: string; color: string | null }>;
   timeline: unknown;
+  segments?: unknown;
+  games?: unknown;
+  ground?: string | null;
 };
 
 export type MatchDetail = {

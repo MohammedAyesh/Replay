@@ -458,6 +458,9 @@ router.get("/academy/console/academies/:academyId/matches/:sessionId", async (re
             color: group.torso ? labToHex(group.torso) : null,
           })),
           timeline: ctx.roster!.training!.timeline ?? [],
+          segments: ctx.roster!.training!.segments ?? [],
+          games: ctx.roster!.training!.games ?? [],
+          ground: typeof ctx.roster!.training!.ground === "string" ? ctx.roster!.training!.ground : null,
         };
       })()
     : null;
@@ -665,10 +668,23 @@ router.post("/academy/console/academies/:academyId/matches/:sessionId/analyse", 
   const playersPerSide = ctx.page.playersPerSide ?? Math.max(5, Math.min(11, squad.length || 7));
   const numbers = squad.map((p) => p.shirtNumber).filter((n): n is number => n !== null).sort((a, b) => a - b);
   const [academy] = await db.select({ name: academiesTable.name }).from(academiesTable).where(eq(academiesTable.id, found.academyId));
+  const academyPlayers = await db.select({ jerseyNumber: academyPlayersTable.jerseyNumber })
+    .from(academyPlayersTable)
+    .where(found.session.squadId === null
+      ? and(eq(academyPlayersTable.academyId, found.academyId), eq(academyPlayersTable.isActive, true))
+      : and(
+          eq(academyPlayersTable.academyId, found.academyId),
+          eq(academyPlayersTable.squadId, found.session.squadId),
+          eq(academyPlayersTable.isActive, true),
+        ));
+  const academyNumbers = [...new Set(academyPlayers.flatMap((player) =>
+    player.jerseyNumber === null ? [] : [player.jerseyNumber],
+  ))].sort((a, b) => a - b).map(String);
   const rosterHints = {
     matchCode: `academy-session-${found.session.id}`,
     playersPerSide,
     teamCount: 2,
+    numbers: academyNumbers,
     substitutesPerTeam: Math.max(0, squad.length - playersPerSide),
     teams: [
       {

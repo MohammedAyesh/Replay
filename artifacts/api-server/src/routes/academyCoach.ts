@@ -18,6 +18,8 @@ import { ballInWindow, rosterBoxes, trackIndex } from "../lib/coachTracks";
 import { recordingBall } from "../lib/creative/framing";
 import { logger } from "../lib/logger";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
+import { labToHex } from "../lib/matchPlay";
+import { matchTrainingGroups } from "../lib/matchRoster";
 import { readMatchWindow } from "../lib/matchWindow";
 import {
   consoleSession,
@@ -194,6 +196,21 @@ router.get(base, async (req, res): Promise<void> => {
         logger.warn({ sessionId: found.session.id, error: (error as Error).message }, "Coach board training flags unavailable");
       }
     }
+    const selectedRecording = ctx.recordings.find((recording) => recording.id === ctx.recordingId);
+    const training = ctx.roster?.training
+      ? {
+          groups: matchTrainingGroups(ctx.roster).map((group) => ({
+            id: group.id,
+            name: group.name,
+            color: group.torso ? labToHex(group.torso) : null,
+          })),
+          segments: ctx.roster.training.segments ?? [],
+          games: ctx.roster.training.games ?? [],
+          ground: typeof ctx.roster.training.ground === "string" ? ctx.roster.training.ground : null,
+          recordingDate: selectedRecording?.date ?? null,
+          recordingTimeSlot: selectedRecording?.timeSlot ?? null,
+        }
+      : null;
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
       session: {
@@ -211,6 +228,7 @@ router.get(base, async (req, res): Promise<void> => {
       analysed: Boolean(ctx.bundle && ctx.roster),
       players: coachPlayers(ctx, trainingAdultIds),
       lineup: ctx.lineup.filter((l) => l.inSquad).map((l) => ({ playerId: l.playerId, name: l.name, shirtNumber: l.shirtNumber })),
+      training,
       notes: await notesFor(found.session.id, found.user.id),
     });
   } catch (error) {

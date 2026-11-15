@@ -10,6 +10,7 @@ import {
 } from "@workspace/db";
 import { claimIdentityId } from "./claimChain";
 import { getLocalUserId } from "../lib/clerkUserBridge";
+import { loadMatchRoster } from "../lib/academyMatchStats";
 import { selectExportSource } from "../lib/exportSource";
 import { loadRecordingPlay, type RecordingPlay } from "../lib/matchPlayLoad";
 
@@ -399,6 +400,8 @@ router.get("/admin/recordings/:id/debug/window", async (req, res): Promise<void>
     return;
   }
   const { play } = loaded;
+  const roster = await loadMatchRoster(play.manifest);
+  const rawTraining = roster?.training;
   const claims = claimsForWindow(play, loaded.usersById, recordingId, from, to);
   const ball = pointsForWindow(play, from, to)
     .map((point) => [roundTime(point.frame, play.fps), point.x, point.y, false] as const);
@@ -407,6 +410,12 @@ router.get("/admin/recordings/:id/debug/window", async (req, res): Promise<void>
     from,
     to,
     videoUrl: loaded.recording.videoUrl,
+    training: rawTraining ? {
+      groups: rawTraining.groups ?? [],
+      segments: rawTraining.segments ?? [],
+      games: rawTraining.games ?? [],
+      ground: typeof rawTraining.ground === "string" ? rawTraining.ground : null,
+    } : null,
     manifest: {
       fps: play.fps,
       frameRate: play.fps,

@@ -116,6 +116,11 @@ const en = {
     adultsShown: "Hide coaches & adults",
   },
   matchStart: "Kick-off",
+  trainingGames: {
+    session: "Full session",
+    select: "Game",
+    game: (n: number, teams: string) => `Game ${n}${teams ? ` · ${teams}` : ""}`,
+  },
   // Family view
   family: {
     title: "From your coach",
@@ -244,6 +249,11 @@ const ar: CoachStrings = {
     adultsShown: "إخفاء المدربين والبالغين",
   },
   matchStart: "بداية المباراة",
+  trainingGames: {
+    session: "الجلسة كاملة",
+    select: "المباراة",
+    game: (n: number, teams: string) => `مباراة ${n}${teams ? ` · ${teams}` : ""}`,
+  },
   family: {
     title: "من المدرب",
     empty: "لسا ما في إشي من المدرب.",

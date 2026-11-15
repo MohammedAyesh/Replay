@@ -58,6 +58,7 @@ export function CoachMatchView({ academyId, sessionId, onClose }: { academyId: n
       subtitle={subtitle}
       video={data.video}
       players={data.players}
+      training={data.training}
       analysed={data.analysed}
       loadTracks={loadTracks}
       loadAnalysis={loadAnalysis}

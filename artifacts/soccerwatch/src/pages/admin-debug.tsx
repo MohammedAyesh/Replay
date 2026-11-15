@@ -2,6 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { useLocation } from "wouter";
 import { Activity, AlertTriangle, ArrowLeft, Camera, Clock3, Crosshair, Film, LoaderCircle, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/lib/auth";
+import { HlsPlayer } from "@/components/HlsPlayer";
+import { TrainingSessionTimeline } from "@/components/academy-console/TrainingSessionTimeline";
+import { useMatchesCopy } from "@/i18n/matches-strings";
+import { parseTrainingSession } from "@/lib/academy-training";
+import { seekVideoElement } from "@/lib/video-seek";
 
 const API_BASE = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
 type Zoom = "frame" | "ball" | "claimant";
@@ -10,7 +15,7 @@ type Ball = [number, number, number, boolean];
 type Touch = [number, number, number, number, number, number, number, number];
 type Claim = { identityId: string | number; userId: number; userName: string; color: string; parts: Array<{ trackId: string; fromFrame: number; toFrame: number }> };
 type Box = { identityId: string | number; userName: string; color: string; trackId: string; boxes: Array<[number, number, number, number, number]> };
-type DebugWindow = { manifest?: { width?: number; height?: number; duration?: number }; ball?: Ball[]; touches?: Touch[]; claims?: Claim[]; boxes?: Box[] };
+type DebugWindow = { manifest?: { width?: number; height?: number; duration?: number }; videoUrl?: string | null; training?: unknown; ball?: Ball[]; touches?: Touch[]; claims?: Claim[]; boxes?: Box[] };
 type Clip = { id: number; title?: string; recordingId?: number; startTime: number; endTime: number };
 type RecordingOption = {
   id: number;
@@ -18,6 +23,7 @@ type RecordingOption = {
   timeSlot: string;
   court: string;
   duration: string;
+  videoUrl: string | null;
   fieldName: string | null;
   hasTrackingBundle: boolean;
   trackingSegmentCount: number | null;
@@ -54,7 +60,9 @@ function numberParam(params: Params, key: "t" | "win" | "step" | "vo" | "zw", fa
 
 export default function AdminDebug() {
   const { user, isLoading, isAdmin } = useAuth();
+  const matchesCopy = useMatchesCopy();
   const [, setLocation] = useLocation();
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [params, setParams] = useState<Params>(readParams);
   const [windowData, setWindowData] = useState<DebugWindow | null>(null);
   const [recordings, setRecordings] = useState<RecordingOption[]>([]);
@@ -167,6 +175,9 @@ export default function AdminDebug() {
   };
 
   const dimensions = windowData?.manifest;
+  const training = useMemo(() => windowData?.training ? parseTrainingSession(windowData.training) : null, [windowData?.training]);
+  const selectedRecording = recordings.find((recording) => String(recording.id) === params.rec);
+  const videoUrl = windowData?.videoUrl ?? selectedRecording?.videoUrl ?? null;
   const nativeW = dimensions?.width && dimensions.width > 0 ? dimensions.width : 1600;
   const nativeH = dimensions?.height && dimensions.height > 0 ? dimensions.height : 900;
   const tiles = useMemo<Tile[]>(() => {
@@ -264,6 +275,28 @@ export default function AdminDebug() {
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
           <section className="min-w-0" aria-label="Frame grid">
+            {videoUrl && (
+              <div className="mb-4 space-y-3" data-testid="admin-recording-player">
+                <div className="overflow-hidden rounded-xl border border-line bg-void">
+                  <HlsPlayer ref={videoRef} url={videoUrl} label={`Recording #${params.rec}`} controls videoClassName="aspect-video w-full object-contain" />
+                </div>
+                {training?.segments.length ? (
+                  <TrainingSessionTimeline
+                    segments={training.segments}
+                    games={training.games}
+                    groups={training.groups}
+                    recordingDate={selectedRecording?.date}
+                    recordingTimeSlot={selectedRecording?.timeSlot}
+                    duration={windowData?.manifest?.duration}
+                    copy={matchesCopy}
+                    onSeek={(seconds) => {
+                      seekVideoElement(videoRef.current, seconds);
+                      update("t", String(seconds));
+                    }}
+                  />
+                ) : null}
+              </div>
+            )}
             <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
               <div><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-muted-text">Frame sequence</p><h2 className="mt-1 font-display text-xl font-bold">{Number.isFinite(time) ? timeLabel(time) : "Waiting for time"} <span className="font-sans text-sm font-medium text-muted-text">± {win / 2}s · every {step}s</span></h2></div>
               <span className="rounded-full border border-line bg-surface px-3 py-1.5 font-mono text-xs text-muted-text">{tiles.length} frames</span>

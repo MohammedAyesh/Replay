@@ -55,7 +55,9 @@ import {
   type CoachView,
 } from "@workspace/api-zod";
 import { useCoachCopy } from "@/i18n/coach-strings";
-import type { CoachPlayer as RosterPlayer, CoachVideo } from "@/lib/academy-coach-api";
+import { useMatchesCopy } from "@/i18n/matches-strings";
+import type { CoachPlayer as RosterPlayer, CoachTraining, CoachVideo } from "@/lib/academy-coach-api";
+import { TrainingSessionTimeline } from "@/components/academy-console/TrainingSessionTimeline";
 import {
   WHOLE,
   boxesAt,
@@ -79,6 +81,7 @@ import {
   type TrackStore,
 } from "@/lib/coach-board";
 import { LINE_COLORS, metresLabel } from "@/lib/coach-analysis";
+import { seekVideoElement } from "@/lib/video-seek";
 import { cn } from "@/lib/utils";
 import { useCoachVideo } from "./use-coach-video";
 
@@ -107,6 +110,7 @@ export type CoachPlayerProps = {
   title: string;
   subtitle?: string | null;
   video: CoachVideo;
+  training?: CoachTraining | null;
   players: RosterPlayer[];
   analysed: boolean;
   loadTracks: (from: number, to: number) => Promise<CoachTracks>;
@@ -138,6 +142,7 @@ const newId = () => `s${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 
 export function CoachPlayer(props: CoachPlayerProps) {
   const copy = useCoachCopy();
+  const matchesCopy = useMatchesCopy();
   const { video: v, readOnly = false } = props;
   const aspect = v.width > 0 && v.height > 0 ? v.width / v.height : 32 / 9;
   const startAt = props.initialNote ? props.initialNote.atMs / 1000 : v.matchWindow?.from ?? 0;
@@ -170,6 +175,13 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const [paused, setPaused] = useState(true);
   const [time, setTime] = useState(startAt);
   const [duration, setDuration] = useState(v.duration ?? 0);
+  const [selectedGameIndex, setSelectedGameIndex] = useState<number | null>(null);
+  const selectedGame = selectedGameIndex === null ? null : props.training?.games[selectedGameIndex] ?? null;
+  const rangeStart = selectedGame?.start ?? 0;
+  const fullDuration = duration || v.duration || 0;
+  const rangeEnd = selectedGame
+    ? Math.max(rangeStart, fullDuration > 0 ? Math.min(selectedGame.end, fullDuration) : selectedGame.end)
+    : fullDuration;
   const [speed, setSpeed] = useState(1);
   // The side panel starts open where there is room for it beside the video.
   const [panel, setPanel] = useState<"players" | "notes" | null>(() => (readOnly || (typeof window !== "undefined" && window.innerWidth < 1024) ? null : "players"));
@@ -341,10 +353,30 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const seek = useCallback((t: number) => {
     const video = videoRef.current;
     if (!video) return;
-    const end = Number.isFinite(video.duration) && video.duration > 0 ? video.duration - 0.1 : Infinity;
-    video.currentTime = Math.max(0, Math.min(end, t));
+    const videoEnd = Number.isFinite(video.duration) && video.duration > 0 ? video.duration - 0.1 : Infinity;
+    const end = Math.min(videoEnd, selectedGame?.end ?? videoEnd);
+    const target = Math.max(rangeStart, Math.min(end, t));
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      seekVideoElement(video, target);
+      setTime(target);
+      return;
+    }
+    video.currentTime = target;
     setTime(video.currentTime);
-  }, []);
+  }, [rangeStart, selectedGame?.end]);
+  useEffect(() => {
+    if (!selectedGame) return;
+    const video = videoRef.current;
+    if (!video) return;
+    const stopAtGameEnd = () => {
+      if (video.currentTime < selectedGame.end) return;
+      video.pause();
+      video.currentTime = Math.max(selectedGame.start, selectedGame.end - 0.05);
+      setTime(video.currentTime);
+    };
+    video.addEventListener("timeupdate", stopAtGameEnd);
+    return () => video.removeEventListener("timeupdate", stopAtGameEnd);
+  }, [selectedGame?.start, selectedGame?.end]);
   const togglePlay = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -592,7 +624,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
 
   const matchFrom = v.matchWindow?.from ?? 0;
   const clockOf = (t: number) => (v.matchWindow ? `${clock(t - matchFrom)}` : clock(t));
-  const total = duration || v.duration || 0;
+  const total = rangeEnd;
   const spotRosterIds = new Set(board.spotlights.map((s) => s.rosterId));
   const tracked = props.analysed ? boxesAt(store.current, time) : new Map();
   // On camera now first, so a 200-player training roster starts with who can be tapped.
@@ -807,6 +839,55 @@ export function CoachPlayer(props: CoachPlayerProps) {
       )}
 
       <footer className="border-t border-line bg-void px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
+        {props.training && (props.training.segments.length > 0 || props.training.games.length > 0) && (
+          <div className="mb-3 space-y-2" data-testid="coach-training-timeline">
+            {props.training.games.length > 0 && (
+              <label className="block max-w-xl text-xs font-semibold text-muted-text">
+                <span className="mb-1 block">{copy.trainingGames.select}</span>
+                <select
+                  value={selectedGameIndex ?? ""}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    if (!value) {
+                      setSelectedGameIndex(null);
+                      const start = v.matchWindow?.from ?? 0;
+                      seekVideoElement(videoRef.current, start);
+                      setTime(start);
+                      return;
+                    }
+                    const index = Number(value);
+                    const game = props.training?.games[index];
+                    if (!Number.isInteger(index) || !game) return;
+                    setSelectedGameIndex(index);
+                    seekVideoElement(videoRef.current, game.start);
+                    setTime(game.start);
+                  }}
+                  className="min-h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-text"
+                  data-testid="coach-game-picker"
+                >
+                  <option value="">{copy.trainingGames.session}</option>
+                  {props.training.games.map((game, index) => {
+                    const teams = game.teams.map((team, teamIndex) => game.teamNames[teamIndex] || props.training?.groups.find((group) => group.id === team)?.name || team).join(" vs ");
+                    return <option key={`${game.start}-${index}`} value={index}>{copy.trainingGames.game(index + 1, teams)}</option>;
+                  })}
+                </select>
+              </label>
+            )}
+            {props.training.segments.length > 0 && (
+              <TrainingSessionTimeline
+                segments={props.training.segments}
+                games={props.training.games}
+                groups={props.training.groups}
+                recordingDate={props.training.recordingDate}
+                recordingTimeSlot={props.training.recordingTimeSlot}
+                duration={fullDuration}
+                range={selectedGame ? { from: selectedGame.start, to: selectedGame.end } : null}
+                copy={matchesCopy}
+                onSeek={seek}
+              />
+            )}
+          </div>
+        )}
         {!readOnly && (
           <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1">
             <div className="flex gap-1 md:hidden"><ToolButtons tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} /></div>
@@ -856,11 +937,11 @@ export function CoachPlayer(props: CoachPlayerProps) {
           <span className="w-14 shrink-0 text-center font-mono text-xs tabular-nums text-muted-text">{clockOf(time)}</span>
           <span className="flex-1 sm:hidden" />
           <div className="relative order-first min-w-0 basis-full sm:order-none sm:basis-auto sm:flex-1">
-            <input type="range" min={0} max={Math.max(1, total)} step={0.05} value={Math.min(time, total || time)} onChange={(e) => seek(Number(e.target.value))}
+            <input type="range" min={rangeStart} max={Math.max(rangeStart + 0.1, total)} step={0.05} value={Math.min(Math.max(time, rangeStart), total || time)} onChange={(e) => seek(Number(e.target.value))}
               className="w-full accent-floodlight" aria-label="time" data-testid="coach-scrubber" />
-            {total > 0 && (props.notes ?? []).map((n) => (
+            {total > rangeStart && (props.notes ?? []).filter((n) => n.atMs / 1000 >= rangeStart && n.atMs / 1000 <= total).map((n) => (
               <button key={n.id} type="button" onClick={() => openNote(n)} title={n.title || clockOf(n.atMs / 1000)}
-                className="absolute -top-1.5 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-turf ring-2 ring-void" style={{ left: `${(n.atMs / 1000 / total) * 100}%` }} />
+                className="absolute -top-1.5 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-turf ring-2 ring-void" style={{ left: `${((n.atMs / 1000 - rangeStart) / (total - rangeStart)) * 100}%` }} />
             ))}
           </div>
           <span className="hidden w-14 shrink-0 text-center font-mono text-xs tabular-nums text-muted-text sm:block">{clockOf(total)}</span>
