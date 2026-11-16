@@ -71,11 +71,15 @@ import {
   hitPlayer,
   mergeTracks,
   missingWindow,
+  findList,
   nextOnCamera,
+  nextSpan,
   nextSpotColor,
   noteMoment,
-  QUICK_NOTE_MS,
+  QUICK_LENGTHS,
   QUICK_PRESETS,
+  quickWindow,
+  type FindEntry,
   type QuickPreset,
   panBy,
   playerLabel,
@@ -149,7 +153,8 @@ const clock = (s: number) => {
 };
 const round1 = (n: number) => Math.round(n * 10) / 10;
 /** What a Quick note carries over when the coach asks for the full form. */
-type QuickDraft = { title: string; body: string | null; playerIds: number[]; shared: boolean };
+type QuickDraft = { title: string; body: string | null; playerIds: number[]; shared: boolean; atMs: number; endMs: number };
+type QuickFields = { preset: QuickPreset | null; comment: string; playerId: number | null; lengthS: number };
 let idSeq = 0;
 const newId = () => `s${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 
@@ -189,7 +194,10 @@ export function CoachPlayer(props: CoachPlayerProps) {
   };
   const toolList = useMemo(() => TOOLS.filter((t) => moreTools || SIMPLE_TOOLS.has(t.id)), [moreTools]);
   /** Quick note: the child a tap picked, waiting for Well done / Watch this / Work on it. */
-  const [quick, setQuick] = useState<{ rosterId: string } | null>(null);
+  /** `left`: on a wide screen the sheet sits on the side of the video away from him */
+  const [quick, setQuick] = useState<{ rosterId: string; left: boolean } | null>(null);
+  /** the Quick note clip the coach picked, shown as a band on the timeline */
+  const [quickLen, setQuickLen] = useState(10);
   const [findText, setFindText] = useState("");
   const [color, setColorState] = useState<string>(COACH_COLORS[0]);
   const setColor = (c: string) => { colorRef.current = c; setColorState(c); };
@@ -441,8 +449,16 @@ export function CoachPlayer(props: CoachPlayerProps) {
     if (lit && quick?.rosterId === rosterId) { toggleSpot(rosterId); setQuick(null); return; }
     ensureSpot(rosterId);
     videoRef.current?.pause();
-    setQuick({ rosterId });
-  }, [quickOn, quick, toggleSpot, ensureSpot]);
+    const stage = stageRef.current;
+    const boxes = store.current.players.get(rosterId);
+    const box = boxes ? coachBoxAt(boxes, videoRef.current?.currentTime ?? 0) : null;
+    let left = false;
+    if (stage && box) {
+      const [x] = toScreen(frameRect(stage.clientWidth, stage.clientHeight, aspect, viewRef.current), [box[0] + box[2] / 2, box[1]]);
+      left = x > stage.clientWidth / 2;
+    }
+    setQuick({ rosterId, left });
+  }, [quickOn, quick, toggleSpot, ensureSpot, aspect]);
   const toggleOffside = useCallback((rosterId: string) => {
     const b = boardRef.current;
     const list = b.offside ?? [];
@@ -667,29 +683,31 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const total = rangeEnd;
   const spotRosterIds = new Set(board.spotlights.map((s) => s.rosterId));
   const tracked = props.analysed ? boxesAt(store.current, time) : new Map();
-  // On camera now first, so a 200-player training roster starts with who can be tapped.
+  // Find a player: only children tied to the lineup and kept shirt numbers tracked for a while,
+  // one entry per child; anyone else is tapped on the video. On camera now first.
+  const entries = useMemo(() => findList(props.players, (id) => analysis?.players[id]), [props.players, analysis]);
+  const entryLabel = (e: FindEntry) => (e.name ? `${e.number ? `#${e.number} ` : ""}${e.name}` : `#${e.number}`);
   const needle = findText.trim().toLowerCase().replace(/^#/, "");
-  const matchesFind = (p: RosterPlayer) => !needle || label(p.rosterId).toLowerCase().includes(needle)
-    || String(p.shirtNumber ?? p.number ?? "").toLowerCase() === needle;
-  const shown = props.players.filter((p) => visible(p.rosterId) && matchesFind(p))
-    .map((p, i) => ({ p, i, on: tracked.has(p.rosterId) }))
+  const matchesFind = (e: FindEntry) => !needle || (e.name ?? "").toLowerCase().includes(needle) || (e.number ?? "").toLowerCase() === needle;
+  const shown = entries.filter((e) => e.rosterIds.some((id) => visible(id)) && matchesFind(e))
+    .map((e, i) => ({ e, i, on: e.rosterIds.some((id) => tracked.has(id)) }))
     .sort((a, b) => Number(b.on) - Number(a.on) || a.i - b.i)
-    .map((x) => x.p);
-  const ours = shown.filter((p) => p.playerId !== null);
-  const others = shown.filter((p) => p.playerId === null);
+    .map((x) => x.e);
+  const ours = shown.filter((e) => e.playerId !== null);
+  const others = shown.filter((e) => e.playerId === null);
   const trainingSections = analysis?.isTraining
     ? [
         ...analysis.groupDetails.map((group) => ({
           id: group.id,
           title: group.name,
           color: group.color,
-          players: shown.filter((player) => analysis.players[player.rosterId]?.group === group.id),
+          players: shown.filter((e) => e.team === group.id),
         })),
         {
           id: "__unassigned",
           title: copy.analysis.ungrouped,
           color: null,
-          players: shown.filter((player) => !analysis.players[player.rosterId]?.group),
+          players: shown.filter((e) => !e.team || !analysis.groupDetails.some((g) => g.id === e.team)),
         },
       ].filter((section) => section.players.length > 0)
     : [];
@@ -703,56 +721,54 @@ export function CoachPlayer(props: CoachPlayerProps) {
     if (bound?.playerId !== null && bound?.playerId !== undefined && bound.playerId === playerId && bound.name) return bound.name;
     return props.lineup?.find((l) => l.playerId === playerId)?.name ?? label(rosterId);
   };
-  const quickDraft = (rosterId: string, f: { preset: QuickPreset | null; comment: string; playerId: number | null }): QuickDraft => {
+  /** The clip: the seconds up to the moment (now, or the drawing's moment) plus a short run-on, inside the game picked. */
+  const quickClip = (lengthS: number) => quickWindow(noteMoment(boardRef.current, Math.round((videoRef.current?.currentTime ?? time) * 1000)), lengthS, rangeStart * 1000);
+  const quickDraft = (rosterId: string, f: QuickFields): QuickDraft => {
     const name = quickName(rosterId, f.playerId);
     return {
+      ...quickClip(f.lengthS),
       title: (f.preset ? `${copy.quick.presets[f.preset]} ${copy.quick.emoji[f.preset]} · ${name}` : name).slice(0, 120),
       body: f.comment.trim() || null,
       playerIds: f.playerId !== null ? [f.playerId] : [],
       shared: f.playerId !== null,
     };
   };
-  /** Save a Quick note: this child's spotlight only, from now (or the drawing's moment), for eight seconds. */
-  const sendQuick = async (rosterId: string, f: { preset: QuickPreset | null; comment: string; playerId: number | null; share: boolean }) => {
+  /** Save a Quick note: this child's spotlight only, over the clip the coach picked. */
+  const sendQuick = async (rosterId: string, f: QuickFields & { share: boolean }) => {
     const d = quickDraft(rosterId, f);
     const b = boardRef.current;
-    const atMs = noteMoment(b, Math.round((videoRef.current?.currentTime ?? time) * 1000));
     await props.onSaveNote!({
       ...d,
       shared: d.shared && f.share,
-      atMs,
-      endMs: atMs + QUICK_NOTE_MS,
       board: { ...b, spotlights: b.spotlights.filter((s) => s.rosterId === rosterId), view: { ...viewRef.current, follow } },
     });
   };
-  /** A row in the list: off camera, jump to where he next appears; then spotlight him (and ask in Simple mode). */
-  const findPlayer = (p: RosterPlayer) => {
-    if (!tracked.has(p.rosterId)) {
-      const at = nextOnCamera(p.spans, time);
-      if (at !== null) {
-        videoRef.current?.pause();
-        seek(at);
-        if (window.innerWidth < 640) setPanel(null);
-        if (quickOn) pickPlayer(p.rosterId); else ensureSpot(p.rosterId);
-        return;
-      }
-    }
-    if (window.innerWidth < 640 && quickOn) setPanel(null);
-    pickPlayer(p.rosterId);
+  /** A row in the list: on camera, pick him; off camera, jump to where he next appears and pick that track. */
+  const findEntry = (e: FindEntry) => {
+    const onId = e.rosterIds.find((id) => tracked.has(id));
+    const phone = window.innerWidth < 640;
+    if (onId) { if (phone && quickOn) setPanel(null); pickPlayer(onId); return; }
+    const next = nextSpan(e.spans, time);
+    if (!next) return;
+    videoRef.current?.pause();
+    seek(Math.min(next[1], next[0] + 0.2));
+    if (phone) setPanel(null);
+    if (quickOn) pickPlayer(next[2]); else ensureSpot(next[2]);
   };
-  const playerRow = (p: RosterPlayer) => {
-    const spot = board.spotlights.find((s) => s.rosterId === p.rosterId);
-    const visible = tracked.has(p.rosterId);
-    const next = visible ? null : nextOnCamera(p.spans, time);
+  const playerRow = (e: FindEntry) => {
+    const spot = board.spotlights.find((s) => e.rosterIds.includes(s.rosterId));
+    const on = e.rosterIds.some((id) => tracked.has(id));
+    const next = on ? null : nextOnCamera(e.spans, time);
+    const kit = analysis?.players[e.rosterIds[0]]?.kit;
     return (
-      <button key={p.rosterId} type="button" onClick={() => findPlayer(p)} disabled={!props.analysed}
+      <button key={e.key} type="button" onClick={() => findEntry(e)} disabled={!props.analysed}
         className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-start text-sm transition-colors", spot ? "bg-raised text-text" : "text-muted-text hover:bg-raised/60 hover:text-text")}
-        data-testid={`coach-player-${p.rosterId}`}>
+        data-testid={`coach-player-${e.rosterIds[0]}`}>
         <span className="h-3 w-3 shrink-0 rounded-full border border-line" style={spot ? { background: spot.color, borderColor: spot.color } : undefined} />
-        {analysis?.players[p.rosterId]?.kit && <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: analysis.players[p.rosterId].kit! }} title={analysis.players[p.rosterId].group ?? undefined} />}
-        <span className="min-w-0 flex-1 truncate font-semibold" dir="auto">{label(p.rosterId)}</span>
-        <span className={cn("shrink-0 text-[11px]", visible ? "text-turf" : next !== null ? "text-floodlight" : "text-muted-text/60")}>
-          {visible ? copy.minutes(p.minutes) : next !== null ? copy.quick.jump(clockOf(next)) : copy.notOnCamera}
+        {kit && <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: kit }} />}
+        <span className="min-w-0 flex-1 truncate font-semibold" dir="auto">{entryLabel(e)}</span>
+        <span className={cn("shrink-0 text-[11px]", on ? "text-turf" : next !== null ? "text-floodlight" : "text-muted-text/60")}>
+          {on ? copy.minutes(e.minutes) : next !== null ? copy.quick.jump(clockOf(next)) : copy.notOnCamera}
         </span>
       </button>
     );
@@ -843,6 +859,23 @@ export function CoachPlayer(props: CoachPlayerProps) {
               )}
             </div>
           )}
+      {quick && props.onSaveNote && !saveOpen && (
+        <QuickNoteSheet
+          key={quick.rosterId}
+          left={quick.left}
+          copy={copy}
+          name={label(quick.rosterId)}
+          boundPlayerId={byRoster.get(quick.rosterId)?.playerId ?? null}
+          lineup={props.lineup ?? []}
+          sentName={(playerId) => quickName(quick.rosterId, playerId)}
+          lengthS={quickLen}
+          onLength={setQuickLen}
+          clipLabel={(() => { const w = quickClip(quickLen); return `${clockOf(w.atMs / 1000)}–${clockOf(w.endMs / 1000)}`; })()}
+          onClose={() => setQuick(null)}
+          onSend={(f) => sendQuick(quick.rosterId, f)}
+          onMore={(f) => { setSaveOpen({ initial: quickDraft(quick.rosterId, f) }); setQuick(null); }}
+        />
+      )}
           {/* Zoom and overlays */}
           <div className="absolute bottom-3 end-3 flex flex-col gap-1.5">
             <IconButton label={copy.zoomIn} onClick={() => zoomBy(1.4)}><Plus className="h-4 w-4" /></IconButton>
@@ -856,7 +889,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
             {panel === "players" ? (
               <div className="space-y-3">
                 {!props.analysed && <p className="text-xs text-muted-text">{copy.notAnalysed}</p>}
-                {props.players.length > 8 && (
+                {entries.length > 8 && (
                   <label className="flex items-center gap-2 rounded-xl border border-line bg-raised px-2.5">
                     <Search className="h-4 w-4 shrink-0 text-muted-text" aria-hidden />
                     <input value={findText} onChange={(e) => setFindText(e.target.value)} placeholder={copy.quick.find} aria-label={copy.quick.find} dir="auto"
@@ -888,6 +921,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
                   </section>
                 )}
                 {analysis && !map && <p className="px-2 text-xs text-muted-text">{copy.analysis.needsPitch}</p>}
+                {props.analysed && <p className="px-2 text-[11px] text-muted-text" data-testid="coach-find-hint">{shown.length ? copy.quick.findHint : copy.quick.findEmpty}</p>}
                 {analysis?.isTraining ? (
                   trainingSections.map((section) => (
                     <section key={section.id} data-testid={`coach-group-${section.id}`}>
@@ -1046,6 +1080,11 @@ export function CoachPlayer(props: CoachPlayerProps) {
           <span className="w-14 shrink-0 text-center font-mono text-xs tabular-nums text-muted-text">{clockOf(time)}</span>
           <span className="flex-1 sm:hidden" />
           <div className="relative order-first min-w-0 basis-full sm:order-none sm:basis-auto sm:flex-1">
+            {quick && total > rangeStart && (() => {
+              const w = quickClip(quickLen);
+              const pct = (ms: number) => Math.max(0, Math.min(100, ((ms / 1000 - rangeStart) / (total - rangeStart)) * 100));
+              return <span className="pointer-events-none absolute inset-y-0 my-auto h-3 rounded-full bg-floodlight/35 ring-1 ring-floodlight" style={{ left: `${pct(w.atMs)}%`, width: `${Math.max(0.6, pct(w.endMs) - pct(w.atMs))}%` }} data-testid="coach-quick-band" />;
+            })()}
             <input type="range" min={rangeStart} max={Math.max(rangeStart + 0.1, total)} step={0.05} value={Math.min(Math.max(time, rangeStart), total || time)} onChange={(e) => seek(Number(e.target.value))}
               className="w-full accent-floodlight" aria-label="time" data-testid="coach-scrubber" />
             {total > rangeStart && (props.notes ?? []).filter((n) => n.atMs / 1000 >= rangeStart && n.atMs / 1000 <= total).map((n) => (
@@ -1060,20 +1099,6 @@ export function CoachPlayer(props: CoachPlayerProps) {
         </div>
         {!readOnly && <p className="mt-1 hidden text-[11px] text-muted-text lg:block">{copy.toolHints[tool]} · {copy.keys}</p>}
       </footer>
-
-      {quick && props.onSaveNote && !saveOpen && (
-        <QuickNoteSheet
-          key={quick.rosterId}
-          copy={copy}
-          name={label(quick.rosterId)}
-          boundPlayerId={byRoster.get(quick.rosterId)?.playerId ?? null}
-          lineup={props.lineup ?? []}
-          sentName={(playerId) => quickName(quick.rosterId, playerId)}
-          onClose={() => setQuick(null)}
-          onSend={(f) => sendQuick(quick.rosterId, f)}
-          onMore={(f) => { setSaveOpen({ initial: quickDraft(quick.rosterId, f) }); setQuick(null); }}
-        />
-      )}
 
       {saveOpen && props.onSaveNote && (
         <SaveDialog
@@ -1191,11 +1216,12 @@ function SaveDialog({ copy, existing, initial, lineup, spotlitPlayerIds, atMs, o
 }) {
   const [title, setTitle] = useState(existing?.title ?? initial?.title ?? "");
   const [body, setBody] = useState(existing?.body ?? initial?.body ?? "");
-  const [playFor, setPlayFor] = useState(existing?.endMs ? Math.max(1, Math.round((existing.endMs - existing.atMs) / 1000)) : 8);
+  const [playFor, setPlayFor] = useState(existing?.endMs ? Math.max(1, Math.round((existing.endMs - existing.atMs) / 1000))
+    : initial ? Math.max(1, Math.round((initial.endMs - initial.atMs) / 1000)) : 8);
   const [players, setPlayers] = useState<number[]>(existing?.playerIds ?? initial?.playerIds ?? [...new Set(spotlitPlayerIds)]);
   const [shared, setShared] = useState(existing?.shared ?? initial?.shared ?? false);
   const [state, setState] = useState<"idle" | "saving" | "failed">("idle");
-  const at = existing?.atMs ?? atMs;
+  const at = existing?.atMs ?? initial?.atMs ?? atMs;
   const toggle = (id: number) => setPlayers((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-black/60 p-4" role="dialog" aria-modal="true" data-testid="coach-save-dialog">
@@ -1221,7 +1247,7 @@ function SaveDialog({ copy, existing, initial, lineup, spotlitPlayerIds, atMs, o
         <div className="mt-3">
           <p className="text-sm font-semibold text-text">{copy.playFor}</p>
           <div className="mt-1 flex gap-1.5">
-            {PLAY_FOR.map((s) => (
+            {[...new Set([...PLAY_FOR, playFor])].sort((a, b) => a - b).map((s) => (
               <button key={s} type="button" onClick={() => setPlayFor(s)} aria-pressed={playFor === s}
                 className={cn("h-9 rounded-lg px-3 text-sm font-semibold", playFor === s ? "bg-turf text-void" : "bg-raised text-muted-text")}>{copy.seconds(s)}</button>
             ))}
@@ -1260,15 +1286,22 @@ function SaveDialog({ copy, existing, initial, lineup, spotlitPlayerIds, atMs, o
  * The Quick note: tap a child, pick Well done / Watch this / Work on it, send. It goes to his
  * parents straight away; a track not tied to a child asks who he is first, or stays with staff.
  */
-function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, onClose, onSend, onMore }: {
+function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, lengthS, onLength, clipLabel, left, onClose, onSend, onMore }: {
   copy: ReturnType<typeof useCoachCopy>;
   name: string;
   boundPlayerId: number | null;
   lineup: Array<{ playerId: number; name: string; shirtNumber: number | null }>;
   sentName: (playerId: number | null) => string;
+  /** clip length in seconds, kept by the parent so the timeline can show it */
+  lengthS: number;
+  onLength: (s: number) => void;
+  /** the clip's times, as the timeline shows them */
+  clipLabel: string;
+  /** wide screens: dock on the left of the video (he is on the right) */
+  left: boolean;
   onClose: () => void;
-  onSend: (f: { preset: QuickPreset | null; comment: string; playerId: number | null; share: boolean }) => Promise<void>;
-  onMore: (f: { preset: QuickPreset | null; comment: string; playerId: number | null }) => void;
+  onSend: (f: QuickFields & { share: boolean }) => Promise<void>;
+  onMore: (f: QuickFields) => void;
 }) {
   const [preset, setPreset] = useState<QuickPreset | null>(null);
   const [comment, setComment] = useState("");
@@ -1286,7 +1319,7 @@ function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, onClose, 
   const send = async (share: boolean) => {
     setState("sending");
     try {
-      await onSend({ preset, comment, playerId, share });
+      await onSend({ preset, comment, playerId, lengthS, share });
       setState({ done: share && playerId !== null ? copy.quick.sent(sentName(playerId)) : copy.quick.savedStaff });
     } catch {
       setState("failed");
@@ -1294,7 +1327,7 @@ function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, onClose, 
   };
   const shownName = playerId !== null ? sentName(playerId) : name;
   return (
-    <div className="fixed inset-x-0 bottom-0 z-[85] mx-auto w-full max-w-lg rounded-t-3xl border border-b-0 border-line bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl"
+    <div className={cn("fixed inset-x-0 bottom-0 z-[85] mx-auto w-full max-w-lg rounded-t-3xl border border-b-0 border-line bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl md:absolute md:inset-x-auto md:bottom-3 md:mx-0 md:w-[26rem] md:rounded-3xl md:border-b md:pb-4", left ? "md:left-3" : "md:right-3")}
       role="dialog" aria-label={shownName} data-testid="coach-quick">
       {typeof state === "object" ? (
         <p className="flex items-center justify-center gap-2 py-6 text-base font-bold text-turf" role="status" data-testid="coach-quick-done"><Check className="h-5 w-5" aria-hidden />{state.done}</p>
@@ -1329,11 +1362,20 @@ function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, onClose, 
               </button>
             ))}
           </div>
+          <div className="mt-3 flex flex-wrap items-center gap-1.5" data-testid="coach-quick-length">
+            <span className="me-1 text-xs font-semibold text-muted-text">{copy.quick.clip}</span>
+            {QUICK_LENGTHS.map((s) => (
+              <button key={s} type="button" onClick={() => onLength(s)} aria-pressed={lengthS === s}
+                className={cn("h-8 rounded-full px-3 text-xs font-semibold", lengthS === s ? "bg-turf text-void" : "bg-raised text-muted-text hover:text-text")}
+                data-testid={`coach-quick-len-${s}`}>{copy.quick.lastSeconds(s)}</button>
+            ))}
+            <span className="ms-auto font-mono text-[11px] tabular-nums text-muted-text" dir="ltr" data-testid="coach-quick-clip">{clipLabel}</span>
+          </div>
           <input value={comment} onChange={(e) => setComment(e.target.value)} maxLength={300} placeholder={copy.quick.comment} aria-label={copy.quick.comment} dir="auto"
             className="mt-3 h-10 w-full rounded-xl border border-line bg-raised px-3 text-sm text-text outline-none" data-testid="coach-quick-comment" />
           {state === "failed" && <p className="mt-2 text-sm text-live" role="alert">{copy.quick.failed}</p>}
           <div className="mt-3 flex items-center gap-2">
-            <button type="button" onClick={() => onMore({ preset, comment, playerId })} className="h-11 shrink-0 rounded-xl px-3 text-sm font-semibold text-muted-text hover:text-text" data-testid="coach-quick-more">{copy.quick.more}</button>
+            <button type="button" onClick={() => onMore({ preset, comment, playerId, lengthS })} className="h-11 shrink-0 rounded-xl px-3 text-sm font-semibold text-muted-text hover:text-text" data-testid="coach-quick-more">{copy.quick.more}</button>
             <button type="button" onClick={() => void send(false)} disabled={state === "sending"} className="h-11 shrink-0 rounded-xl border border-line px-3 text-sm font-semibold text-text disabled:opacity-50" data-testid="coach-quick-staff">{copy.quick.saveStaff}</button>
             <button type="button" onClick={() => void send(true)} disabled={state === "sending" || playerId === null || (!preset && !comment.trim())}
               className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl bg-floodlight px-3 text-sm font-bold text-void disabled:opacity-40" data-testid="coach-quick-send">

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { coachBoardSchema, coachBoxAt, coachShapeVisible, type CoachBox } from "@workspace/api-zod";
 import {
+  findList,
   nextOnCamera,
+  quickWindow,
   WHOLE,
   ballAt,
   boxesAt,
@@ -142,4 +144,30 @@ describe("nextOnCamera", () => {
   it("wraps to his first stretch after the last", () => expect(nextOnCamera(spans, 330)).toBeCloseTo(10.2));
   it("never lands past a very short stretch", () => expect(nextOnCamera([[20, 20.1]], 10)).toBe(20.1));
   it("is null without spans", () => { expect(nextOnCamera(undefined, 5)).toBeNull(); expect(nextOnCamera([], 5)).toBeNull(); });
+});
+
+describe("quickWindow", () => {
+  it("covers the seconds before the pause and two after", () => expect(quickWindow(60_000, 10)).toEqual({ atMs: 52_000, endMs: 62_000 }));
+  it("never starts before the video (or the game) starts", () => expect(quickWindow(3_000, 20, 1_000)).toEqual({ atMs: 1_000, endMs: 5_000 }));
+});
+
+describe("findList", () => {
+  const P = (rosterId: string, o: Partial<{ playerId: number | null; name: string | null; number: string | null; shirtNumber: number | null; numbered: boolean; minutes: number; spans: Array<[number, number]> }>) =>
+    ({ rosterId, playerId: null, name: null, number: null, shirtNumber: null, numbered: false, minutes: 10, spans: [], ...o });
+  const flags: Record<string, { side?: number; group?: string; adult?: boolean }> = { a: { group: "red" }, b: { group: "red" }, c: { group: "white" }, coach: { adult: true } };
+  const list = findList([
+    P("a", { number: "7", numbered: true, minutes: 20, spans: [[100, 200]] }),
+    P("b", { number: "7", numbered: true, minutes: 6, spans: [[10, 40]] }),
+    P("c", { number: "7", numbered: true, minutes: 8 }),
+    P("guess", { number: "3", numbered: false, minutes: 30 }),
+    P("short", { number: "9", numbered: true, minutes: 1.5 }),
+    P("coach", { number: "1", numbered: true, minutes: 40 }),
+    P("blank", { minutes: 40 }),
+    P("sami", { playerId: 4, name: "Sami", shirtNumber: 2, number: "2", numbered: false, minutes: 0.5, spans: [[5, 6]] }),
+  ], (id) => flags[id]);
+  it("keeps tied children and kept shirt numbers tracked long enough, never adults or guesses", () =>
+    expect(list.map((e) => e.key)).toEqual(["p:4", "n:red:7", "n:white:7"]));
+  it("joins a child's broken tracks into one entry with their spans in order", () => {
+    expect(list[1]).toMatchObject({ rosterIds: ["a", "b"], minutes: 26, spans: [[10, 40, "b"], [100, 200, "a"]] });
+  });
 });
