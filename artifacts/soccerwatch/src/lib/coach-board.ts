@@ -490,14 +490,13 @@ export function noteMoment(board: Pick<CoachBoard, "shapes">, nowMs: number): nu
 
 
 /**
- * Where to jump to find a player: just inside his next stretch on camera after `t` (the video is
+ * Where to jump to find a player who isn't drawn now: just inside his next stretch on camera after `t` (the video is
  * paused there, so he must already be in shot), wrapping to his first one. Null when he never appears.
  */
 export function nextOnCamera(spans: ReadonlyArray<readonly [number, number]> | undefined, t: number, into = 0.2): number | null {
   if (!spans?.length) return null;
   const sorted = [...spans].sort((a, b) => a[0] - b[0]);
-  const inside = sorted.find(([a, b]) => a <= t && t < b);
-  if (inside) return t;
+  // Only asked when he isn't drawn now, so a stretch around `t` (a merged gap, a hidden box) doesn't count.
   const next = sorted.find(([a]) => a > t + 0.05) ?? sorted[0];
   return Math.min(next[1], next[0] + into);
 }

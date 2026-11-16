@@ -137,7 +137,7 @@ describe("saved moments", () => {
 
 describe("nextOnCamera", () => {
   const spans: Array<[number, number]> = [[100, 140], [10, 30], [300, 320]];
-  it("stays put while he is on camera", () => expect(nextOnCamera(spans, 20)).toBe(20));
+  it("skips the stretch around now, where he isn't drawn", () => expect(nextOnCamera(spans, 20)).toBeCloseTo(100.2));
   it("goes just inside his next stretch", () => expect(nextOnCamera(spans, 50)).toBeCloseTo(100.2));
   it("wraps to his first stretch after the last", () => expect(nextOnCamera(spans, 330)).toBeCloseTo(10.2));
   it("never lands past a very short stretch", () => expect(nextOnCamera([[20, 20.1]], 10)).toBe(20.1));
