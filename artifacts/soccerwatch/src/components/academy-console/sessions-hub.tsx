@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, ArrowRight, Video } from "lucide-react";
+import { ArrowLeft, ArrowRight, Radio, Video } from "lucide-react";
 import {
   getListAcademyConsoleRecordingsQueryKey,
   useListAcademyConsoleRecordings,
@@ -12,6 +12,9 @@ import { PhoneReviewCard } from "@/components/academy-console/phone-review-card"
 import { useConsoleNavCopy } from "@/i18n/console-nav-strings";
 import { useMatchesCopy } from "@/i18n/matches-strings";
 import { useAcademyMatches } from "@/lib/academy-matches-api";
+import { canTagNow } from "@/lib/academy-coach-api";
+import { LiveTagger } from "@/components/coach-board/LiveTagger";
+import { useCoachCopy } from "@/i18n/coach-strings";
 import { cn } from "@/lib/utils";
 
 /**
@@ -29,6 +32,12 @@ import { cn } from "@/lib/utils";
  */
 export type SessionsAccess = { schedule: boolean; recordings: boolean; matches: boolean };
 type Tab = "sessions" | "videos" | "compare";
+
+function taggingSession(): number | null {
+  if (typeof window === "undefined") return null;
+  const id = Number(new URLSearchParams(window.location.search).get("tag"));
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
 
 function linkedSession(): { id: number; step: string | null } | null {
   if (typeof window === "undefined") return null;
@@ -50,6 +59,17 @@ export function AcademySessionsHub({ academyId, academyName, isOwner, can, initi
   const dir = copy.locale === "ar" ? "rtl" : "ltr";
   const linked = useMemo(linkedSession, []);
   const [openId, setOpenId] = useState<number | null>(can.matches ? linked?.id ?? null : null);
+  const coachCopy = useCoachCopy();
+  // Tag moments on the phone during a session (?tag=<id> opens it straight away, for a home-screen link).
+  const [tagId, setTagId] = useState<number | null>(can.matches ? taggingSession() : null);
+  const startTagging = (id: number) => {
+    setTagId(id);
+    if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", `/academy/sessions?tag=${id}`);
+  };
+  const stopTagging = () => {
+    setTagId(null);
+    if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", "/academy/sessions");
+  };
   const tabs = ([
     (can.schedule || can.matches) && "sessions",
     can.recordings && "videos",
@@ -75,6 +95,8 @@ export function AcademySessionsHub({ academyId, academyName, isOwner, can, initi
     if (typeof window !== "undefined") window.history.replaceState(window.history.state, "", "/academy/sessions");
   };
 
+  if (tagId !== null) return <LiveTagger academyId={academyId} sessionId={tagId} onClose={stopTagging} />;
+
   if (openId !== null) {
     return (
       <section className="space-y-5" data-testid="academy-sessions-hub" dir={dir}>
@@ -86,9 +108,18 @@ export function AcademySessionsHub({ academyId, academyName, isOwner, can, initi
   const Chevron = copy.locale === "ar" ? ArrowLeft : ArrowRight;
   const sessionExtra = (session: AcademySessionSummary) => {
     const m = byId.get(session.id);
-    if (!m || !m.hasVideo) return null;
+    const tagNow = canTagNow(session.startsAt, session.endsAt ?? null);
+    const tagButton = tagNow && (
+      <button type="button" onClick={() => startTagging(session.id)}
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-floodlight px-3 text-xs font-bold text-void hover:brightness-110"
+        data-testid={`button-tag-session-${session.id}`}>
+        <Radio className="h-3.5 w-3.5" aria-hidden="true" />{coachCopy.tag.open}
+      </button>
+    );
+    if (!m || !m.hasVideo) return tagButton ? <div className="mt-2.5 flex flex-wrap items-center gap-2">{tagButton}</div> : null;
     return (
       <div className="mt-2.5 flex flex-wrap items-center gap-2" data-testid={`session-video-${session.id}`}>
+        {tagButton}
         <AnalysisBadge item={m} copy={matchesCopy} />
         {m.playersWithStats > 0 && <span className="rounded-full bg-violet-400/15 px-2 py-0.5 text-[11px] font-bold text-violet-300">{matchesCopy.playersWithStats(m.playersWithStats)}</span>}
         {m.published && <span className="rounded-full bg-floodlight/15 px-2 py-0.5 text-[11px] font-bold text-floodlight">{matchesCopy.published}</span>}

@@ -178,3 +178,53 @@ export const familyTracksLoader = (noteId: number) =>
 
 export const familyAnalysisLoader = (noteId: number) =>
   () => call<CoachAnalysis>(`/academy/family/coach-notes/${noteId}/analysis`);
+
+// ─── Live tags (the coach's phone, during the session) ─────────────────────────
+
+export type CoachTagPreset = "good" | "watch" | "work";
+export type CoachLiveTag = { id: number; at: string | null; title: string; playerId: number | null; preset: CoachTagPreset | null; mine: boolean };
+export type CoachTagsPage = {
+  session: { id: number; type: "match" | "training"; squadName: string | null; startsAt: string; endsAt: string | null };
+  lineup: Array<{ playerId: number; name: string; shirtNumber: number | null }>;
+  tags: CoachLiveTag[];
+};
+const tagsKey = (academyId: number, sessionId: number) => ["academy-coach-tags", academyId, sessionId] as const;
+
+export function useCoachTags(academyId: number, sessionId: number) {
+  return useQuery({ queryKey: tagsKey(academyId, sessionId), staleTime: 10_000, queryFn: () => call<CoachTagsPage>(coachPath(academyId, sessionId, "/tags")) });
+}
+
+/** Tag, change and remove live moments; every change also refreshes the Coach view's notes. */
+export function useCoachTagActions(academyId: number, sessionId: number) {
+  const qc = useQueryClient();
+  const put = (tag: CoachLiveTag, replaces?: number) => qc.setQueryData<CoachTagsPage>(tagsKey(academyId, sessionId), (old) => old && ({
+    ...old, tags: [tag, ...old.tags.filter((t) => t.id !== tag.id && t.id !== replaces)].sort((a, b) => Date.parse(b.at ?? "") - Date.parse(a.at ?? "")),
+  }));
+  const settle = () => void qc.invalidateQueries({ queryKey: coachKeys.match(academyId, sessionId) });
+  return {
+    put,
+    create: async (input: { at: string; title: string }) => {
+      const r = await call<{ tag: CoachLiveTag }>(coachPath(academyId, sessionId, "/tags"), { method: "POST", body: JSON.stringify(input) });
+      settle();
+      return r.tag;
+    },
+    change: async (id: number, input: { playerId?: number | null; preset?: CoachTagPreset | null; title?: string }) => {
+      const r = await call<{ tag: CoachLiveTag }>(coachPath(academyId, sessionId, `/tags/${id}`), { method: "PATCH", body: JSON.stringify(input) });
+      put(r.tag);
+      settle();
+      return r.tag;
+    },
+    remove: async (id: number) => {
+      await call<void>(coachPath(academyId, sessionId, `/notes/${id}`), { method: "DELETE" });
+      qc.setQueryData<CoachTagsPage>(tagsKey(academyId, sessionId), (old) => old && ({ ...old, tags: old.tags.filter((t) => t.id !== id) }));
+      settle();
+    },
+  };
+}
+
+/** Around a session's time (from 30 min before to 30 min after its end, or 3 h without one) a coach can tag moments. */
+export function canTagNow(startsAt: string, endsAt: string | null, now = Date.now()): boolean {
+  const start = Date.parse(startsAt);
+  const end = endsAt ? Date.parse(endsAt) : start + 3 * 3_600_000;
+  return Number.isFinite(start) && now >= start - 30 * 60_000 && now <= end + 30 * 60_000;
+}
