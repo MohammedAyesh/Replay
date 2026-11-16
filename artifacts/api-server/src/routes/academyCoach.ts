@@ -114,6 +114,8 @@ export type CoachPlayerView = {
   playerId: number | null;
   name: string | null;
   shirtNumber: number | null;
+  /** the analysis read a shirt number on him and kept it (not just a candidate, not dropped) */
+  numbered?: boolean;
   /** when he is on camera, video seconds [from, to], merged across small gaps (Coach view's "find him") */
   spans?: Array<[number, number]>;
 };
@@ -153,6 +155,7 @@ export function coachPlayers(ctx: Pick<MatchContext, "roster" | "lineup"> & { bu
       playerId,
       name: entry?.name ?? null,
       shirtNumber: p.numberDropped ? null : entry?.shirtNumber ?? null,
+      numbered: Boolean(p.number) && !p.numberDropped,
       ...(ctx.bundle ? { spans: cameraSpans(p.parts, ctx.bundle.manifest) } : {}),
     };
   });

@@ -490,19 +490,77 @@ export function noteMoment(board: Pick<CoachBoard, "shapes">, nowMs: number): nu
 
 
 /**
- * Where to jump to find a player: just inside his next stretch on camera after `t` (the video is
+ * Where to jump to find a player who isn't drawn now: just inside his next stretch on camera after `t` (the video is
  * paused there, so he must already be in shot), wrapping to his first one. Null when he never appears.
  */
-export function nextOnCamera(spans: ReadonlyArray<readonly [number, number]> | undefined, t: number, into = 0.2): number | null {
+export function nextOnCamera(spans: ReadonlyArray<readonly [number, number, ...unknown[]]> | undefined, t: number, into = 0.2): number | null {
+  const next = nextSpan(spans, t);
+  return next ? Math.min(next[1], next[0] + into) : null;
+}
+
+/** The span `nextOnCamera` lands in, so a merged entry knows which of its tracks to spotlight. */
+export function nextSpan<S extends readonly [number, number, ...unknown[]]>(spans: ReadonlyArray<S> | undefined, t: number): S | null {
   if (!spans?.length) return null;
   const sorted = [...spans].sort((a, b) => a[0] - b[0]);
-  const inside = sorted.find(([a, b]) => a <= t && t < b);
-  if (inside) return t;
-  const next = sorted.find(([a]) => a > t + 0.05) ?? sorted[0];
-  return Math.min(next[1], next[0] + into);
+  // Only asked when he isn't drawn now, so a stretch around `t` (a merged gap, a hidden box) doesn't count.
+  return sorted.find((s) => s[0] > t + 0.05) ?? sorted[0];
+}
+
+/** "Find a player" lists only children we can trust to be him: tied to a child, or a kept shirt number tracked this long. */
+export const FIND_MIN_MINUTES = 2;
+export type FindEntry = {
+  key: string;
+  /** every track that is this child / this shirt */
+  rosterIds: string[];
+  playerId: number | null;
+  name: string | null;
+  number: string | null;
+  team: string | null;
+  minutes: number;
+  /** on-camera spans across his tracks, each with the track it belongs to */
+  spans: Array<[number, number, string]>;
+};
+type FindPlayer = { rosterId: string; playerId: number | null; name: string | null; number: string | null; shirtNumber: number | null; numbered?: boolean; minutes: number; spans?: Array<[number, number]> };
+/**
+ * The players a coach can look for: one entry per child tied to the lineup, and one per kept shirt
+ * number per team (training group or kit side) for tracks of at least `minMinutes`. A child the tracker
+ * lost and found again shares one entry. Adults and unnumbered fragments are left to tapping the video.
+ */
+export function findList(players: ReadonlyArray<FindPlayer>, flags: (rosterId: string) => { side?: number | null; group?: string | null; adult?: boolean | null } | undefined, minMinutes = FIND_MIN_MINUTES): FindEntry[] {
+  const out = new Map<string, FindEntry>();
+  for (const p of players) {
+    const f = flags(p.rosterId);
+    if (p.playerId === null && (f?.adult || !p.numbered || p.minutes < minMinutes)) continue;
+    const number = p.shirtNumber !== null ? String(p.shirtNumber) : p.number;
+    if (p.playerId === null && !number) continue;
+    const team = f?.group ?? (f?.side === 0 || f?.side === 1 ? `side${f.side}` : null);
+    const key = p.playerId !== null ? `p:${p.playerId}` : `n:${team ?? ""}:${number}`;
+    const e = out.get(key) ?? { key, rosterIds: [], playerId: p.playerId, name: p.name, number, team, minutes: 0, spans: [] };
+    e.rosterIds.push(p.rosterId);
+    e.minutes = Math.round((e.minutes + p.minutes) * 10) / 10;
+    for (const [a, b] of p.spans ?? []) e.spans.push([a, b, p.rosterId]);
+    out.set(key, e);
+  }
+  for (const e of out.values()) e.spans.sort((x, y) => x[0] - y[0]);
+  return [...out.values()].sort((a, b) => {
+    if ((a.playerId === null) !== (b.playerId === null)) return a.playerId === null ? 1 : -1;
+    if (a.playerId !== null) return Number(a.number ?? 999) - Number(b.number ?? 999) || (a.name ?? "").localeCompare(b.name ?? "");
+    return b.minutes - a.minutes;
+  });
 }
 
 export const QUICK_PRESETS = ["good", "watch", "work"] as const;
 export type QuickPreset = (typeof QUICK_PRESETS)[number];
-/** How long a Quick note plays for, from the moment it was made. */
-export const QUICK_NOTE_MS = 8000;
+
+/** Quick note clip lengths, in seconds. */
+export const QUICK_LENGTHS = [5, 10, 20, 30] as const;
+/** How long a Quick note keeps playing after the moment the coach stopped on. */
+export const QUICK_AFTER_MS = 2000;
+/**
+ * A Quick note's clip: the coach pauses just after the thing happened, so it covers the
+ * `lengthS` seconds up to `momentMs` plus a short run-on, never before the video's start.
+ */
+export function quickWindow(momentMs: number, lengthS: number, startMs = 0): { atMs: number; endMs: number } {
+  const endMs = Math.round(momentMs + QUICK_AFTER_MS);
+  return { atMs: Math.max(Math.round(startMs), endMs - Math.round(lengthS * 1000)), endMs };
+}

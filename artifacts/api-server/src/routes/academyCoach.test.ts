@@ -175,6 +175,7 @@ describe("coach board (staff)", () => {
     expect(res.body.players[0]).toMatchObject({ rosterId: "p1", playerId: ali, name: "Ali", shirtNumber: 7, number: "7" });
     expect(res.body.players[2]).toMatchObject({ rosterId: "p3", playerId: null, name: null });
     for (const p of res.body.players) expect(Array.isArray(p.spans)).toBe(true);
+    expect(res.body.players.map((p: { numbered: boolean }) => p.numbered)).toEqual([true, true, false]);
     expect(res.body.notes).toEqual([]);
   });
 
