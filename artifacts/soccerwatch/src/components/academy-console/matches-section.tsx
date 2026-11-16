@@ -1,11 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CoachMatchView, CoachViewButton } from "@/components/coach-board/CoachViews";
 import { PrivateClipsCard } from "@/components/academy-console/private-clips-card";
 import { PhoneMediaCard } from "@/components/academy-console/phone-media-card";
 import { PhoneReviewCard } from "@/components/academy-console/phone-review-card";
-import { HlsPlayer } from "@/components/HlsPlayer";
 import { TrainingGameStatsCard } from "@/components/academy-console/TrainingGameStatsCard";
-import { TrainingSessionTimeline } from "@/components/academy-console/TrainingSessionTimeline";
 import { ArrowLeft, ArrowRight, BarChart3, Check, ExternalLink, Loader2, RefreshCw, Sparkles, UserRoundX, Video } from "lucide-react";
 import { useMatchesCopy, type MatchesStrings } from "@/i18n/matches-strings";
 import {
@@ -27,7 +25,6 @@ import {
 } from "@/lib/academy-matches-api";
 import { METRICS, combine, ratingsFor, trainingTimelineBuckets, type MetricKey } from "@/lib/academy-match-metrics";
 import { parseTrainingSession } from "@/lib/academy-training";
-import { seekVideoElement } from "@/lib/video-seek";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -187,10 +184,6 @@ function VideoCard({ academyId, data, isOwner, copy }: { academyId: number; data
   const save = useSaveMatchPage(academyId, data.session.id);
   const analyse = useAnalyseMatch(academyId, data.session.id);
   const [page, setPage] = useState(data.page);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const training = useMemo(() => data.training ? parseTrainingSession(data.training) : null, [data.training]);
-  const selectedRecording = data.recordings.find((recording) => recording.id === (page.recordingId ?? data.page.recordingId))
-    ?? data.recordings[0];
   useEffect(() => { setPage(data.page); }, [data.page]);
   const job = data.analysis.job;
   const active = job ? ACTIVE.includes(job.status) : false;
@@ -243,26 +236,6 @@ function VideoCard({ academyId, data, isOwner, copy }: { academyId: number; data
         </Button>
       )}
       {save.isError && <p className="mt-2 text-sm text-red-400" role="alert">{(save.error as Error).message}</p>}
-
-      {training?.segments.length && selectedRecording?.videoUrl && (
-        <div className="mt-5 space-y-3" data-testid="training-session-player">
-          <div className="overflow-hidden rounded-xl border border-line bg-void">
-            <HlsPlayer ref={videoRef} url={selectedRecording.videoUrl} label={selectedRecording.court} controls videoClassName="aspect-video w-full object-contain" />
-          </div>
-          {page.recordingId === data.page.recordingId && (
-            <TrainingSessionTimeline
-              segments={training.segments}
-              games={training.games}
-              groups={training.groups}
-              recordingDate={selectedRecording.date}
-              recordingTimeSlot={selectedRecording.timeSlot}
-              duration={Number(selectedRecording.duration) || undefined}
-              copy={copy}
-              onSeek={(seconds) => seekVideoElement(videoRef.current, seconds)}
-            />
-          )}
-        </div>
-      )}
 
       <div className="mt-5 rounded-xl bg-raised p-4">
         {active ? (
