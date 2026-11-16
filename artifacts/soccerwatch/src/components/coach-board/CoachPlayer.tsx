@@ -60,7 +60,8 @@ import {
 import { useCoachCopy } from "@/i18n/coach-strings";
 import { useMatchesCopy } from "@/i18n/matches-strings";
 import type { CoachPlayer as RosterPlayer, CoachTraining, CoachVideo } from "@/lib/academy-coach-api";
-import { TrainingSessionTimeline } from "@/components/academy-console/TrainingSessionTimeline";
+import { recordingClock, TrainingSessionTimeline } from "@/components/academy-console/TrainingSessionTimeline";
+import { coachParts } from "@/lib/academy-training";
 import {
   WHOLE,
   boxesAt,
@@ -76,6 +77,7 @@ import {
   nextSpan,
   nextSpotColor,
   noteMoment,
+  QUICK_AFTER_MS,
   QUICK_LENGTHS,
   QUICK_PRESETS,
   quickWindow,
@@ -152,6 +154,8 @@ const clock = (s: number) => {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 };
 const round1 = (n: number) => Math.round(n * 10) / 10;
+/** A saved board is a finished note: drop the live tag. */
+const stripTag = (b: CoachBoard): CoachBoard => { const { tag: _tag, ...rest } = b; return rest; };
 /** What a Quick note carries over when the coach asks for the full form. */
 type QuickDraft = { title: string; body: string | null; playerIds: number[]; shared: boolean; atMs: number; endMs: number };
 type QuickFields = { preset: QuickPreset | null; comment: string; playerId: number | null; lengthS: number };
@@ -161,6 +165,7 @@ const newId = () => `s${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 export function CoachPlayer(props: CoachPlayerProps) {
   const copy = useCoachCopy();
   const matchesCopy = useMatchesCopy();
+  const sessionClock = (t: number) => recordingClock(props.training?.recordingDate, props.training?.recordingTimeSlot, t, matchesCopy.locale).slice(0, 5);
   const { video: v, readOnly = false } = props;
   const aspect = v.width > 0 && v.height > 0 ? v.width / v.height : 32 / 9;
   const startAt = props.initialNote ? props.initialNote.atMs / 1000 : v.matchWindow?.from ?? 0;
@@ -195,7 +200,8 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const toolList = useMemo(() => TOOLS.filter((t) => moreTools || SIMPLE_TOOLS.has(t.id)), [moreTools]);
   /** Quick note: the child a tap picked, waiting for Well done / Watch this / Work on it. */
   /** `left`: on a wide screen the sheet sits on the side of the video away from him */
-  const [quick, setQuick] = useState<{ rosterId: string; left: boolean } | null>(null);
+  /** `noteId`, `playerId`, `preset`: finishing a moment tagged live on the coach's phone */
+  const [quick, setQuick] = useState<{ rosterId: string | null; left: boolean; noteId?: number; playerId?: number | null; preset?: QuickPreset | null } | null>(null);
   /** the Quick note clip the coach picked, shown as a band on the timeline */
   const [quickLen, setQuickLen] = useState(10);
   const [findText, setFindText] = useState("");
@@ -206,8 +212,10 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const [paused, setPaused] = useState(true);
   const [time, setTime] = useState(startAt);
   const [duration, setDuration] = useState(v.duration ?? 0);
-  const [selectedGameIndex, setSelectedGameIndex] = useState<number | null>(null);
-  const selectedGame = selectedGameIndex === null ? null : props.training?.games[selectedGameIndex] ?? null;
+  // A part of a training (a game or a drill) narrows the video, the player list and Quick notes to it.
+  const parts = useMemo(() => coachParts(props.training), [props.training]);
+  const [selectedPartKey, setSelectedPartKey] = useState<string | null>(null);
+  const selectedGame = parts.find((p) => p.key === selectedPartKey) ?? null;
   const rangeStart = selectedGame?.start ?? 0;
   const fullDuration = duration || v.duration || 0;
   const rangeEnd = selectedGame
@@ -669,6 +677,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
 
   // ── Notes ─────────────────────────────────────────────────────────────────
   const openNote = (note: CoachNote) => {
+    if (note.board.tag && props.onSaveNote && !readOnly) { finishTag(note); return; }
     videoRef.current?.pause();
     setActiveNote(note);
     history.current = [];
@@ -676,6 +685,21 @@ export function CoachPlayer(props: CoachPlayerProps) {
     setBoardState(note.board);
     if (note.board.view) { setView(note.board.view); setFollow(Boolean(note.board.view.follow)); }
     seek(note.atMs / 1000);
+  };
+
+  /** A moment tagged live: go to the tap, and open its Quick note with the child and the verdict the coach gave. */
+  const finishTag = (note: CoachNote) => {
+    videoRef.current?.pause();
+    setActiveNote(null);
+    const tap = Math.max(0, (note.endMs ?? note.atMs) - QUICK_AFTER_MS) / 1000;
+    if (selectedGame && (tap < selectedGame.start || tap > selectedGame.end)) setSelectedPartKey(null);
+    const video = videoRef.current;
+    if (video) { video.currentTime = tap; setTime(tap); }
+    const playerId = note.playerIds[0] ?? null;
+    const rosterId = playerId !== null ? props.players.find((p) => p.playerId === playerId)?.rosterId ?? null : null;
+    if (rosterId) ensureSpot(rosterId);
+    if (window.innerWidth < 640) setPanel(null);
+    setQuick({ rosterId, left: false, noteId: note.id, playerId, preset: note.board.tag?.preset ?? null });
   };
 
   const matchFrom = v.matchWindow?.from ?? 0;
@@ -689,7 +713,8 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const entryLabel = (e: FindEntry) => (e.name ? `${e.number ? `#${e.number} ` : ""}${e.name}` : `#${e.number}`);
   const needle = findText.trim().toLowerCase().replace(/^#/, "");
   const matchesFind = (e: FindEntry) => !needle || (e.name ?? "").toLowerCase().includes(needle) || (e.number ?? "").toLowerCase() === needle;
-  const shown = entries.filter((e) => e.rosterIds.some((id) => visible(id)) && matchesFind(e))
+  const inPart = (e: FindEntry) => !selectedGame || e.spans.some(([a, b]) => a < selectedGame.end && b > selectedGame.start);
+  const shown = entries.filter((e) => e.rosterIds.some((id) => visible(id)) && matchesFind(e) && inPart(e))
     .map((e, i) => ({ e, i, on: e.rosterIds.some((id) => tracked.has(id)) }))
     .sort((a, b) => Number(b.on) - Number(a.on) || a.i - b.i)
     .map((x) => x.e);
@@ -716,14 +741,14 @@ export function CoachPlayer(props: CoachPlayerProps) {
     : 0;
   const groupLabel = (id: string) => analysis?.groupDetails.find((group) => group.id === id)?.name ?? copy.analysis.group(id);
 
-  const quickName = (rosterId: string, playerId: number | null) => {
-    const bound = byRoster.get(rosterId);
+  const quickName = (rosterId: string | null, playerId: number | null) => {
+    const bound = rosterId ? byRoster.get(rosterId) : undefined;
     if (bound?.playerId !== null && bound?.playerId !== undefined && bound.playerId === playerId && bound.name) return bound.name;
-    return props.lineup?.find((l) => l.playerId === playerId)?.name ?? label(rosterId);
+    return props.lineup?.find((l) => l.playerId === playerId)?.name ?? (rosterId ? label(rosterId) : copy.quick.moment);
   };
   /** The clip: the seconds up to the moment (now, or the drawing's moment) plus a short run-on, inside the game picked. */
   const quickClip = (lengthS: number) => quickWindow(noteMoment(boardRef.current, Math.round((videoRef.current?.currentTime ?? time) * 1000)), lengthS, rangeStart * 1000);
-  const quickDraft = (rosterId: string, f: QuickFields): QuickDraft => {
+  const quickDraft = (rosterId: string | null, f: QuickFields): QuickDraft => {
     const name = quickName(rosterId, f.playerId);
     return {
       ...quickClip(f.lengthS),
@@ -734,14 +759,14 @@ export function CoachPlayer(props: CoachPlayerProps) {
     };
   };
   /** Save a Quick note: this child's spotlight only, over the clip the coach picked. */
-  const sendQuick = async (rosterId: string, f: QuickFields & { share: boolean }) => {
+  const sendQuick = async (rosterId: string | null, f: QuickFields & { share: boolean }, noteId?: number) => {
     const d = quickDraft(rosterId, f);
-    const b = boardRef.current;
+    const { tag: _tag, ...b } = boardRef.current;
     await props.onSaveNote!({
       ...d,
       shared: d.shared && f.share,
       board: { ...b, spotlights: b.spotlights.filter((s) => s.rosterId === rosterId), view: { ...viewRef.current, follow } },
-    });
+    }, noteId);
   };
   /** A row in the list: on camera, pick him; off camera, jump to where he next appears and pick that track. */
   const findEntry = (e: FindEntry) => {
@@ -861,19 +886,21 @@ export function CoachPlayer(props: CoachPlayerProps) {
           )}
       {quick && props.onSaveNote && !saveOpen && (
         <QuickNoteSheet
-          key={quick.rosterId}
+          key={`${quick.rosterId}-${quick.noteId ?? ""}`}
           left={quick.left}
           copy={copy}
-          name={label(quick.rosterId)}
-          boundPlayerId={byRoster.get(quick.rosterId)?.playerId ?? null}
+          name={quick.rosterId ? label(quick.rosterId) : quickName(null, quick.playerId ?? null)}
+          boundPlayerId={quick.playerId ?? (quick.rosterId ? byRoster.get(quick.rosterId)?.playerId ?? null : null)}
+          initialPreset={quick.preset ?? null}
+          tagged={quick.noteId !== undefined}
           lineup={props.lineup ?? []}
           sentName={(playerId) => quickName(quick.rosterId, playerId)}
           lengthS={quickLen}
           onLength={setQuickLen}
           clipLabel={(() => { const w = quickClip(quickLen); return `${clockOf(w.atMs / 1000)}–${clockOf(w.endMs / 1000)}`; })()}
           onClose={() => setQuick(null)}
-          onSend={(f) => sendQuick(quick.rosterId, f)}
-          onMore={(f) => { setSaveOpen({ initial: quickDraft(quick.rosterId, f) }); setQuick(null); }}
+          onSend={(f) => sendQuick(quick.rosterId, f, quick.noteId)}
+          onMore={(f) => { setSaveOpen({ id: quick.noteId, initial: quickDraft(quick.rosterId, f) }); setQuick(null); }}
         />
       )}
           {/* Zoom and overlays */}
@@ -978,34 +1005,30 @@ export function CoachPlayer(props: CoachPlayerProps) {
       <footer className="border-t border-line bg-void px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
         {props.training && (props.training.segments.length > 0 || props.training.games.length > 0) && (
           <div className="mb-3 space-y-2" data-testid="coach-training-timeline">
-            {props.training.games.length > 0 && (
+            {parts.length > 0 && (
               <label className="block max-w-xl text-xs font-semibold text-muted-text">
                 <span className="mb-1 block">{copy.trainingGames.select}</span>
                 <select
-                  value={selectedGameIndex ?? ""}
+                  value={selectedPartKey ?? ""}
                   onChange={(event) => {
-                    const value = event.target.value;
-                    if (!value) {
-                      setSelectedGameIndex(null);
-                      const start = v.matchWindow?.from ?? 0;
-                      seekVideoElement(videoRef.current, start);
-                      setTime(start);
-                      return;
-                    }
-                    const index = Number(value);
-                    const game = props.training?.games[index];
-                    if (!Number.isInteger(index) || !game) return;
-                    setSelectedGameIndex(index);
-                    seekVideoElement(videoRef.current, game.start);
-                    setTime(game.start);
+                    const part = parts.find((p) => p.key === event.target.value);
+                    setSelectedPartKey(part?.key ?? null);
+                    const start = part?.start ?? v.matchWindow?.from ?? 0;
+                    seekVideoElement(videoRef.current, start);
+                    setTime(start);
                   }}
                   className="min-h-9 w-full rounded-lg border border-line bg-surface px-3 text-sm font-semibold text-text"
                   data-testid="coach-game-picker"
                 >
                   <option value="">{copy.trainingGames.session}</option>
-                  {props.training.games.map((game, index) => {
-                    const teams = game.teams.map((team, teamIndex) => game.teamNames[teamIndex] || props.training?.groups.find((group) => group.id === team)?.name || team).join(" vs ");
-                    return <option key={`${game.start}-${index}`} value={index}>{copy.trainingGames.game(index + 1, teams)}</option>;
+                  {parts.map((part) => {
+                    const at = sessionClock(part.start);
+                    if (part.gameIndex !== null) {
+                      const game = props.training!.games[part.gameIndex];
+                      const teams = game.teams.map((team, teamIndex) => game.teamNames[teamIndex] || props.training?.groups.find((group) => group.id === team)?.name || team).join(" vs ");
+                      return <option key={part.key} value={part.key}>{`${at} · ${copy.trainingGames.game(part.gameIndex + 1, teams)}`}</option>;
+                    }
+                    return <option key={part.key} value={part.key}>{`${at} · ${matchesCopy.sessionTimeline.labels[part.label as keyof typeof matchesCopy.sessionTimeline.labels]} · ${copy.trainingGames.minutes(Math.round((part.end - part.start) / 60))}`}</option>;
                   })}
                 </select>
               </label>
@@ -1089,7 +1112,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
               className="w-full accent-floodlight" aria-label="time" data-testid="coach-scrubber" />
             {total > rangeStart && (props.notes ?? []).filter((n) => n.atMs / 1000 >= rangeStart && n.atMs / 1000 <= total).map((n) => (
               <button key={n.id} type="button" onClick={() => openNote(n)} title={n.title || clockOf(n.atMs / 1000)}
-                className="absolute -top-1.5 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-turf ring-2 ring-void" style={{ left: `${((n.atMs / 1000 - rangeStart) / (total - rangeStart)) * 100}%` }} />
+                className={cn("absolute -top-1.5 h-2.5 w-2.5 -translate-x-1/2 rounded-full ring-2 ring-void", n.board.tag ? "bg-floodlight" : "bg-turf")} style={{ left: `${((n.atMs / 1000 - rangeStart) / (total - rangeStart)) * 100}%` }} />
             ))}
           </div>
           <span className="hidden w-14 shrink-0 text-center font-mono text-xs tabular-nums text-muted-text sm:block">{clockOf(total)}</span>
@@ -1112,7 +1135,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
           onSave={async (fields) => {
             const input: CoachNoteInput = {
               ...fields,
-              board: { ...boardRef.current, view: { ...viewRef.current, follow } },
+              board: { ...stripTag(boardRef.current), view: { ...viewRef.current, follow } },
             };
             const note = await props.onSaveNote!(input, saveOpen.id);
             setActiveNote(note);
@@ -1185,14 +1208,15 @@ function NotesList({ notes, copy, clockOf, activeId, onOpen, canEdit, onDelete }
   return (
     <ul className="space-y-2">
       {notes.map((n) => (
-        <li key={n.id} className={cn("rounded-xl border p-2.5", activeId === n.id ? "border-turf bg-turf/5" : "border-line")}>
+        <li key={n.id} className={cn("rounded-xl border p-2.5", n.board.tag ? "border-floodlight/50 bg-floodlight/5" : activeId === n.id ? "border-turf bg-turf/5" : "border-line")}>
           <button type="button" onClick={() => onOpen(n)} className="block w-full text-start" data-testid={`coach-note-${n.id}`}>
             <span className="font-mono text-xs text-turf">{clockOf(n.atMs)}</span>
             <span className="ms-2 font-semibold text-text" dir="auto">{n.title || "—"}</span>
             {n.body && <span className="mt-0.5 line-clamp-2 block text-xs text-muted-text" dir="auto">{n.body}</span>}
           </button>
           <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-text">
-            {n.shared ? <span className="inline-flex items-center gap-1 text-turf"><Share2 className="h-3 w-3" />{copy.shared}</span> : <span>{copy.private}</span>}
+            {n.board.tag ? <span className="font-semibold text-floodlight">{copy.quick.taggedFinish}</span>
+              : n.shared ? <span className="inline-flex items-center gap-1 text-turf"><Share2 className="h-3 w-3" />{copy.shared}</span> : <span>{copy.private}</span>}
             {n.author && <span className="truncate">{copy.by(n.author)}</span>}
             {onDelete && canEdit?.(n) && (
               <button type="button" className="ms-auto text-live hover:underline" onClick={() => { if (window.confirm(copy.deleteConfirm)) void onDelete(n.id); }}>{copy.delete}</button>
@@ -1286,10 +1310,13 @@ function SaveDialog({ copy, existing, initial, lineup, spotlitPlayerIds, atMs, o
  * The Quick note: tap a child, pick Well done / Watch this / Work on it, send. It goes to his
  * parents straight away; a track not tied to a child asks who he is first, or stays with staff.
  */
-function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, lengthS, onLength, clipLabel, left, onClose, onSend, onMore }: {
+function QuickNoteSheet({ copy, name, boundPlayerId, initialPreset, tagged, lineup, sentName, lengthS, onLength, clipLabel, left, onClose, onSend, onMore }: {
   copy: ReturnType<typeof useCoachCopy>;
   name: string;
   boundPlayerId: number | null;
+  /** finishing a live tag: the verdict the coach tapped on the pitch */
+  initialPreset: QuickPreset | null;
+  tagged: boolean;
   lineup: Array<{ playerId: number; name: string; shirtNumber: number | null }>;
   sentName: (playerId: number | null) => string;
   /** clip length in seconds, kept by the parent so the timeline can show it */
@@ -1303,7 +1330,7 @@ function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, lengthS, 
   onSend: (f: QuickFields & { share: boolean }) => Promise<void>;
   onMore: (f: QuickFields) => void;
 }) {
-  const [preset, setPreset] = useState<QuickPreset | null>(null);
+  const [preset, setPreset] = useState<QuickPreset | null>(initialPreset);
   const [comment, setComment] = useState("");
   const [playerId, setPlayerId] = useState<number | null>(boundPlayerId);
   const [state, setState] = useState<"idle" | "sending" | "failed" | { done: string }>("idle");
@@ -1335,6 +1362,7 @@ function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, lengthS, 
         <>
           <div className="flex items-center gap-2">
             <p className="min-w-0 flex-1 truncate font-display text-lg font-bold text-text" dir="auto">{shownName}</p>
+            {tagged && <span className="shrink-0 rounded-full bg-floodlight/15 px-2 py-0.5 text-[11px] font-bold text-floodlight" data-testid="coach-quick-tagged">{copy.quick.taggedLive}</span>}
             <button type="button" onClick={onClose} aria-label={copy.close} className="grid h-9 w-9 place-items-center rounded-full text-muted-text hover:bg-raised hover:text-text"><X className="h-5 w-5" /></button>
           </div>
           {needsChild && (

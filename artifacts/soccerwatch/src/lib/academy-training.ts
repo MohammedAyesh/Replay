@@ -231,3 +231,26 @@ export function numberedSharePercent(value: number | null): number | null {
   if (value === null) return null;
   return Math.round(Math.max(0, Math.min(100, value <= 1 ? value * 100 : value)));
 }
+
+/** Segment labels a coach can pick as a part of the session (games come from `games`). */
+export const COACH_PART_LABELS: ReadonlySet<TrainingSegmentLabel> = new Set(["multi-ball drill", "shooting / queue drill", "drill", "warm-up"]);
+export type CoachPart = { key: string; kind: "game" | "drill"; start: number; end: number; label: TrainingSegmentLabel | "game"; gameIndex: number | null };
+/**
+ * The parts of a training a coach can narrow the Coach view to: each game, and each drill or warm-up
+ * of at least `minSeconds`, joining runs of the same kind split by a gap of up to `joinGap` seconds.
+ * In time order.
+ */
+export function coachParts(training: Pick<TrainingSessionData, "segments" | "games"> | null | undefined, minSeconds = 120, joinGap = 60): CoachPart[] {
+  if (!training) return [];
+  const drills: CoachPart[] = [];
+  for (const s of [...training.segments].sort((a, b) => a.start - b.start)) {
+    if (!COACH_PART_LABELS.has(s.label) || !(s.end > s.start)) continue;
+    const last = drills[drills.length - 1];
+    if (last && last.label === s.label && s.start - last.end <= joinGap) { last.end = Math.max(last.end, s.end); continue; }
+    drills.push({ key: "", kind: "drill", start: s.start, end: s.end, label: s.label, gameIndex: null });
+  }
+  const games: CoachPart[] = training.games.map((g, i) => ({ key: `g${i}`, kind: "game", start: g.start, end: g.end, label: "game", gameIndex: i }));
+  return [...games, ...drills.filter((d) => d.end - d.start >= minSeconds)]
+    .sort((a, b) => a.start - b.start)
+    .map((p) => (p.kind === "drill" ? { ...p, key: `d${Math.round(p.start)}` } : p));
+}

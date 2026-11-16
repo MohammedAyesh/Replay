@@ -74,7 +74,8 @@ vi.mock("../lib/creative/framing", async (importOriginal) => {
 
 beforeEach(() => { suppliedRoster = ROSTER; });
 
-import coachRouter, { cameraSpans } from "./academyCoach";
+import coachRouter, { cameraSpans, tagTime } from "./academyCoach";
+import { tagClip } from "@workspace/api-zod";
 
 const tag = `ac_${Date.now()}`;
 let app: Express;
@@ -342,5 +343,55 @@ describe("coach notes", () => {
     expect((await request(app).delete(`${base()}/notes/${noteId}`).set(auth(coachId))).status).toBe(204);
     const list = await request(app).get(base()).set(auth(coachId));
     expect(list.body.notes.map((n: { id: number }) => n.id)).not.toContain(noteId);
+  });
+});
+
+describe("live tags", () => {
+  const fileStart = Date.UTC(2026, 10, 1, 14, 0); // 1 Nov 17:00 Amman, the recording's slot
+  it("uses the phone's time unless it is far from the server's", () => {
+    const now = Date.UTC(2026, 10, 16, 15, 0);
+    expect(tagTime(new Date(now - 60_000).toISOString(), now)).toBe(new Date(now - 60_000).toISOString());
+    expect(tagTime(new Date(now - 3_600_000).toISOString(), now)).toBe(new Date(now).toISOString());
+    expect(tagTime(undefined, now)).toBe(new Date(now).toISOString());
+  });
+  it("places a tag ten seconds before the tap to two after, on the video's clock", () => {
+    expect(tagClip(new Date(fileStart + 600_000).toISOString(), fileStart)).toEqual({ atMs: 590_000, endMs: 602_000 });
+    expect(tagClip(new Date(fileStart - 5_000).toISOString(), fileStart)).toEqual({ atMs: 0, endMs: 2_000 });
+  });
+
+  let tagId = 0;
+  it("tags a moment now, then says who it was and how it went", async () => {
+    const before = Date.now();
+    const res = await request(app).post(`${base()}/tags`).set(auth(coachId)).send({ title: "Moment" });
+    expect(res.status).toBe(201);
+    tagId = res.body.tag.id;
+    expect(Date.parse(res.body.tag.at)).toBeGreaterThanOrEqual(before - 1000);
+    const patched = await request(app).patch(`${base()}/tags/${tagId}`).set(auth(coachId)).send({ playerId: ali, preset: "good", title: "Well done · Ali" });
+    expect(patched.status).toBe(200);
+    expect(patched.body.tag).toMatchObject({ id: tagId, playerId: ali, preset: "good", title: "Well done · Ali", mine: true });
+    const list = await request(app).get(`${base()}/tags`).set(auth(coachId));
+    expect(list.status).toBe(200);
+    expect(list.body.tags.map((t: { id: number }) => t.id)).toContain(tagId);
+    expect(list.body.lineup.some((l: { playerId: number }) => l.playerId === ali)).toBe(true);
+  });
+  it("shows an unfinished tag in Coach view where it falls on the recording, unshared", async () => {
+    const res = await request(app).get(base()).set(auth(coachId));
+    const note = res.body.notes.find((n: { id: number }) => n.id === tagId);
+    const at = Date.parse(note.board.tag.at);
+    expect(note).toMatchObject({ shared: false, atMs: at - fileStart - 10_000, endMs: at - fileStart + 2_000, playerIds: [ali] });
+  });
+  it("finishing it in Coach view drops the tag and keeps the coach's clip", async () => {
+    const fin = await request(app).patch(`${base()}/notes/${tagId}`).set(auth(coachId)).send({ atMs: 4000, endMs: 9000, board: board(), shared: true, title: "Well done · Ali" });
+    expect(fin.status).toBe(200);
+    expect(fin.body.note.board.tag).toBeUndefined();
+    const res = await request(app).get(base()).set(auth(coachId));
+    expect(res.body.notes.find((n: { id: number }) => n.id === tagId)).toMatchObject({ atMs: 4000, endMs: 9000, shared: true });
+    const again = await request(app).patch(`${base()}/tags/${tagId}`).set(auth(coachId)).send({ preset: "work" });
+    expect(again.status).toBe(409);
+    await request(app).delete(`${base()}/notes/${tagId}`).set(auth(coachId));
+  });
+  it("lets only staff tag", async () => {
+    const res = await request(app).post(`${base()}/tags`).set(auth(parentId)).send({});
+    expect([403, 404]).toContain(res.status);
   });
 });

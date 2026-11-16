@@ -100,6 +100,25 @@ export const coachTeamLinesSchema = z.object({
 });
 export type CoachTeamLines = z.infer<typeof coachTeamLinesSchema>;
 
+export const COACH_TAG_PRESETS = ["good", "watch", "work"] as const;
+/** A moment tagged live: when it happened (wall clock) and, if the coach said, how it went. */
+export const coachTagSchema = z.object({
+  at: z.string().max(40).refine((s) => Number.isFinite(Date.parse(s)), "a time"),
+  preset: z.enum(COACH_TAG_PRESETS).nullable().optional(),
+});
+export type CoachTag = z.infer<typeof coachTagSchema>;
+/** A tagged moment's clip: this long before the tap, and this long after it. */
+export const COACH_TAG_BEFORE_MS = 10_000;
+export const COACH_TAG_AFTER_MS = 2_000;
+/** Where a moment tagged at `atIso` sits on a video whose first frame was at `fileStartMs` (epoch ms). */
+export function tagClip(atIso: string, fileStartMs: number): { atMs: number; endMs: number } | null {
+  const at = Date.parse(atIso);
+  if (!Number.isFinite(at) || !Number.isFinite(fileStartMs)) return null;
+  const moment = Math.round(at - fileStartMs);
+  if (moment < 0) return { atMs: 0, endMs: COACH_TAG_AFTER_MS };
+  return { atMs: Math.max(0, moment - COACH_TAG_BEFORE_MS), endMs: moment + COACH_TAG_AFTER_MS };
+}
+
 export const coachBoardSchema = z.object({
   v: z.literal(1),
   shapes: z.array(coachShapeSchema).max(COACH_MAX_SHAPES),
@@ -119,6 +138,8 @@ export const coachBoardSchema = z.object({
   group: z.string().min(1).max(40).optional(),
   /** show the adults (coaches) the analysis flagged; hidden by default */
   showAdults: z.boolean().optional(),
+  /** tagged live from a phone during the session and not finished in Coach view yet */
+  tag: coachTagSchema.optional(),
 });
 export type CoachBoard = z.infer<typeof coachBoardSchema>;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateTrainingGamePlayers, numberedSharePercent, parseTrainingSession } from "@/lib/academy-training";
+import { aggregateTrainingGamePlayers, coachParts, numberedSharePercent, parseTrainingSession } from "@/lib/academy-training";
 
 const trainingFixture = {
   mode: "training",
@@ -78,4 +78,27 @@ describe("training session metadata", () => {
     expect(numberedSharePercent(0.8)).toBe(80);
     expect(numberedSharePercent(75)).toBe(75);
   });
+});
+
+describe("coachParts", () => {
+  it("lists games and drills in time order, joining a drill split by a short gap and dropping short or non-drill parts", () => {
+    const parts = coachParts({
+      segments: [
+        { start: 0, end: 100, label: "team talk" },
+        { start: 100, end: 400, label: "multi-ball drill" },
+        { start: 430, end: 600, label: "multi-ball drill" },
+        { start: 600, end: 660, label: "warm-up" },
+        { start: 700, end: 1300, label: "game" },
+        { start: 1300, end: 1700, label: "shooting / queue drill" },
+        { start: 1700, end: 2000, label: "adults" },
+      ],
+      games: [{ start: 700, end: 1300, teams: ["a", "b"], teamNames: [], resting: [], players: [], teamTotals: {} }],
+    });
+    expect(parts.map((p) => [p.key, p.kind, p.label, p.start, p.end])).toEqual([
+      ["d100", "drill", "multi-ball drill", 100, 600],
+      ["g0", "game", "game", 700, 1300],
+      ["d1300", "drill", "shooting / queue drill", 1300, 1700],
+    ]);
+  });
+  it("is empty without training", () => expect(coachParts(null)).toEqual([]));
 });

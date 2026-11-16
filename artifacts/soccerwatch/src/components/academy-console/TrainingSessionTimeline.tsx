@@ -14,7 +14,8 @@ type Props = {
   onSeek: (seconds: number) => void;
 };
 
-function recordingClock(date: string | null | undefined, timeSlot: string | null | undefined, seconds: number, locale: "ar" | "en") {
+/** Wall-clock time (Amman) of a second into the recording, or hh:mm:ss from its start without a slot. */
+export function recordingClock(date: string | null | undefined, timeSlot: string | null | undefined, seconds: number, locale: "ar" | "en") {
   const time = timeSlot?.match(/(?:^|\D)(\d{1,2}):(\d{2})(?:\D|$)/);
   if (!date || !time) {
     const safe = Math.max(0, Math.floor(seconds));

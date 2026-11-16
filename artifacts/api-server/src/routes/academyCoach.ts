@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { Router, type IRouter, type Request, type Response } from "express";
 
-import { coachBoardRosterIds, coachBoardSchema, coachNoteInputSchema, type CoachNote } from "@workspace/api-zod";
+import { z } from "zod";
+import { COACH_TAG_PRESETS, coachBoardRosterIds, coachBoardSchema, coachNoteInputSchema, tagClip, type CoachNote } from "@workspace/api-zod";
 import {
   academiesTable,
   academyCoachNotesTable,
@@ -21,6 +22,7 @@ import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { labToHex } from "../lib/matchPlay";
 import { matchTrainingGroups } from "../lib/matchRoster";
 import { readMatchWindow } from "../lib/matchWindow";
+import { recordingStart } from "../lib/phoneMedia";
 import {
   consoleSession,
   familyCanSee,
@@ -40,6 +42,13 @@ import {
  *   POST   …/matches/:sessionId/coach/notes            save a moment (drawings, spotlights, comment)
  *   PATCH  …/matches/:sessionId/coach/notes/:noteId    change it (its author or the owner)
  *   DELETE …/matches/:sessionId/coach/notes/:noteId    remove it (its author or the owner)
+ *   GET    …/matches/:sessionId/coach/tags             the session's live tags and its squad (the phone page)
+ *   POST   …/matches/:sessionId/coach/tags             tag a moment now, during the session
+ *   PATCH  …/matches/:sessionId/coach/tags/:noteId     say who it was and how it went
+ *
+ * A live tag is an unshared note whose board carries `tag.at` (wall clock). Until the coach
+ * finishes it in Coach view, its clip is placed from the recording's start each time it is read,
+ * so a tag made before the video existed lands in the right place once it does.
  *
  * Families (a parent, or the player himself):
  *   GET /academy/family/coach-notes                              shared notes about the viewer's children
@@ -194,6 +203,20 @@ async function notesFor(sessionId: number, viewerId: number) {
   return rows.map((r) => noteView({ ...r.note, authorName: r.authorName }, viewerId));
 }
 
+/** When the session's video starts (epoch ms): its recording's date and slot, or the session's planned start. */
+export function videoStartMs(ctx: Pick<MatchContext, "recordings" | "recordingId" | "session">): number {
+  const rec = ctx.recordings.find((r) => r.id === ctx.recordingId);
+  return (rec ? recordingStart(rec.date, rec.timeSlot)?.getTime() : null) ?? ctx.session.startsAt.getTime();
+}
+
+/** Unfinished live tags, placed on the video from their wall-clock time. */
+export function placeTags(notes: CoachNote[], startMs: number): CoachNote[] {
+  return notes.map((n) => {
+    const clip = n.board.tag ? tagClip(n.board.tag.at, startMs) : null;
+    return clip ? { ...n, ...clip } : n;
+  }).sort((a, b) => a.atMs - b.atMs || a.id - b.id);
+}
+
 /** Players tagged on a note must be this academy's. */
 async function academyPlayerIds(academyId: number, ids: number[]): Promise<number[]> {
   if (!ids.length) return [];
@@ -254,7 +277,7 @@ router.get(base, async (req, res): Promise<void> => {
       players: coachPlayers(ctx, trainingAdultIds),
       lineup: ctx.lineup.filter((l) => l.inSquad).map((l) => ({ playerId: l.playerId, name: l.name, shirtNumber: l.shirtNumber })),
       training,
-      notes: await notesFor(found.session.id, found.user.id),
+      notes: placeTags(await notesFor(found.session.id, found.user.id), videoStartMs(ctx)),
     });
   } catch (error) {
     failed(res, error, "Coach board: match failed");
@@ -398,6 +421,91 @@ router.delete(`${base}/notes/:noteId`, async (req, res): Promise<void> => {
     res.status(204).end();
   } catch (error) {
     failed(res, error, "Coach board: delete failed");
+  }
+});
+
+// ─── Live tags (the coach's phone, during the session) ──────────────────────────
+
+const TAG_MAX_SKEW_MS = 10 * 60_000;
+const tagBody = z.object({
+  /** when the coach tapped (his phone's clock); far from now, the server's clock is used */
+  at: z.string().max(40).optional(),
+  playerId: z.number().int().positive().nullable().optional(),
+  preset: z.enum(COACH_TAG_PRESETS).nullable().optional(),
+  title: z.string().max(120).optional(),
+});
+
+/** The tap's time: the phone's, unless it is more than 10 minutes from the server's. */
+export function tagTime(at: string | undefined, now = Date.now()): string {
+  const t = at ? Date.parse(at) : Number.NaN;
+  return new Date(Number.isFinite(t) && Math.abs(t - now) <= TAG_MAX_SKEW_MS ? t : now).toISOString();
+}
+
+function tagView(n: CoachNote) {
+  return { id: n.id, at: n.board.tag?.at ?? null, title: n.title, playerId: n.playerIds[0] ?? null, preset: n.board.tag?.preset ?? null, mine: n.mine };
+}
+
+router.get(`${base}/tags`, async (req, res): Promise<void> => {
+  const found = await consoleSession(req, res);
+  if (!found) return;
+  try {
+    const ctx = await loadContext(found.session);
+    const notes = (await notesFor(found.session.id, found.user.id)).filter((n) => n.board.tag);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.json({
+      session: { id: found.session.id, type: found.session.type, squadName: found.session.squadName, startsAt: found.session.startsAt, endsAt: found.session.endsAt },
+      lineup: ctx.lineup.filter((l) => l.inSquad).map((l) => ({ playerId: l.playerId, name: l.name, shirtNumber: l.shirtNumber })),
+      tags: notes.map(tagView).sort((a, b) => Date.parse(b.at ?? "") - Date.parse(a.at ?? "")),
+    });
+  } catch (error) {
+    failed(res, error, "Coach tags: list failed");
+  }
+});
+
+router.post(`${base}/tags`, async (req, res): Promise<void> => {
+  const found = await consoleSession(req, res);
+  if (!found) return;
+  const body = tagBody.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "That moment could not be saved" }); return; }
+  try {
+    const ctx = await loadContext(found.session);
+    const at = tagTime(body.data.at);
+    const clip = tagClip(at, videoStartMs(ctx))!;
+    const [row] = await db.insert(academyCoachNotesTable).values({
+      academyId: found.academyId,
+      sessionId: found.session.id,
+      recordingId: ctx.recordingId,
+      title: body.data.title ?? "",
+      body: null,
+      ...clip,
+      board: { v: 1, shapes: [], spotlights: [], tag: { at, preset: body.data.preset ?? null } },
+      playerIds: body.data.playerId ? await academyPlayerIds(found.academyId, [body.data.playerId]) : [],
+      shared: false,
+      createdBy: found.user.id,
+    }).returning();
+    res.status(201).json({ tag: tagView(noteView({ ...row, authorName: found.user.name ?? null }, found.user.id)) });
+  } catch (error) {
+    failed(res, error, "Coach tags: save failed");
+  }
+});
+
+router.patch(`${base}/tags/:noteId`, async (req, res): Promise<void> => {
+  const found = await editableNote(req, res);
+  if (!found) return;
+  const board = coachBoardSchema.safeParse(found.row.board);
+  if (!board.success || !board.data.tag) { res.status(409).json({ error: "This moment was already finished in Coach view" }); return; }
+  const body = tagBody.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "That change could not be saved" }); return; }
+  try {
+    const b = body.data;
+    const set: Partial<typeof academyCoachNotesTable.$inferInsert> = { updatedAt: new Date() };
+    if (b.title !== undefined) set.title = b.title;
+    if (b.playerId !== undefined) set.playerIds = b.playerId ? await academyPlayerIds(found.academyId, [b.playerId]) : [];
+    if (b.preset !== undefined) set.board = { ...board.data, tag: { ...board.data.tag, preset: b.preset } };
+    const [row] = await db.update(academyCoachNotesTable).set(set).where(eq(academyCoachNotesTable.id, found.row.id)).returning();
+    res.json({ tag: tagView(noteView({ ...row, authorName: found.user.name ?? null }, found.user.id)) });
+  } catch (error) {
+    failed(res, error, "Coach tags: change failed");
   }
 });
 
