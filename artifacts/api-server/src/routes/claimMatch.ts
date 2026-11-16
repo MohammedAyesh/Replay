@@ -2570,6 +2570,8 @@ export async function storeUploadBundle(recordingId: number, adminId: number, up
     const { matchWindow: _uploadedWindow, ...uploadedProvenance } = upload.manifest.provenance ?? {};
     const manifest: TrackingManifest = {
       ...upload.manifest,
+      // A coach's split of the training survives a re-run of the analysis.
+      ...(previousBundle?.manifest.trainingEdits ? { trainingEdits: previousBundle.manifest.trainingEdits } : {}),
        provenance: {
          ...uploadedProvenance,
          ...(matchWindow ? { matchWindow } : {}),

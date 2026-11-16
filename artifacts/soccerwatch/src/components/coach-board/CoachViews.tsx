@@ -9,6 +9,7 @@ import {
   familyTracksLoader,
   useCoachMatch,
   useDeleteCoachNote,
+  useCoachSplits,
   useFamilyCoachNote,
   useFamilyCoachNotes,
   useSaveCoachNote,
@@ -40,6 +41,7 @@ export function CoachMatchView({ academyId, sessionId, onClose }: { academyId: n
   const match = useCoachMatch(academyId, sessionId);
   const save = useSaveCoachNote(academyId, sessionId);
   const remove = useDeleteCoachNote(academyId, sessionId);
+  const saveSplits = useCoachSplits(academyId, sessionId);
   const loadTracks = useMemo(() => coachTracksLoader(academyId, sessionId), [academyId, sessionId]);
   const loadAnalysis = useMemo(() => coachAnalysisLoader(academyId, sessionId), [academyId, sessionId]);
 
@@ -66,6 +68,7 @@ export function CoachMatchView({ academyId, sessionId, onClose }: { academyId: n
       notes={data.notes}
       lineup={data.lineup}
       onSaveNote={(input, id) => save.mutateAsync({ id, input })}
+      onSaveSplits={saveSplits}
       onDeleteNote={async (id) => { await remove.mutateAsync(id); }}
       canEdit={(n) => n.mine || data.role === "owner"}
     />
