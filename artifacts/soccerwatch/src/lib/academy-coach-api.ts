@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CoachAnalysis, CoachNote, CoachNoteInput, CoachTracks } from "@workspace/api-zod";
-import { parseTrainingSession, type TrainingSessionData } from "@/lib/academy-training";
+import { parseTrainingSession, type TrainingSegment, type TrainingSessionData } from "@/lib/academy-training";
 
 /** Coach board: hand-written client for routes/academyCoach.ts. */
 
@@ -67,7 +67,14 @@ export type CoachMatch = {
   notes: CoachNote[];
 };
 
-export type CoachTraining = TrainingSessionData & { recordingDate: string | null; recordingTimeSlot: string | null };
+export type CoachTraining = TrainingSessionData & {
+  recordingDate: string | null;
+  recordingTimeSlot: string | null;
+  /** the parts are the coach's own split, not the analysis's */
+  edited: boolean;
+  /** the analysis's own parts, for "back to the analysis's split" */
+  analysisSegments: TrainingSegment[];
+};
 
 type CoachTrainingPayload = {
   groups?: unknown;
@@ -76,6 +83,8 @@ type CoachTrainingPayload = {
   ground?: unknown;
   recordingDate?: unknown;
   recordingTimeSlot?: unknown;
+  edited?: unknown;
+  analysisSegments?: unknown;
 };
 
 type CoachMatchPayload = Omit<CoachMatch, "training"> & { training: CoachTrainingPayload | null };
@@ -100,6 +109,8 @@ export function useCoachMatch(academyId: number, sessionId: number | null) {
             ...parseTrainingSession(data.training),
             recordingDate: typeof data.training.recordingDate === "string" ? data.training.recordingDate : null,
             recordingTimeSlot: typeof data.training.recordingTimeSlot === "string" ? data.training.recordingTimeSlot : null,
+            edited: data.training.edited === true,
+            analysisSegments: parseTrainingSession({ segments: data.training.analysisSegments }).segments,
           }
         : null;
       return { ...data, training };
@@ -227,4 +238,20 @@ export function canTagNow(startsAt: string, endsAt: string | null, now = Date.no
   const start = Date.parse(startsAt);
   const end = endsAt ? Date.parse(endsAt) : start + 3 * 3_600_000;
   return Number.isFinite(start) && now >= start - 30 * 60_000 && now <= end + 30 * 60_000;
+}
+
+// ─── The coach's split of a training ───────────────────────────────────────────
+
+/** Save the coach's parts (or reset to the analysis's with null); the Coach view and the session page refresh. */
+export function useCoachSplits(academyId: number, sessionId: number) {
+  const qc = useQueryClient();
+  const refresh = () => Promise.all([
+    qc.invalidateQueries({ queryKey: coachKeys.match(academyId, sessionId) }),
+    qc.invalidateQueries({ queryKey: ["academy-matches", academyId] }),
+  ]);
+  return async (segments: TrainingSegment[] | null) => {
+    if (segments) await call(coachPath(academyId, sessionId, "/splits"), { method: "PUT", body: JSON.stringify({ segments }) });
+    else await call<void>(coachPath(academyId, sessionId, "/splits"), { method: "DELETE" });
+    await refresh();
+  };
 }

@@ -61,7 +61,8 @@ import { useCoachCopy } from "@/i18n/coach-strings";
 import { useMatchesCopy } from "@/i18n/matches-strings";
 import type { CoachPlayer as RosterPlayer, CoachTraining, CoachVideo } from "@/lib/academy-coach-api";
 import { recordingClock, TrainingSessionTimeline } from "@/components/academy-console/TrainingSessionTimeline";
-import { coachParts } from "@/lib/academy-training";
+import { coachParts, type TrainingSegment } from "@/lib/academy-training";
+import { SplitEditor } from "@/components/coach-board/SplitEditor";
 import {
   WHOLE,
   boxesAt,
@@ -141,6 +142,8 @@ export type CoachPlayerProps = {
   /** staff: the match's saved moments and who they could be about */
   notes?: CoachNote[];
   lineup?: Array<{ playerId: number; name: string; shirtNumber: number | null }>;
+  /** save the coach's own parts of a training (null: back to the analysis's) */
+  onSaveSplits?: (segments: TrainingSegment[] | null) => Promise<void>;
   onSaveNote?: (input: CoachNoteInput, id?: number) => Promise<CoachNote>;
   onDeleteNote?: (id: number) => Promise<void>;
   canEdit?: (note: CoachNote) => boolean;
@@ -165,7 +168,8 @@ const newId = () => `s${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 export function CoachPlayer(props: CoachPlayerProps) {
   const copy = useCoachCopy();
   const matchesCopy = useMatchesCopy();
-  const sessionClock = (t: number) => recordingClock(props.training?.recordingDate, props.training?.recordingTimeSlot, t, matchesCopy.locale).slice(0, 5);
+  const fullClock = (t: number) => recordingClock(props.training?.recordingDate, props.training?.recordingTimeSlot, t, matchesCopy.locale);
+  const sessionClock = (t: number) => fullClock(t).slice(0, 5);
   const { video: v, readOnly = false } = props;
   const aspect = v.width > 0 && v.height > 0 ? v.width / v.height : 32 / 9;
   const startAt = props.initialNote ? props.initialNote.atMs / 1000 : v.matchWindow?.from ?? 0;
@@ -215,6 +219,8 @@ export function CoachPlayer(props: CoachPlayerProps) {
   // A part of a training (a game or a drill) narrows the video, the player list and Quick notes to it.
   const parts = useMemo(() => coachParts(props.training), [props.training]);
   const [selectedPartKey, setSelectedPartKey] = useState<string | null>(null);
+  const [editingSplits, setEditingSplits] = useState(false);
+  const canSplit = Boolean(props.onSaveSplits) && !readOnly && props.analysed;
   const selectedGame = parts.find((p) => p.key === selectedPartKey) ?? null;
   const rangeStart = selectedGame?.start ?? 0;
   const fullDuration = duration || v.duration || 0;
@@ -827,11 +833,11 @@ export function CoachPlayer(props: CoachPlayerProps) {
 
       <div className="flex min-h-0 flex-1">
         {!readOnly && (
-          <aside className={cn("hidden shrink-0 flex-col items-center gap-1 overflow-y-auto border-e border-line py-2 md:flex", moreTools ? "w-14" : "w-20")} aria-label="tools" data-testid="coach-rail">
+          <aside className={cn("hidden shrink-0 flex-col items-center gap-0.5 overflow-y-auto overflow-x-hidden border-e border-line py-2 [scrollbar-width:none] md:flex [&::-webkit-scrollbar]:hidden", moreTools ? "w-[6.25rem] flex-row flex-wrap content-start justify-center" : "w-20")} aria-label="tools" data-testid="coach-rail">
             <ToolButtons tools={toolList} tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} vertical labelled={!moreTools} />
-            <span className="my-1 h-px w-8 shrink-0 bg-line" />
+            <span className={cn("my-1 h-px shrink-0 bg-line", moreTools ? "w-full" : "w-8")} />
             <button type="button" onClick={() => setMoreTools(!moreTools)} aria-pressed={moreTools} title={moreTools ? copy.quick.simpleTools : copy.quick.moreToolsHint}
-              className={cn("flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-semibold leading-tight text-muted-text hover:bg-raised hover:text-text", moreTools ? "w-11" : "w-[4.25rem]")}
+              className={cn("flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-semibold leading-tight text-muted-text hover:bg-raised hover:text-text", moreTools ? "w-[5.5rem]" : "w-[4.25rem]")}
               data-testid="coach-more-tools">
               <SlidersHorizontal className="h-5 w-5" aria-hidden />
               <span className="text-center">{moreTools ? copy.quick.simpleTools : copy.quick.moreTools}</span>
@@ -1003,10 +1009,34 @@ export function CoachPlayer(props: CoachPlayerProps) {
       )}
 
       <footer className="border-t border-line bg-void px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-4">
-        {props.training && (props.training.segments.length > 0 || props.training.games.length > 0) && (
-          <div className="mb-3 space-y-2" data-testid="coach-training-timeline">
+        {editingSplits && props.onSaveSplits && (
+          <SplitEditor
+            initial={props.training?.segments ?? []}
+            analysisSegments={props.training?.analysisSegments ?? []}
+            edited={Boolean(props.training?.edited)}
+            duration={fullDuration}
+            time={time}
+            clock={fullClock}
+            labels={matchesCopy.sessionTimeline.labels}
+            onSeek={seek}
+            onSave={async (segments: TrainingSegment[] | null) => { setSelectedPartKey(null); await props.onSaveSplits!(segments); }}
+            onClose={() => setEditingSplits(false)}
+          />
+        )}
+        {!editingSplits && canSplit && !(props.training && props.training.segments.length > 0) && (
+          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs text-muted-text" data-testid="coach-split-mark">
+            <button type="button" onClick={() => setEditingSplits(true)} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 font-semibold text-text hover:border-muted-text">
+              {copy.splits.mark}
+            </button>
+            <span className="hidden sm:inline">{copy.splits.markHint}</span>
+          </div>
+        )}
+        {!editingSplits && props.training && (props.training.segments.length > 0 || props.training.games.length > 0) && (
+          <div className="mb-2 space-y-1.5" data-testid="coach-training-timeline">
+            {(parts.length > 0 || canSplit) && (
+            <div className="flex max-w-3xl items-end gap-2">
             {parts.length > 0 && (
-              <label className="block max-w-xl text-xs font-semibold text-muted-text">
+              <label className="block min-w-0 flex-1 text-xs font-semibold text-muted-text">
                 <span className="mb-1 block">{copy.trainingGames.select}</span>
                 <select
                   value={selectedPartKey ?? ""}
@@ -1033,6 +1063,14 @@ export function CoachPlayer(props: CoachPlayerProps) {
                 </select>
               </label>
             )}
+            {canSplit && (
+              <button type="button" onClick={() => setEditingSplits(true)} className="h-9 shrink-0 rounded-lg border border-line px-3 text-xs font-semibold text-text hover:border-muted-text" data-testid="coach-split-edit">
+                {copy.splits.edit}
+              </button>
+            )}
+            {props.training.edited && <span className="mb-2 hidden shrink-0 text-[11px] text-muted-text sm:inline">{copy.splits.editedNote}</span>}
+            </div>
+            )}
             {props.training.segments.length > 0 && (
               <TrainingSessionTimeline
                 segments={props.training.segments}
@@ -1044,6 +1082,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
                 range={selectedGame ? { from: selectedGame.start, to: selectedGame.end } : null}
                 copy={matchesCopy}
                 onSeek={seek}
+                compact
               />
             )}
           </div>
@@ -1166,7 +1205,7 @@ function ToolButtons({ tools, tool, setTool, copy, vertical, labelled, disabled 
           className={cn("shrink-0 rounded-xl transition-colors disabled:opacity-35",
             labelled
               ? vertical ? "flex w-[4.25rem] flex-col items-center gap-0.5 px-1 py-1.5 text-[11px] font-semibold leading-tight" : "inline-flex h-9 items-center gap-1.5 px-2.5 text-xs font-semibold"
-              : cn("grid place-items-center", vertical ? "h-10 w-11" : "h-9 w-9"),
+              : cn("grid place-items-center", vertical ? "h-9 w-11" : "h-9 w-9"),
             tool === id ? "bg-floodlight text-void" : "text-muted-text hover:bg-raised hover:text-text")}
           data-testid={`coach-tool-${id}`}>
           <Icon className="h-5 w-5 shrink-0" aria-hidden />

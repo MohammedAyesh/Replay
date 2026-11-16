@@ -50,6 +50,7 @@ import { fetchExportObject, probeExportObject } from "../lib/backupExport";
 import { ADMIN_PREVIEW_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
+import { attachRosterTraining, isTrainingBlock } from "../lib/rosterTraining";
 import {
   adminClipExportSnapshot,
   isLiveVideoId,
@@ -255,6 +256,33 @@ function adToEntry(ad: typeof adsTable.$inferSelect) {
     createdAt: ad.createdAt.toISOString(),
   };
 }
+
+/**
+ * Attach a training block (kit groups, drills, games) computed after the analysis, without a re-run.
+ * PUT /admin/recordings/:recordingId/roster-training  { training }
+ */
+router.put("/admin/recordings/:recordingId/roster-training", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const recordingId = Number(req.params.recordingId);
+  const training = (req.body as { training?: unknown } | undefined)?.training;
+  if (!Number.isSafeInteger(recordingId) || recordingId <= 0 || !isTrainingBlock(training)) {
+    res.status(400).json({ error: "A recording id and a training block with segments and games are needed" });
+    return;
+  }
+  try {
+    const result = await attachRosterTraining(recordingId, training);
+    if (!result.ok) { res.status(result.status).json({ error: result.error }); return; }
+    logger.info({ adminId, recordingId, bundleId: result.bundleId, previous: result.previousMatchRosterPath }, "Admin attached a training block to a roster");
+    res.json(result);
+  } catch (error) {
+    logger.error({ err: error, recordingId }, "Admin roster training attach failed");
+    res.status(500).json({ error: "Could not attach the training block" });
+  }
+});
 
 router.get("/admin/ads", async (req, res): Promise<void> => {
   const adminId = await requireAdmin(req);

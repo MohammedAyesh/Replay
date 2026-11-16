@@ -55,7 +55,8 @@ export function TrainingSessionTimeline({
   range,
   copy,
   onSeek,
-}: Props) {
+  compact = false,
+}: Props & { compact?: boolean }) {
   const groupMap = useMemo(() => new Map(groups.map((group) => [group.id, group])), [groups]);
   const gameSegments = useMemo(() => segments.filter((segment) => segment.label === "game"), [segments]);
   const gameOrder = new Map(gameSegments.map((segment, index) => [segment, index]));
@@ -82,9 +83,9 @@ export function TrainingSessionTimeline({
   };
 
   return (
-    <section className="rounded-xl border border-line bg-raised/50 p-4" data-testid="training-segments-timeline" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
-      <h3 className="mb-3 font-display text-base font-bold text-text">{copy.sessionTimeline.title}</h3>
-      <div className="relative h-9 overflow-hidden rounded-lg bg-void" dir="ltr" aria-label={copy.sessionTimeline.title}>
+    <section className={compact ? "" : "rounded-xl border border-line bg-raised/50 p-4"} data-testid="training-segments-timeline" dir={copy.locale === "ar" ? "rtl" : "ltr"}>
+      {!compact && <h3 className="mb-3 font-display text-base font-bold text-text">{copy.sessionTimeline.title}</h3>}
+      <div className={`relative overflow-hidden rounded-lg bg-void ${compact ? "h-7" : "h-9"}`} dir="ltr" aria-label={copy.sessionTimeline.title}>
         {visible.map(({ source: original, ...segment }, index) => {
           const full = original;
           const segmentIndex = gameOrder.get(full) ?? index;
@@ -107,12 +108,12 @@ export function TrainingSessionTimeline({
               className="absolute inset-y-0 overflow-hidden border-e border-void/60 text-[10px] font-bold text-white hover:brightness-110 focus:z-10 focus:outline focus:outline-2 focus:outline-offset-[-2px] focus:outline-white"
               style={{ left: `${left}%`, width: `${Math.max(0.5, width)}%`, background: colorFor(full.label) }}
             >
-              {width >= 12 && <span className="block truncate px-1" dir="ltr">{recordingClock(recordingDate, recordingTimeSlot, segment.start, copy.locale)}</span>}
+              {width >= (compact ? 6 : 12) && <span className="block truncate px-1" dir={compact ? "auto" : "ltr"}>{compact ? title : recordingClock(recordingDate, recordingTimeSlot, segment.start, copy.locale)}</span>}
             </button>
           );
         })}
       </div>
-      <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+      {!compact && <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
         {visible.map(({ source: original, ...segment }, index) => {
           const full = original;
           const segmentIndex = gameOrder.get(full) ?? index;
@@ -132,7 +133,7 @@ export function TrainingSessionTimeline({
             </button>
           );
         })}
-      </div>
+      </div>}
     </section>
   );
 }

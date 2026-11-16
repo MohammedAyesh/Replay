@@ -10,6 +10,7 @@ import {
   academySessionsTable,
   academySquadsTable,
   db,
+  recordingTrackingBundlesTable,
   usersTable,
   type AcademyCoachNote,
 } from "@workspace/db";
@@ -23,6 +24,7 @@ import { labToHex } from "../lib/matchPlay";
 import { matchTrainingGroups } from "../lib/matchRoster";
 import { readMatchWindow } from "../lib/matchWindow";
 import { recordingStart } from "../lib/phoneMedia";
+import { normaliseSegments, trainingSplitsInput, withTrainingEdits } from "../lib/trainingEdits";
 import {
   consoleSession,
   familyCanSee,
@@ -42,6 +44,8 @@ import {
  *   POST   …/matches/:sessionId/coach/notes            save a moment (drawings, spotlights, comment)
  *   PATCH  …/matches/:sessionId/coach/notes/:noteId    change it (its author or the owner)
  *   DELETE …/matches/:sessionId/coach/notes/:noteId    remove it (its author or the owner)
+ *   PUT    …/matches/:sessionId/coach/splits           the coach's own split of a training into parts
+ *   DELETE …/matches/:sessionId/coach/splits           back to the analysis's split
  *   GET    …/matches/:sessionId/coach/tags             the session's live tags and its squad (the phone page)
  *   POST   …/matches/:sessionId/coach/tags             tag a moment now, during the session
  *   PATCH  …/matches/:sessionId/coach/tags/:noteId     say who it was and how it went
@@ -245,7 +249,7 @@ router.get(base, async (req, res): Promise<void> => {
       }
     }
     const selectedRecording = ctx.recordings.find((recording) => recording.id === ctx.recordingId);
-    const training = ctx.roster?.training
+    const analysisTraining = ctx.roster?.training
       ? {
           groups: matchTrainingGroups(ctx.roster).map((group) => ({
             id: group.id,
@@ -259,6 +263,11 @@ router.get(base, async (req, res): Promise<void> => {
           recordingTimeSlot: selectedRecording?.timeSlot ?? null,
         }
       : null;
+    // A coach's own split wins over the analysis's (and gives a session without one a timeline).
+    const training = withTrainingEdits(analysisTraining, ctx.bundle?.manifest.trainingEdits, () => ({
+      groups: [], segments: [], games: [], ground: null,
+      recordingDate: selectedRecording?.date ?? null, recordingTimeSlot: selectedRecording?.timeSlot ?? null,
+    }));
     res.setHeader("Cache-Control", "private, no-store");
     res.json({
       session: {
@@ -421,6 +430,42 @@ router.delete(`${base}/notes/:noteId`, async (req, res): Promise<void> => {
     res.status(204).end();
   } catch (error) {
     failed(res, error, "Coach board: delete failed");
+  }
+});
+
+// ─── The coach's split of a training ───────────────────────────────────────────
+
+router.put(`${base}/splits`, async (req, res): Promise<void> => {
+  const found = await consoleSession(req, res);
+  if (!found) return;
+  const body = trainingSplitsInput.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "Those parts could not be saved" }); return; }
+  try {
+    const ctx = await loadContext(found.session);
+    if (!ctx.bundle) { res.status(409).json({ error: "This session's video has not been analysed yet" }); return; }
+    const segments = normaliseSegments(body.data.segments, ctx.bundle.manifest.duration);
+    const trainingEdits = { segments, by: found.user.id, at: new Date().toISOString() };
+    await db.update(recordingTrackingBundlesTable)
+      .set({ manifest: { ...ctx.bundle.manifest, trainingEdits } })
+      .where(eq(recordingTrackingBundlesTable.id, ctx.bundle.id));
+    res.json({ segments, editedAt: trainingEdits.at });
+  } catch (error) {
+    failed(res, error, "Coach splits: save failed");
+  }
+});
+
+router.delete(`${base}/splits`, async (req, res): Promise<void> => {
+  const found = await consoleSession(req, res);
+  if (!found) return;
+  try {
+    const ctx = await loadContext(found.session);
+    if (ctx.bundle?.manifest.trainingEdits) {
+      const { trainingEdits: _drop, ...manifest } = ctx.bundle.manifest;
+      await db.update(recordingTrackingBundlesTable).set({ manifest }).where(eq(recordingTrackingBundlesTable.id, ctx.bundle.id));
+    }
+    res.status(204).end();
+  } catch (error) {
+    failed(res, error, "Coach splits: reset failed");
   }
 });
 

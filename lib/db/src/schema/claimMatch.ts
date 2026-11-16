@@ -117,6 +117,12 @@ export type TrackingManifest = {
   }>;
   /** Match-wide roster sidecar stored beside the per-segment sidecars. */
   matchRosterPath?: string;
+  /**
+   * A coach's own split of a training into parts (drills, games, talks), seconds on
+   * the video's clock. Shown instead of the analysis's segments, and carried over
+   * when a new bundle replaces this one, so a re-run never undoes it.
+   */
+  trainingEdits?: { segments: Array<{ start: number; end: number; label: string }>; by: number | null; at: string };
   /** Compact index for the admin analysis queue; the full roster remains in object storage. */
   matchRosterSummary?: TrackingMatchRosterSummary;
   /**

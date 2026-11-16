@@ -75,6 +75,7 @@ vi.mock("../lib/creative/framing", async (importOriginal) => {
 beforeEach(() => { suppliedRoster = ROSTER; });
 
 import coachRouter, { cameraSpans, tagTime } from "./academyCoach";
+import { latestBundle } from "../lib/academyMatchStats";
 import { tagClip } from "@workspace/api-zod";
 
 const tag = `ac_${Date.now()}`;
@@ -392,6 +393,29 @@ describe("live tags", () => {
   });
   it("lets only staff tag", async () => {
     const res = await request(app).post(`${base()}/tags`).set(auth(parentId)).send({});
+    expect([403, 404]).toContain(res.status);
+  });
+});
+
+describe("coach splits", () => {
+  it("saves a coach's split over a session with none, shows it, and resets", async () => {
+    const put = await request(app).put(`${base()}/splits`).set(auth(coachId)).send({ segments: [
+      { start: 0, end: 20, label: "warm-up" }, { start: 20, end: 50, label: "game" }, { start: 45, end: 9999, label: "team talk" },
+    ] });
+    expect(put.status).toBe(200);
+    expect(put.body.segments.map((s: { label: string }) => s.label)).toEqual(["warm-up", "game", "team talk"]);
+    // The bundle is mocked here: hand the GET the manifest the PUT would have stored.
+    vi.mocked(latestBundle).mockResolvedValueOnce({ id: 99, manifest: { ...MANIFEST, trainingEdits: { segments: put.body.segments, by: coachId, at: put.body.editedAt } } as never });
+    const view = await request(app).get(base()).set(auth(coachId));
+    expect(view.body.training).toMatchObject({ edited: true, segments: [{ start: 0, end: 20, label: "warm-up" }, { start: 20, end: 45, label: "game" }, expect.objectContaining({ label: "team talk" })] });
+    expect(view.body.training.games).toHaveLength(1);
+    const bad = await request(app).put(`${base()}/splits`).set(auth(coachId)).send({ segments: [{ start: 0, end: 5, label: "nap" }] });
+    expect(bad.status).toBe(400);
+    expect((await request(app).delete(`${base()}/splits`).set(auth(coachId))).status).toBe(204);
+    expect((await request(app).get(base()).set(auth(coachId))).body.training).toBeNull();
+  });
+  it("lets only staff split", async () => {
+    const res = await request(app).put(`${base()}/splits`).set(auth(parentId)).send({ segments: [] });
     expect([403, 404]).toContain(res.status);
   });
 });

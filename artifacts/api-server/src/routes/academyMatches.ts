@@ -36,6 +36,7 @@ import { logger } from "../lib/logger";
 import { labToHex } from "../lib/matchPlay";
 import { loadRecordingPlay, type RecordingPlay } from "../lib/matchPlayLoad";
 import { trainingRosterFlags } from "../lib/coachAnalysis";
+import { withTrainingEdits } from "../lib/trainingEdits";
 import { canViewPinnedAcademyRecording } from "../lib/publicFootage";
 import { matchTrainingGroups, type MatchRoster } from "../lib/matchRoster";
 import { rosterInsideMatchWindow, rosterPlayersWithPhotos } from "./claimMatch";
@@ -440,7 +441,7 @@ router.get("/academy/console/academies/:academyId/matches/:sessionId", async (re
   }
   const trainingAdultIds = new Set([...trainingFlags.entries()].filter(([, flags]) => flags.adult === true).map(([id]) => id));
   const bindings = resolveBindings(ctx.lineup, ctx.roster, trainingAdultIds);
-  const training = ctx.roster?.training
+  const analysisTraining = ctx.roster?.training
     ? (() => {
         const groups = matchTrainingGroups(ctx.roster!);
         const known = new Set(groups.map((group) => group.id));
@@ -464,6 +465,9 @@ router.get("/academy/console/academies/:academyId/matches/:sessionId", async (re
         };
       })()
     : null;
+  const training = withTrainingEdits(analysisTraining, ctx.bundle?.manifest.trainingEdits, () => ({
+    groups: [] as Array<{ id: string; name: string; color: string | null }>, timeline: [] as unknown[], segments: [] as unknown[], games: [] as unknown[], ground: null as string | null,
+  }));
   res.json({
     session: sessionView(ctx.session),
     role: found.isOwner ? "owner" : "coach",
