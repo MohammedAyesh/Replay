@@ -121,7 +121,13 @@ function sessionFormFor(session?: AcademySessionSummary): SessionForm {
   };
 }
 
-export function AcademySessionsSection({ academyId }: { academyId: number }) {
+export function AcademySessionsSection({ academyId, heading, sessionExtra }: {
+  academyId: number;
+  /** The Sessions page (sessions-hub) gives its own title and description. */
+  heading?: { title: string | null; description: string | null; kicker?: string | null };
+  /** Extra line per session from the Sessions page: its video and analysis. */
+  sessionExtra?: (session: AcademySessionSummary) => React.ReactNode;
+}) {
   const [, setLocation] = useLocation();
   const { t, locale } = useTranslation();
   const labels = t.academyConsole;
@@ -408,6 +414,7 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
                 )}
               </div>
             )}
+            {sessionExtra?.(session)}
             {["scheduled", "recording"].includes(session.footage.status) && (
               <SessionLiveNotice
                 academyId={academyId}
@@ -473,11 +480,11 @@ export function AcademySessionsSection({ academyId }: { academyId: number }) {
         title={`${kindLabel(liveSession.type)} · ${liveSession.location}`}
         onClose={() => setLiveSession(null)}
       />}
-      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-turf">{labels.workspace}</p>
-          <h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-text">{labels.scheduleResults}</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-text">{copy.description}</p>
+      <header className={cn("flex flex-col justify-between gap-4 sm:flex-row sm:items-end", heading && heading.title === null && "sm:justify-end")}>
+        <div className={cn(heading && heading.title === null && "hidden")}>
+          {(heading ? heading.kicker : labels.workspace) && <p className="text-xs font-bold uppercase tracking-[0.18em] text-turf">{heading ? heading.kicker : labels.workspace}</p>}
+          <h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-text">{heading ? heading.title : labels.scheduleResults}</h1>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-text">{heading ? heading.description : copy.description}</p>
         </div>
         <Button
           type="button"

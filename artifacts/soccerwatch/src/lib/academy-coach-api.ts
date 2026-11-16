@@ -39,6 +39,8 @@ export type CoachPlayer = {
   playerId: number | null;
   name: string | null;
   shirtNumber: number | null;
+  /** when he is on camera, as video-second spans (analysed matches) */
+  spans?: Array<[number, number]>;
 };
 
 export type CoachSession = {

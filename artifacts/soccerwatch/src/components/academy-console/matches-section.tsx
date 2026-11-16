@@ -34,7 +34,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { cn } from "@/lib/utils";
 import { CompareBars, PlayerStatsTable, TeamStatsBars, matchValues, scoreLine, type ComparePlayer } from "@/components/academy-matches/match-stats-views";
 
-type Copy = MatchesStrings & { locale: "ar" | "en" };
+export type Copy = MatchesStrings & { locale: "ar" | "en" };
 const ACTIVE = ["queued", "claimed", "running"];
 
 function sessionTitle(session: MatchSession, copy: Copy) {
@@ -98,14 +98,14 @@ export function AcademyMatchesSection({ academyId, isOwner }: { academyId: numbe
   );
 }
 
-function AnalysisBadge({ item, copy }: { item: Pick<MatchListItem, "hasVideo" | "analysis">; copy: Copy }) {
+export function AnalysisBadge({ item, copy }: { item: Pick<MatchListItem, "hasVideo" | "analysis">; copy: Copy }) {
   if (!item.hasVideo) return <span className="rounded-full bg-raised px-2 py-0.5 text-[11px] font-bold text-muted-text">{copy.noVideo}</span>;
   const status = item.analysis ?? "none";
   const tone = status === "succeeded" ? "bg-turf/15 text-turf" : ACTIVE.includes(status) ? "bg-sky-400/15 text-sky-300" : status === "failed" ? "bg-red-500/15 text-red-400" : "bg-amber-300/15 text-amber-200";
   return <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", tone)}>{copy.analysis[status]}</span>;
 }
 
-function MatchList({ academyId, copy, onOpen }: { academyId: number; copy: Copy; onOpen: (id: number) => void }) {
+export function MatchList({ academyId, copy, onOpen }: { academyId: number; copy: Copy; onOpen: (id: number) => void }) {
   const matches = useAcademyMatches(academyId);
   if (matches.isLoading) return <div className="space-y-2">{[0, 1, 2].map((n) => <div key={n} className="h-20 animate-pulse rounded-2xl bg-raised" />)}</div>;
   if (matches.isError) return <p className="text-sm text-red-400" role="alert">{(matches.error as Error).message}</p>;
@@ -140,7 +140,7 @@ function MatchList({ academyId, copy, onOpen }: { academyId: number; copy: Copy;
   );
 }
 
-function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack, focus }: { academyId: number; sessionId: number; isOwner: boolean; copy: Copy; onBack: () => void; focus?: string | null }) {
+export function MatchDetailView({ academyId, sessionId, isOwner, copy, onBack, focus }: { academyId: number; sessionId: number; isOwner: boolean; copy: Copy; onBack: () => void; focus?: string | null }) {
   const detail = useAcademyMatch(academyId, sessionId);
   const [coaching, setCoaching] = useState(false);
   const loaded = Boolean(detail.data);
@@ -669,7 +669,7 @@ export function aggregatePlayers(rows: PlayerStatsRow[]) {
   }).sort((a, b) => (b.values.rating ?? -1) - (a.values.rating ?? -1) || b.matches - a.matches);
 }
 
-function PlayerCompare({ academyId, copy }: { academyId: number; copy: Copy }) {
+export function PlayerCompare({ academyId, copy }: { academyId: number; copy: Copy }) {
   const rows = useAcademyPlayerStats(academyId);
   const [selected, setSelected] = useState<number[]>([]);
   const players = useMemo(() => aggregatePlayers(rows.data ?? []), [rows.data]);

@@ -74,7 +74,7 @@ vi.mock("../lib/creative/framing", async (importOriginal) => {
 
 beforeEach(() => { suppliedRoster = ROSTER; });
 
-import coachRouter from "./academyCoach";
+import coachRouter, { cameraSpans } from "./academyCoach";
 
 const tag = `ac_${Date.now()}`;
 let app: Express;
@@ -153,6 +153,18 @@ afterAll(async () => {
   for (const id of [ownerId, coachId, coach2Id, parentId, strangerId]) if (id) await db.delete(usersTable).where(eq(usersTable.id, id));
 });
 
+describe("cameraSpans", () => {
+  it("turns tracked frames into video seconds, joining gaps of 3 s or less", () => {
+    expect(cameraSpans([{ fromFrame: 200, toFrame: 400 }, { fromFrame: 0, toFrame: 100 }, { fromFrame: 440, toFrame: 500 }], { frameRate: 20, videoStartSeconds: 1.5 }))
+      .toEqual([[1.5, 6.5], [11.5, 26.5]]);
+  });
+  it("keeps the longest stretches, in time order, and skips broken parts", () => {
+    const parts = [{ fromFrame: 0, toFrame: 20 }, { fromFrame: 1000, toFrame: 1400 }, { fromFrame: 3000, toFrame: 3100 }, { fromFrame: 9, toFrame: 2 }];
+    expect(cameraSpans(parts, { frameRate: 20 }, 3, 2)).toEqual([[50, 70], [150, 155]]);
+    expect(cameraSpans([], { frameRate: 0 })).toEqual([]);
+  });
+});
+
 describe("coach board (staff)", () => {
   it("gives a coach the video, every tracked player (ours named by shirt number first) and no notes yet", async () => {
     const res = await request(app).get(base()).set(auth(coachId));
@@ -162,6 +174,7 @@ describe("coach board (staff)", () => {
     expect(res.body.players.map((p: { rosterId: string }) => p.rosterId)).toEqual(["p1", "p2", "p3"]);
     expect(res.body.players[0]).toMatchObject({ rosterId: "p1", playerId: ali, name: "Ali", shirtNumber: 7, number: "7" });
     expect(res.body.players[2]).toMatchObject({ rosterId: "p3", playerId: null, name: null });
+    for (const p of res.body.players) expect(Array.isArray(p.spans)).toBe(true);
     expect(res.body.notes).toEqual([]);
   });
 

@@ -32,6 +32,9 @@ import {
   SquareDashed,
   Rows3,
   Check,
+  Send,
+  Search,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   COACH_COLORS,
@@ -68,8 +71,12 @@ import {
   hitPlayer,
   mergeTracks,
   missingWindow,
+  nextOnCamera,
   nextSpotColor,
   noteMoment,
+  QUICK_NOTE_MS,
+  QUICK_PRESETS,
+  type QuickPreset,
   panBy,
   playerLabel,
   thinStroke,
@@ -99,6 +106,10 @@ const TOOLS: Array<{ id: CoachTool; icon: typeof Crosshair }> = [
   { id: "zone", icon: Shapes },
   { id: "text", icon: Type },
 ];
+/** The tools a coach sees first; the rest sit behind "More tools". */
+const SIMPLE_TOOLS: ReadonlySet<CoachTool> = new Set(["spotlight", "arrow", "circle", "text"]);
+const MORE_TOOLS_KEY = "coach-more-tools";
+const readMoreTools = () => { try { return window.localStorage.getItem(MORE_TOOLS_KEY) === "1"; } catch { return false; } };
 /** Tools that pick a tracked player with a tap. */
 const PICK_TOOLS: ReadonlySet<CoachTool> = new Set(["spotlight", "offside", "unit"]);
 /** Tools that need the camera's pitch model. */
@@ -137,6 +148,8 @@ const clock = (s: number) => {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}` : `${m}:${String(sec).padStart(2, "0")}`;
 };
 const round1 = (n: number) => Math.round(n * 10) / 10;
+/** What a Quick note carries over when the coach asks for the full form. */
+type QuickDraft = { title: string; body: string | null; playerIds: number[]; shared: boolean };
 let idSeq = 0;
 const newId = () => `s${Date.now().toString(36)}${(idSeq++).toString(36)}`;
 
@@ -168,6 +181,16 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const followRef = useRef(follow);
   followRef.current = follow;
   const [tool, setTool] = useState<CoachTool>("spotlight");
+  const [moreTools, setMoreToolsState] = useState<boolean>(() => (typeof window !== "undefined" ? readMoreTools() : false));
+  const setMoreTools = (on: boolean) => {
+    setMoreToolsState(on);
+    try { window.localStorage.setItem(MORE_TOOLS_KEY, on ? "1" : "0"); } catch { /* private mode */ }
+    if (!on && !SIMPLE_TOOLS.has(tool)) { if (pendingRef.current) finishUnit(); setTool("spotlight"); }
+  };
+  const toolList = useMemo(() => TOOLS.filter((t) => moreTools || SIMPLE_TOOLS.has(t.id)), [moreTools]);
+  /** Quick note: the child a tap picked, waiting for Well done / Watch this / Work on it. */
+  const [quick, setQuick] = useState<{ rosterId: string } | null>(null);
+  const [findText, setFindText] = useState("");
   const [color, setColorState] = useState<string>(COACH_COLORS[0]);
   const setColor = (c: string) => { colorRef.current = c; setColorState(c); };
   const [width, setWidth] = useState<number>(COACH_WIDTHS[1]);
@@ -185,7 +208,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const [speed, setSpeed] = useState(1);
   // The side panel starts open where there is room for it beside the video.
   const [panel, setPanel] = useState<"players" | "notes" | null>(() => (readOnly || (typeof window !== "undefined" && window.innerWidth < 1024) ? null : "players"));
-  const [saveOpen, setSaveOpen] = useState<{ id?: number } | null>(null);
+  const [saveOpen, setSaveOpen] = useState<{ id?: number; initial?: QuickDraft } | null>(null);
   const [textAt, setTextAt] = useState<{ p: Pt; x: number; y: number } | null>(null);
   const [activeNote, setActiveNote] = useState<CoachNote | null>(props.initialNote ?? null);
   const activeNoteRef = useRef(activeNote);
@@ -403,6 +426,23 @@ export function CoachPlayer(props: CoachPlayerProps) {
     if (b.spotlights.length >= COACH_MAX_SPOTLIGHTS) return;
     setBoard({ ...b, spotlights: [...b.spotlights, { rosterId, color: nextSpotColor(b.spotlights.map((s) => s.color), COACH_COLORS) }] });
   }, [setBoard]);
+  /** Spotlight him if he isn't yet, letting the oldest spotlight go when the board is full. */
+  const ensureSpot = useCallback((rosterId: string) => {
+    const b = boardRef.current;
+    if (b.spotlights.some((s) => s.rosterId === rosterId)) return;
+    const kept = b.spotlights.slice(-(COACH_MAX_SPOTLIGHTS - 1));
+    setBoard({ ...b, spotlights: [...kept, { rosterId, color: nextSpotColor(kept.map((s) => s.color), COACH_COLORS) }] });
+  }, [setBoard]);
+  /** Simple mode with notes on: a tap on a child opens the Quick note for him. */
+  const quickOn = !moreTools && Boolean(props.onSaveNote);
+  const pickPlayer = useCallback((rosterId: string) => {
+    if (!quickOn) { toggleSpot(rosterId); return; }
+    const lit = boardRef.current.spotlights.some((s) => s.rosterId === rosterId);
+    if (lit && quick?.rosterId === rosterId) { toggleSpot(rosterId); setQuick(null); return; }
+    ensureSpot(rosterId);
+    videoRef.current?.pause();
+    setQuick({ rosterId });
+  }, [quickOn, quick, toggleSpot, ensureSpot]);
   const toggleOffside = useCallback((rosterId: string) => {
     const b = boardRef.current;
     const list = b.offside ?? [];
@@ -560,7 +600,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
       if (!hit) return;
       if (tool === "offside") { if (map) toggleOffside(hit); return; }
       if (tool === "unit") { pickForUnit(hit); return; }
-      if (tool === "spotlight") toggleSpot(hit);
+      if (tool === "spotlight") pickPlayer(hit);
       return;
     }
     if (g.kind === "draw" && draft.current) {
@@ -593,7 +633,7 @@ export function CoachPlayer(props: CoachPlayerProps) {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
-      if (e.key === "Escape") { if (saveOpen) setSaveOpen(null); else if (textAt) setTextAt(null); else props.onClose(); return; }
+      if (e.key === "Escape") { if (saveOpen) setSaveOpen(null); else if (quick) setQuick(null); else if (textAt) setTextAt(null); else props.onClose(); return; }
       if (e.key === " ") { e.preventDefault(); togglePlay(); return; }
       if (e.key === "ArrowLeft") { seek((videoRef.current?.currentTime ?? 0) - 5); return; }
       if (e.key === "ArrowRight") { seek((videoRef.current?.currentTime ?? 0) + 5); return; }
@@ -604,12 +644,12 @@ export function CoachPlayer(props: CoachPlayerProps) {
       if (e.key === "f" || e.key === "F") { setFollow((f) => !f); return; }
       if (e.key === "Enter" && pendingRef.current) { finishUnit(); return; }
       const n = Number(e.key);
-      if (n >= 1 && n <= Math.min(9, TOOLS.length)) chooseTool(TOOLS[n - 1].id);
+      if (n >= 1 && n <= Math.min(9, toolList.length)) chooseTool(toolList[n - 1].id);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props, readOnly, saveOpen, seek, step, textAt, togglePlay, undo, finishUnit, map]);
+  }, [props, readOnly, saveOpen, quick, seek, step, textAt, togglePlay, undo, finishUnit, map, toolList]);
 
   // ── Notes ─────────────────────────────────────────────────────────────────
   const openNote = (note: CoachNote) => {
@@ -628,7 +668,10 @@ export function CoachPlayer(props: CoachPlayerProps) {
   const spotRosterIds = new Set(board.spotlights.map((s) => s.rosterId));
   const tracked = props.analysed ? boxesAt(store.current, time) : new Map();
   // On camera now first, so a 200-player training roster starts with who can be tapped.
-  const shown = props.players.filter((p) => visible(p.rosterId))
+  const needle = findText.trim().toLowerCase().replace(/^#/, "");
+  const matchesFind = (p: RosterPlayer) => !needle || label(p.rosterId).toLowerCase().includes(needle)
+    || String(p.shirtNumber ?? p.number ?? "").toLowerCase() === needle;
+  const shown = props.players.filter((p) => visible(p.rosterId) && matchesFind(p))
     .map((p, i) => ({ p, i, on: tracked.has(p.rosterId) }))
     .sort((a, b) => Number(b.on) - Number(a.on) || a.i - b.i)
     .map((x) => x.p);
@@ -655,17 +698,62 @@ export function CoachPlayer(props: CoachPlayerProps) {
     : 0;
   const groupLabel = (id: string) => analysis?.groupDetails.find((group) => group.id === id)?.name ?? copy.analysis.group(id);
 
+  const quickName = (rosterId: string, playerId: number | null) => {
+    const bound = byRoster.get(rosterId);
+    if (bound?.playerId !== null && bound?.playerId !== undefined && bound.playerId === playerId && bound.name) return bound.name;
+    return props.lineup?.find((l) => l.playerId === playerId)?.name ?? label(rosterId);
+  };
+  const quickDraft = (rosterId: string, f: { preset: QuickPreset | null; comment: string; playerId: number | null }): QuickDraft => {
+    const name = quickName(rosterId, f.playerId);
+    return {
+      title: (f.preset ? `${copy.quick.presets[f.preset]} ${copy.quick.emoji[f.preset]} · ${name}` : name).slice(0, 120),
+      body: f.comment.trim() || null,
+      playerIds: f.playerId !== null ? [f.playerId] : [],
+      shared: f.playerId !== null,
+    };
+  };
+  /** Save a Quick note: this child's spotlight only, from now (or the drawing's moment), for eight seconds. */
+  const sendQuick = async (rosterId: string, f: { preset: QuickPreset | null; comment: string; playerId: number | null; share: boolean }) => {
+    const d = quickDraft(rosterId, f);
+    const b = boardRef.current;
+    const atMs = noteMoment(b, Math.round((videoRef.current?.currentTime ?? time) * 1000));
+    await props.onSaveNote!({
+      ...d,
+      shared: d.shared && f.share,
+      atMs,
+      endMs: atMs + QUICK_NOTE_MS,
+      board: { ...b, spotlights: b.spotlights.filter((s) => s.rosterId === rosterId), view: { ...viewRef.current, follow } },
+    });
+  };
+  /** A row in the list: off camera, jump to where he next appears; then spotlight him (and ask in Simple mode). */
+  const findPlayer = (p: RosterPlayer) => {
+    if (!tracked.has(p.rosterId)) {
+      const at = nextOnCamera(p.spans, time);
+      if (at !== null) {
+        videoRef.current?.pause();
+        seek(at);
+        if (window.innerWidth < 640) setPanel(null);
+        if (quickOn) pickPlayer(p.rosterId); else ensureSpot(p.rosterId);
+        return;
+      }
+    }
+    if (window.innerWidth < 640 && quickOn) setPanel(null);
+    pickPlayer(p.rosterId);
+  };
   const playerRow = (p: RosterPlayer) => {
     const spot = board.spotlights.find((s) => s.rosterId === p.rosterId);
     const visible = tracked.has(p.rosterId);
+    const next = visible ? null : nextOnCamera(p.spans, time);
     return (
-      <button key={p.rosterId} type="button" onClick={() => toggleSpot(p.rosterId)} disabled={!props.analysed}
+      <button key={p.rosterId} type="button" onClick={() => findPlayer(p)} disabled={!props.analysed}
         className={cn("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-start text-sm transition-colors", spot ? "bg-raised text-text" : "text-muted-text hover:bg-raised/60 hover:text-text")}
         data-testid={`coach-player-${p.rosterId}`}>
         <span className="h-3 w-3 shrink-0 rounded-full border border-line" style={spot ? { background: spot.color, borderColor: spot.color } : undefined} />
         {analysis?.players[p.rosterId]?.kit && <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: analysis.players[p.rosterId].kit! }} title={analysis.players[p.rosterId].group ?? undefined} />}
         <span className="min-w-0 flex-1 truncate font-semibold" dir="auto">{label(p.rosterId)}</span>
-        <span className={cn("shrink-0 text-[11px]", visible ? "text-turf" : "text-muted-text/60")}>{visible ? copy.minutes(p.minutes) : copy.notOnCamera}</span>
+        <span className={cn("shrink-0 text-[11px]", visible ? "text-turf" : next !== null ? "text-floodlight" : "text-muted-text/60")}>
+          {visible ? copy.minutes(p.minutes) : next !== null ? copy.quick.jump(clockOf(next)) : copy.notOnCamera}
+        </span>
       </button>
     );
   };
@@ -698,8 +786,15 @@ export function CoachPlayer(props: CoachPlayerProps) {
 
       <div className="flex min-h-0 flex-1">
         {!readOnly && (
-          <aside className="hidden w-14 shrink-0 flex-col items-center gap-1 border-e border-line py-2 md:flex" aria-label="tools">
-            <ToolButtons tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} vertical />
+          <aside className={cn("hidden shrink-0 flex-col items-center gap-1 overflow-y-auto border-e border-line py-2 md:flex", moreTools ? "w-14" : "w-20")} aria-label="tools" data-testid="coach-rail">
+            <ToolButtons tools={toolList} tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} vertical labelled={!moreTools} />
+            <span className="my-1 h-px w-8 shrink-0 bg-line" />
+            <button type="button" onClick={() => setMoreTools(!moreTools)} aria-pressed={moreTools} title={moreTools ? copy.quick.simpleTools : copy.quick.moreToolsHint}
+              className={cn("flex shrink-0 flex-col items-center gap-0.5 rounded-xl px-1 py-1.5 text-[10px] font-semibold leading-tight text-muted-text hover:bg-raised hover:text-text", moreTools ? "w-11" : "w-[4.25rem]")}
+              data-testid="coach-more-tools">
+              <SlidersHorizontal className="h-5 w-5" aria-hidden />
+              <span className="text-center">{moreTools ? copy.quick.simpleTools : copy.quick.moreTools}</span>
+            </button>
           </aside>
         )}
 
@@ -761,6 +856,14 @@ export function CoachPlayer(props: CoachPlayerProps) {
             {panel === "players" ? (
               <div className="space-y-3">
                 {!props.analysed && <p className="text-xs text-muted-text">{copy.notAnalysed}</p>}
+                {props.players.length > 8 && (
+                  <label className="flex items-center gap-2 rounded-xl border border-line bg-raised px-2.5">
+                    <Search className="h-4 w-4 shrink-0 text-muted-text" aria-hidden />
+                    <input value={findText} onChange={(e) => setFindText(e.target.value)} placeholder={copy.quick.find} aria-label={copy.quick.find} dir="auto"
+                      className="h-9 min-w-0 flex-1 bg-transparent text-sm text-text outline-none" data-testid="coach-find" />
+                    {findText && <button type="button" onClick={() => setFindText("")} aria-label={copy.cancel} className="text-muted-text hover:text-text"><X className="h-4 w-4" /></button>}
+                  </label>
+                )}
                 {analysis?.isTraining && (analysis.groups.length > 0 || analysis.hasAdults) && (
                   <section className="space-y-1.5 border-b border-line pb-3" data-testid="coach-training-filters">
                     {analysis.groups.length > 0 && (
@@ -890,12 +993,16 @@ export function CoachPlayer(props: CoachPlayerProps) {
         )}
         {!readOnly && (
           <div className="mb-2 flex items-center gap-1.5 overflow-x-auto pb-1">
-            <div className="flex gap-1 md:hidden"><ToolButtons tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} /></div>
+            <div className="flex gap-1 md:hidden">
+              <ToolButtons tools={toolList} tool={tool} setTool={chooseTool} disabled={toolDisabled} copy={copy} labelled={!moreTools} />
+              <Chip on={moreTools} onClick={() => setMoreTools(!moreTools)} title={copy.quick.moreToolsHint}><SlidersHorizontal className="h-3.5 w-3.5" />{moreTools ? copy.quick.simpleTools : copy.quick.moreTools}</Chip>
+            </div>
             <span className="mx-1 h-6 w-px shrink-0 bg-line md:hidden" />
             {COACH_COLORS.map((c) => (
               <button key={c} type="button" onClick={() => setColor(c)} aria-label={c} aria-pressed={color === c}
                 className={cn("h-7 w-7 shrink-0 rounded-full border-2", color === c ? "border-text" : "border-transparent")} style={{ background: c }} />
             ))}
+            {moreTools && <>
             <span className="mx-1 h-6 w-px shrink-0 bg-line" />
             {COACH_WIDTHS.map((w) => (
               <button key={w} type="button" onClick={() => setWidth(w)} aria-pressed={width === w} aria-label={`${w}px`}
@@ -906,21 +1013,23 @@ export function CoachPlayer(props: CoachPlayerProps) {
             <Chip on={dashed} onClick={() => setDashed((d) => !d)}>{copy.dashed}</Chip>
             <span className="mx-1 h-6 w-px shrink-0 bg-line" />
             <Chip on={Boolean(board.connect)} onClick={() => setBoard({ ...board, connect: !board.connect }, false)} title={copy.connectHint}><Link2 className="h-3.5 w-3.5" />{copy.connect}</Chip>
+            </>}
+            {!moreTools && <span className="mx-1 h-6 w-px shrink-0 bg-line" />}
             <Chip on={Boolean(board.ball)} onClick={() => setBoard({ ...board, ball: !board.ball }, false)}><Goal className="h-3.5 w-3.5" />{copy.ball}</Chip>
             <Chip on={follow} onClick={() => { const next = !follow; setFollow(next); if (next && viewRef.current.zoom < 1.5) zoomBy(2.2); }} title={copy.followHint}><Crosshair className="h-3.5 w-3.5" />{copy.follow}</Chip>
-            {analysis && (
+            {analysis && moreTools && (
               <span className="relative shrink-0">
                 <Chip on={Boolean(board.teamLines)} onClick={() => (board.teamLines ? setBoard({ ...board, teamLines: undefined }, false) : setLinesOpen((o) => !o))} title={map ? copy.analysis.linesHint : copy.analysis.needsPitch} disabled={!map}>
                   <Rows3 className="h-3.5 w-3.5" />{copy.analysis.teamLines}
                 </Chip>
               </span>
             )}
-            {board.teamLines && (
+            {board.teamLines && moreTools && (
               <Chip on={board.teamLines.keeper !== false} onClick={() => setBoard({ ...board, teamLines: { ...board.teamLines!, keeper: board.teamLines!.keeper === false ? undefined : false } }, false)} title={copy.analysis.keeperHint}>{copy.analysis.leaveKeeperOut}</Chip>
             )}
             <span className="mx-1 h-6 w-px shrink-0 bg-line" />
             <Chip onClick={undo}><Undo2 className="h-3.5 w-3.5" />{copy.undo}</Chip>
-            <Chip onClick={clearShapes}><Eraser className="h-3.5 w-3.5" />{copy.clear}</Chip>
+            {moreTools && <Chip onClick={clearShapes}><Eraser className="h-3.5 w-3.5" />{copy.clear}</Chip>}
             <Chip onClick={clearAll}><Trash2 className="h-3.5 w-3.5" />{copy.clearAll}</Chip>
             <button type="button" onClick={() => setPanel(panel === "players" ? null : "players")} className="ms-auto inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-text sm:hidden"><Users className="h-4 w-4" />{copy.players}</button>
             <button type="button" onClick={() => setPanel(panel === "notes" ? null : "notes")} className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-muted-text sm:hidden"><StickyNote className="h-4 w-4" />{copy.notes}</button>
@@ -952,9 +1061,24 @@ export function CoachPlayer(props: CoachPlayerProps) {
         {!readOnly && <p className="mt-1 hidden text-[11px] text-muted-text lg:block">{copy.toolHints[tool]} · {copy.keys}</p>}
       </footer>
 
+      {quick && props.onSaveNote && !saveOpen && (
+        <QuickNoteSheet
+          key={quick.rosterId}
+          copy={copy}
+          name={label(quick.rosterId)}
+          boundPlayerId={byRoster.get(quick.rosterId)?.playerId ?? null}
+          lineup={props.lineup ?? []}
+          sentName={(playerId) => quickName(quick.rosterId, playerId)}
+          onClose={() => setQuick(null)}
+          onSend={(f) => sendQuick(quick.rosterId, f)}
+          onMore={(f) => { setSaveOpen({ initial: quickDraft(quick.rosterId, f) }); setQuick(null); }}
+        />
+      )}
+
       {saveOpen && props.onSaveNote && (
         <SaveDialog
           copy={copy}
+          initial={saveOpen.initial}
           existing={saveOpen.id ? (props.notes ?? []).find((n) => n.id === saveOpen.id) ?? null : null}
           lineup={props.lineup ?? []}
           spotlitPlayerIds={board.spotlights.map((s) => byRoster.get(s.rosterId)?.playerId).filter((id): id is number => typeof id === "number")}
@@ -976,15 +1100,29 @@ export function CoachPlayer(props: CoachPlayerProps) {
   );
 }
 
-function ToolButtons({ tool, setTool, copy, vertical, disabled }: { tool: CoachTool; setTool: (t: CoachTool) => void; copy: ReturnType<typeof useCoachCopy>; vertical?: boolean; disabled?: (t: CoachTool) => boolean }) {
+function ToolButtons({ tools, tool, setTool, copy, vertical, labelled, disabled }: {
+  tools: typeof TOOLS;
+  tool: CoachTool;
+  setTool: (t: CoachTool) => void;
+  copy: ReturnType<typeof useCoachCopy>;
+  vertical?: boolean;
+  /** Simple mode: the tool's name next to (or under) its icon */
+  labelled?: boolean;
+  disabled?: (t: CoachTool) => boolean;
+}) {
   return (
     <>
-      {TOOLS.map(({ id, icon: Icon }, i) => (
+      {tools.map(({ id, icon: Icon }, i) => (
         <button key={id} type="button" onClick={() => setTool(id)} aria-pressed={tool === id} disabled={disabled?.(id)}
           title={disabled?.(id) ? `${copy.tools[id]} · ${copy.analysis.needsPitch}` : `${copy.tools[id]}${i < 9 ? ` (${i + 1})` : ""}`}
-          className={cn("grid shrink-0 place-items-center rounded-xl transition-colors disabled:opacity-35", vertical ? "h-10 w-11" : "h-9 w-9", tool === id ? "bg-floodlight text-void" : "text-muted-text hover:bg-raised hover:text-text")}
+          className={cn("shrink-0 rounded-xl transition-colors disabled:opacity-35",
+            labelled
+              ? vertical ? "flex w-[4.25rem] flex-col items-center gap-0.5 px-1 py-1.5 text-[11px] font-semibold leading-tight" : "inline-flex h-9 items-center gap-1.5 px-2.5 text-xs font-semibold"
+              : cn("grid place-items-center", vertical ? "h-10 w-11" : "h-9 w-9"),
+            tool === id ? "bg-floodlight text-void" : "text-muted-text hover:bg-raised hover:text-text")}
           data-testid={`coach-tool-${id}`}>
-          <Icon className="h-5 w-5" aria-hidden /><span className="sr-only">{copy.tools[id]}</span>
+          <Icon className="h-5 w-5 shrink-0" aria-hidden />
+          {labelled ? <span className="text-center">{copy.tools[id]}</span> : <span className="sr-only">{copy.tools[id]}</span>}
         </button>
       ))}
     </>
@@ -1041,20 +1179,21 @@ function NotesList({ notes, copy, clockOf, activeId, onOpen, canEdit, onDelete }
   );
 }
 
-function SaveDialog({ copy, existing, lineup, spotlitPlayerIds, atMs, onCancel, onSave }: {
+function SaveDialog({ copy, existing, initial, lineup, spotlitPlayerIds, atMs, onCancel, onSave }: {
   copy: ReturnType<typeof useCoachCopy>;
   existing: CoachNote | null;
+  initial?: QuickDraft;
   lineup: Array<{ playerId: number; name: string; shirtNumber: number | null }>;
   spotlitPlayerIds: number[];
   atMs: number;
   onCancel: () => void;
   onSave: (fields: Omit<CoachNoteInput, "board">) => Promise<void>;
 }) {
-  const [title, setTitle] = useState(existing?.title ?? "");
-  const [body, setBody] = useState(existing?.body ?? "");
+  const [title, setTitle] = useState(existing?.title ?? initial?.title ?? "");
+  const [body, setBody] = useState(existing?.body ?? initial?.body ?? "");
   const [playFor, setPlayFor] = useState(existing?.endMs ? Math.max(1, Math.round((existing.endMs - existing.atMs) / 1000)) : 8);
-  const [players, setPlayers] = useState<number[]>(existing?.playerIds ?? [...new Set(spotlitPlayerIds)]);
-  const [shared, setShared] = useState(existing?.shared ?? false);
+  const [players, setPlayers] = useState<number[]>(existing?.playerIds ?? initial?.playerIds ?? [...new Set(spotlitPlayerIds)]);
+  const [shared, setShared] = useState(existing?.shared ?? initial?.shared ?? false);
   const [state, setState] = useState<"idle" | "saving" | "failed">("idle");
   const at = existing?.atMs ?? atMs;
   const toggle = (id: number) => setPlayers((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
@@ -1113,6 +1252,97 @@ function SaveDialog({ copy, existing, lineup, spotlitPlayerIds, atMs, onCancel, 
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/**
+ * The Quick note: tap a child, pick Well done / Watch this / Work on it, send. It goes to his
+ * parents straight away; a track not tied to a child asks who he is first, or stays with staff.
+ */
+function QuickNoteSheet({ copy, name, boundPlayerId, lineup, sentName, onClose, onSend, onMore }: {
+  copy: ReturnType<typeof useCoachCopy>;
+  name: string;
+  boundPlayerId: number | null;
+  lineup: Array<{ playerId: number; name: string; shirtNumber: number | null }>;
+  sentName: (playerId: number | null) => string;
+  onClose: () => void;
+  onSend: (f: { preset: QuickPreset | null; comment: string; playerId: number | null; share: boolean }) => Promise<void>;
+  onMore: (f: { preset: QuickPreset | null; comment: string; playerId: number | null }) => void;
+}) {
+  const [preset, setPreset] = useState<QuickPreset | null>(null);
+  const [comment, setComment] = useState("");
+  const [playerId, setPlayerId] = useState<number | null>(boundPlayerId);
+  const [state, setState] = useState<"idle" | "sending" | "failed" | { done: string }>("idle");
+  const needsChild = boundPlayerId === null && lineup.length > 0;
+  // The parent re-renders as the video plays, so hold onClose in a ref or the timer never fires.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    if (typeof state !== "object") return;
+    const id = window.setTimeout(() => closeRef.current(), 1600);
+    return () => window.clearTimeout(id);
+  }, [state]);
+  const send = async (share: boolean) => {
+    setState("sending");
+    try {
+      await onSend({ preset, comment, playerId, share });
+      setState({ done: share && playerId !== null ? copy.quick.sent(sentName(playerId)) : copy.quick.savedStaff });
+    } catch {
+      setState("failed");
+    }
+  };
+  const shownName = playerId !== null ? sentName(playerId) : name;
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-[85] mx-auto w-full max-w-lg rounded-t-3xl border border-b-0 border-line bg-surface p-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl"
+      role="dialog" aria-label={shownName} data-testid="coach-quick">
+      {typeof state === "object" ? (
+        <p className="flex items-center justify-center gap-2 py-6 text-base font-bold text-turf" role="status" data-testid="coach-quick-done"><Check className="h-5 w-5" aria-hidden />{state.done}</p>
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <p className="min-w-0 flex-1 truncate font-display text-lg font-bold text-text" dir="auto">{shownName}</p>
+            <button type="button" onClick={onClose} aria-label={copy.close} className="grid h-9 w-9 place-items-center rounded-full text-muted-text hover:bg-raised hover:text-text"><X className="h-5 w-5" /></button>
+          </div>
+          {needsChild && (
+            <div className="mt-2">
+              <p className="text-sm font-semibold text-text">{copy.quick.whoIsThis}</p>
+              <p className="text-xs text-muted-text">{copy.quick.whoHint}</p>
+              <div className="mt-1.5 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto" data-testid="coach-quick-who">
+                {lineup.map((p) => (
+                  <button key={p.playerId} type="button" onClick={() => setPlayerId(playerId === p.playerId ? null : p.playerId)} aria-pressed={playerId === p.playerId}
+                    className={cn("h-8 rounded-full px-3 text-xs font-semibold", playerId === p.playerId ? "bg-floodlight text-void" : "bg-raised text-muted-text")} dir="auto">
+                    {p.shirtNumber !== null ? `#${p.shirtNumber} ` : ""}{p.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {QUICK_PRESETS.map((k) => (
+              <button key={k} type="button" onClick={() => setPreset(preset === k ? null : k)} aria-pressed={preset === k}
+                className={cn("flex flex-col items-center gap-1 rounded-2xl border px-2 py-3 text-sm font-bold transition-colors",
+                  preset === k ? "border-floodlight bg-floodlight text-void" : "border-line bg-raised text-text hover:border-muted-text")}
+                data-testid={`coach-quick-${k}`}>
+                <span className="text-2xl leading-none" aria-hidden>{copy.quick.emoji[k]}</span>
+                {copy.quick.presets[k]}
+              </button>
+            ))}
+          </div>
+          <input value={comment} onChange={(e) => setComment(e.target.value)} maxLength={300} placeholder={copy.quick.comment} aria-label={copy.quick.comment} dir="auto"
+            className="mt-3 h-10 w-full rounded-xl border border-line bg-raised px-3 text-sm text-text outline-none" data-testid="coach-quick-comment" />
+          {state === "failed" && <p className="mt-2 text-sm text-live" role="alert">{copy.quick.failed}</p>}
+          <div className="mt-3 flex items-center gap-2">
+            <button type="button" onClick={() => onMore({ preset, comment, playerId })} className="h-11 shrink-0 rounded-xl px-3 text-sm font-semibold text-muted-text hover:text-text" data-testid="coach-quick-more">{copy.quick.more}</button>
+            <button type="button" onClick={() => void send(false)} disabled={state === "sending"} className="h-11 shrink-0 rounded-xl border border-line px-3 text-sm font-semibold text-text disabled:opacity-50" data-testid="coach-quick-staff">{copy.quick.saveStaff}</button>
+            <button type="button" onClick={() => void send(true)} disabled={state === "sending" || playerId === null || (!preset && !comment.trim())}
+              className="inline-flex h-11 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-xl bg-floodlight px-3 text-sm font-bold text-void disabled:opacity-40" data-testid="coach-quick-send">
+              <Send className="h-4 w-4 shrink-0" aria-hidden /><span className="truncate">{state === "sending" ? copy.quick.sending : copy.quick.send}</span>
+            </button>
+          </div>
+          {playerId === null && !needsChild && <p className="mt-2 text-xs text-muted-text">{copy.quick.noChild} · {copy.shareNeedsPlayers}</p>}
+        </>
+      )}
     </div>
   );
 }

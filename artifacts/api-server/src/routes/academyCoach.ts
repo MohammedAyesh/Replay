@@ -114,10 +114,31 @@ export type CoachPlayerView = {
   playerId: number | null;
   name: string | null;
   shirtNumber: number | null;
+  /** when he is on camera, video seconds [from, to], merged across small gaps (Coach view's "find him") */
+  spans?: Array<[number, number]>;
 };
 
+/** A roster player's time on camera as video-second spans, gaps under `mergeGap` joined, at most `max`. */
+export function cameraSpans(parts: ReadonlyArray<{ fromFrame: number; toFrame: number }>, clock: { frameRate: number; videoStartSeconds?: number | null }, mergeGap = 3, max = 120): Array<[number, number]> {
+  const fps = clock.frameRate > 0 ? clock.frameRate : 20;
+  const offset = clock.videoStartSeconds ?? 0;
+  const raw = parts
+    .filter((p) => Number.isFinite(p.fromFrame) && Number.isFinite(p.toFrame) && p.toFrame >= p.fromFrame)
+    .map((p) => [p.fromFrame / fps + offset, p.toFrame / fps + offset] as [number, number])
+    .sort((a, b) => a[0] - b[0]);
+  const out: Array<[number, number]> = [];
+  for (const [a, b] of raw) {
+    const last = out[out.length - 1];
+    if (last && a - last[1] <= mergeGap) last[1] = Math.max(last[1], b);
+    else out.push([a, b]);
+  }
+  // Too many: keep the longest, in time order.
+  const kept = out.length <= max ? out : [...out].sort((x, y) => (y[1] - y[0]) - (x[1] - x[0])).slice(0, max).sort((x, y) => x[0] - y[0]);
+  return kept.map(([a, b]) => [Math.round(a * 10) / 10, Math.round(b * 10) / 10]);
+}
+
 /** Every tracked player, ours first (named, by shirt number), then the rest by time on camera. */
-export function coachPlayers(ctx: Pick<MatchContext, "roster" | "lineup">, trainingAdultIds: ReadonlySet<string> = new Set()): CoachPlayerView[] {
+export function coachPlayers(ctx: Pick<MatchContext, "roster" | "lineup"> & { bundle?: MatchContext["bundle"] }, trainingAdultIds: ReadonlySet<string> = new Set()): CoachPlayerView[] {
   if (!ctx.roster) return [];
   const bindings = resolveBindings(ctx.lineup, ctx.roster, trainingAdultIds);
   const byRoster = new Map(bindings.map((b) => [b.rosterPlayerId, b.playerId]));
@@ -132,6 +153,7 @@ export function coachPlayers(ctx: Pick<MatchContext, "roster" | "lineup">, train
       playerId,
       name: entry?.name ?? null,
       shirtNumber: p.numberDropped ? null : entry?.shirtNumber ?? null,
+      ...(ctx.bundle ? { spans: cameraSpans(p.parts, ctx.bundle.manifest) } : {}),
     };
   });
   return out.sort((a, b) => {

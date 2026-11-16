@@ -22,7 +22,6 @@ import {
   Plus,
   ReceiptText,
   Trash2,
-  Trophy,
   Target,
   ShieldCheck,
   Building2,
@@ -90,7 +89,6 @@ import { lazyNamed } from "@/lib/lazy-page";
 import { AcademySidebarBrand } from "@/components/academy-console/academy-brand";
 import { useWhatsappCopy } from "@/i18n/whatsapp-strings";
 import { usePeopleCopy } from "@/i18n/people-strings";
-import { useMatchesCopy } from "@/i18n/matches-strings";
 import { useAdsCopy } from "@/i18n/ads-strings";
 import { useSocialCopy } from "@/i18n/social-strings";
 import { useTeamCopy } from "@/i18n/team-strings";
@@ -100,12 +98,12 @@ import { useStudioCopy } from "@/i18n/studio-strings";
 import { useCreativeCopy } from "@/i18n/creative-strings";
 import { useAcademyLiveStatus, formatAmmanClock } from "@/components/academy-console/use-academy-live-status";
 import { useValueReportCopy } from "@/i18n/value-report-strings";
+import { useConsoleNavCopy } from "@/i18n/console-nav-strings";
 
 // Sections load when opened (lib/lazy-page.ts).
 const AcademyWhatsappSection = lazyNamed(() => import("@/components/academy-console/whatsapp-section"), "AcademyWhatsappSection");
 const AcademyChatsSection = lazyNamed(() => import("@/components/academy-console/chats-section"), "AcademyChatsSection");
 const AcademyPeopleSection = lazyNamed(() => import("@/components/academy-console/people-section"), "AcademyPeopleSection");
-const AcademyMatchesSection = lazyNamed(() => import("@/components/academy-console/matches-section"), "AcademyMatchesSection");
 const AcademyAdsSection = lazyNamed(() => import("@/components/academy-console/ads-section"), "AcademyAdsSection");
 const AcademyProfileSection = lazyNamed(() => import("@/components/academy-console/profile-section"), "AcademyProfileSection");
 const AcademyTeamSection = lazyNamed(() => import("@/components/academy-console/team-section"), "AcademyTeamSection");
@@ -113,10 +111,9 @@ const AcademySocialSection = lazyNamed(() => import("@/components/academy-consol
 const AcademyBrandingSection = lazyNamed(() => import("@/components/academy-console/branding-section"), "AcademyBrandingSection");
 const AcademyCreativeHub = lazyNamed(() => import("@/components/creative-hub/hub"), "AcademyCreativeHub");
 const AcademyPlayersSection = lazyNamed(() => import("@/components/academy-console/players-section"), "AcademyPlayersSection");
-const AcademySessionsSection = lazyNamed(() => import("@/components/academy-console/sessions-section"), "AcademySessionsSection");
 const AcademyLiveOverlay = lazyNamed(() => import("@/components/academy-console/AcademyLiveOverlay"), "AcademyLiveOverlay");
 const AcademyAttendanceSection = lazyNamed(() => import("@/components/academy-console/attendance-section"), "AcademyAttendanceSection");
-const AcademyRecordingsSection = lazyNamed(() => import("@/components/academy-console/recordings-section"), "AcademyRecordingsSection");
+const AcademySessionsHub = lazyNamed(() => import("@/components/academy-console/sessions-hub"), "AcademySessionsHub");
 const AcademyAnnouncementsSection = lazyNamed(() => import("@/components/academy-console/announcements-section"), "AcademyAnnouncementsSection");
 const AcademyFeesPaymentsSection = lazyNamed(() => import("@/components/academy-console/fees-payments-section"), "AcademyFeesPaymentsSection");
 const AcademyRegistrationsSection = lazyNamed(() => import("@/components/academy-console/registrations-section"), "AcademyRegistrationsSection");
@@ -124,7 +121,7 @@ const AcademyValueReportSection = lazyNamed(() => import("@/components/academy-c
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "creative" | "team" | "report";
+type ConsoleSection = "dashboard" | "sessions" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "creative" | "team" | "report";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -206,7 +203,6 @@ function AcademyConsoleSidebar({
   const labels = t.academyConsole;
   const whatsappCopy = useWhatsappCopy();
   const peopleCopy = usePeopleCopy();
-  const matchesCopy = useMatchesCopy();
   const adsCopy = useAdsCopy();
   const profileCopy = useProfileCopy();
   const studioCopy = useStudioCopy();
@@ -215,28 +211,45 @@ function AcademyConsoleSidebar({
   const socialCopy = useSocialCopy();
   const reportCopy = useValueReportCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
-  const items: Array<{ id: ConsoleSection; label: string; icon: typeof LayoutDashboard; ownerOnly?: boolean }> = [
-    { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
-    { id: "report", label: reportCopy.nav, icon: BarChart3, ownerOnly: true },
-    { id: "squads", label: labels.squads, icon: Users },
-    { id: "players", label: labels.players, icon: UserRound },
-    { id: "registrations", label: labels.registrations.title, icon: UserRoundPlus },
-    { id: "attendance", label: labels.attendance, icon: ClipboardList },
-    { id: "schedule", label: labels.scheduleResults, icon: CalendarDays },
-    { id: "recordings", label: labels.recordings, icon: Video },
-    { id: "matches", label: matchesCopy.nav, icon: Trophy },
-    { id: "fees", label: labels.feesPayments, icon: ReceiptText, ownerOnly: true },
-    { id: "announcements", label: labels.announcements, icon: Megaphone },
-    { id: "chats", label: peopleCopy.chats.nav, icon: MessagesSquare },
-    { id: "people", label: peopleCopy.people.nav, icon: ContactIcon },
-    { id: "social", label: socialCopy.nav, icon: Instagram, ownerOnly: true },
-    { id: "ads", label: adsCopy.nav, icon: Target, ownerOnly: true },
-    { id: "whatsapp", label: whatsappCopy.nav, icon: MessageCircle },
-    { id: "profile", label: profileCopy.nav, icon: Building2 },
-    { id: "branding", label: studioCopy.branding.nav, icon: Palette, ownerOnly: true },
-    { id: "creative", label: creativeCopy.nav, icon: Sparkles, ownerOnly: true },
-    { id: "team", label: teamCopy.team.nav, icon: ShieldCheck, ownerOnly: true },
+  const navCopy = useConsoleNavCopy();
+  type NavItem = { id: ConsoleSection; label: string; icon: typeof LayoutDashboard };
+  // The menu in labelled groups. Schedule & Results, Recordings and Matches are one
+  // section now: Sessions (components/academy-console/sessions-hub.tsx).
+  const groups: Array<{ id: string; title: string | null; items: NavItem[] }> = [
+    { id: "overview", title: null, items: [
+      { id: "dashboard", label: labels.dashboard, icon: LayoutDashboard },
+      { id: "report", label: reportCopy.nav, icon: BarChart3 },
+    ] },
+    { id: "players", title: navCopy.groups.players, items: [
+      { id: "squads", label: labels.squads, icon: Users },
+      { id: "players", label: labels.players, icon: UserRound },
+      { id: "registrations", label: labels.registrations.title, icon: UserRoundPlus },
+    ] },
+    { id: "sessions", title: navCopy.groups.sessions, items: [
+      { id: "sessions", label: navCopy.sessions.nav, icon: CalendarDays },
+      { id: "attendance", label: labels.attendance, icon: ClipboardList },
+    ] },
+    { id: "money", title: navCopy.groups.money, items: [
+      { id: "fees", label: labels.feesPayments, icon: ReceiptText },
+    ] },
+    { id: "families", title: navCopy.groups.families, items: [
+      { id: "announcements", label: labels.announcements, icon: Megaphone },
+      { id: "chats", label: peopleCopy.chats.nav, icon: MessagesSquare },
+      { id: "people", label: peopleCopy.people.nav, icon: ContactIcon },
+      { id: "whatsapp", label: whatsappCopy.nav, icon: MessageCircle },
+      { id: "social", label: socialCopy.nav, icon: Instagram },
+      { id: "ads", label: adsCopy.nav, icon: Target },
+      { id: "creative", label: creativeCopy.nav, icon: Sparkles },
+    ] },
+    { id: "settings", title: navCopy.groups.settings, items: [
+      { id: "profile", label: profileCopy.nav, icon: Building2 },
+      { id: "branding", label: studioCopy.branding.nav, icon: Palette },
+      { id: "team", label: teamCopy.team.nav, icon: ShieldCheck },
+    ] },
   ];
+  const shownGroups = groups
+    .map((group) => ({ ...group, items: group.items.filter((item) => (item.id === "team" ? isOwner : canSee(item.id))) }))
+    .filter((group) => group.items.length > 0);
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-surface" data-testid={mobile ? "academy-console-mobile-sidebar" : "academy-console-sidebar"}>
@@ -274,31 +287,37 @@ function AcademyConsoleSidebar({
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto p-3" aria-label={labels.navigation}>
-        <p className="px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-text">{labels.workspace}</p>
-        <div className="space-y-1">
-          {items.filter((item) => (item.id === "team" ? isOwner : canSee(item.id))).map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                type="button"
-                key={item.id}
-                onClick={() => onNavigate(item.id)}
-                className={cn(
-                  "flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-start text-sm font-semibold transition-colors",
-                  section === item.id ? "bg-turf/10 text-turf" : "text-muted-text hover:bg-raised hover:text-text",
-                )}
-                data-testid={`nav-academy-${item.id}`}
-              >
-                <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  <span className="min-w-0 flex-1">{item.label}</span>
-                  {item.id === "registrations" && pendingRegistrationCount > 0 && (
-                    <span className="grid min-w-6 place-items-center rounded-full bg-amber-300/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-200" aria-label={labels.registrations.pendingCount(pendingRegistrationCount, true)}>
-                      {pendingRegistrationCount}
-                    </span>
-                  )}
-              </button>
-            );
-          })}
+        <div className="space-y-4">
+          {shownGroups.map((group) => (
+            <div key={group.id} data-testid={`nav-academy-group-${group.id}`}>
+              {group.title && <p className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-muted-text/80">{group.title}</p>}
+              <div className="space-y-0.5">
+                {group.items.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      onClick={() => onNavigate(item.id)}
+                      className={cn(
+                        "flex min-h-10 w-full items-center gap-3 rounded-xl px-3 text-start text-sm font-semibold transition-colors",
+                        section === item.id ? "bg-turf/10 text-turf" : "text-muted-text hover:bg-raised hover:text-text",
+                      )}
+                      data-testid={`nav-academy-${item.id}`}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      <span className="min-w-0 flex-1">{item.label}</span>
+                      {item.id === "registrations" && pendingRegistrationCount > 0 && (
+                        <span className="grid min-w-6 place-items-center rounded-full bg-amber-300/15 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-amber-200" aria-label={labels.registrations.pendingCount(pendingRegistrationCount, true)}>
+                          {pendingRegistrationCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
       </nav>
 
@@ -369,7 +388,7 @@ function Dashboard({ dashboard, isOwner, onOpenInstagram }: { dashboard: Academy
   const links: Array<{ section: ConsoleSection; label: string; description: string; icon: typeof Users }> = [
     { section: "squads", label: labels.gettingStartedSquads, description: labels.gettingStartedSquadsDescription, icon: Users },
     { section: "players", label: labels.gettingStartedPlayers, description: labels.gettingStartedPlayersDescription, icon: UserRound },
-    { section: "schedule", label: labels.gettingStartedSchedule, description: labels.gettingStartedScheduleDescription, icon: CalendarDays },
+    { section: "sessions", label: labels.gettingStartedSchedule, description: labels.gettingStartedScheduleDescription, icon: CalendarDays },
   ];
   return (
     <div className="space-y-7" data-testid="academy-console-dashboard">
@@ -809,7 +828,10 @@ export default function AcademyConsole() {
   // fall back to the role alone.
   const myAccess = useMyAcademyAccess(activeAcademyId);
   const OWNER_ONLY: ConsoleSection[] = ["report", "fees", "social", "ads", "branding", "studio", "creative", "team"];
-  const canSee = (s: ConsoleSection) => isOwner || (s !== "team" && s !== "report" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
+  const canSeeOne = (s: ConsoleSection) => isOwner || (s !== "team" && s !== "report" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
+  // Sessions shows whichever of its three parts this member may see.
+  const canSee = (s: ConsoleSection) => (s === "sessions" ? canSeeOne("schedule") || canSeeOne("recordings") || canSeeOne("matches") : canSeeOne(s));
+  const [sessionsTab, setSessionsTab] = useState<"sessions" | "videos" | undefined>(undefined);
   const manages = (s: ConsoleSection) => isOwner || Boolean(myAccess.data?.manages.includes(s));
   const canManageChats = isOwner || Boolean(myAccess.data?.permissions.includes("chats.manage"));
 
@@ -839,7 +861,11 @@ export default function AcademyConsole() {
   useEffect(() => {
     const path = location.split(/[?#]/)[0].replace(/\/+$/, "");
     const pathSection = path.split("/")[2] as ConsoleSection | undefined;
-    if (pathSection && ["squads", "players", "registrations", "attendance", "schedule", "recordings", "fees", "announcements", "whatsapp", "chats", "people", "matches", "ads", "social", "profile", "branding", "studio", "creative", "team", "report"].includes(pathSection)) {
+    if (pathSection === "schedule" || pathSection === "recordings" || pathSection === "matches") {
+      // The three old sections are one page now; old links (and ?match=<id>) land on it.
+      setSessionsTab(pathSection === "recordings" ? "videos" : undefined);
+      setSection("sessions");
+    } else if (pathSection && ["sessions", "squads", "players", "registrations", "attendance", "fees", "announcements", "whatsapp", "chats", "people", "ads", "social", "profile", "branding", "studio", "creative", "team", "report"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -913,12 +939,20 @@ export default function AcademyConsole() {
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyPlayersSection academyId={activeAcademyId} isOwner={manages("players")} />
           ) : section === "registrations" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyRegistrationsSection academyId={activeAcademyId} isOwner={manages("registrations")} />
-          ) : section === "schedule" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademySessionsSection academyId={activeAcademyId} />
+          ) : section === "sessions" ? (
+            activeAcademyId === null ? <AcademyConsoleSkeleton /> : (
+              <AcademySessionsHub
+                key={`${activeAcademyId}-${sessionsTab ?? ""}`}
+                academyId={activeAcademyId}
+                academyName={activeMembership?.academyName ?? ""}
+                isOwner={manages("matches")}
+                can={{ schedule: canSeeOne("schedule"), recordings: canSeeOne("recordings"), matches: canSeeOne("matches") }}
+                initialTab={sessionsTab}
+              />
+            )
           ) : section === "attendance" ? (
             activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyAttendanceSection academyId={activeAcademyId} />
-          ) : section === "recordings" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyRecordingsSection academyId={activeAcademyId} academyName={activeMembership?.academyName ?? ""} />
+
           ) : section === "fees" ? (
             !manages("fees") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyFeesPaymentsSection academyId={activeAcademyId} />
           ) : section === "announcements" ? (
@@ -942,8 +976,7 @@ export default function AcademyConsole() {
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyCreativeHub academyId={activeAcademyId} initialTab="clips" />
           ) : section === "creative" ? (
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyCreativeHub academyId={activeAcademyId} />
-          ) : section === "matches" ? (
-            activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyMatchesSection academyId={activeAcademyId} isOwner={manages("matches")} />
+
           ) : section === "team" ? (
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyTeamSection academyId={activeAcademyId} />
           ) : <AcademyConsoleSkeleton />}

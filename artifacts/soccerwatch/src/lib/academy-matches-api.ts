@@ -167,8 +167,8 @@ const keys = {
   playerStats: (academyId: number) => ["academy-matches", academyId, "player-stats"],
 };
 
-export function useAcademyMatches(academyId: number) {
-  return useQuery({ queryKey: keys.list(academyId), queryFn: () => call<MatchListItem[]>(`${consolePath(academyId)}/matches`), staleTime: 15_000 });
+export function useAcademyMatches(academyId: number, opts: { enabled?: boolean } = {}) {
+  return useQuery({ queryKey: keys.list(academyId), queryFn: () => call<MatchListItem[]>(`${consolePath(academyId)}/matches`), staleTime: 15_000, enabled: opts.enabled ?? true });
 }
 
 export function useAcademyMatch(academyId: number, sessionId: number | null) {

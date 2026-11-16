@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { coachBoardSchema, coachBoxAt, coachShapeVisible, type CoachBox } from "@workspace/api-zod";
 import {
+  nextOnCamera,
   WHOLE,
   ballAt,
   boxesAt,
@@ -132,4 +133,13 @@ describe("saved moments", () => {
     expect(noteMoment({ shapes: [{ ...shape, atMs: 8700 }] }, 9000)).toBe(9000);
     expect(noteMoment({ shapes: [{ ...shape, atMs: 4000 }, { ...shape, atMs: 6000 }] }, 9000)).toBe(6000);
   });
+});
+
+describe("nextOnCamera", () => {
+  const spans: Array<[number, number]> = [[100, 140], [10, 30], [300, 320]];
+  it("stays put while he is on camera", () => expect(nextOnCamera(spans, 20)).toBe(20));
+  it("goes just inside his next stretch", () => expect(nextOnCamera(spans, 50)).toBeCloseTo(100.2));
+  it("wraps to his first stretch after the last", () => expect(nextOnCamera(spans, 330)).toBeCloseTo(10.2));
+  it("never lands past a very short stretch", () => expect(nextOnCamera([[20, 20.1]], 10)).toBe(20.1));
+  it("is null without spans", () => { expect(nextOnCamera(undefined, 5)).toBeNull(); expect(nextOnCamera([], 5)).toBeNull(); });
 });

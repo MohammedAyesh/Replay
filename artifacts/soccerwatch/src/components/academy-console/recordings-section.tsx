@@ -29,7 +29,13 @@ function extractBunnyGuid(videoUrl: string): string {
   }
 }
 
-export function AcademyRecordingsSection({ academyId, academyName }: { academyId: number; academyName: string }) {
+export function AcademyRecordingsSection({ academyId, academyName, unattachedOnly = false, heading }: {
+  academyId: number;
+  academyName: string;
+  /** The Sessions page lists only videos not yet attached to a session. */
+  unattachedOnly?: boolean;
+  heading?: { description: string; empty: string } | null;
+}) {
   const { t, locale } = useTranslation();
   const copy = t.academyConsole.recordingsPanel;
   const queryClient = useQueryClient();
@@ -43,9 +49,11 @@ export function AcademyRecordingsSection({ academyId, academyName }: { academyId
   // Owners and coaches save clips of the academy's footage, branded as the
   // academy's; the owner finds every one of them in Studio.
   const createUserClip = useCreateUserClip();
-  const recordings = useMemo(() => [...(recordingsQuery.data ?? [])].sort((a, b) => (
-    `${b.date} ${b.timeSlot}`.localeCompare(`${a.date} ${a.timeSlot}`)
-  )), [recordingsQuery.data]);
+  const recordings = useMemo(() => [...(recordingsQuery.data ?? [])]
+    .filter((recording) => !unattachedOnly || recording.sessionId === null)
+    .sort((a, b) => (
+      `${b.date} ${b.timeSlot}`.localeCompare(`${a.date} ${a.timeSlot}`)
+    )), [recordingsQuery.data, unattachedOnly]);
   const [playing, setPlaying] = useState<AcademyConsoleRecording | null>(null);
   const viewTracking = useRecordingViewTracking(
     playing?.videoUrl ? getRecordingViewInput(playing) : null,
@@ -89,15 +97,15 @@ export function AcademyRecordingsSection({ academyId, academyName }: { academyId
 
   return (
     <section className="space-y-6" data-testid="academy-recordings">
-      <header>
+      {heading ? <p className="max-w-2xl text-sm leading-6 text-muted-text">{heading.description}</p> : <header>
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-turf">{t.academyConsole.workspace}</p>
         <h1 className="mt-2 font-display text-4xl font-bold tracking-tight text-text">{t.academyConsole.recordings}</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-text">{copy.description}</p>
-      </header>
+      </header>}
       {sessionsQuery.isError && <p className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive" role="alert">{copy.sessionsLoadError}</p>}
       {recordingsQuery.isLoading ? <div className="space-y-3" data-testid="academy-recordings-loading" aria-label={copy.loading}>{[0, 1, 2].map((item) => <div key={item} className="h-24 animate-pulse rounded-2xl border border-line bg-surface" />)}</div> :
         recordingsQuery.isError ? <div className="rounded-2xl border border-line bg-surface p-6" data-testid="academy-recordings-error"><p role="alert" className="text-sm text-muted-text">{copy.loadError}</p><Button type="button" variant="outline" className="mt-4 min-h-10" onClick={() => void recordingsQuery.refetch()}>{t.academyConsole.retry}</Button></div> :
-        recordings.length === 0 ? <div className="rounded-2xl border border-dashed border-line bg-surface p-9 text-center" data-testid="academy-recordings-empty"><span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-turf/10 text-turf"><Video className="h-5 w-5" aria-hidden="true" /></span><h2 className="mt-4 font-display text-xl font-bold text-text">{copy.emptyTitle}</h2><p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-text">{copy.emptyDescription}</p></div> :
+        recordings.length === 0 ? <div className="rounded-2xl border border-dashed border-line bg-surface p-9 text-center" data-testid="academy-recordings-empty"><span className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-turf/10 text-turf"><Video className="h-5 w-5" aria-hidden="true" /></span><h2 className="mt-4 font-display text-xl font-bold text-text">{heading ? heading.empty : copy.emptyTitle}</h2>{!heading && <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-text">{copy.emptyDescription}</p>}</div> :
         <div className="space-y-3" data-testid="academy-recordings-list">
           {recordings.map((recording) => <article key={recording.id} className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4 transition-colors hover:border-turf/35 sm:flex-row sm:items-center sm:px-5" data-testid={`academy-recording-${recording.id}`}>
             <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-raised text-turf"><Video className="h-5 w-5" aria-hidden="true" /></div>
