@@ -701,7 +701,7 @@ async function completeRequest(
 
   // Only the call that actually completed the request queues its analysis.
   try {
-    await queueLiveAnalysisForBooking(row, videoId, deliveredSeconds);
+    await queueLiveAnalysisForBooking(row, videoId, deliveredSeconds, streamless);
   } catch (error) {
     logger.warn({ requestId: row.id, error }, "Could not queue the booking's analysis");
   }

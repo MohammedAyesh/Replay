@@ -52,6 +52,21 @@ export function storagePlaybackUrl(
   return `/api/hls-proxy/storage/${encodeURIComponent(guid)}/${rendition}.m3u8`;
 }
 
+export function storagePlaybackProxyUrl(
+  videoGuid: string | null | undefined,
+  rendition: StorageRendition,
+): string | null {
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid) return null;
+  if (rendition === "4k") return uhdPlaybackUrl(guid);
+  return `/api/hls-proxy/storage/${encodeURIComponent(guid)}/${rendition}.m3u8`;
+}
+
+export function storageThumbnailProxyUrl(videoGuid: string | null | undefined): string | null {
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  return guid ? `/api/hls-proxy/storage/${encodeURIComponent(guid)}/thumb.jpg` : null;
+}
+
 export function uhdPlaybackWindowUrl(
   videoGuid: string | null | undefined,
   fromMs: number,

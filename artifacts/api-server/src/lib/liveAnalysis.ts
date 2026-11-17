@@ -4,6 +4,7 @@ import { BUNNY_CDN_HOSTNAME } from "./bunny";
 import { logger } from "./logger";
 import { getSettingValue } from "./settings";
 import { isKitField } from "./cameraKitModels";
+import { storageRenditionPlaylistUrl } from "./uhdPlayback";
 
 /**
  * Bookings analysed while they are played.
@@ -37,7 +38,12 @@ function durationLabel(seconds: number): string {
 }
 
 /** The recordings row for a Bunny video, created (hidden) if the Bunny sync has not made one yet. */
-export async function ensureRecordingForVideo(row: FootageRequest, videoId: string, seconds: number): Promise<number> {
+export async function ensureRecordingForVideo(
+  row: FootageRequest,
+  videoId: string,
+  seconds: number,
+  streamlessStorage = false,
+): Promise<number> {
   const [existing] = await db
     .select({ id: recordingsTable.id })
     .from(recordingsTable)
@@ -53,7 +59,9 @@ export async function ensureRecordingForVideo(row: FootageRequest, videoId: stri
       date,
       timeSlot: time.slice(0, 5),
       duration: durationLabel(seconds),
-      videoUrl: `https://${BUNNY_CDN_HOSTNAME}/${videoId}/playlist.m3u8`,
+      videoUrl: streamlessStorage
+        ? storageRenditionPlaylistUrl(videoId, "8k")
+        : `https://${BUNNY_CDN_HOSTNAME}/${videoId}/playlist.m3u8`,
       isVisible: false,
     })
     .returning({ id: recordingsTable.id });
@@ -148,6 +156,7 @@ export async function queueLiveAnalysisForBooking(
   row: FootageRequest,
   videoId: string | null,
   deliveredSeconds: number | null,
+  streamlessStorage = false,
 ): Promise<LiveAnalysisOutcome> {
   const matchedRecordings = await recordingsForBooking(row, videoId);
   const videoRecording = videoId
@@ -159,7 +168,12 @@ export async function queueLiveAnalysisForBooking(
   const existing = await existingAnalysisForBooking(row, relatedRecordingIds);
   if (existing) {
     if (!recordingId && videoId) {
-      recordingId = await ensureRecordingForVideo(row, videoId, deliveredSeconds ?? row.requestedSeconds);
+      recordingId = await ensureRecordingForVideo(
+        row,
+        videoId,
+        deliveredSeconds ?? row.requestedSeconds,
+        streamlessStorage,
+      );
     }
     const linkedRecordingId = await linkExistingAnalysisToBooking(row, existing, recordingId);
     return {
@@ -172,7 +186,12 @@ export async function queueLiveAnalysisForBooking(
   if (!videoId || !row.vpsJobId) return { queued: false, reason: "no video or no VPS job" };
   if (!(await liveAnalysisEnabled(row.fieldId)) && !(await isKitField(row.fieldId))) return { queued: false, reason: "setting off for this field" };
 
-  recordingId ??= await ensureRecordingForVideo(row, videoId, deliveredSeconds ?? row.requestedSeconds);
+  recordingId ??= await ensureRecordingForVideo(
+    row,
+    videoId,
+    deliveredSeconds ?? row.requestedSeconds,
+    streamlessStorage,
+  );
   // Recheck after resolving/creating the canonical video recording, so a job
   // linked through that recording is reused instead of being duplicated.
   const existingAfterRecording = await existingAnalysisForBooking(row, [...new Set([...relatedRecordingIds, recordingId])]);

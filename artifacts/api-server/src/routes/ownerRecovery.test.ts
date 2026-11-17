@@ -195,6 +195,26 @@ describe("failed owner footage recovery", () => {
     expect(h.attachAcademy).toHaveBeenCalledTimes(1);
   });
 
+  it("recovers a streamless result without handing it to Stream analysis", async () => {
+    const row = await createFailedRequest();
+    const videoId = "95a477cd-6639-42dd-ad06-554eb3ff0c0c";
+    replyFor(row.vpsJobId!, {
+      body: { status: "done", message: "ready", videoId, streamless: true },
+    });
+
+    await runOwnerStatusSync();
+
+    const [completed] = await db.select().from(footageRequestsTable)
+      .where(inArray(footageRequestsTable.id, [row.id]));
+    expect(completed).toMatchObject({
+      status: "ready",
+      videoId,
+      shareToken: expect.stringMatching(/^s-[0-9a-f]{32}$/),
+    });
+    expect(h.queueAnalysis).toHaveBeenCalledWith(row, videoId, row.requestedSeconds, true);
+    expect(h.attachAcademy).toHaveBeenCalledWith(row, videoId, row.requestedSeconds, true);
+  });
+
   it("lists eligible recent failures for admins only", async () => {
     const row = await createFailedRequest();
     const response = await request(app).get("/api/admin/footage-requests").expect(200);

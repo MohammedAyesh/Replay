@@ -23,6 +23,7 @@ import { interpolatePitchPosition } from "./pitchModel";
 import { kitDistance, type ClaimedPart, type Lab } from "./matchPlay";
 import type { PersonalMoment } from "./personalMoments";
 import type { ReviewedGoal } from "./goalReview";
+import { isStreamlessStorageVideoUrl, storagePlaybackProxyUrl } from "./uhdPlayback";
 
 export const CHECK = {
   /**
@@ -191,6 +192,12 @@ export function applyCuts<T extends ClaimedPart>(parts: readonly T[], cuts: read
 export function browserVideoUrl(videoUrl: string): string {
   try {
     const parsed = new URL(videoUrl);
+    if (isStreamlessStorageVideoUrl(videoUrl)) {
+      const match = parsed.pathname.match(/\/vod\/([0-9a-f-]{36})\/(8k|4k|h264)\.m3u8$/i);
+      if (match) {
+        return storagePlaybackProxyUrl(match[1], match[2].toLowerCase() as "8k" | "4k" | "h264") ?? videoUrl;
+      }
+    }
     if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
       return `/api/hls-proxy/manifest?url=${encodeURIComponent(videoUrl)}`;
     }

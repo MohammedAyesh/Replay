@@ -130,6 +130,8 @@ export function isStreamlessStorageUrl(value: string | null | undefined): boolea
   if (!value) return false;
   try {
     const parsed = new URL(value, typeof window === "undefined" ? "https://replayjo.com" : window.location.origin);
+    const nested = parsed.searchParams.get("url");
+    if (nested && nested !== value && isStreamlessStorageUrl(nested)) return true;
     return /\/vod\/(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:8k|4k|h264)\.m3u8$/i.test(parsed.pathname)
       || /^\/api\/hls-proxy\/storage\/(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:8k|4k|h264)\.m3u8$/i.test(parsed.pathname)
       || /^\/w\/s-[a-f0-9]{32}\/manifest\.m3u8$/i.test(parsed.pathname);

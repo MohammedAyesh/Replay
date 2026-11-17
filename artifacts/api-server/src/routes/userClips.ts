@@ -125,6 +125,7 @@ import {
   type Camera4kReclipValidation,
 } from "../lib/camera4kReclipValidation";
 import { isStreamlessStorageVideoUrl } from "../lib/uhdPlayback";
+import { storagePlaybackProxyUrl, storageThumbnailProxyUrl } from "../lib/uhdPlayback";
 import { contentAddressedHashPrefix, inspectRenderedVideo, saveRenderSnapshotBestEffort, sha256File } from "../lib/renderSnapshots";
 import { clipRenderOptionsFromSnapshot } from "../lib/clipRenderSnapshot";
 
@@ -308,24 +309,60 @@ export function isLiveVideoId(videoId: string): boolean {
   return videoId.startsWith("live:");
 }
 
-async function isStreamlessStorageClip(
-  clip: Pick<typeof userClipsTable.$inferSelect, "sourceRecordingId" | "footageRequestId">,
-): Promise<boolean> {
-  if (clip.sourceRecordingId !== null) {
-    const [recording] = await db.select({ videoUrl: recordingsTable.videoUrl })
-      .from(recordingsTable)
-      .where(eq(recordingsTable.id, clip.sourceRecordingId))
-      .limit(1);
-    if (isStreamlessStorageVideoUrl(recording?.videoUrl)) return true;
+type StreamlessClipIdentity = Pick<
+  typeof userClipsTable.$inferSelect,
+  "id" | "sourceRecordingId" | "footageRequestId"
+>;
+
+export async function streamlessStorageClipIds(clips: readonly StreamlessClipIdentity[]): Promise<Set<number>> {
+  const recordingIds = [...new Set(clips.flatMap((clip) => clip.sourceRecordingId === null ? [] : [clip.sourceRecordingId]))];
+  const requestIds = [...new Set(clips.flatMap((clip) => clip.footageRequestId === null ? [] : [clip.footageRequestId]))];
+  const [recordings, requests] = await Promise.all([
+    recordingIds.length
+      ? db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl })
+        .from(recordingsTable).where(inArray(recordingsTable.id, recordingIds))
+      : Promise.resolve([]),
+    requestIds.length
+      ? db.select({ id: footageRequestsTable.id, shareToken: footageRequestsTable.shareToken })
+        .from(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds))
+      : Promise.resolve([]),
+  ]);
+  const storageRecordingIds = new Set(
+    recordings.filter((recording) => isStreamlessStorageVideoUrl(recording.videoUrl)).map((recording) => recording.id),
+  );
+  const storageRequestIds = new Set(
+    requests.filter((request) => /^s-[a-f0-9]{32}$/i.test(request.shareToken ?? "")).map((request) => request.id),
+  );
+  return new Set(clips.filter((clip) =>
+    (clip.sourceRecordingId !== null && storageRecordingIds.has(clip.sourceRecordingId))
+    || (clip.footageRequestId !== null && storageRequestIds.has(clip.footageRequestId)),
+  ).map((clip) => clip.id));
+}
+
+export async function isStreamlessStorageClip(clip: StreamlessClipIdentity): Promise<boolean> {
+  return (await streamlessStorageClipIds([clip])).has(clip.id);
+}
+
+function clipMediaUrls(
+  clip: Pick<typeof userClipsTable.$inferSelect, "videoId">,
+  thumbnailTime: number | null,
+  streamlessStorage: boolean,
+): { thumbnailUrl: string | null; playbackUrl: string | null } {
+  if (isLiveVideoId(clip.videoId)) return { thumbnailUrl: null, playbackUrl: null };
+  if (streamlessStorage) {
+    return isBunnyStorageConfigured()
+      ? {
+        thumbnailUrl: storageThumbnailProxyUrl(clip.videoId),
+        playbackUrl: storagePlaybackProxyUrl(clip.videoId, "8k"),
+      }
+      : { thumbnailUrl: null, playbackUrl: null };
   }
-  if (clip.footageRequestId !== null) {
-    const [request] = await db.select({ shareToken: footageRequestsTable.shareToken })
-      .from(footageRequestsTable)
-      .where(eq(footageRequestsTable.id, clip.footageRequestId))
-      .limit(1);
-    return /^s-[a-f0-9]{32}$/i.test(request?.shareToken ?? "");
-  }
-  return false;
+  return isBunnyConfigured()
+    ? {
+      thumbnailUrl: getBunnyProxiedThumbnailUrl(clip.videoId, thumbnailTime),
+      playbackUrl: getBunnyProxiedPlaybackUrl(clip.videoId),
+    }
+    : { thumbnailUrl: null, playbackUrl: null };
 }
 
 const BUNNY_VIDEO_GUID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i;

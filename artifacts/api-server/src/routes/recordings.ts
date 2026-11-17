@@ -32,6 +32,11 @@ import {
   getBunnyProxiedThumbnailUrl,
 } from "../lib/bunny";
 import { hasUhdPlaylist, uhdPlaybackUrl } from "../lib/uhdPlayback";
+import {
+  isStreamlessStorageVideoUrl,
+  storagePlaybackProxyUrl,
+  storageThumbnailProxyUrl,
+} from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 
@@ -402,6 +407,15 @@ router.get("/demo/media", async (req, res): Promise<void> => {
 
   const toDemoMedia = (source: string, preferredVideoId?: string | null) => {
     let videoId = preferredVideoId ?? null;
+    if (isStreamlessStorageVideoUrl(source)) {
+      videoId ??= extractBunnyVideoId(source);
+      const rendition = new URL(source).pathname.match(/\/(8k|4k|h264)\.m3u8$/i)?.[1]?.toLowerCase() as "8k" | "4k" | "h264" | undefined;
+      return {
+        src: videoId && rendition ? storagePlaybackProxyUrl(videoId, rendition) ?? source : source,
+        rawSrc: source,
+        poster: videoId ? storageThumbnailProxyUrl(videoId) : null,
+      };
+    }
     if (!videoId) {
       try {
         const parsed = new URL(source);

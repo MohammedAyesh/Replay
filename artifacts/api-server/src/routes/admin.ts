@@ -54,9 +54,11 @@ import { attachRosterTraining, isTrainingBlock } from "../lib/rosterTraining";
 import {
   adminClipExportSnapshot,
   isLiveVideoId,
+  isStreamlessStorageClip,
   queueAdminClipReclip,
   rememberAdminClipFailure,
 } from "./userClips";
+import { hasUhdPlaylist, isStreamlessStorageVideoUrl } from "../lib/uhdPlayback";
 import multer from "multer";
 import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 import {
@@ -625,6 +627,46 @@ async function checkAdminClipSource(clipId: number): Promise<{
         reason: "Live-source clips cannot be re-clipped until the recording is uploaded to Bunny Stream.",
       },
     };
+  }
+  if (await isStreamlessStorageClip(clip)) {
+    if (!isBunnyStorageConfigured()) {
+      return {
+        clip,
+        result: {
+          clipId,
+          sourceStatus: "unavailable",
+          sourceStatusCode: null,
+          reason: "Bunny Storage is not configured on this server.",
+        },
+      };
+    }
+    try {
+      if (await hasUhdPlaylist(clip.videoId)) {
+        return {
+          clip,
+          result: { clipId, sourceStatus: "ready", sourceStatusCode: null, reason: null },
+        };
+      }
+      return {
+        clip,
+        result: {
+          clipId,
+          sourceStatus: "unavailable",
+          sourceStatusCode: null,
+          reason: "The Storage 4K source is not available yet.",
+        },
+      };
+    } catch (error) {
+      return {
+        clip,
+        result: {
+          clipId,
+          sourceStatus: "unavailable",
+          sourceStatusCode: null,
+          reason: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
   }
   if (!isBunnyConfigured()) {
     return {
@@ -1615,6 +1657,10 @@ router.post("/admin/recordings/:id/replace-video", async (req, res): Promise<voi
   const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, recordingId));
   if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
   const oldVideoId = extractBunnyVideoId(recording.videoUrl);
+  if (isStreamlessStorageVideoUrl(recording.videoUrl)) {
+    res.status(409).json({ error: "Storage-only recordings cannot be replaced through Bunny Stream" });
+    return;
+  }
   if (!oldVideoId) { res.status(409).json({ error: "Recording does not point to a Bunny Stream video" }); return; }
   // Lower-case before any check. The schema already insists on a GUID; every
   // reference lookup below is case-insensitive too, so "ABCD…" cannot slip
@@ -1852,9 +1898,10 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
   }
 
   function bunnyGuidFromUrl(url: string): string | null {
+    if (isStreamlessStorageVideoUrl(url)) return null;
     try {
-      const guid = new URL(url).pathname.split("/").filter(Boolean)[0];
-      return guid || null;
+      const guid = extractBunnyVideoId(url);
+      return guid && BUNNY_GUID_RE.test(guid) ? guid : null;
     } catch {
       return null;
     }
