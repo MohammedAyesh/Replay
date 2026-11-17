@@ -27,6 +27,7 @@ import {
   type TrackingPitchModel,
 } from "@workspace/db";
 
+import { setupModelsForRecordings } from "./cameraKitModels";
 import { parsePitchModel, pitchModelFramingError } from "./pitchModel";
 
 export type PitchModelFit =
@@ -81,12 +82,17 @@ export async function cameraForRecording(recordingId: number): Promise<{
     .select({
       cameraId: fieldsTable.cameraId,
       pitchModel: camerasTable.pitchModel,
+      fieldId: recordingsTable.fieldId,
+      date: recordingsTable.date,
+      timeSlot: recordingsTable.timeSlot,
     })
     .from(recordingsTable)
     .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
     .leftJoin(camerasTable, eq(camerasTable.id, fieldsTable.cameraId))
     .where(eq(recordingsTable.id, recordingId));
-  return { cameraId: row?.cameraId ?? null, pitchModel: row?.pitchModel ?? null };
+  // A portable kit's recording reads the calibration of the set-up it was made in.
+  const setup = row ? (await setupModelsForRecordings([{ recordingId, cameraId: row.cameraId, fieldId: row.fieldId, date: row.date, timeSlot: row.timeSlot }])).get(recordingId) : undefined;
+  return { cameraId: row?.cameraId ?? null, pitchModel: setup ?? row?.pitchModel ?? null };
 }
 
 /** Same, for many recordings at once, so a list page is one query not N. */
@@ -100,15 +106,19 @@ export async function camerasForRecordings(recordingIds: number[]): Promise<
       recordingId: recordingsTable.id,
       cameraId: fieldsTable.cameraId,
       pitchModel: camerasTable.pitchModel,
+      fieldId: recordingsTable.fieldId,
+      date: recordingsTable.date,
+      timeSlot: recordingsTable.timeSlot,
     })
     .from(recordingsTable)
     .leftJoin(fieldsTable, eq(fieldsTable.id, recordingsTable.fieldId))
     .leftJoin(camerasTable, eq(camerasTable.id, fieldsTable.cameraId))
     .where(inArray(recordingsTable.id, recordingIds));
+  const setups = await setupModelsForRecordings(rows);
   for (const row of rows) {
     out.set(row.recordingId, {
       cameraId: row.cameraId ?? null,
-      pitchModel: row.pitchModel ?? null,
+      pitchModel: setups.get(row.recordingId) ?? row.pitchModel ?? null,
     });
   }
   return out;

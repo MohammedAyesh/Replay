@@ -74,3 +74,4 @@ export * from "./creativeLibraryTemplates";
 export * from "./academyInstagram";
 export * from "./pushSubscriptions";
 export * from "./academyCoachNotes";
+export * from "./cameraKits";

@@ -3,6 +3,7 @@ import { Link, useLocation } from "wouter";
 import {
   Bot,
   Building2,
+  Cctv,
   CalendarDays,
   ChevronDown,
   Contact as ContactIcon,
@@ -32,6 +33,8 @@ import { useVenueCopy } from "@/i18n/venue-strings";
 import { cn } from "@/lib/utils";
 import { ConsoleKindProvider } from "@/lib/console-kind";
 import { useMyAcademyAccess } from "@/lib/academy-team-api";
+import { useKitAccess } from "@/lib/kits-api";
+import { useKitCopy } from "@/i18n/kit-strings";
 import { useSetUpVenue, useVenueMemberships, type Customer } from "@/lib/venue-api";
 import type { FieldSection } from "@/components/field-console/dashboard-section";
 import { useInstagramCopy } from "@/i18n/instagram-strings";
@@ -51,6 +54,7 @@ const AcademyCreativeHub = lazyNamed(() => import("@/components/creative-hub/hub
 const BookingsSection = lazyNamed(() => import("@/components/field-console/bookings-section"), "BookingsSection");
 const CustomersSection = lazyNamed(() => import("@/components/field-console/customers-section"), "CustomersSection");
 const PitchesSection = lazyNamed(() => import("@/components/field-console/pitches-section"), "PitchesSection");
+const CamerasSection = lazyNamed(() => import("@/components/field-console/cameras-section"), "CamerasSection");
 const PaymentsSection = lazyNamed(() => import("@/components/field-console/payments-section"), "PaymentsSection");
 const AgentSection = lazyNamed(() => import("@/components/field-console/agent-section"), "AgentSection");
 const WebsiteSection = lazyNamed(() => import("@/components/field-console/website-section"), "WebsiteSection");
@@ -59,10 +63,10 @@ const DashboardSection = lazyNamed(() => import("@/components/field-console/dash
 const Owner = lazyPage(() => import("@/pages/owner"));
 const OwnerVar = lazyPage(() => import("@/pages/owner-var"));
 
-const SECTIONS: FieldSection[] = ["footage", "dashboard", "bookings", "customers", "chats", "people", "agent", "whatsapp", "pitches", "payments", "website", "ads", "social", "instagram", "creative", "studio", "branding", "profile", "team"];
+const SECTIONS: FieldSection[] = ["footage", "dashboard", "bookings", "customers", "chats", "people", "agent", "whatsapp", "pitches", "cameras", "payments", "website", "ads", "social", "instagram", "creative", "studio", "branding", "profile", "team"];
 /** Which Team permission each screen falls under (lib/academyPermissions.ts on the server). */
 const PERMISSION: Partial<Record<FieldSection, string>> = { customers: "people" };
-const OWNER_ONLY: FieldSection[] = ["footage", "pitches", "payments", "website", "ads", "social", "instagram", "creative", "studio", "branding", "team"];
+const OWNER_ONLY: FieldSection[] = ["footage", "pitches", "cameras", "payments", "website", "ads", "social", "instagram", "creative", "studio", "branding", "team"];
 const SESSION_KEY = "replay_field_console_venue";
 
 function readSelected(): number | null {
@@ -89,6 +93,9 @@ export default function FieldConsole() {
   const venueId = active?.academyId ?? null;
   const isOwner = active?.roles.includes("owner") ?? false;
   const access = useMyAcademyAccess(venueId);
+  // Labs: portable cameras, for whoever it is switched on for.
+  const kitAccess = useKitAccess(isSignedIn && !isGuest);
+  const kitCopy = useKitCopy();
 
   const section: FieldSection = useMemo(() => {
     const part = location.split(/[?#]/)[0].replace(/\/+$/, "").split("/")[2] as FieldSection | undefined;
@@ -102,6 +109,7 @@ export default function FieldConsole() {
   }, [location]);
 
   const canSee = (s: FieldSection) => {
+    if (s === "cameras") return kitAccess.data?.enabled === true && (isOwner || (active?.roles.includes("manager") ?? false));
     if (s === "team" || s === "creative" || s === "studio" || s === "footage" || s === "instagram") return isOwner;
     if (isOwner) return true;
     const perm = PERMISSION[s] ?? s;
@@ -168,6 +176,7 @@ export default function FieldConsole() {
     ] },
     { label: copy.console.settings, items: [
       { id: "pitches", label: copy.nav.pitches, icon: Trophy },
+      { id: "cameras", label: kitCopy.console.title, icon: Cctv },
       { id: "payments", label: copy.nav.payments, icon: CreditCard },
       { id: "website", label: copy.nav.website, icon: Globe },
       { id: "whatsapp", label: copy.nav.whatsapp, icon: MessageCircle },
@@ -252,6 +261,7 @@ export default function FieldConsole() {
               : section === "agent" ? <AgentSection venueId={id} onOpenChat={openChat} onOpenWhatsapp={() => navigate("whatsapp")} />
               : section === "whatsapp" ? <AcademyWhatsappSection academyId={id} />
               : section === "pitches" ? <PitchesSection venueId={id} />
+              : section === "cameras" ? <CamerasSection academyId={id} />
               : section === "payments" ? <PaymentsSection venueId={id} />
               : section === "website" ? <WebsiteSection venueId={id} />
               : section === "ads" ? <AcademyAdsSection academyId={id} onOpenChat={openChat} />

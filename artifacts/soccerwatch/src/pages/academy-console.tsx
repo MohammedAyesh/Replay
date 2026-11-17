@@ -24,6 +24,7 @@ import {
   Trash2,
   Target,
   ShieldCheck,
+  Cctv,
   Building2,
   Sparkles,
   Palette,
@@ -92,6 +93,8 @@ import { usePeopleCopy } from "@/i18n/people-strings";
 import { useAdsCopy } from "@/i18n/ads-strings";
 import { useSocialCopy } from "@/i18n/social-strings";
 import { useTeamCopy } from "@/i18n/team-strings";
+import { useKitAccess } from "@/lib/kits-api";
+import { useKitCopy } from "@/i18n/kit-strings";
 import { useMyAcademyAccess } from "@/lib/academy-team-api";
 import { useProfileCopy } from "@/i18n/profile-strings";
 import { useStudioCopy } from "@/i18n/studio-strings";
@@ -101,6 +104,7 @@ import { useValueReportCopy } from "@/i18n/value-report-strings";
 import { useConsoleNavCopy } from "@/i18n/console-nav-strings";
 
 // Sections load when opened (lib/lazy-page.ts).
+const CamerasSection = lazyNamed(() => import("@/components/field-console/cameras-section"), "CamerasSection");
 const AcademyWhatsappSection = lazyNamed(() => import("@/components/academy-console/whatsapp-section"), "AcademyWhatsappSection");
 const AcademyChatsSection = lazyNamed(() => import("@/components/academy-console/chats-section"), "AcademyChatsSection");
 const AcademyPeopleSection = lazyNamed(() => import("@/components/academy-console/people-section"), "AcademyPeopleSection");
@@ -121,7 +125,7 @@ const AcademyValueReportSection = lazyNamed(() => import("@/components/academy-c
 
 const SESSION_ACADEMY_KEY = "soccerwatch_academy_console_academy";
 
-type ConsoleSection = "dashboard" | "sessions" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "creative" | "team" | "report";
+type ConsoleSection = "dashboard" | "sessions" | "squads" | "players" | "registrations" | "attendance" | "schedule" | "recordings" | "fees" | "announcements" | "whatsapp" | "chats" | "people" | "matches" | "ads" | "social" | "profile" | "branding" | "studio" | "creative" | "team" | "report" | "cameras";
 
 function readSelectedAcademyId(): number | null {
   try {
@@ -210,6 +214,7 @@ function AcademyConsoleSidebar({
   const teamCopy = useTeamCopy();
   const socialCopy = useSocialCopy();
   const reportCopy = useValueReportCopy();
+  const kitCopy = useKitCopy();
   const selectedMembership = memberships.find((membership) => membership.academyId === selectedAcademyId) ?? memberships[0];
   const navCopy = useConsoleNavCopy();
   type NavItem = { id: ConsoleSection; label: string; icon: typeof LayoutDashboard };
@@ -245,6 +250,7 @@ function AcademyConsoleSidebar({
       { id: "profile", label: profileCopy.nav, icon: Building2 },
       { id: "branding", label: studioCopy.branding.nav, icon: Palette },
       { id: "team", label: teamCopy.team.nav, icon: ShieldCheck },
+      { id: "cameras", label: kitCopy.console.title, icon: Cctv },
     ] },
   ];
   const shownGroups = groups
@@ -828,7 +834,11 @@ export default function AcademyConsole() {
   // fall back to the role alone.
   const myAccess = useMyAcademyAccess(activeAcademyId);
   const OWNER_ONLY: ConsoleSection[] = ["report", "fees", "social", "ads", "branding", "studio", "creative", "team"];
-  const canSeeOne = (s: ConsoleSection) => isOwner || (s !== "team" && s !== "report" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
+  // Labs: portable cameras, for owners and managers it is switched on for.
+  const kitAccess = useKitAccess(activeAcademyId !== null);
+  const canSeeOne = (s: ConsoleSection) => s === "cameras"
+    ? kitAccess.data?.enabled === true && (isOwner || (activeMembership?.roles.includes("manager") ?? false))
+    : isOwner || (s !== "team" && s !== "report" && (myAccess.data ? myAccess.data.sections.includes(s) : !OWNER_ONLY.includes(s)));
   // Sessions shows whichever of its three parts this member may see.
   const canSee = (s: ConsoleSection) => (s === "sessions" ? canSeeOne("schedule") || canSeeOne("recordings") || canSeeOne("matches") : canSeeOne(s));
   const [sessionsTab, setSessionsTab] = useState<"sessions" | "videos" | undefined>(undefined);
@@ -865,7 +875,7 @@ export default function AcademyConsole() {
       // The three old sections are one page now; old links (and ?match=<id>) land on it.
       setSessionsTab(pathSection === "recordings" ? "videos" : undefined);
       setSection("sessions");
-    } else if (pathSection && ["sessions", "squads", "players", "registrations", "attendance", "fees", "announcements", "whatsapp", "chats", "people", "ads", "social", "profile", "branding", "studio", "creative", "team", "report"].includes(pathSection)) {
+    } else if (pathSection && ["sessions", "squads", "players", "registrations", "attendance", "fees", "announcements", "whatsapp", "chats", "people", "ads", "social", "profile", "branding", "studio", "creative", "team", "report", "cameras"].includes(pathSection)) {
       setSection(pathSection);
     } else {
       setSection("dashboard");
@@ -979,6 +989,8 @@ export default function AcademyConsole() {
 
           ) : section === "team" ? (
             !isOwner || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <AcademyTeamSection academyId={activeAcademyId} />
+          ) : section === "cameras" ? (
+            !canSee("cameras") || activeAcademyId === null ? <AcademyConsoleSkeleton /> : <CamerasSection academyId={activeAcademyId} />
           ) : <AcademyConsoleSkeleton />}
           </Suspense>
         </div>

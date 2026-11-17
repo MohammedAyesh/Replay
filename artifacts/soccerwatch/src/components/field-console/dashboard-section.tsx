@@ -8,7 +8,7 @@ import { clock, jod, useVenueDashboard } from "@/lib/venue-api";
 import { Card, ErrorText, Pill, Skeleton, Stat } from "./shared";
 import { SuggestionList } from "./instagram-suggestions";
 
-export type FieldSection = "dashboard" | "footage" | "bookings" | "customers" | "chats" | "people" | "agent" | "whatsapp" | "pitches" | "payments" | "website" | "ads" | "social" | "instagram" | "creative" | "studio" | "branding" | "profile" | "team";
+export type FieldSection = "dashboard" | "footage" | "bookings" | "customers" | "chats" | "people" | "agent" | "whatsapp" | "pitches" | "cameras" | "payments" | "website" | "ads" | "social" | "instagram" | "creative" | "studio" | "branding" | "profile" | "team";
 
 export function DashboardSection({ venueId, onNavigate }: { venueId: number; onNavigate: (s: FieldSection) => void }) {
   const copy = useVenueCopy();

@@ -1,11 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Plus, Trash2, Video } from "lucide-react";
+import { Plus, Ruler, Trash2, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useVenueCopy } from "@/i18n/venue-strings";
+import { useKitCopy } from "@/i18n/kit-strings";
 import { cn } from "@/lib/utils";
 import { jod, useDeletePitch, usePitches, useSavePitch, useSaveRules, type OpeningHours, type Pitch, type PriceRule, type Rules } from "@/lib/venue-api";
 import { Card, ErrorText, SectionHeader, Skeleton, ToggleRow, filsFromJod, jodInput } from "./shared";
@@ -17,6 +18,7 @@ export function PitchesSection({ venueId }: { venueId: number }) {
   if (q.isLoading) return <Skeleton rows={3} />;
   if (q.isError || !q.data) return <ErrorText error={q.error} />;
   const { pitches, fields, rules } = q.data;
+  const portable = q.data.portable === true;
   return (
     <section className="space-y-6" data-testid="field-pitches">
       <SectionHeader title={copy.pitches.title} description={copy.pitches.description}
@@ -36,17 +38,35 @@ export function PitchesSection({ venueId }: { venueId: number }) {
               <p key={i} className="mt-1 text-xs text-muted-text">{r.days.map((d) => copy.pitches.days[d]).join(", ")} {r.from}–{r.to}: {jod(r.pricePerHourFils, copy.locale)}</p>
             ))}
             {!p.active && <p className="mt-2 text-xs font-bold text-muted-text">{copy.pitches.archived}</p>}
+            {portable && <MeasuredLine pitch={p} />}
           </button>
         ))}
       </div>
       <RulesCard venueId={venueId} rules={rules} />
-      {editing && <PitchDialog venueId={venueId} pitch={editing === "new" ? null : editing} fields={fields} onClose={() => setEditing(null)} />}
+      {editing && <PitchDialog venueId={venueId} pitch={editing === "new" ? null : editing} fields={fields} portable={portable} onClose={() => setEditing(null)} />}
     </section>
   );
 }
 
-function PitchDialog({ venueId, pitch, fields, onClose }: { venueId: number; pitch: Pitch | null; fields: Array<{ id: number; name: string; hasCamera: boolean }>; onClose: () => void }) {
+/** Labs: what portable cameras measured on this pitch. */
+function MeasuredLine({ pitch }: { pitch: Pitch }) {
+  const k = useKitCopy();
+  const m = pitch.measured;
+  const r = (n: number) => Math.round(n * 10) / 10;
+  return (
+    <p className={cn("mt-3 flex items-center gap-2 border-t border-line pt-3 text-xs font-semibold", m ? "text-turf" : "text-muted-text")}>
+      <Ruler className="h-3.5 w-3.5 shrink-0" />
+      {m ? k.pitches.measured(r(m.lengthM), r(m.widthM), m.setups, m.mastHeightM) : k.pitches.notMeasured}
+    </p>
+  );
+}
+
+function PitchDialog({ venueId, pitch, fields, portable, onClose }: { venueId: number; pitch: Pitch | null; fields: Array<{ id: number; name: string; hasCamera: boolean }>; portable: boolean; onClose: () => void }) {
   const copy = useVenueCopy();
+  const k = useKitCopy();
+  const [lengthM, setLengthM] = useState(pitch?.lengthM != null ? String(pitch.lengthM) : "");
+  const [widthM, setWidthM] = useState(pitch?.widthM != null ? String(pitch.widthM) : "");
+  const [autoApprove, setAutoApprove] = useState(pitch?.autoApproveSize ?? true);
   const save = useSavePitch(venueId);
   const remove = useDeletePitch(venueId);
   const [name, setName] = useState(pitch?.name ?? "");
@@ -64,7 +84,9 @@ function PitchDialog({ venueId, pitch, fields, onClose }: { venueId: number; pit
     e.preventDefault();
     const pricePerHourFils = filsFromJod(price) ?? 0;
     try {
-      await save.mutateAsync({ id: pitch?.id, name, nameAr: nameAr || null, size, surface: surface || null, indoor, pricePerHourFils, priceRules: rules, fieldId, recordBookings: record, active });
+      const num = (v: string) => { const n = Number(v.replace(",", ".")); return v.trim() && Number.isFinite(n) ? n : null; };
+      const sizeFields = portable ? { lengthM: num(lengthM), widthM: num(widthM), autoApproveSize: autoApprove } : {};
+      await save.mutateAsync({ id: pitch?.id, name, nameAr: nameAr || null, size, surface: surface || null, indoor, pricePerHourFils, priceRules: rules, fieldId, recordBookings: record, active, ...sizeFields });
       onClose();
     } catch {
       // shown below
@@ -120,6 +142,13 @@ function PitchDialog({ venueId, pitch, fields, onClose }: { venueId: number; pit
           {fieldId && fields.find((f) => f.id === fieldId)?.hasCamera && (
             <ToggleRow label={copy.pitches.record} hint={copy.pitches.recordHint}><Switch checked={record} onCheckedChange={setRecord} /></ToggleRow>
           )}
+          {portable && <>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5"><Label>{k.pitches.length}</Label><Input value={lengthM} onChange={(e) => setLengthM(e.target.value)} inputMode="decimal" placeholder={k.pitches.measureHint} /></div>
+              <div className="space-y-1.5"><Label>{k.pitches.width}</Label><Input value={widthM} onChange={(e) => setWidthM(e.target.value)} inputMode="decimal" placeholder={k.pitches.measureHint} /></div>
+            </div>
+            <ToggleRow label={k.pitches.autoApprove} hint={k.pitches.autoApproveHint}><Switch checked={autoApprove} onCheckedChange={setAutoApprove} /></ToggleRow>
+          </>}
           <ToggleRow label={copy.pitches.active}><Switch checked={active} onCheckedChange={setActive} /></ToggleRow>
           <ErrorText error={save.error ?? remove.error} />
           <div className="flex gap-2">

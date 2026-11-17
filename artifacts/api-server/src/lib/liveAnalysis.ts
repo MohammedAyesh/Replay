@@ -3,6 +3,7 @@ import { academySessionsTable, analysisJobsTable, db, recordingsTable, type Foot
 import { BUNNY_CDN_HOSTNAME } from "./bunny";
 import { logger } from "./logger";
 import { getSettingValue } from "./settings";
+import { isKitField } from "./cameraKitModels";
 
 /**
  * Bookings analysed while they are played.
@@ -169,7 +170,7 @@ export async function queueLiveAnalysisForBooking(
   }
 
   if (!videoId || !row.vpsJobId) return { queued: false, reason: "no video or no VPS job" };
-  if (!(await liveAnalysisEnabled(row.fieldId))) return { queued: false, reason: "setting off for this field" };
+  if (!(await liveAnalysisEnabled(row.fieldId)) && !(await isKitField(row.fieldId))) return { queued: false, reason: "setting off for this field" };
 
   recordingId ??= await ensureRecordingForVideo(row, videoId, deliveredSeconds ?? row.requestedSeconds);
   // Recheck after resolving/creating the canonical video recording, so a job
