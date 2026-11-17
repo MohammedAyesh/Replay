@@ -27,6 +27,7 @@ import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
 import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
+import { markKitFootageReady } from "../lib/cameraKits";
 import {
   attachReward, availableReward, canEarn, claimReward, loyaltyStatus, releaseReward, releaseRewardForMatch, unpaidLapseCutoffLocal,
   UNPAID_BOOKING_LAPSE_MS,
@@ -708,6 +709,12 @@ async function completeRequest(
     await attachAcademyRecordingsForFootageRequest(row, videoId, deliveredSeconds, streamless);
   } catch (error) {
     logger.warn({ requestId: row.id, error }, "Could not attach completed footage to academy sessions");
+  }
+  try {
+    // A portable camera's set-up moves on to measuring the pitch (lib/cameraKits.ts).
+    await markKitFootageReady(row.id);
+  } catch (error) {
+    logger.warn({ requestId: row.id, error }, "Could not move the camera set-up on");
   }
   return true;
 }

@@ -98,6 +98,12 @@ export type Pitch = {
   imageUrl: string | null;
   active: boolean;
   sortOrder: number;
+  /** Painted size if the owner knows it; portable cameras check against it (Labs). */
+  lengthM?: number | null;
+  widthM?: number | null;
+  autoApproveSize?: boolean;
+  /** What portable cameras measured here, if anything (Labs). */
+  measured?: { lengthM: number; widthM: number; setups: number; mastHeightM: number; at: string } | null;
 };
 
 export type Rules = {
@@ -256,7 +262,7 @@ export function useCustomers(venueId: number) {
 }
 
 export function usePitches(venueId: number) {
-  return useQuery({ queryKey: ["venue", venueId, "pitches"], queryFn: () => venueCall<{ pitches: Pitch[]; fields: Array<{ id: number; name: string; hasCamera: boolean }>; rules: Rules; isOwner: boolean }>(`${v(venueId)}/pitches`) });
+  return useQuery({ queryKey: ["venue", venueId, "pitches"], queryFn: () => venueCall<{ pitches: Pitch[]; fields: Array<{ id: number; name: string; hasCamera: boolean }>; rules: Rules; isOwner: boolean; portable?: boolean }>(`${v(venueId)}/pitches`) });
 }
 
 export function useSavePitch(venueId: number) {

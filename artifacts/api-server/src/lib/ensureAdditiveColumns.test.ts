@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { pool } from "@workspace/db";
 import fs from "node:fs";
 import { PACK_STYLES } from "@workspace/api-zod";
-import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS, FAVORITES_STATEMENTS, MY_TEMPLATES_STATEMENTS, PUSH_STATEMENTS, PUSH_KEYS_STATEMENTS, ACADEMY_IG_STATEMENTS, LIBRARY_TEMPLATES_STATEMENTS, COACH_NOTES_STATEMENTS } from "./ensureAdditiveColumns";
+import { CREATIVE_MUSIC_STATEMENTS, CREATIVE_PACK_COLUMN, CREATIVE_TEMPLATE_MUSIC_STATEMENTS, PLAYER_PHOTOS_STATEMENTS, VENUE_IG_STATEMENTS, ensureAdditiveColumns, PLAYER_FEATURES_STATEMENTS, FEATURE_SETTINGS_STATEMENTS, PLAYER_CLIPS_STATEMENTS, PHONE_MEDIA_STATEMENTS, STAGE_EVENTS_STATEMENTS, REPORT_SHARES_STATEMENTS, STAGE_TRIGGER_STATEMENTS, TRIAL_CLIPS_STATEMENTS, COLUMNS, FAVORITES_STATEMENTS, MY_TEMPLATES_STATEMENTS, PUSH_STATEMENTS, PUSH_KEYS_STATEMENTS, ACADEMY_IG_STATEMENTS, LIBRARY_TEMPLATES_STATEMENTS, COACH_NOTES_STATEMENTS, CAMERA_KITS_STATEMENTS, CAMERA_SETUPS_STATEMENTS } from "./ensureAdditiveColumns";
 
 describe("ensureAdditiveColumns", () => {
   it("adds columns and tables a database is missing, and is a no-op after", async () => {
@@ -143,6 +143,19 @@ describe("ensureAdditiveColumns", () => {
     expect(await ensureAdditiveColumns(pool)).toBe(1);
     const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0078_creative_library_templates.sql", import.meta.url), "utf8");
     for (const statement of LIBRARY_TEMPLATES_STATEMENTS) expect(migration).toContain(`${statement};`);
+    expect(await ensureAdditiveColumns(pool)).toBe(0);
+  });
+
+  it("creates camera_kits and camera_setups (0081), as the migration says", async () => {
+    await pool.query(`DROP TABLE IF EXISTS "camera_setups"`);
+    await pool.query(`DROP TABLE IF EXISTS "camera_kits"`);
+    await pool.query(`ALTER TABLE "venue_pitches" DROP COLUMN IF EXISTS "length_m", DROP COLUMN IF EXISTS "width_m", DROP COLUMN IF EXISTS "auto_approve_size"`);
+    expect(await ensureAdditiveColumns(pool)).toBe(5);
+    const migration = fs.readFileSync(new URL("../../../../lib/db/migrations/0081_portable_camera_kits.sql", import.meta.url), "utf8");
+    for (const statement of [...CAMERA_KITS_STATEMENTS, ...CAMERA_SETUPS_STATEMENTS]) expect(migration).toContain(`${statement};`);
+    expect(migration).toContain(`ALTER TABLE "venue_pitches" ADD COLUMN IF NOT EXISTS "auto_approve_size" boolean DEFAULT true NOT NULL;`);
+    // Nothing assumes a mast height: a set-up without one, or an impossible one, is refused.
+    await expect(pool.query(`INSERT INTO camera_setups (kit_id, mast_height_m) VALUES (1, 0.5)`)).rejects.toThrow();
     expect(await ensureAdditiveColumns(pool)).toBe(0);
   });
 

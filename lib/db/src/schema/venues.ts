@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   serial,
   text,
   timestamp,
@@ -151,6 +152,11 @@ export const venuePitchesTable = pgTable("venue_pitches", {
   /** Peak / off-peak prices: [{ days: [0..6], from: "HH:MM", to: "HH:MM", pricePerHourFils }]. The first match wins. */
   priceRules: jsonb("price_rules").notNull().default(sql`'[]'::jsonb`),
   imageUrl: text("image_url"),
+  /** Painted size in metres, if the owner knows it (0081). Empty means a portable camera measures it. */
+  lengthM: real("length_m"),
+  widthM: real("width_m"),
+  /** A portable camera's measurement within 3% of the saved size is used without asking (0081). */
+  autoApproveSize: boolean("auto_approve_size").notNull().default(true),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

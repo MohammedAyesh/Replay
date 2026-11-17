@@ -11,7 +11,7 @@ import { AuthIdentityPanel } from "@/components/auth-identity-panel";
 import { clerkAppearance } from "@/lib/clerkAppearance";
 import { LocaleProvider, useLocale, useTranslation } from "@/i18n";
 import { FullscreenVideoProvider } from "@/lib/fullscreen-video";
-import { lazyPage } from "@/lib/lazy-page";
+import { lazyNamed, lazyPage } from "@/lib/lazy-page";
 import { useAuth } from "@/lib/auth";
 import { consoleHomeTarget, consumeExplicitAuthRedirect, getIncompleteProfileOnboardingRedirect, getPostAuthLanding, getRedirectPathFromSearch, getSafeRedirectPath, rememberExplicitAuthRedirect, withRedirectPath } from "@/lib/auth-redirect";
 import { isPublicStandalonePath } from "@/lib/public-paths";
@@ -54,6 +54,10 @@ const Matches = lazyPage(() => import("@/pages/matches"));
 const FriendsPage = lazyPage(() => import("@/pages/friends"));
 const FriendLinkPage = lazyPage(() => import("@/pages/friend-link"));
 const BookPage = lazyPage(() => import("@/pages/book"));
+// Labs: portable cameras (hidden unless switched on; the page says so).
+const KitStartPage = lazyPage(() => import("@/pages/kit"));
+const KitSetupPage = lazyNamed(() => import("@/pages/kit"), "KitSetupPage");
+const KitWatchPage = lazyNamed(() => import("@/pages/kit"), "KitWatchPage");
 const LegalPage = lazyPage(() => import("@/pages/legal").then((m) => ({ default: m.LegalPage })));
 const DeleteAccountPage = lazyPage(() => import("@/pages/delete-account"));
 const BlockedPlayers = lazyPage(() => import("@/pages/blocked-players"));
@@ -669,6 +673,9 @@ function AppRouter() {
         <Route path="/f/:code" component={FriendLinkPage} />
         <Route path="/matches" component={Matches} />
         <Route path="/book" component={BookPage} />
+        <Route path="/kit/s/:id/watch" component={KitWatchPage} />
+        <Route path="/kit/s/:id" component={KitSetupPage} />
+        <Route path="/kit" component={KitStartPage} />
         <Route path="/demo" component={SimpleDemo} />
         <Route path="/demo/full" component={DemoPage} />
         <Route path="/demo/old" component={LegacyDemoPage} />

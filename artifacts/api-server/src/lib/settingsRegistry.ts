@@ -131,6 +131,19 @@ export const SETTINGS: readonly SettingDefinition[] = [
     defaultValue: "",
   },
 
+  // ── Labs ───────────────────────────────────────────────────────────────
+  {
+    key: "labs.portableCameras",
+    group: "Labs",
+    label: "Portable cameras",
+    description:
+      "Shows Me → Set up a camera and the Cameras page in the field and academy consoles. " +
+      "Off for everyone by default: add a rule for a user, an academy or a field to try it. " +
+      "Admins always see it.",
+    type: "boolean",
+    defaultValue: false,
+  },
+
   // ── Bookings ───────────────────────────────────────────────────────────
   {
     key: "booking.enabled",

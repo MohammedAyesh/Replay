@@ -44,6 +44,7 @@ import {
   type Venue,
 } from "../lib/venues/store";
 import { agentApiKey } from "../lib/venues/agent";
+import { pitchMeasurements, portableEnabled } from "../lib/cameraKits";
 import { consentMode } from "../lib/venues/igConsent";
 import { checkDomain, setDomain, sitesIp } from "../lib/venues/domains";
 import { sealCardConfig } from "../lib/venues/payments";
@@ -431,6 +432,12 @@ async function cameraFields(a: Access) {
   return db.select({ id: fieldsTable.id, name: fieldsTable.name, cameraId: fieldsTable.cameraId }).from(fieldsTable).where(inArray(fieldsTable.id, ids));
 }
 
+/** Each pitch with what portable cameras measured there (0081), if anything. */
+async function withMeasurements<T extends { id: number }>(pitches: T[]) {
+  const measured = await pitchMeasurements(pitches.map((p) => p.id));
+  return pitches.map((pitch) => ({ pitch, measured: measured.get(pitch.id) ?? null }));
+}
+
 router.get(`${base}/pitches`, async (req, res): Promise<void> => {
   const a = await access(req, res);
   if (!a) return;
@@ -438,8 +445,10 @@ router.get(`${base}/pitches`, async (req, res): Promise<void> => {
   const withCamera = new Set(fields.filter((f) => f.cameraId).map((f) => f.id));
   const s = settingsView(a.venue.settings);
   res.json({
-    pitches: (await listPitches(a.venue.id)).map((p) => pitchView(p, withCamera)),
+    pitches: (await withMeasurements(await listPitches(a.venue.id))).map(({ pitch, measured }) => ({ ...pitchView(pitch, withCamera), measured })),
     fields: fields.map((f) => ({ id: f.id, name: f.name, hasCamera: Boolean(f.cameraId) })),
+    // Labs: portable cameras (hidden unless switched on).
+    portable: await portableEnabled(a.user, [a.venue.id]),
     rules: { bookingEnabled: s.bookingEnabled, openingHours: s.openingHours, slotStepMinutes: s.slotStepMinutes, durations: s.durations, maxDaysAhead: s.maxDaysAhead, minNoticeMinutes: s.minNoticeMinutes, holdMinutes: s.holdMinutes },
     isOwner: a.isOwner,
   });
@@ -459,6 +468,10 @@ const pitchSchema = z.object({
   imageUrl: z.string().trim().url().max(500).nullable().optional(),
   active: z.boolean().optional(),
   sortOrder: z.number().int().min(0).max(1000).optional(),
+  // 0081: the painted size, if known, for portable cameras to check against.
+  lengthM: z.number().min(10).max(130).nullable().optional(),
+  widthM: z.number().min(5).max(100).nullable().optional(),
+  autoApproveSize: z.boolean().optional(),
 });
 
 async function checkField(a: Access, fieldId: number | null | undefined): Promise<boolean> {

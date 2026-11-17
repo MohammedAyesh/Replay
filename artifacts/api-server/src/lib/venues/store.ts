@@ -1010,6 +1010,9 @@ export function pitchView(p: VenuePitch, cameraFieldIds?: Set<number>) {
     imageUrl: p.imageUrl,
     active: p.active,
     sortOrder: p.sortOrder,
+    lengthM: p.lengthM ?? null,
+    widthM: p.widthM ?? null,
+    autoApproveSize: p.autoApproveSize ?? true,
   };
 }
 
