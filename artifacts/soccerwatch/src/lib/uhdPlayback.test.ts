@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   canDecode8k,
   canDecodeUhd,
+  canUse8kDirect,
   canUse8kPlayback,
   canUseH264Playback,
+  hasSavedPlaybackPreference,
   canUseUhdPlayback,
   createUhdStallGuard,
   isUhdPlaylistAvailable,
@@ -207,5 +209,30 @@ describe("recorded UHD playback eligibility and fallback", () => {
     finishCurrentStall();
     expect(onRepeatedStall).toHaveBeenCalledOnce();
     guard.dispose();
+  });
+});
+
+describe("8K straight from Storage, for any recording", () => {
+  const smooth = { decodingInfo: vi.fn(async () => ({ supported: true, smooth: true, powerEfficient: true }) as MediaCapabilitiesDecodingInfo) };
+  const choppy = { decodingInfo: vi.fn(async () => ({ supported: true, smooth: false, powerEfficient: false }) as MediaCapabilitiesDecodingInfo) };
+
+  it("never asks for the playlist on a phone that can't play 8K smoothly", async () => {
+    const fetcher = vi.fn(async () => new Response("#EXTM3U", { status: 200 }));
+    expect(await canUse8kDirect("/api/hls-proxy/storage/abc/8k.m3u8", choppy, fetcher as unknown as typeof fetch)).toBe(false);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("plays 8K when the phone is smooth and the recording has one, and not when it hasn't", async () => {
+    const ok = vi.fn(async () => new Response("#EXTM3U\n", { status: 200 }));
+    const missing = vi.fn(async () => new Response("not found", { status: 404 }));
+    expect(await canUse8kDirect("/api/hls-proxy/storage/abc/8k.m3u8", smooth, ok as unknown as typeof fetch)).toBe(true);
+    expect(await canUse8kDirect("/api/hls-proxy/storage/abc/8k.m3u8", smooth, missing as unknown as typeof fetch)).toBe(false);
+    expect(await canUse8kDirect(null, smooth, ok as unknown as typeof fetch)).toBe(false);
+  });
+
+  it("knows whether the viewer ever picked a quality", () => {
+    expect(hasSavedPlaybackPreference({ getItem: () => null })).toBe(false);
+    expect(hasSavedPlaybackPreference({ getItem: () => "4k" })).toBe(true);
+    expect(hasSavedPlaybackPreference({ getItem: () => "junk" })).toBe(false);
   });
 });

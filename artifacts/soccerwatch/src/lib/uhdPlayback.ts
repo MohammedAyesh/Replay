@@ -27,6 +27,31 @@ export function readUhdPlaybackPreference(
   }
 }
 
+/** Whether the viewer ever picked a quality. With none picked, the best the phone plays smoothly wins (8K first). */
+export function hasSavedPlaybackPreference(
+  storage: Pick<Storage, "getItem"> | null = browserStorage(),
+): boolean {
+  try {
+    const saved = storage?.getItem(UHD_PLAYBACK_PREFERENCE_KEY);
+    return saved === "8k" || saved === "4k" || saved === "hd";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The original's 8K, straight from the Storage pull zone, for any recording (not only
+ * streamless ones). Checks the phone first, so most phones never ask for the playlist.
+ */
+export async function canUse8kDirect(
+  url: string | null | undefined,
+  mediaCapabilities?: MediaCapabilitiesLike | null,
+  fetcher: typeof fetch = fetch,
+): Promise<boolean> {
+  if (!url || !(await canDecode8k(mediaCapabilities))) return false;
+  return isUhdPlaylistAvailable(url, fetcher);
+}
+
 export function writeUhdPlaybackPreference(
   preference: UhdPlaybackPreference,
   storage: Pick<Storage, "setItem"> | null = browserStorage(),

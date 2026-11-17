@@ -476,7 +476,7 @@ describe("GET /hls-proxy/uhd/:videoGuid.m3u8", () => {
 });
 
 describe("GET /hls-proxy/storage/:videoGuid/:rendition.m3u8", () => {
-  it.each(["8k", "4k", "h264"] as const)("rewrites %s fMP4 playlists through the authorized media proxy", async (rendition) => {
+  it.each(["8k", "4k", "h264"] as const)("rewrites %s fMP4 playlists to the public Storage pull zone, never this server", async (rendition) => {
     const guid = testVideoGuid();
     fetchMock.mockResolvedValueOnce(new Response([
       "#EXTM3U",
@@ -494,9 +494,8 @@ describe("GET /hls-proxy/storage/:videoGuid/:rendition.m3u8", () => {
     expect(res.headers["content-type"]).toContain("mpegurl");
     expect(res.headers["cache-control"]).toBe("no-store");
     expect(upstreamMedia.pathname).toBe(`/vod/${guid}/${rendition}.m3u8`);
-    expect(res.text).toContain(`/api/hls-proxy/segment?url=${encodeURIComponent(
-      upstreamMedia.toString().replace(`${rendition}.m3u8`, `${rendition}.mp4`),
-    )}`);
+    expect(res.text).toContain(`URI="${upstreamMedia.toString().replace(`${rendition}.m3u8`, `${rendition}.mp4`)}"`);
+    expect(res.text).not.toContain("/api/hls-proxy/segment");
     expect(res.text).toContain(`${rendition}.mp4`);
   });
 

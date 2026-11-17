@@ -68,11 +68,13 @@ import {
 } from "./playbackRecovery";
 import {
   canDecodeUhd,
+  canUse8kDirect,
   canUse8kPlayback,
   canUseH264Playback,
   createUhdStallGuard,
   isUhdPlaylistAvailable,
   isStreamlessStorageUrl,
+  hasSavedPlaybackPreference,
   readUhdPlaybackPreference,
   storagePlaybackUrlForSource,
   uhdPlaybackUrlForSource,
@@ -337,11 +339,16 @@ export function ClipPlayer({
     || (source.kind === "ownerShare" && source.token.startsWith("s-"))
   );
   const uhdSrc = isLive ? null : suppliedUhdPlaybackUrl ?? uhdPlaybackUrlForSource(source, isLive);
-  const eightKSrc = streamlessStorage ? storagePlaybackUrlForSource(source, "8k", isLive) : null;
+  // The camera's 8K original plays straight from the Storage pull zone when it exists and the
+  // phone decodes it smoothly; Bunny Stream stays the alternate for recordings that have one.
+  const eightKSrc = streamlessStorage || (!isLive && source.kind === "bunny")
+    ? storagePlaybackUrlForSource(source, "8k", isLive)
+    : null;
+  const wantsStorageCheck = !isLive && Boolean(uhdSrc || eightKSrc) && readUhdPlaybackPreference() !== "hd";
   const h264Src = streamlessStorage ? storagePlaybackUrlForSource(source, "h264", isLive) : null;
   const streamSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
   const [initialSourceStage] = useState<PlaybackSourceStage>(() =>
-    streamlessStorage || (!isLive && uhdSrc && readUhdPlaybackPreference() === "4k")
+    streamlessStorage || wantsStorageCheck
       ? "checking"
       : streamSourceStage);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -659,7 +666,7 @@ export function ClipPlayer({
       })();
       return () => { active = false; };
     }
-    if (!uhdSrc || isLive || !element) {
+    if ((!uhdSrc && !eightKSrc) || isLive || !element) {
       setUhdAvailable(false);
       setEightKAvailable(false);
       setH264Available(false);
@@ -668,13 +675,25 @@ export function ClipPlayer({
     }
 
     const preference = readUhdPlaybackPreference();
+    const picked = hasSavedPlaybackPreference();
     void (async () => {
-      const capable = await canDecodeUhd(element);
-      const available = capable && await isUhdPlaylistAvailable(uhdSrc);
+      const [available, available8k] = await Promise.all([
+        uhdSrc ? canDecodeUhd(element).then((capable) => capable && isUhdPlaylistAvailable(uhdSrc)) : Promise.resolve(false),
+        preference === "hd" ? Promise.resolve(false) : canUse8kDirect(eightKSrc),
+      ]);
       if (!active) return;
       setUhdAvailable(available);
+      setEightKAvailable(available8k);
       if (sourceStageRef.current === "checking") {
-        setPlaybackSourceStage(preference === "4k" && available ? "uhd" : streamSourceStage);
+        // Unpicked or 8K: the original 8K first. 4K picked: 4K. Otherwise, or if neither exists: Stream.
+        const next: PlaybackSourceStage = preference === "hd"
+          ? streamSourceStage
+          : (preference === "8k" || !picked) && available8k
+            ? "8k"
+            : available
+              ? "uhd"
+              : streamSourceStage;
+        setPlaybackSourceStage(next);
       }
     })();
     return () => { active = false; };
@@ -704,7 +723,7 @@ export function ClipPlayer({
     setStorageOnlyUnavailable(false);
     setPlaybackSourceStage(streamlessStorage
       ? "checking"
-      : !isLive && uhdAvailable && readUhdPlaybackPreference() === "4k" ? "uhd" : streamSourceStage);
+      : wantsStorageCheck ? "checking" : streamSourceStage);
     setPlaybackAttempt((attempt) => attempt + 1);
   };
 
@@ -713,8 +732,7 @@ export function ClipPlayer({
   }, []);
 
   useEffect(() => {
-    const preferredStage: PlaybackSourceStage = streamlessStorage
-      || (!isLive && uhdSrc && readUhdPlaybackPreference() === "4k")
+    const preferredStage: PlaybackSourceStage = streamlessStorage || wantsStorageCheck
       ? "checking"
       : streamSourceStage;
     setPlaybackSourceStage(preferredStage);
@@ -1007,6 +1025,16 @@ export function ClipPlayer({
             });
             return;
           }
+          if (currentStage === "8k" && uhdAvailable) {
+            setEightKAvailable(false);
+            setPlaybackSourceStage("uhd");
+            toast({
+              title: locale === "ar"
+                ? "حوّلنا لـ 4K عشان يمشي الفيديو أسلس"
+                : "Switched to 4K for smoother playback",
+            });
+            return;
+          }
           setPlaybackSourceStage("cdn");
           toast({
             title: locale === "ar"
@@ -1050,6 +1078,12 @@ export function ClipPlayer({
           return;
         }
         showPlaybackError();
+        return;
+      }
+      if (currentStage === "8k") {
+        // 8K didn't load: 4K if it's there, else Bunny Stream.
+        preservePosition();
+        setPlaybackSourceStage(uhdAvailable ? "uhd" : cdnSrc ? "cdn" : streamSourceStage);
         return;
       }
       try {
@@ -1441,7 +1475,7 @@ export function ClipPlayer({
     setStorageOnlyUnavailable(false);
     setPlaybackSourceStage(streamlessStorage
       ? preference === "8k" ? "8k" : preference === "4k" ? "uhd" : "h264"
-      : preference === "4k" ? "uhd" : streamSourceStage);
+      : preference === "8k" && eightKAvailable ? "8k" : preference === "4k" ? "uhd" : streamSourceStage);
   };
 
   const onLoadedMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {

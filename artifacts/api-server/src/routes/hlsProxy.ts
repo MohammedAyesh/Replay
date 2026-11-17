@@ -353,11 +353,6 @@ const DIRECT_SEGMENT_PAGE_HOSTS = new Set(
     .split(",").map((h) => h.trim().toLowerCase()).filter(Boolean),
 );
 
-function storageMediaProxyUrl(videoGuid: string, rendition: StorageRendition): string {
-  const upstream = storageRenditionMediaUrl(videoGuid, rendition);
-  return `/api/hls-proxy/segment?url=${encodeURIComponent(upstream)}`;
-}
-
 router.get("/hls-proxy/storage/:videoGuid/thumb.jpg", async (req, res): Promise<void> => {
   const videoGuid = Array.isArray(req.params.videoGuid) ? req.params.videoGuid[0] : req.params.videoGuid;
   const guid = normalizeUhdVideoGuid(videoGuid);
@@ -410,7 +405,8 @@ router.get("/hls-proxy/storage/:videoGuid/:rendition.m3u8", async (req, res): Pr
     const fromValue = req.query.fromMs;
     const toValue = req.query.toMs;
     const hasWindow = fromValue !== undefined || toValue !== undefined;
-    const mediaUrl = storageMediaProxyUrl(guid, rendition);
+    // Media straight from the public Storage pull zone, like the 4K: playback never streams through this server.
+    const mediaUrl = storageRenditionMediaUrl(guid, rendition);
     if (hasWindow) {
       const fromRaw = typeof fromValue === "string" ? fromValue : null;
       const toRaw = typeof toValue === "string" ? toValue : null;
@@ -495,11 +491,7 @@ router.get("/hls-proxy/uhd/:videoGuid.m3u8", async (req, res): Promise<void> => 
         res.status(404).type("text/plain").send("4K playback window not found");
         return;
       }
-      const mediaUrl = wantsDirectSegments(
-        req.query,
-        req.header("referer") ?? undefined,
-        req.header("origin") ?? undefined,
-      ) ? storageRenditionMediaUrl(videoGuid, "4k") : storageMediaProxyUrl(videoGuid, "4k");
+      const mediaUrl = storageRenditionMediaUrl(videoGuid, "4k");
       res.set("Content-Type", "application/vnd.apple.mpegurl");
       res.set("Cache-Control", "no-store");
       res.set("Access-Control-Allow-Origin", "*");
@@ -514,11 +506,8 @@ router.get("/hls-proxy/uhd/:videoGuid.m3u8", async (req, res): Promise<void> => 
       res.status(404).type("text/plain").send("4K recording not found");
       return;
     }
-    const mediaUrl = wantsDirectSegments(
-      req.query,
-      req.header("referer") ?? undefined,
-      req.header("origin") ?? undefined,
-    ) ? storageRenditionMediaUrl(videoGuid, "4k") : storageMediaProxyUrl(videoGuid, "4k");
+    // Straight from the public Storage pull zone, as before the streamless work (decided 2026-09-27, 2026-11-17).
+    const mediaUrl = storageRenditionMediaUrl(videoGuid, "4k");
     res.set("Content-Type", "application/vnd.apple.mpegurl");
     res.set("Cache-Control", "no-store");
     res.set("Access-Control-Allow-Origin", "*");

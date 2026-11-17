@@ -607,7 +607,7 @@ describe("public owner watch links", () => {
       const poster = await request(app).get(`/w/${token}/poster.jpg`);
       expect(poster.status).toBe(200);
       expect(poster.headers["content-type"]).toBe("image/jpeg");
-      expect(poster.text).toBe("storage-thumbnail");
+      expect(Buffer.from(poster.body).toString()).toBe("storage-thumbnail");
     } finally {
       await db.update(footageRequestsTable)
         .set({ videoId: original[0]!.videoId, shareToken: original[0]!.shareToken })
