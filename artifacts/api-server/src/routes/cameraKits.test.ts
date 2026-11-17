@@ -174,6 +174,14 @@ describe("portable cameras", () => {
     const [kit] = await db.select().from(cameraKitsTable).where(eq(cameraKitsTable.id, kitId));
     const [field] = await db.select().from(fieldsTable).where(eq(fieldsTable.id, kit.fieldId!));
     expect(field).toMatchObject({ isHidden: true, cameraId: "camera9" });
+    // A camera that already has a field keeps it: no second field shares a camera.
+    const reuse = await request(app).post("/api/kits/manage").set(auth(adminId)).send({ academyId, name: "Kit fixed", cameraId: "camera1" }).expect(201);
+    const { ensureKitField } = await import("../lib/cameraKits");
+    const [reuseKit] = await db.select().from(cameraKitsTable).where(eq(cameraKitsTable.id, reuse.body.kit.id));
+    const homeFields = await db.select({ id: fieldsTable.id }).from(fieldsTable).where(eq(fieldsTable.cameraId, "camera1")).orderBy(fieldsTable.id);
+    expect(await ensureKitField(reuseKit)).toBe(homeFields[0].id);
+    expect((await db.select({ id: fieldsTable.id }).from(fieldsTable).where(eq(fieldsTable.cameraId, "camera1"))).length).toBe(homeFields.length);
+    await db.update(cameraKitsTable).set({ archived: true }).where(eq(cameraKitsTable.id, reuseKit.id));
     expect(control.calls.some((c) => c.path.startsWith("/record-hq/camera9") && c.method === "POST")).toBe(true);
 
     // A second set-up on the same kit can't record at the same time.
