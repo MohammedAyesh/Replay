@@ -13,8 +13,21 @@ import { Router, type IRouter, type Request, type Response as ExpressResponse } 
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { canViewBunnyVideo, extractBunnyVideoId } from "../lib/publicFootage";
+import { storagePullZoneBase } from "../lib/bunny";
 import { CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } from "../lib/backupExport";
-import { getUhdPlaylist, getUhdPlaylistWindow, isValidUhdWindow, rewriteUhdPlaylist } from "../lib/uhdPlayback";
+import {
+  getStoragePlaylist,
+  getStoragePlaylistWindow,
+  getUhdPlaylist,
+  getUhdPlaylistWindow,
+  isValidUhdWindow,
+  normalizeUhdVideoGuid,
+  rewriteStoragePlaylist,
+  rewriteUhdPlaylist,
+  storageRenditionMediaUrl,
+  STORAGE_RENDITIONS,
+  type StorageRendition,
+} from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 
@@ -340,6 +353,101 @@ const DIRECT_SEGMENT_PAGE_HOSTS = new Set(
     .split(",").map((h) => h.trim().toLowerCase()).filter(Boolean),
 );
 
+function storageMediaProxyUrl(videoGuid: string, rendition: StorageRendition): string {
+  const upstream = storageRenditionMediaUrl(videoGuid, rendition);
+  return `/api/hls-proxy/segment?url=${encodeURIComponent(upstream)}`;
+}
+
+router.get("/hls-proxy/storage/:videoGuid/thumb.jpg", async (req, res): Promise<void> => {
+  const videoGuid = Array.isArray(req.params.videoGuid) ? req.params.videoGuid[0] : req.params.videoGuid;
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid || !await canViewBunnyVideo(req, guid)) {
+    res.status(404).type("text/plain").send("Media not found");
+    return;
+  }
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  try {
+    const upstream = await fetch(`${storagePullZoneBase()}/vod/${guid}/thumb.jpg`, {
+      signal: AbortSignal.any([abort.signal, AbortSignal.timeout(20_000)]),
+    });
+    if (!upstream.ok || !upstream.body) {
+      try { await upstream.body?.cancel(); } catch { /* upstream already closed */ }
+      res.status(upstream.status === 404 ? 404 : 502).type("text/plain").send("Thumbnail unavailable");
+      return;
+    }
+    res.status(upstream.status);
+    res.set("Content-Type", upstream.headers.get("content-type")?.startsWith("image/")
+      ? upstream.headers.get("content-type")!
+      : "image/jpeg");
+    res.set("Cache-Control", "private, no-store");
+    const length = upstream.headers.get("content-length");
+    if (length) res.set("Content-Length", length);
+    await pipeline(
+      Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>),
+      res,
+    );
+  } catch (error) {
+    if (!abort.signal.aborted) req.log?.warn({ err: error, videoGuid: guid }, "Bunny Storage thumbnail proxy failed");
+    if (!res.headersSent) res.status(502).type("text/plain").send("Thumbnail unavailable");
+  }
+});
+
+router.get("/hls-proxy/storage/:videoGuid/:rendition.m3u8", async (req, res): Promise<void> => {
+  const videoGuid = Array.isArray(req.params.videoGuid) ? req.params.videoGuid[0] : req.params.videoGuid;
+  const rawRendition = Array.isArray(req.params.rendition) ? req.params.rendition[0] : req.params.rendition;
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid || !STORAGE_RENDITIONS.includes(rawRendition as StorageRendition)) {
+    res.status(404).type("text/plain").send("Media not found");
+    return;
+  }
+  const rendition = rawRendition as StorageRendition;
+  if (!await canViewBunnyVideo(req, guid)) {
+    res.status(404).type("text/plain").send("Media not found");
+    return;
+  }
+  try {
+    const fromValue = req.query.fromMs;
+    const toValue = req.query.toMs;
+    const hasWindow = fromValue !== undefined || toValue !== undefined;
+    const mediaUrl = storageMediaProxyUrl(guid, rendition);
+    if (hasWindow) {
+      const fromRaw = typeof fromValue === "string" ? fromValue : null;
+      const toRaw = typeof toValue === "string" ? toValue : null;
+      const fromMs = fromRaw && /^\d+$/.test(fromRaw) ? Number(fromRaw) : Number.NaN;
+      const toMs = toRaw && /^\d+$/.test(toRaw) ? Number(toRaw) : Number.NaN;
+      if (!isValidUhdWindow(fromMs, toMs)) {
+        res.status(400).type("text/plain").send("Invalid playback window");
+        return;
+      }
+      const window = await getStoragePlaylistWindow(guid, rendition, fromMs, toMs);
+      if (!window) {
+        res.status(404).type("text/plain").send("Playback window not found");
+        return;
+      }
+      res.set("Content-Type", "application/vnd.apple.mpegurl");
+      res.set("Cache-Control", "no-store");
+      res.set("Access-Control-Allow-Origin", "*");
+      res.set("Access-Control-Expose-Headers", "X-Replay-Window-Start-Ms");
+      res.set("X-Replay-Window-Start-Ms", String(window.startMs));
+      res.send(rewriteStoragePlaylist(window.playlist, rendition, mediaUrl));
+      return;
+    }
+    const playlist = await getStoragePlaylist(guid, rendition);
+    if (!playlist) {
+      res.status(404).type("text/plain").send(`${rendition.toUpperCase()} recording not found`);
+      return;
+    }
+    res.set("Content-Type", "application/vnd.apple.mpegurl");
+    res.set("Cache-Control", "no-store");
+    res.set("Access-Control-Allow-Origin", "*");
+    res.send(rewriteStoragePlaylist(playlist, rendition, mediaUrl));
+  } catch (error) {
+    req.log?.warn({ err: error, videoGuid: guid, rendition }, "Bunny Storage rendition playlist fetch failed");
+    res.status(502).type("text/plain").send(`${rendition.toUpperCase()} recording unavailable`);
+  }
+});
+
 /**
  * `direct=1` asks for segment lines that point at Bunny instead of this proxy.
  * Granted only when the page asking is one Bunny accepts. The playlist itself
@@ -387,12 +495,17 @@ router.get("/hls-proxy/uhd/:videoGuid.m3u8", async (req, res): Promise<void> => 
         res.status(404).type("text/plain").send("4K playback window not found");
         return;
       }
+      const mediaUrl = wantsDirectSegments(
+        req.query,
+        req.header("referer") ?? undefined,
+        req.header("origin") ?? undefined,
+      ) ? storageRenditionMediaUrl(videoGuid, "4k") : storageMediaProxyUrl(videoGuid, "4k");
       res.set("Content-Type", "application/vnd.apple.mpegurl");
       res.set("Cache-Control", "no-store");
       res.set("Access-Control-Allow-Origin", "*");
       res.set("Access-Control-Expose-Headers", "X-Replay-Window-Start-Ms");
       res.set("X-Replay-Window-Start-Ms", String(window.startMs));
-      res.send(rewriteUhdPlaylist(window.playlist, videoGuid));
+      res.send(rewriteUhdPlaylist(window.playlist, videoGuid, mediaUrl));
       return;
     }
 
@@ -401,10 +514,15 @@ router.get("/hls-proxy/uhd/:videoGuid.m3u8", async (req, res): Promise<void> => 
       res.status(404).type("text/plain").send("4K recording not found");
       return;
     }
+    const mediaUrl = wantsDirectSegments(
+      req.query,
+      req.header("referer") ?? undefined,
+      req.header("origin") ?? undefined,
+    ) ? storageRenditionMediaUrl(videoGuid, "4k") : storageMediaProxyUrl(videoGuid, "4k");
     res.set("Content-Type", "application/vnd.apple.mpegurl");
     res.set("Cache-Control", "no-store");
     res.set("Access-Control-Allow-Origin", "*");
-    res.send(rewriteUhdPlaylist(playlist, videoGuid));
+    res.send(rewriteUhdPlaylist(playlist, videoGuid, mediaUrl));
   } catch (error) {
     req.log?.warn({ err: error }, "4K Bunny Storage playlist fetch failed");
     res.status(502).type("text/plain").send("4K recording unavailable");

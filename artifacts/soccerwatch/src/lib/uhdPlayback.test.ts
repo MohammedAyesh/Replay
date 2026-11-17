@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  canDecode8k,
   canDecodeUhd,
+  canUse8kPlayback,
+  canUseH264Playback,
   canUseUhdPlayback,
   createUhdStallGuard,
   isUhdPlaylistAvailable,
+  isStreamlessStorageUrl,
   readUhdPlaybackPreference,
   RECORDED_PLAYBACK_STAGE_ORDER,
   stageAfterUhd,
+  storagePlaybackUrlForSource,
   uhdPlaybackUrlForGuid,
   uhdPlaybackUrlForStreamUrl,
   uhdPlaybackUrlForSource,
@@ -17,6 +22,36 @@ import {
 import { decidePlaybackRecovery } from "../components/clip-player/playbackRecovery";
 
 describe("recorded UHD playback eligibility and fallback", () => {
+  it("offers 8K only when MediaCapabilities reports smooth native 8K decoding", async () => {
+    const smoothCapabilities = {
+      decodingInfo: vi.fn().mockResolvedValue({ supported: true, smooth: true }),
+    };
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, body: { cancel: vi.fn() } });
+    expect(await canDecode8k(smoothCapabilities)).toBe(true);
+    expect(await canUse8kPlayback(
+      { canPlayType: () => "probably" },
+      "/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/8k.m3u8",
+      smoothCapabilities,
+      fetcher,
+    )).toBe(true);
+    expect(smoothCapabilities.decodingInfo).toHaveBeenCalledWith({
+      type: "media-source",
+      video: expect.objectContaining({ width: 7680, height: 2160, framerate: 20 }),
+    });
+    expect(await canUse8kPlayback(
+      { canPlayType: () => "probably" },
+      "/8k.m3u8",
+      { decodingInfo: vi.fn().mockResolvedValue({ supported: true, smooth: false }) },
+      fetcher,
+    )).toBe(false);
+    expect(await canUseH264Playback(
+      { canPlayType: () => "" },
+      "/h264.m3u8",
+      { decodingInfo: vi.fn().mockResolvedValue({ supported: true, smooth: true }) },
+      fetcher,
+    )).toBe(true);
+  });
+
   it("uses native HLS codec support when the browser owns HLS playback", async () => {
     const canPlayType = vi.fn((type: string) =>
       type.includes(UHD_HEVC_CODEC) ? "probably" : type === "application/vnd.apple.mpegurl" ? "maybe" : "");
@@ -120,6 +155,13 @@ describe("recorded UHD playback eligibility and fallback", () => {
     expect(uhdPlaybackUrlForSource({ kind: "ownerShare", token: "a".repeat(32) }))
       .toBe(`/w/${"a".repeat(32)}/4k.m3u8`);
     expect(uhdPlaybackUrlForSource({ kind: "ownerShare", token: "bad-token" })).toBeNull();
+    expect(storagePlaybackUrlForSource({ kind: "ownerShare", token: `s-${"a".repeat(32)}` }, "8k"))
+      .toBe(`/w/s-${"a".repeat(32)}/8k.m3u8`);
+    expect(storagePlaybackUrlForSource({ kind: "bunny", videoId: "123e4567-e89b-12d3-a456-426614174000" }, "h264"))
+      .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
+    expect(isStreamlessStorageUrl("https://storage.example.com/vod/123e4567-e89b-12d3-a456-426614174000/8k.m3u8")).toBe(true);
+    expect(isStreamlessStorageUrl("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8")).toBe(true);
+    expect(isStreamlessStorageUrl("/api/hls-proxy/manifest?url=https://vz-123.b-cdn.net/video/playlist.m3u8")).toBe(false);
   });
 
   it("tries UHD before Stream and falls directly back to the Stream CDN stage", async () => {

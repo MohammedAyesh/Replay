@@ -83,20 +83,27 @@ beforeAll(async () => {
   realFetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : input.url;
-    if (url.startsWith("https://fake-pullzone.local/vod/") && url.endsWith("/4k.m3u8")) {
-      return new Response("#EXTM3U\n#EXT-X-MAP:URI=\"4k.mp4\"\n#EXTINF:12,\n4k.mp4\n", {
+    const storagePlaylist = url.match(/^https:\/\/fake-pullzone\.local\/vod\/[^/]+\/(8k|4k|h264)\.m3u8$/);
+    if (storagePlaylist) {
+      const rendition = storagePlaylist[1];
+      return new Response(`#EXTM3U\n#EXT-X-MAP:URI=\"${rendition}.mp4\"\n#EXTINF:12,\n${rendition}.mp4\n`, {
         status: 200,
         headers: { "content-type": "application/vnd.apple.mpegurl" },
       });
     }
-    if (url.startsWith("https://fake-pullzone.local/vod/") && url.endsWith("/4k.mp4")) {
+    const storageMedia = url.match(/^https:\/\/fake-pullzone\.local\/vod\/[^/]+\/(8k|4k|h264)\.mp4$/);
+    if (storageMedia) {
+      const mediaBytes = `${storageMedia[1]}-segment-bytes`;
       const range = init?.headers?.Range as string | undefined;
-      return new Response("4k-segment-bytes", {
+      return new Response(mediaBytes, {
         status: range ? 206 : 200,
         headers: range
-          ? { "content-range": "bytes 0-15/100", "content-length": "16", "accept-ranges": "bytes" }
-          : { "content-length": "16", "accept-ranges": "bytes" },
+          ? { "content-range": `bytes 0-${mediaBytes.length - 1}/100`, "content-length": String(mediaBytes.length), "accept-ranges": "bytes" }
+          : { "content-length": String(mediaBytes.length), "accept-ranges": "bytes" },
       });
+    }
+    if (url.startsWith("https://fake-pullzone.local/vod/") && url.endsWith("/thumb.jpg")) {
+      return new Response("storage-thumbnail", { status: 200, headers: { "content-type": "image/jpeg" } });
     }
     if (url === "https://private-cdn.local/private-video-guid/playlist.m3u8") {
       return new Response("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvideo/segment-001.ts\n", {
@@ -564,6 +571,46 @@ describe("public owner watch links", () => {
     } finally {
       await db.update(footageRequestsTable)
         .set({ videoId: "private-video-guid" })
+        .where(eq(footageRequestsTable.id, ownerRequestIds[0]));
+      if (oldPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
+      else process.env.BUNNY_REEL_CDN_URL = oldPullZone;
+    }
+  });
+
+  it("serves streamless 8K, H.264, ranged media, and Storage thumbnails through its token", async () => {
+    const guid = "44444444-4444-4444-8444-444444444444";
+    const token = `s-${"a".repeat(32)}`;
+    const original = await db.select({
+      videoId: footageRequestsTable.videoId,
+      shareToken: footageRequestsTable.shareToken,
+    }).from(footageRequestsTable).where(eq(footageRequestsTable.id, ownerRequestIds[0])).limit(1);
+    const oldPullZone = process.env.BUNNY_REEL_CDN_URL;
+    process.env.BUNNY_REEL_CDN_URL = "https://fake-pullzone.local";
+    await db.update(footageRequestsTable)
+      .set({ videoId: guid, shareToken: token })
+      .where(eq(footageRequestsTable.id, ownerRequestIds[0]));
+    try {
+      const meta = await request(app).get(`/w/${token}/meta`);
+      expect(meta.status).toBe(200);
+      expect(meta.body.streamless).toBe(true);
+
+      const playlist = await request(app).get(`/w/${token}/8k.m3u8`);
+      expect(playlist.status).toBe(200);
+      expect(playlist.text).toContain(`URI=\"/w/${token}/8k.mp4\"`);
+      expect(playlist.text).toContain(`/w/${token}/8k.mp4`);
+
+      const media = await request(app).get(`/w/${token}/8k.mp4`).set("Range", "bytes=0-15");
+      expect(media.status).toBe(206);
+      expect(media.headers["content-range"]).toBe("bytes 0-15/100");
+      expect(media.body.toString()).toBe("8k-segment-bytes");
+
+      const poster = await request(app).get(`/w/${token}/poster.jpg`);
+      expect(poster.status).toBe(200);
+      expect(poster.headers["content-type"]).toBe("image/jpeg");
+      expect(poster.text).toBe("storage-thumbnail");
+    } finally {
+      await db.update(footageRequestsTable)
+        .set({ videoId: original[0]!.videoId, shareToken: original[0]!.shareToken })
         .where(eq(footageRequestsTable.id, ownerRequestIds[0]));
       if (oldPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
       else process.env.BUNNY_REEL_CDN_URL = oldPullZone;

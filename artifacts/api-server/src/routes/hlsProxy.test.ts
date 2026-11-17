@@ -474,3 +474,44 @@ describe("GET /hls-proxy/uhd/:videoGuid.m3u8", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe("GET /hls-proxy/storage/:videoGuid/:rendition.m3u8", () => {
+  it.each(["8k", "4k", "h264"] as const)("rewrites %s fMP4 playlists through the authorized media proxy", async (rendition) => {
+    const guid = testVideoGuid();
+    fetchMock.mockResolvedValueOnce(new Response([
+      "#EXTM3U",
+      "#EXT-X-VERSION:7",
+      `#EXT-X-MAP:URI=\"${rendition}.mp4\"`,
+      "#EXTINF:12.000,",
+      `${rendition}.mp4`,
+      "#EXT-X-ENDLIST",
+      "",
+    ].join("\n")));
+
+    const res = await request(app).get(`/api/hls-proxy/storage/${guid}/${rendition}.m3u8`);
+    const upstreamMedia = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("mpegurl");
+    expect(res.headers["cache-control"]).toBe("no-store");
+    expect(upstreamMedia.pathname).toBe(`/vod/${guid}/${rendition}.m3u8`);
+    expect(res.text).toContain(`/api/hls-proxy/segment?url=${encodeURIComponent(
+      upstreamMedia.toString().replace(`${rendition}.m3u8`, `${rendition}.mp4`),
+    )}`);
+    expect(res.text).toContain(`${rendition}.mp4`);
+  });
+
+  it("proxies an authorized Storage thumbnail without exposing the origin", async () => {
+    const guid = testVideoGuid();
+    fetchMock.mockResolvedValueOnce(new Response(Buffer.from("jpeg"), {
+      status: 200,
+      headers: { "Content-Type": "image/jpeg" },
+    }));
+
+    const res = await request(app).get(`/api/hls-proxy/storage/${guid}/thumb.jpg`);
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("image/jpeg");
+    expect(res.headers["cache-control"]).toBe("private, no-store");
+    expect(Buffer.from(res.body).toString()).toBe("jpeg");
+    expect(String(fetchMock.mock.calls[0][0])).toContain(`/vod/${guid}/thumb.jpg`);
+  });
+});

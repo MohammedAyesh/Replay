@@ -23,7 +23,9 @@ import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
 
 function extractBunnyGuid(videoUrl: string): string {
   try {
-    return new URL(videoUrl).pathname.split("/").filter(Boolean)[0] ?? videoUrl;
+    const parts = new URL(videoUrl).pathname.split("/").filter(Boolean);
+    const guid = parts.find((part) => /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i.test(part));
+    return guid ?? (parts[0]?.toLowerCase() === "vod" ? parts[1] : parts[0]) ?? videoUrl;
   } catch {
     return videoUrl;
   }

@@ -188,8 +188,13 @@ function publicBaseUrl(req: Request): string {
   return `${proto}://${host}`;
 }
 
-function newShareToken(): string {
-  return crypto.randomBytes(16).toString("hex");
+function newShareToken(streamless = false): string {
+  const token = crypto.randomBytes(16).toString("hex");
+  return streamless ? `s-${token}` : token;
+}
+
+function isStreamlessShareToken(token: string | null | undefined): boolean {
+  return typeof token === "string" && /^s-[a-f0-9]{32}$/i.test(token);
 }
 
 function isActiveShare(row: FootageRequest, now = Date.now()): boolean {
@@ -266,6 +271,7 @@ function requestToResponse(
     shareUrl,
     shareExpiresAt: row.shareExpiresAt?.toISOString() ?? null,
     playbackManifestUrl,
+    streamless: isStreamlessShareToken(row.shareToken),
     varOpensAt: Number.isFinite(varOpenMs) ? new Date(varOpenMs).toISOString() : null,
     varClosesAt: Number.isFinite(varCloseMs) ? new Date(varCloseMs).toISOString() : null,
     varState: academyOwned ? null : row.varState,
@@ -602,6 +608,15 @@ function bodyNumber(body: unknown, ...keys: string[]): number | null {
   return null;
 }
 
+function bodyBoolean(body: unknown, ...keys: string[]): boolean | null {
+  if (!body || typeof body !== "object") return null;
+  const record = body as Record<string, unknown>;
+  for (const key of keys) {
+    if (typeof record[key] === "boolean") return record[key] as boolean;
+  }
+  return null;
+}
+
 function varStateFromJob(body: unknown): string | null {
   if (!body || typeof body !== "object") return null;
   const value = (body as Record<string, unknown>).var;
@@ -656,6 +671,7 @@ async function completeRequest(
     deliveredSeconds,
   );
   const videoId = bodyString(body, "videoId", "video_id") ?? row.videoId;
+  const streamless = bodyBoolean(body, "streamless") === true;
 
   const completed = await db.update(footageRequestsTable)
     .set({
@@ -665,7 +681,7 @@ async function completeRequest(
       deliveredSeconds,
       videoId,
       readyAt: now,
-      shareToken: row.academyId === null ? newShareToken() : null,
+      shareToken: row.academyId === null ? newShareToken(streamless) : null,
       shareExpiresAt: row.academyId === null ? new Date(now.getTime() + SHARE_LIFETIME_MS) : null,
       shareRevoked: row.academyId !== null,
       billableHours,
@@ -689,7 +705,7 @@ async function completeRequest(
     logger.warn({ requestId: row.id, error }, "Could not queue the booking's analysis");
   }
   try {
-    await attachAcademyRecordingsForFootageRequest(row, videoId, deliveredSeconds);
+    await attachAcademyRecordingsForFootageRequest(row, videoId, deliveredSeconds, streamless);
   } catch (error) {
     logger.warn({ requestId: row.id, error }, "Could not attach completed footage to academy sessions");
   }
@@ -1976,7 +1992,7 @@ router.post("/owner/requests/:id/new-link", async (req, res): Promise<void> => {
   }
   const found = await requireRequestAccess(req, res, id);
   if (!found) return;
-  const token = newShareToken();
+  const token = newShareToken(isStreamlessShareToken(found.request.shareToken));
   await db.update(footageRequestsTable)
     .set({ shareToken: token, shareRevoked: false, updatedAt: new Date() })
     .where(eq(footageRequestsTable.id, id));

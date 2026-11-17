@@ -124,6 +124,7 @@ import {
   validateCamera4kReclip,
   type Camera4kReclipValidation,
 } from "../lib/camera4kReclipValidation";
+import { isStreamlessStorageVideoUrl } from "../lib/uhdPlayback";
 import { contentAddressedHashPrefix, inspectRenderedVideo, saveRenderSnapshotBestEffort, sha256File } from "../lib/renderSnapshots";
 import { clipRenderOptionsFromSnapshot } from "../lib/clipRenderSnapshot";
 
@@ -305,6 +306,26 @@ async function getExportAccessibleClip(req: Parameters<typeof getLocalUserId>[0]
  */
 export function isLiveVideoId(videoId: string): boolean {
   return videoId.startsWith("live:");
+}
+
+async function isStreamlessStorageClip(
+  clip: Pick<typeof userClipsTable.$inferSelect, "sourceRecordingId" | "footageRequestId">,
+): Promise<boolean> {
+  if (clip.sourceRecordingId !== null) {
+    const [recording] = await db.select({ videoUrl: recordingsTable.videoUrl })
+      .from(recordingsTable)
+      .where(eq(recordingsTable.id, clip.sourceRecordingId))
+      .limit(1);
+    if (isStreamlessStorageVideoUrl(recording?.videoUrl)) return true;
+  }
+  if (clip.footageRequestId !== null) {
+    const [request] = await db.select({ shareToken: footageRequestsTable.shareToken })
+      .from(footageRequestsTable)
+      .where(eq(footageRequestsTable.id, clip.footageRequestId))
+      .limit(1);
+    return /^s-[a-f0-9]{32}$/i.test(request?.shareToken ?? "");
+  }
+  return false;
 }
 
 const BUNNY_VIDEO_GUID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i;
@@ -1628,7 +1649,8 @@ export async function queueUserClipExport(clip: typeof userClipsTable.$inferSele
   if (isInternalPendingStatus(clip.exportStatus)) return "pending";
   if (inFlight.has(clip.id)) return "pending";
 
-  const primaryAvailable = isBunnyConfigured() && isBunnyStorageConfigured();
+  const streamlessSource = await isStreamlessStorageClip(clip);
+  const primaryAvailable = isBunnyStorageConfigured() && (streamlessSource || isBunnyConfigured());
   if (!primaryAvailable && !isBackupExportConfigured()) {
     await db.update(userClipsTable)
       .set({ exportStatus: "error" })
@@ -1681,35 +1703,38 @@ function startMissingExportBackfill(intervalMs = 10 * 60_000): () => void {
       if (candidates.length < 3) cursor = 0;
 
       await Promise.all(candidates.map(async (clip) => {
-        const primaryAvailable = isBunnyConfigured() && isBunnyStorageConfigured();
+        const streamlessSource = await isStreamlessStorageClip(clip);
+        const primaryAvailable = isBunnyStorageConfigured() && (streamlessSource || isBunnyConfigured());
         const backupAvailable = isBackupExportConfigured();
         if (
           isLiveVideoId(clip.videoId)
           || !BUNNY_VIDEO_GUID_RE.test(clip.videoId)
           || inFlight.has(clip.id)
-          || (!primaryAvailable && !backupAvailable)
-          // Without the Bunny metadata API, this process cannot prove that a
-          // source still exists. Do not launch a speculative retry on vps1.
-          || !isBunnyConfigured()
+          || (streamlessSource ? !isBunnyStorageConfigured() : (!primaryAvailable && !backupAvailable))
+          // Only Stream-backed sources use the Stream metadata API to decide
+          // whether a missing export is safe to retry.
+          || (!streamlessSource && !isBunnyConfigured())
         ) return;
 
-        try {
-          await getBunnyVideoInfo(clip.videoId);
-        } catch (err) {
-          if (classifyPortfolioSourceError(err) === "expired") {
-            const probe = clip.exportedUrl ? await probeExportObject(clip.exportedUrl) : { state: "missing" as const, url: "", bytes: null };
-            if (probe.state !== "unverified") {
-              await db.update(userClipsTable)
-                .set(probe.state === "exists" ? { exportStatus: "done", exportedUrl: probe.url } : { exportStatus: "expired" })
-                .where(and(
-                  eq(userClipsTable.id, clip.id),
-                  or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
-                ));
+        if (!streamlessSource) {
+          try {
+            await getBunnyVideoInfo(clip.videoId);
+          } catch (err) {
+            if (classifyPortfolioSourceError(err) === "expired") {
+              const probe = clip.exportedUrl ? await probeExportObject(clip.exportedUrl) : { state: "missing" as const, url: "", bytes: null };
+              if (probe.state !== "unverified") {
+                await db.update(userClipsTable)
+                  .set(probe.state === "exists" ? { exportStatus: "done", exportedUrl: probe.url } : { exportStatus: "expired" })
+                  .where(and(
+                    eq(userClipsTable.id, clip.id),
+                    or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+                  ));
+              }
+            } else {
+              logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
             }
-          } else {
-            logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
+            return;
           }
-          return;
         }
         if (!shouldRetryMissingClipExport(clip, true, inFlight.has(clip.id))) return;
 

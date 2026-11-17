@@ -6,7 +6,7 @@ import { canPlayDirect, withDirectSegments } from "@/lib/directSegments";
  * (the same playlist with every segment relayed), then "fallback" (the MP4).
  * "direct" is the bare `src`, used for live and for players given no proxy.
  */
-export type PlaybackSourceStage = "checking" | "uhd" | "cdn" | "direct" | "proxy" | "fallback";
+export type PlaybackSourceStage = "checking" | "8k" | "uhd" | "h264" | "cdn" | "direct" | "proxy" | "fallback";
 
 export const PLAYBACK_STALL_TIMEOUT_MS = 8_000;
 

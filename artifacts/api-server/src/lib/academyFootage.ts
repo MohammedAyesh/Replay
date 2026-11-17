@@ -9,6 +9,7 @@ import {
   recordingsTable,
 } from "@workspace/db";
 import { getBunnyPlaybackUrl } from "./bunny";
+import { storageRenditionPlaylistUrl } from "./uhdPlayback";
 import {
   ammanNowWallEpoch,
   cancelFootageRequest,
@@ -411,12 +412,15 @@ export async function attachAcademyRecordingsForFootageRequest(
   request: FootageRequest,
   videoId: string | null,
   deliveredSeconds: number | null,
+  streamless = false,
 ): Promise<void> {
   // Only an academy's own booking feeds its sessions; a player's or owner's
   // booking (academyId null) never attaches to any academy.
   const requestAcademyId = request.academyId;
   if (!videoId || requestAcademyId === null) return;
-  const playbackUrl = getBunnyPlaybackUrl(videoId);
+  const playbackUrl = streamless
+    ? storageRenditionPlaylistUrl(videoId, "8k")
+    : getBunnyPlaybackUrl(videoId);
   const attached: Array<{ academyId: number; sessionId: number; recordingId: number }> = [];
   await db.transaction(async (tx) => {
     // Serialize duplicate completion callbacks across API replicas without a

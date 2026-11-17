@@ -8,6 +8,8 @@ const WINDOW_CACHE_TTL_MS = 5 * 60_000;
 const MAX_WINDOW_CACHE_SIZE = 256;
 export const UHD_PLAYBACK_MAX_WINDOW_MS = 180_000;
 export const UHD_PLAYBACK_PADDING_MS = 5_000;
+export const STORAGE_RENDITIONS = ["8k", "4k", "h264"] as const;
+export type StorageRendition = typeof STORAGE_RENDITIONS[number];
 
 type CacheEntry = { playlist: string | null; expiresAt: number };
 const playlistCache = new Map<string, CacheEntry>();
@@ -22,8 +24,8 @@ export type UhdPlaylistWindow = {
 };
 
 export class UhdPlaylistRequestError extends Error {
-  constructor(readonly status: number) {
-    super(`4K playlist request returned HTTP ${status}`);
+  constructor(readonly status: number, readonly rendition: StorageRendition = "4k") {
+    super(`${rendition.toUpperCase()} playlist request returned HTTP ${status}`);
     this.name = "UhdPlaylistRequestError";
   }
 }
@@ -38,6 +40,16 @@ export function normalizeUhdVideoGuid(value: string | null | undefined): string 
 export function uhdPlaybackUrl(videoGuid: string | null | undefined): string | null {
   const guid = normalizeUhdVideoGuid(videoGuid);
   return guid ? `/api/hls-proxy/uhd/${encodeURIComponent(guid)}.m3u8` : null;
+}
+
+export function storagePlaybackUrl(
+  videoGuid: string | null | undefined,
+  rendition: StorageRendition,
+): string | null {
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid) return null;
+  if (rendition === "4k") return uhdPlaybackUrl(guid);
+  return `/api/hls-proxy/storage/${encodeURIComponent(guid)}/${rendition}.m3u8`;
 }
 
 export function uhdPlaybackWindowUrl(
@@ -213,10 +225,28 @@ export async function getUhdPlaylistWindow(
 ): Promise<UhdPlaylistWindow | null> {
   const guid = normalizeUhdVideoGuid(videoGuid);
   if (!guid || !isValidUhdWindow(fromMs, toMs)) return null;
-  const key = `${guid}:${fromMs}:${toMs}`;
+  const key = `${guid}:4k:${fromMs}:${toMs}`;
   const cached = cachedWindow(key);
   if (cached !== undefined) return cached;
-  const source = await getUhdPlaylist(guid);
+  const source = await getStoragePlaylist(guid, "4k");
+  if (!source) return null;
+  const window = windowUhdPlaylist(source, fromMs, toMs);
+  if (window) rememberWindow(key, window);
+  return window;
+}
+
+export async function getStoragePlaylistWindow(
+  videoGuid: string,
+  rendition: StorageRendition,
+  fromMs: number,
+  toMs: number,
+): Promise<UhdPlaylistWindow | null> {
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid || !isValidUhdWindow(fromMs, toMs)) return null;
+  const key = `${guid}:${rendition}:${fromMs}:${toMs}`;
+  const cached = cachedWindow(key);
+  if (cached !== undefined) return cached;
+  const source = await getStoragePlaylist(guid, rendition);
   if (!source) return null;
   const window = windowUhdPlaylist(source, fromMs, toMs);
   if (window) rememberWindow(key, window);
@@ -224,15 +254,34 @@ export async function getUhdPlaylistWindow(
 }
 
 export function uhdMediaUrl(videoGuid: string): string {
-  const guid = normalizeUhdVideoGuid(videoGuid);
-  if (!guid) throw new Error("Invalid Bunny video guid");
-  return `${storagePullZoneBase()}/vod/${guid}/4k.mp4`;
+  return storageRenditionMediaUrl(videoGuid, "4k");
 }
 
 export function uhdPlaylistUrl(videoGuid: string): string {
+  return storageRenditionPlaylistUrl(videoGuid, "4k");
+}
+
+export function storageRenditionMediaUrl(videoGuid: string, rendition: StorageRendition): string {
   const guid = normalizeUhdVideoGuid(videoGuid);
   if (!guid) throw new Error("Invalid Bunny video guid");
-  return `${storagePullZoneBase()}/vod/${guid}/4k.m3u8`;
+  return `${storagePullZoneBase()}/vod/${guid}/${rendition}.mp4`;
+}
+
+export function storageRenditionPlaylistUrl(videoGuid: string, rendition: StorageRendition): string {
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid) throw new Error("Invalid Bunny video guid");
+  return `${storagePullZoneBase()}/vod/${guid}/${rendition}.m3u8`;
+}
+
+export function isStreamlessStorageVideoUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return /\/vod\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:8k|4k|h264)\.m3u8$/i
+      .test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 export function rewriteUhdPlaylist(
@@ -240,10 +289,20 @@ export function rewriteUhdPlaylist(
   videoGuid: string,
   mediaUrl = uhdMediaUrl(videoGuid),
 ): string {
+  return rewriteStoragePlaylist(playlist, "4k", mediaUrl);
+}
+
+export function rewriteStoragePlaylist(
+  playlist: string,
+  rendition: StorageRendition,
+  mediaUrl: string,
+): string {
+  const fileReference = new RegExp(`(?:[^"'\\\\s]*\\/)?${rendition}\\.mp4(?:\\?[^"'\\\\s]*)?`, "i");
   return playlist
-    .replace(/URI=(["'])\.?\/?4k\.mp4\1/gi, (_match, quote: string) => `URI=${quote}${mediaUrl}${quote}`)
-    .replace(/^([ \t]*)\.?\/?4k\.mp4([ \t]*)$/gim, (_match, leading: string, trailing: string) =>
-      `${leading}${mediaUrl}${trailing}`);
+    .replace(/URI=(["'])([^"']+)\1/gi, (match, quote: string, uri: string) =>
+      fileReference.test(uri) ? `URI=${quote}${mediaUrl}${quote}` : match)
+    .replace(/^([ \t]*)(\S+)([ \t]*)$/gm, (match, leading: string, uri: string, trailing: string) =>
+      !uri.startsWith("#") && fileReference.test(uri) ? `${leading}${mediaUrl}${trailing}` : match);
 }
 
 /**
@@ -251,48 +310,71 @@ export function rewriteUhdPlaylist(
  * cached briefly because vps1 may not have uploaded the original yet.
  */
 export async function getUhdPlaylist(videoGuid: string): Promise<string | null> {
+  return getStoragePlaylist(videoGuid, "4k");
+}
+
+export async function getStoragePlaylist(
+  videoGuid: string,
+  rendition: StorageRendition,
+): Promise<string | null> {
   const guid = normalizeUhdVideoGuid(videoGuid);
   if (!guid) return null;
+  const key = `${guid}:${rendition}`;
 
-  const cached = cachedPlaylist(guid);
+  const cached = cachedPlaylist(key);
   if (cached !== undefined) return cached;
 
-  const existingRequest = playlistRequests.get(guid);
+  const existingRequest = playlistRequests.get(key);
   if (existingRequest) return existingRequest;
 
-  const request = fetchAndCacheUhdPlaylist(guid);
-  playlistRequests.set(guid, request);
+  const request = fetchAndCacheStoragePlaylist(guid, rendition, key);
+  playlistRequests.set(key, request);
   try {
     return await request;
   } finally {
-    if (playlistRequests.get(guid) === request) playlistRequests.delete(guid);
+    if (playlistRequests.get(key) === request) playlistRequests.delete(key);
   }
 }
 
-async function fetchAndCacheUhdPlaylist(guid: string): Promise<string | null> {
-  const url = uhdPlaylistUrl(guid);
+async function fetchAndCacheStoragePlaylist(
+  guid: string,
+  rendition: StorageRendition,
+  cacheKey: string,
+): Promise<string | null> {
+  const url = storageRenditionPlaylistUrl(guid, rendition);
   const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
   if (response.status === 404 || response.status === 410) {
     try { await response.body?.cancel(); } catch { /* closed upstream */ }
-    rememberPlaylist(guid, null, MISS_TTL_MS);
+    rememberPlaylist(cacheKey, null, MISS_TTL_MS);
     return null;
   }
   if (!response.ok) {
     try { await response.body?.cancel(); } catch { /* closed upstream */ }
-    throw new UhdPlaylistRequestError(response.status);
+    throw new UhdPlaylistRequestError(response.status, rendition);
   }
 
   const playlist = await response.text();
   if (!playlist.trimStart().startsWith("#EXTM3U")) {
-    throw new Error("Storage pull zone returned an invalid 4K HLS playlist");
+    throw new Error(`Storage pull zone returned an invalid ${rendition.toUpperCase()} HLS playlist`);
   }
-  rememberPlaylist(guid, playlist, HIT_TTL_MS);
+  rememberPlaylist(cacheKey, playlist, HIT_TTL_MS);
   return playlist;
 }
 
 export async function hasUhdPlaylist(videoGuid: string): Promise<boolean> {
   try {
     return Boolean(await getUhdPlaylist(videoGuid));
+  } catch {
+    return false;
+  }
+}
+
+export async function hasStoragePlaylist(
+  videoGuid: string,
+  rendition: StorageRendition,
+): Promise<boolean> {
+  try {
+    return Boolean(await getStoragePlaylist(videoGuid, rendition));
   } catch {
     return false;
   }

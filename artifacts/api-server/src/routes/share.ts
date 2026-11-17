@@ -17,6 +17,7 @@ import {
   isBunnyStorageConfigured,
   getBunnyPlaybackUrl,
   getPortfolioClipStoragePath,
+  storagePullZoneBase,
 } from "../lib/bunny";
 import {
   fetchExportObject,
@@ -36,7 +37,17 @@ import {
   POSTER_WIDTH,
   POSTER_HEIGHT,
 } from "../lib/posterFrame";
-import { getUhdPlaylist, rewriteUhdPlaylist, uhdMediaUrl } from "../lib/uhdPlayback";
+import {
+  getStoragePlaylist,
+  getUhdPlaylist,
+  normalizeUhdVideoGuid,
+  rewriteStoragePlaylist,
+  rewriteUhdPlaylist,
+  storageRenditionMediaUrl,
+  STORAGE_RENDITIONS,
+  type StorageRendition,
+  uhdMediaUrl,
+} from "../lib/uhdPlayback";
 import {
   buildShareCardHtml,
   shareCardPath,
@@ -84,6 +95,7 @@ function htmlEscape(value: string): string {
 type OwnerShareRow = typeof footageRequestsTable.$inferSelect;
 export type OwnerShareMeta = {
   token: string;
+  streamless: boolean;
   fieldName: string;
   startLocal: string;
   endLocal: string;
@@ -96,7 +108,7 @@ export type OwnerShareMeta = {
 };
 
 export async function resolveOwnerShare(token: string): Promise<(OwnerShareRow & { fieldName: string }) | null> {
-  if (!/^[a-f0-9]{32}$/.test(token)) return null;
+  if (!/^(?:[a-f0-9]{32}|s-[a-f0-9]{32})$/i.test(token)) return null;
   const [row] = await db
     .select({ request: footageRequestsTable, fieldName: fieldsTable.name })
     .from(footageRequestsTable)
@@ -110,6 +122,10 @@ export async function resolveOwnerShare(token: string): Promise<(OwnerShareRow &
     ));
   if (!row || !row.request.videoId) return null;
   return { ...row.request, fieldName: row.fieldName };
+}
+
+function isStreamlessShare(share: Pick<OwnerShareRow, "shareToken">): boolean {
+  return typeof share.shareToken === "string" && /^s-[a-f0-9]{32}$/i.test(share.shareToken);
 }
 
 function streamResourceId(token: string, url: string): string {
@@ -260,6 +276,7 @@ async function ownerShareMeta(share: OwnerShareRow & { fieldName: string }): Pro
   const startInstant = ammanLocalInstant(share.startLocal);
   return {
     token: share.shareToken!,
+    streamless: isStreamlessShare(share),
     fieldName: share.fieldName,
     startLocal: share.startLocal,
     endLocal: share.endLocal,
@@ -446,6 +463,7 @@ function ownerShareHtml(
   share: OwnerShareRow & { fieldName: string },
 ): string {
   const token = share.shareToken!;
+  const streamless = isStreamlessShare(share);
   const base = publicBaseUrl(req);
   const pageUrl = `${base}/w/${token}`;
   const manifestUrl = `${pageUrl}/manifest.m3u8`;
@@ -545,11 +563,19 @@ function ownerShareHtml(
   const qualityButton = document.getElementById("quality-toggle");
   const qualityToast = document.getElementById("quality-toast");
   const uhdManifest = ${JSON.stringify(`${pageUrl}/4k.m3u8`)};
+  const eightKManifest = ${JSON.stringify(`${pageUrl}/8k.m3u8`)};
+  const h264Manifest = ${JSON.stringify(`${pageUrl}/h264.m3u8`)};
+  const streamless = ${JSON.stringify(streamless)};
   const preferenceKey = "replay.playback-quality";
   let activeLanguage = "en";
   let sourceStage = "cdn";
   let hls = null;
   let availableUhd = false;
+  let available8k = false;
+  let availableH264 = false;
+  let smooth4k = false;
+  let smooth8k = false;
+  let smoothH264 = false;
   let toastTimer = null;
   let waitTimer = null;
   let waiting = false;
@@ -577,14 +603,14 @@ function ownerShareHtml(
     || navigator.language.toLowerCase().startsWith("ar") ? "ar" : "en");
   const showToast = () => {
     qualityToast.textContent = activeLanguage === "ar"
-      ? "حوّلنا لـ HD عشان يمشي الفيديو أسلس"
-      : "Switched to HD for smoother playback";
+      ? (streamless ? "حوّلنا لجودة أقل عشان يمشي الفيديو أسلس" : "حوّلنا لـ HD عشان يمشي الفيديو أسلس")
+      : (streamless ? "Switched to a lower quality for smoother playback" : "Switched to HD for smoother playback");
     qualityToast.style.display = "block";
     if (toastTimer) clearTimeout(toastTimer);
     toastTimer = window.setTimeout(() => { qualityToast.style.display = "none"; }, 4000);
   };
-  const useUhdPreference = () => {
-    try { return localStorage.getItem(preferenceKey) !== "hd"; }
+  const savedPreference = () => {
+    try { return localStorage.getItem(preferenceKey); }
     catch { return true; }
   };
   const savePreference = (value) => {
@@ -605,11 +631,73 @@ function ownerShareHtml(
       return result.supported && result.smooth;
     } catch { return false; }
   };
+  const canDecode8k = async () => {
+    try {
+      if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) return false;
+      const result = await navigator.mediaCapabilities.decodingInfo({
+        type: "media-source",
+        video: {
+          contentType: 'video/mp4; codecs="hvc1.1.6.L153.B0"',
+          width: 7680,
+          height: 2160,
+          bitrate: 40000000,
+          framerate: 20,
+        },
+      });
+      return result.supported && result.smooth;
+    } catch { return false; }
+  };
+  const canDecodeH264 = async () => {
+    try {
+      const codec = 'application/vnd.apple.mpegurl; codecs="avc1.640033"';
+      if (video.canPlayType(codec)) return true;
+      if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) return false;
+      const result = await navigator.mediaCapabilities.decodingInfo({
+        type: "media-source",
+        video: {
+          contentType: 'video/mp4; codecs="avc1.640033"',
+          width: 3840,
+          height: 1080,
+          bitrate: 12000000,
+          framerate: 20,
+        },
+      });
+      return result.supported && result.smooth;
+    } catch { return false; }
+  };
+  const playlistAvailable = async (url) => {
+    try {
+      const response = await fetch(url, { credentials: "include", cache: "no-store" });
+      const available = response.ok;
+      try { await response.body?.cancel(); } catch {}
+      return available;
+    } catch { return false; }
+  };
+  const fallbackStage = (stage) => {
+    if (!streamless) return "cdn";
+    if (stage === "8k" && availableUhd && smooth4k) return "uhd";
+    if ((stage === "8k" || stage === "uhd") && availableH264 && smoothH264) return "hd";
+    return null;
+  };
   const setQualityButton = () => {
-    if (!availableUhd) return;
+    if (!streamless) {
+      if (!availableUhd) return;
+      qualityButton.style.display = "block";
+      qualityButton.textContent = sourceStage === "uhd" ? "HD" : "4K";
+      qualityButton.setAttribute("aria-label", sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K");
+      return;
+    }
+    const options = [
+      ...(availableUhd ? ["uhd"] : []),
+      ...(available8k && smooth8k ? ["8k"] : []),
+      ...(availableH264 && smoothH264 ? ["hd"] : []),
+    ];
+    if (options.length < 2) return;
     qualityButton.style.display = "block";
-    qualityButton.textContent = sourceStage === "uhd" ? "HD" : "4K";
-    qualityButton.setAttribute("aria-label", sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K");
+    qualityButton.textContent = sourceStage === "8k" ? "8K"
+      : sourceStage === "uhd" ? "4K"
+      : "HD";
+    qualityButton.setAttribute("aria-label", "Change video quality");
   };
   const startSource = (stage, position = null, paused = null, playbackRate = video.playbackRate) => {
     clearUhdStartupTimer();
@@ -618,15 +706,19 @@ function ownerShareHtml(
     video.pause();
     video.removeAttribute("src");
     video.load();
-    if (stage === "uhd") {
+    if (stage === "uhd" || stage === "8k") {
       longStalls = [];
       uhdStartupTimer = window.setTimeout(() => {
-        if (sourceStage === "uhd" && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-          startSource("cdn", Math.max(0, video.currentTime || position || 0), hasPlayed && video.paused, video.playbackRate);
+        if ((sourceStage === "uhd" || sourceStage === "8k") && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+          const next = fallbackStage(stage);
+          if (next) startSource(next, Math.max(0, video.currentTime || position || 0), hasPlayed && video.paused, video.playbackRate);
         }
       }, 8000);
     }
-    const source = stage === "uhd" ? uhdManifest : manifest;
+    const source = stage === "8k" ? eightKManifest
+      : stage === "uhd" ? uhdManifest
+      : streamless && stage === "hd" ? h264Manifest
+      : manifest;
     const restorePlayback = () => {
       if (position !== null && Number.isFinite(position)) video.currentTime = position;
       video.playbackRate = playbackRate;
@@ -639,9 +731,10 @@ function ownerShareHtml(
       const instance = hls;
       instance.on(window.Hls.Events.ERROR, (_event, data) => {
         const details = String(data.details ?? "");
-        if (instance !== hls || sourceStage !== "uhd"
+        if (instance !== hls || (sourceStage !== "uhd" && sourceStage !== "8k")
           || (!data.fatal && details !== "bufferAddCodecError" && details !== "bufferIncompatibleCodecsError")) return;
-        startSource("cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+        const next = fallbackStage(sourceStage);
+        if (next) startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
       });
       instance.on(window.Hls.Events.MANIFEST_PARSED, () => {
         if (instance !== hls) return;
@@ -654,8 +747,9 @@ function ownerShareHtml(
       video.src = source;
       video.addEventListener("loadedmetadata", restorePlayback, { once: true });
       video.onerror = () => {
-        if (sourceStage === "uhd") {
-          startSource("cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+        if (sourceStage === "uhd" || sourceStage === "8k") {
+          const next = fallbackStage(sourceStage);
+          if (next) startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
         }
       };
       video.load();
@@ -666,6 +760,18 @@ function ownerShareHtml(
     setQualityButton();
   };
   qualityButton.addEventListener("click", () => {
+    if (streamless) {
+      const options = [
+        ...(availableUhd ? ["uhd"] : []),
+        ...(available8k && smooth8k ? ["8k"] : []),
+        ...(availableH264 && smoothH264 ? ["hd"] : []),
+      ];
+      if (options.length < 2) return;
+      const next = options[(options.indexOf(sourceStage) + 1) % options.length];
+      savePreference(next === "uhd" ? "4k" : next === "8k" ? "8k" : "hd");
+      startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+      return;
+    }
     const next = sourceStage === "uhd" ? "hd" : "4k";
     savePreference(next);
     startSource(next === "4k" ? "uhd" : "cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
@@ -682,18 +788,20 @@ function ownerShareHtml(
     recoverUhdStall();
   };
   const onWait = () => {
-    if (sourceStage !== "uhd" || !hasPlayed || waiting) return;
+    if ((sourceStage !== "uhd" && sourceStage !== "8k") || !hasPlayed || waiting) return;
     waiting = true;
     countedWait = false;
     waitTimer = window.setTimeout(() => {
       waitTimer = null;
-      if (!waiting || countedWait || sourceStage !== "uhd") return;
+      if (!waiting || countedWait || (sourceStage !== "uhd" && sourceStage !== "8k")) return;
       countedWait = true;
       const now = Date.now();
       longStalls = longStalls.filter((stamp) => now - stamp <= 60000);
       longStalls.push(now);
       if (longStalls.length >= 2) {
-        startSource("cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+        const next = fallbackStage(sourceStage);
+        if (!next) return;
+        startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
         showToast();
       }
     }, 2000);
@@ -703,6 +811,32 @@ function ownerShareHtml(
   video.addEventListener("playing", onPlaying);
   video.addEventListener("pause", recoverUhdStall);
   void (async () => {
+    if (streamless) {
+      [availableUhd, available8k, availableH264] = await Promise.all([
+        playlistAvailable(uhdManifest),
+        playlistAvailable(eightKManifest),
+        playlistAvailable(h264Manifest),
+      ]);
+      [smooth8k, smoothH264] = await Promise.all([canDecode8k(), canDecodeH264()]);
+      smooth4k = availableUhd && await canDecodeUhd();
+      const saved = savedPreference();
+      const stage = saved === "8k" && available8k && smooth8k ? "8k"
+        : saved === "4k" && smooth4k ? "uhd"
+        : saved === "hd" && availableH264 && smoothH264 ? "hd"
+        : smooth4k ? "uhd"
+        : availableH264 && smoothH264 ? "hd"
+        : available8k && smooth8k ? "8k"
+        : null;
+      setQualityButton();
+      if (stage) startSource(stage);
+      else {
+        qualityToast.textContent = activeLanguage === "ar"
+          ? "جودة متوافقة قيد التجهيز لهذا التسجيل."
+          : "A compatible version of this recording is still processing.";
+        qualityToast.style.display = "block";
+      }
+      return;
+    }
     const capable = await canDecodeUhd();
     if (capable) {
       try {
@@ -712,7 +846,7 @@ function ownerShareHtml(
       } catch { availableUhd = false; }
     }
     setQualityButton();
-    startSource(availableUhd && useUhdPreference() ? "uhd" : "cdn");
+    startSource(availableUhd && savedPreference() !== "hd" ? "uhd" : "cdn");
   })();
 })();
 </script>
@@ -832,6 +966,21 @@ router.get(["/w/:token/poster.jpg", "/api/w/:token/poster.jpg"], async (req, res
     res.status(404).type("text/html").send(ownerShareUnavailableHtml(req));
     return;
   }
+  if (isStreamlessShare(share)) {
+    const guid = normalizeUhdVideoGuid(share.videoId);
+    if (!guid) {
+      res.status(404).end();
+      return;
+    }
+    await proxyOwnerShareStorageMedia(
+      req,
+      res,
+      share,
+      `${storagePullZoneBase()}/vod/${guid}/thumb.jpg`,
+      "image/jpeg",
+    );
+    return;
+  }
   const posterPath = await ensureOwnerSharePoster(share);
   if (!posterPath) {
     res.status(404).end();
@@ -844,11 +993,84 @@ function ownerShareDirect(req: Request): boolean {
   return wantsDirectSegments(req.query, req.header("referer") ?? undefined, req.header("origin") ?? undefined);
 }
 
+async function proxyOwnerShareStorageMedia(
+  req: Request,
+  res: import("express").Response,
+  share: OwnerShareRow & { fieldName: string },
+  mediaUrl: string,
+  contentType: string,
+): Promise<void> {
+  const range = req.header("range");
+  if (range && !/^bytes=\d+-\d*$/i.test(range)) {
+    res.setHeader("Accept-Ranges", "bytes");
+    res.status(416).type("text/plain").send("Invalid byte range");
+    return;
+  }
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  const headers: Record<string, string> = {};
+  if (range) headers.Range = range;
+  const ifRange = req.header("if-range");
+  if (ifRange) headers["If-Range"] = ifRange;
+  const response = await fetch(mediaUrl, {
+    headers,
+    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),
+  }).catch(() => null);
+  if (!response?.ok || !response.body) {
+    try { await response?.body?.cancel(); } catch { /* upstream closed */ }
+    res.setHeader("Accept-Ranges", "bytes");
+    if (response?.headers.get("content-range")) {
+      res.setHeader("Content-Range", response.headers.get("content-range")!);
+    }
+    res.status(response?.status === 404 ? 404 : response?.status === 416 ? 416 : 502)
+      .type("text/plain").send("Not found");
+    return;
+  }
+  if (range && response.status !== 206) {
+    try { await response.body.cancel(); } catch { /* upstream ignored the range */ }
+    res.setHeader("Accept-Ranges", "bytes");
+    res.status(502).type("text/plain").send("Storage did not honor the byte range");
+    return;
+  }
+  res.status(response.status);
+  res.setHeader("Content-Type", contentType);
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") ?? "bytes");
+  for (const header of ["content-length", "content-range", "etag", "last-modified"] as const) {
+    const value = response.headers.get(header);
+    if (value) res.setHeader(header, value);
+  }
+  try {
+    await pipeline(
+      Readable.fromWeb(response.body as import("stream/web").ReadableStream<Uint8Array>),
+      res,
+    );
+  } catch (error) {
+    if (!abort.signal.aborted) logger.warn({ err: error, requestId: share.id }, "Owner-share Storage media proxy failed");
+  }
+}
+
 router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
   const share = await resolveOwnerShare(token);
   if (!share) {
     res.status(404).type("text/plain").send("Not found");
+    return;
+  }
+  if (isStreamlessShare(share)) {
+    for (const rendition of ["4k", "h264", "8k"] as const) {
+      try {
+        const playlist = await getStoragePlaylist(share.videoId!, rendition);
+        if (!playlist) continue;
+        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+        res.setHeader("Cache-Control", "no-store");
+        res.send(rewriteStoragePlaylist(playlist, rendition, `/w/${token}/${rendition}.mp4`));
+        return;
+      } catch (error) {
+        req.log?.warn({ err: error, rendition }, "Owner-share Storage playlist fetch failed");
+      }
+    }
+    res.status(404).type("text/plain").send("The recording is still processing");
     return;
   }
   const rawUrl = getBunnyPlaybackUrl(share.videoId!);
@@ -866,6 +1088,30 @@ router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (re
   res.send(rewriteOwnerManifest(token, manifest, rawUrl, ownerShareDirect(req)));
 });
 
+for (const rendition of ["8k", "h264"] as const) {
+  router.get([`/w/:token/${rendition}.m3u8`, `/api/w/:token/${rendition}.m3u8`], async (req, res): Promise<void> => {
+    const token = String(req.params.token ?? "");
+    const share = await resolveOwnerShare(token);
+    if (!share) {
+      res.status(404).type("text/plain").send("Not found");
+      return;
+    }
+    try {
+      const playlist = await getStoragePlaylist(share.videoId!, rendition);
+      if (!playlist) {
+        res.status(404).type("text/plain").send("Not found");
+        return;
+      }
+      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+      res.setHeader("Cache-Control", "no-store");
+      res.send(rewriteStoragePlaylist(playlist, rendition, `/w/${token}/${rendition}.mp4`));
+    } catch (error) {
+      req.log?.warn({ err: error, rendition }, "Owner-share Storage playlist fetch failed");
+      res.status(502).type("text/plain").send("Not found");
+    }
+  });
+}
+
 router.get(["/w/:token/4k.m3u8", "/api/w/:token/4k.m3u8"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
   const share = await resolveOwnerShare(token);
@@ -881,12 +1127,31 @@ router.get(["/w/:token/4k.m3u8", "/api/w/:token/4k.m3u8"], async (req, res): Pro
     }
     res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
     res.setHeader("Cache-Control", "no-store");
-    res.send(rewriteUhdPlaylist(playlist, share.videoId!, `/w/${token}/4k.mp4`));
+    res.send(rewriteStoragePlaylist(playlist, "4k", `/w/${token}/4k.mp4`));
   } catch (error) {
     req.log?.warn({ err: error }, "Owner-share 4K playlist fetch failed");
     res.status(502).type("text/plain").send("Not found");
   }
 });
+
+for (const rendition of ["8k", "h264"] as const) {
+  router.get([`/w/:token/${rendition}.mp4`, `/api/w/:token/${rendition}.mp4`], async (req, res): Promise<void> => {
+    const token = String(req.params.token ?? "");
+    const share = await resolveOwnerShare(token);
+    const guid = normalizeUhdVideoGuid(share?.videoId);
+    if (!share || !guid || !STORAGE_RENDITIONS.includes(rendition)) {
+      res.status(404).type("text/plain").send("Not found");
+      return;
+    }
+    await proxyOwnerShareStorageMedia(
+      req,
+      res,
+      share,
+      storageRenditionMediaUrl(guid, rendition),
+      "video/mp4",
+    );
+  });
+}
 
 router.get(["/w/:token/4k.mp4", "/api/w/:token/4k.mp4"], async (req, res): Promise<void> => {
   const token = String(req.params.token ?? "");
@@ -898,40 +1163,12 @@ router.get(["/w/:token/4k.mp4", "/api/w/:token/4k.mp4"], async (req, res): Promi
 
   let mediaUrl: string;
   try {
-    mediaUrl = uhdMediaUrl(share.videoId!);
+    mediaUrl = storageRenditionMediaUrl(share.videoId!, "4k");
   } catch {
     res.status(404).type("text/plain").send("Not found");
     return;
   }
-  const headers: Record<string, string> = {};
-  const range = req.header("range");
-  if (range && /^bytes=\d+-\d*$/.test(range)) headers.Range = range;
-  const abort = new AbortController();
-  res.on("close", () => abort.abort());
-  const response = await fetch(mediaUrl, {
-    headers,
-    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(60_000)]),
-  }).catch(() => null);
-  if (!response?.ok || !response.body) {
-    try { await response?.body?.cancel(); } catch { /* upstream closed */ }
-    res.status(404).type("text/plain").send("Not found");
-    return;
-  }
-
-  res.status(response.status);
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Cache-Control", "no-store");
-  res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") ?? "bytes");
-  for (const header of ["content-length", "content-range"]) {
-    const value = response.headers.get(header);
-    if (value) res.setHeader(header, value);
-  }
-  const nodeStream = Readable.fromWeb(response.body as import("stream/web").ReadableStream<Uint8Array>);
-  try {
-    await pipeline(nodeStream, res);
-  } catch {
-    if (!res.headersSent) res.status(503).end();
-  }
+  await proxyOwnerShareStorageMedia(req, res, share, mediaUrl, "video/mp4");
 });
 
 router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceId"], async (req, res): Promise<void> => {

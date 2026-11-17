@@ -10,7 +10,11 @@ export function getBunnyMp4FallbackSource(manifestUrl: string): string | undefin
     const manifest = new URL(manifestUrl);
     if (!BUNNY_HOST_RE.test(manifest.hostname)) return undefined;
 
-    const videoId = manifest.pathname.split("/").filter(Boolean)[0];
+    const parts = manifest.pathname.split("/").filter(Boolean);
+    if (parts[0]?.toLowerCase() === "vod") return undefined;
+    const videoId = parts.find((part) =>
+      /^(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})$/i.test(part),
+    ) ?? parts[0];
     if (!videoId || !/^[a-z0-9-]{1,128}$/i.test(videoId)) return undefined;
 
     const mp4Url = new URL(`/${videoId}/play_720p.mp4`, manifest.origin);

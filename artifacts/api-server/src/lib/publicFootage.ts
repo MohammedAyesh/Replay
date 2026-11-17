@@ -29,8 +29,13 @@ export function extractBunnyVideoId(value: string | null | undefined): string | 
   if (!value) return null;
   if (!value.includes("/") && !value.includes(":")) return value;
   try {
-    const firstSegment = new URL(value).pathname.split("/").filter(Boolean)[0];
-    return firstSegment ?? null;
+    const parts = new URL(value).pathname.split("/").filter(Boolean);
+    const guid = parts.find((part) =>
+      /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i.test(part),
+    );
+    if (guid) return guid;
+    if (parts[0]?.toLowerCase() === "vod" && parts[1]) return parts[1];
+    return parts[0] ?? null;
   } catch {
     return value;
   }

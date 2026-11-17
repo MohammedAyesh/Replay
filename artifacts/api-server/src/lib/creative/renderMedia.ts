@@ -15,6 +15,7 @@ import {
   academyRecordingsTable,
   brandingProfilesTable,
   db,
+  footageRequestsTable,
   recordingsTable,
   userClipsTable,
   type AcademyAdMedia,
@@ -47,7 +48,7 @@ import { Camera4kNotReadyError, waitForCamera4kSource } from "../clipExportSourc
 import { bufferCameraHlsClip, probeVideoDimensions } from "../ffmpegExport";
 import { fetchExportObject, probeExportObject } from "../backupExport";
 import { getBunnyPlaybackUrl, getBunnyProxiedPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
-import { uhdPlaybackUrl, uhdPlaybackWindowUrl } from "../uhdPlayback";
+import { isStreamlessStorageVideoUrl, uhdPlaybackUrl, uhdPlaybackWindowUrl } from "../uhdPlayback";
 
 /**
  * Creative hub engine: where a scene's pictures and footage come from.
@@ -237,6 +238,26 @@ export async function academyRecording(academyId: number, recordingId: number) {
   return venueRecording(academyId, recordingId);
 }
 
+async function clipUsesStreamlessStorage(
+  clip: Pick<typeof userClipsTable.$inferSelect, "sourceRecordingId" | "footageRequestId">,
+): Promise<boolean> {
+  if (clip.sourceRecordingId !== null) {
+    const [recording] = await db.select({ videoUrl: recordingsTable.videoUrl })
+      .from(recordingsTable)
+      .where(eq(recordingsTable.id, clip.sourceRecordingId))
+      .limit(1);
+    if (isStreamlessStorageVideoUrl(recording?.videoUrl)) return true;
+  }
+  if (clip.footageRequestId !== null) {
+    const [request] = await db.select({ shareToken: footageRequestsTable.shareToken })
+      .from(footageRequestsTable)
+      .where(eq(footageRequestsTable.id, clip.footageRequestId))
+      .limit(1);
+    return /^s-[a-f0-9]{32}$/i.test(request?.shareToken ?? "");
+  }
+  return false;
+}
+
 export async function academyUpload(academyId: number, mediaId: number): Promise<AcademyAdMedia | null> {
   const [row] = await db.select().from(academyAdMediaTable)
     .where(and(eq(academyAdMediaTable.id, mediaId), eq(academyAdMediaTable.academyId, academyId))).limit(1);
@@ -272,12 +293,13 @@ export async function browserPlaybackSources(
   if (!camera4kUrl) return null;
 
   const fullUrl = uhdPlaybackUrl(videoId);
+  const streamless = isStreamlessStorageVideoUrl(rec.videoUrl);
   const sources: BrowserPlaybackSource[] = [{
     kind: "camera-4k",
     url: camera4kUrl,
     ...(fullUrl ? { fullUrl } : {}),
   }];
-  if (isBunnyConfigured()) {
+  if (!streamless && isBunnyConfigured()) {
     sources.push({ kind: "stream", url: getBunnyProxiedPlaybackUrl(videoId) });
   }
   return sources;
@@ -398,6 +420,7 @@ async function resolveClipVideo(
   temps: string[],
   sourceWaitMs = CAMERA_4K_WAIT_MS,
 ): Promise<ClipVideoSource> {
+  const streamless = await clipUsesStreamlessStorage(clip);
   try {
     const source = await resolveCamera4kSource(clip.videoId, sourceWaitMs);
     const span = spanOf(Number(clip.startTime), Number(clip.endTime), clip.thumbnailTime == null ? null : Number(clip.thumbnailTime), source.duration);
@@ -409,6 +432,12 @@ async function resolveClipVideo(
   const saved = await downloadSavedClip(clip, temps);
   if (saved) return { kind: "saved-file", ...saved };
 
+  if (streamless) {
+    throw new CreativeRenderError(
+      "This Storage-only recording's 4K version is not ready yet. Please try again later.",
+      409,
+    );
+  }
   const [span, stream] = await Promise.all([
     clipSpan(clip),
     playableStream(clip.videoId),
@@ -555,12 +584,25 @@ export function creativeImageResolver(
       case "clip": {
         const clip = await academyClip(academyId, src.clipId);
         if (!clip || clip.videoId.startsWith("live:")) return null;
+        const streamless = await clipUsesStreamlessStorage(clip);
         // Thumbnails and editor previews must not wait for camera-original 4K.
         const saved = await downloadSavedClip(clip, temps);
         if (saved) {
           const span = await clipSpan(clip);
           const at = layer.kind === "video" ? trimSec : span ? Math.max(0, (span.thumbSec ?? span.startSec) - span.startSec) : saved.durationMs / 2000;
           return loadImage(await frameFromFile(saved.path, at, temps));
+        }
+        if (streamless) {
+          try {
+            const source = await resolveCamera4kSource(clip.videoId);
+            const span = spanOf(Number(clip.startTime), Number(clip.endTime), clip.thumbnailTime == null ? null : Number(clip.thumbnailTime), source.duration);
+            if (!span) return null;
+            const at = layer.kind === "video" ? span.startSec + trimSec : span.thumbSec ?? span.startSec;
+            const buffered = await bufferCamera4kWindow(source, at, Math.min(source.duration, at + 1), temps);
+            return loadImage(await frameFromFile(buffered.bufferPath, 0, temps));
+          } catch {
+            return null;
+          }
         }
         const [span, stream] = await Promise.all([clipSpan(clip), playableStream(clip.videoId)]);
         if (!span || !stream) return null;
@@ -573,6 +615,15 @@ export function creativeImageResolver(
         const id = videoIdOf(rec?.videoUrl);
         if (!id) return null;
         const at = src.type === "frame" ? src.atMs / 1000 : src.fromMs / 1000 + trimSec;
+        if (isStreamlessStorageVideoUrl(rec?.videoUrl)) {
+          try {
+            const source = await resolveCamera4kSource(id);
+            const buffered = await bufferCamera4kWindow(source, at, Math.min(source.duration, at + 1), temps);
+            return loadImage(await frameFromFile(buffered.bufferPath, 0, temps));
+          } catch {
+            return null;
+          }
+        }
         const stream = await playableStream(id);
         return stream ? loadImage(await frameFromStream(stream.url, stream.referer, at, temps)) : null;
       }

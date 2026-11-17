@@ -1,4 +1,4 @@
-export type UhdPlaybackPreference = "4k" | "hd";
+export type UhdPlaybackPreference = "8k" | "4k" | "hd";
 
 export const UHD_PLAYBACK_PREFERENCE_KEY = "replay.playback-quality";
 export const UHD_HEVC_CODEC = "hvc1.1.6.L153.B0";
@@ -20,7 +20,8 @@ export function readUhdPlaybackPreference(
   storage: Pick<Storage, "getItem"> | null = browserStorage(),
 ): UhdPlaybackPreference {
   try {
-    return storage?.getItem(UHD_PLAYBACK_PREFERENCE_KEY) === "hd" ? "hd" : "4k";
+    const saved = storage?.getItem(UHD_PLAYBACK_PREFERENCE_KEY);
+    return saved === "hd" || saved === "8k" ? saved : "4k";
   } catch {
     return "4k";
   }
@@ -41,16 +42,39 @@ export function uhdPlaybackUrlForSource(
   source: { kind: "bunny"; videoId: string } | { kind: "ownerShare"; token: string },
   isLive = false,
 ): string | null {
+  return storagePlaybackUrlForSource(source, "4k", isLive);
+}
+
+export function storagePlaybackUrlForSource(
+  source: { kind: "bunny"; videoId: string } | { kind: "ownerShare"; token: string },
+  rendition: "8k" | "4k" | "h264",
+  isLive = false,
+): string | null {
   if (isLive) return null;
   if (source.kind === "ownerShare") {
-    return /^[a-f0-9]{32}$/i.test(source.token) ? `/w/${source.token}/4k.m3u8` : null;
+    return /^(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}|s-[a-f0-9]{32})$/i.test(source.token)
+      ? `/w/${source.token}/${rendition}.m3u8`
+      : null;
   }
+  if (rendition !== "4k") return storagePlaybackUrlForGuid(source.videoId, rendition);
   return uhdPlaybackUrlForGuid(source.videoId);
+}
+
+export function storagePlaybackUrlForGuid(
+  videoGuid: string | null | undefined,
+  rendition: "8k" | "4k" | "h264",
+): string | null {
+  const guid = videoGuid?.trim() ?? "";
+  if (!/^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i.test(guid)) {
+    return null;
+  }
+  if (rendition === "4k") return uhdPlaybackUrlForGuid(guid);
+  return `/api/hls-proxy/storage/${encodeURIComponent(guid)}/${rendition}.m3u8`;
 }
 
 export function uhdPlaybackUrlForGuid(videoGuid: string | null | undefined): string | null {
   const guid = videoGuid?.trim() ?? "";
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guid)) {
+  if (!/^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i.test(guid)) {
     return null;
   }
   return `/api/hls-proxy/uhd/${encodeURIComponent(guid)}.m3u8`;
@@ -61,17 +85,31 @@ export function uhdPlaybackUrlForStreamUrl(streamUrl: string | null | undefined)
   if (!streamUrl) return null;
   try {
     let parsed = new URL(streamUrl, typeof window === "undefined" ? "https://replayjo.com" : window.location.origin);
-    if (/^\/w\/[a-f0-9]{32}\/manifest\.m3u8$/i.test(parsed.pathname)) {
-      const token = parsed.pathname.split("/")[2];
-      return token ? `/w/${token}/4k.m3u8` : null;
+    const ownerShareMatch = parsed.pathname.match(/^\/w\/((?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}|s-[a-f0-9]{32}))\/manifest\.m3u8$/i);
+    if (ownerShareMatch) {
+      return `/w/${ownerShareMatch[1]}/4k.m3u8`;
     }
     const upstream = parsed.searchParams.get("url");
     if (upstream) parsed = new URL(upstream);
     if (!parsed.hostname.endsWith(".b-cdn.net") && parsed.hostname !== "video.bunnycdn.com") return null;
+    const storageMatch = parsed.pathname.match(/\/vod\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(?:8k|4k|h264)\.m3u8$/i);
+    if (storageMatch?.[1]) return uhdPlaybackUrlForGuid(storageMatch[1]);
     const match = parsed.pathname.match(/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(?:playlist|video)\.m3u8$/i);
     return uhdPlaybackUrlForGuid(match?.[1]);
   } catch {
     return null;
+  }
+}
+
+export function isStreamlessStorageUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value, typeof window === "undefined" ? "https://replayjo.com" : window.location.origin);
+    return /\/vod\/(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:8k|4k|h264)\.m3u8$/i.test(parsed.pathname)
+      || /^\/api\/hls-proxy\/storage\/(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/(?:8k|4k|h264)\.m3u8$/i.test(parsed.pathname)
+      || /^\/w\/s-[a-f0-9]{32}\/manifest\.m3u8$/i.test(parsed.pathname);
+  } catch {
+    return false;
   }
 }
 
@@ -98,6 +136,34 @@ export async function canDecodeUhd(
         width: 4096,
         height: 1152,
         bitrate: 10_000_000,
+        framerate: 20,
+      },
+    });
+    return result.supported && result.smooth;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 8K is an explicit opt-in, never an automatic upgrade. Require the browser's
+ * MediaCapabilities result to say both supported and smooth at native 8K size.
+ */
+export async function canDecode8k(
+  mediaCapabilities?: MediaCapabilitiesLike | null,
+): Promise<boolean> {
+  try {
+    const capabilities = mediaCapabilities === undefined
+      ? (typeof navigator === "undefined" ? null : navigator.mediaCapabilities)
+      : mediaCapabilities;
+    if (!capabilities?.decodingInfo) return false;
+    const result = await capabilities.decodingInfo({
+      type: "media-source",
+      video: {
+        contentType: UHD_VIDEO_CONTENT_TYPE,
+        width: 7680,
+        height: 2160,
+        bitrate: 40_000_000,
         framerate: 20,
       },
     });
@@ -135,6 +201,28 @@ export async function canUseUhdPlayback(
     || (await canDecodeUhdAvc(video, mediaCapabilities))
   ) return true;
   return false;
+}
+
+export async function canUse8kPlayback(
+  video: Pick<HTMLVideoElement, "canPlayType">,
+  url: string | null | undefined,
+  mediaCapabilities?: MediaCapabilitiesLike | null,
+  fetcher: typeof fetch = fetch,
+): Promise<boolean> {
+  if (!url || !(await isUhdPlaylistAvailable(url, fetcher))) return false;
+  // A "probably" from canPlayType alone does not establish smooth 8K decode.
+  void video;
+  return canDecode8k(mediaCapabilities);
+}
+
+export async function canUseH264Playback(
+  video: Pick<HTMLVideoElement, "canPlayType">,
+  url: string | null | undefined,
+  mediaCapabilities?: MediaCapabilitiesLike | null,
+  fetcher: typeof fetch = fetch,
+): Promise<boolean> {
+  if (!url || !(await isUhdPlaylistAvailable(url, fetcher))) return false;
+  return canDecodeUhdAvc(video, mediaCapabilities);
 }
 
 async function canDecodeUhdAvc(
