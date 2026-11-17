@@ -58,7 +58,12 @@ import {
   queueAdminClipReclip,
   rememberAdminClipFailure,
 } from "./userClips";
-import { hasUhdPlaylist, isStreamlessStorageVideoUrl } from "../lib/uhdPlayback";
+import {
+  hasUhdPlaylist,
+  isStreamlessStorageVideoUrl,
+  storagePlaybackProxyUrl,
+  storageThumbnailProxyUrl,
+} from "../lib/uhdPlayback";
 import multer from "multer";
 import { accountDeletionHttpResponse, deleteUserAccount, DELETED_PLAYER_EMAIL } from "../lib/accountDeletion";
 import {
@@ -466,6 +471,8 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
        aspectRatio: userClipsTable.aspectRatio,
        exportStatus: userClipsTable.exportStatus,
        exportedUrl: userClipsTable.exportedUrl,
+      sourceRecordingId: userClipsTable.sourceRecordingId,
+      footageRequestId: userClipsTable.footageRequestId,
       userName: usersTable.name,
       userEmail: usersTable.email,
     })
@@ -476,12 +483,25 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
     id: recordingsTable.id,
     videoUrl: recordingsTable.videoUrl,
   }).from(recordingsTable);
+  const requestIds = [...new Set(rows.flatMap((row) => row.footageRequestId === null ? [] : [row.footageRequestId]))];
+  const requests = requestIds.length
+    ? await db.select({ id: footageRequestsTable.id, shareToken: footageRequestsTable.shareToken })
+      .from(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds))
+    : [];
+  const streamlessRequestIds = new Set(
+    requests.filter((request) => /^s-[0-9a-f]{32}$/i.test(request.shareToken ?? "")).map((request) => request.id),
+  );
 
   const result = rows.map((row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
-    const recordingId = recordings.find((recording) =>
-      recording.videoUrl.includes(row.videoId),
-    )?.id ?? null;
+    const sourceRecording = recordings.find((recording) => recording.id === row.sourceRecordingId)
+      ?? recordings.find((recording) =>
+        extractBunnyVideoId(recording.videoUrl)?.toLowerCase() === row.videoId.toLowerCase(),
+      );
+    const recordingId = sourceRecording?.id ?? null;
+    const streamlessStorage = isStreamlessStorageVideoUrl(sourceRecording?.videoUrl)
+      || (row.footageRequestId !== null && streamlessRequestIds.has(row.footageRequestId));
+    const storageReady = streamlessStorage && isBunnyStorageConfigured();
     return {
       id: row.id,
       recordingId,
@@ -505,8 +525,20 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       // Live-sourced clips carry a synthetic videoId ("live:camera2"), not a
       // Bunny GUID — building CDN URLs from it gives the admin panel a broken
       // thumbnail and a player that 404s. Same guard the user-facing routes use.
-      thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null,
-      playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null,
+      thumbnailUrl: isLiveVideoId(row.videoId)
+        ? null
+        : storageReady
+          ? storageThumbnailProxyUrl(row.videoId)
+          : !streamlessStorage && isBunnyConfigured()
+            ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime)
+            : null,
+      playbackUrl: isLiveVideoId(row.videoId)
+        ? null
+        : storageReady
+          ? storagePlaybackProxyUrl(row.videoId, "8k")
+          : !streamlessStorage && isBunnyConfigured()
+            ? getBunnyProxiedPlaybackUrl(row.videoId)
+            : null,
       userName: row.userName,
       userEmail: row.userEmail,
     };

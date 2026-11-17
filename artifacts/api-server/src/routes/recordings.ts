@@ -30,12 +30,15 @@ import {
   getBunnyPlaybackUrl,
   getBunnyProxiedPlaybackUrl,
   getBunnyProxiedThumbnailUrl,
+  isBunnyConfigured,
+  isBunnyStorageConfigured,
 } from "../lib/bunny";
-import { hasUhdPlaylist, uhdPlaybackUrl } from "../lib/uhdPlayback";
 import {
+  hasUhdPlaylist,
   isStreamlessStorageVideoUrl,
   storagePlaybackProxyUrl,
   storageThumbnailProxyUrl,
+  uhdPlaybackUrl,
 } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
@@ -66,6 +69,10 @@ function toAdminRecording(
     };
   } | null = null,
 ) {
+  const videoId = extractBunnyVideoId(r.videoUrl);
+  const thumbnailUrl = isStreamlessStorageVideoUrl(r.videoUrl)
+    ? videoId && isBunnyStorageConfigured() ? storageThumbnailProxyUrl(videoId) : null
+    : videoId && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(videoId) : null;
   return {
     id: r.id,
     fieldId: r.fieldId,
@@ -75,6 +82,7 @@ function toAdminRecording(
     duration: r.duration,
     score: r.score ?? null,
     videoUrl: r.videoUrl,
+    thumbnailUrl,
     isVisible: r.isVisible,
     fieldName,
     hasTrackingBundle,
@@ -411,9 +419,11 @@ router.get("/demo/media", async (req, res): Promise<void> => {
       videoId ??= extractBunnyVideoId(source);
       const rendition = new URL(source).pathname.match(/\/(8k|4k|h264)\.m3u8$/i)?.[1]?.toLowerCase() as "8k" | "4k" | "h264" | undefined;
       return {
-        src: videoId && rendition ? storagePlaybackProxyUrl(videoId, rendition) ?? source : source,
+        src: videoId && rendition && isBunnyStorageConfigured()
+          ? storagePlaybackProxyUrl(videoId, rendition) ?? source
+          : source,
         rawSrc: source,
-        poster: videoId ? storageThumbnailProxyUrl(videoId) : null,
+        poster: videoId && isBunnyStorageConfigured() ? storageThumbnailProxyUrl(videoId) : null,
       };
     }
     if (!videoId) {

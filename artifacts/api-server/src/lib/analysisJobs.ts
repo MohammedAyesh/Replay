@@ -135,7 +135,7 @@ export type SourceRecordingInput = {
 
 export type SourceDescriptor = {
   recordingId: number;
-  /** Bunny Stream video guid, pulled out of the playback URL. */
+  /** Media ID, pulled from either a Bunny Stream or Storage playback URL. */
   videoGuid: string | null;
   videoUrl: string;
   /** The stable filename parsed from the recording metadata. */
@@ -152,6 +152,36 @@ export function bunnyGuidFromUrl(url: string | null | undefined): string | null 
   if (!url) return null;
   const match = /^https?:\/\/[^/]+\/([0-9a-f-]{36})\//i.exec(url);
   return match ? match[1] : null;
+}
+
+const SOURCE_VIDEO_GUID = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i;
+
+/** Extract the source ID from either a Stream URL or a /vod/<guid>/<rendition>.m3u8 URL. */
+export function sourceVideoGuidFromUrl(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const seen = new Set<string>();
+  const find = (candidate: string): string | null => {
+    const raw = candidate.trim();
+    if (!raw || seen.has(raw)) return null;
+    seen.add(raw);
+    if (SOURCE_VIDEO_GUID.test(raw)) return raw;
+    try {
+      const parsed = new URL(raw, "https://replayjo.com");
+      const nested = parsed.searchParams.get("url");
+      if (nested) {
+        const nestedId = find(nested);
+        if (nestedId) return nestedId;
+      }
+      const parts = parsed.pathname.split("/").filter(Boolean);
+      const vodIndex = parts.findIndex((part) => part.toLowerCase() === "vod");
+      const storageId = vodIndex >= 0 ? parts[vodIndex + 1] : null;
+      if (storageId && SOURCE_VIDEO_GUID.test(storageId)) return storageId;
+      return parts.find((part) => SOURCE_VIDEO_GUID.test(part)) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  return find(value);
 }
 
 /** "12:34" and "1:02:03" both appear in this column, and so does "". */
@@ -172,7 +202,7 @@ export function bunnyTitleFor(recording: SourceRecordingInput): string | null {
 export function describeSource(recording: SourceRecordingInput): SourceDescriptor {
   return {
     recordingId: recording.id,
-    videoGuid: bunnyGuidFromUrl(recording.videoUrl),
+    videoGuid: sourceVideoGuidFromUrl(recording.videoUrl),
     videoUrl: recording.videoUrl ?? "",
     title: bunnyTitleFor(recording),
     durationSeconds: durationToSeconds(recording.duration),

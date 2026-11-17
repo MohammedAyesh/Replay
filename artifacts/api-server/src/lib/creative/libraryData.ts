@@ -28,13 +28,15 @@ import {
   academyRecordingsTable,
   academySessionsTable,
   academySquadsTable,
+  footageRequestsTable,
   db,
   recordingTrackingBundlesTable,
   recordingsTable,
   userClipsTable,
   type TrackingManifest,
 } from "@workspace/db";
-import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { getBunnyProxiedThumbnailUrl, isBunnyConfigured, isBunnyStorageConfigured } from "../bunny";
+import { isStreamlessStorageVideoUrl, storageThumbnailProxyUrl } from "../uhdPlayback";
 import { clipSpans } from "./clipSpan";
 import { academyPlayerPhotosTable, usersTable } from "@workspace/db";
 import { photoView } from "../academyPlayerPhotos";
@@ -75,7 +77,11 @@ function taggedPlayer(p: SessionPlayer, showNames: boolean): LibraryPlayer {
 /** A Bunny thumbnail through the API's proxy, as Studio does; null when it can't be made. */
 function thumbAt(videoUrl: string | null | undefined, seconds: number): string | null {
   const id = bunnyVideoIdOf(videoUrl);
-  if (!id || !isBunnyConfigured()) return null;
+  if (!id) return null;
+  if (isStreamlessStorageVideoUrl(videoUrl)) {
+    return isBunnyStorageConfigured() ? storageThumbnailProxyUrl(id) : null;
+  }
+  if (!isBunnyConfigured()) return null;
   return getBunnyProxiedThumbnailUrl(id, Math.max(0, seconds));
 }
 
@@ -618,6 +624,26 @@ export async function libraryPlayerMedia(academyId: number, playerId: number, sh
       .orderBy(desc(userClipsTable.createdAt), desc(userClipsTable.id)).limit(60)
     : [];
   const playerSpans = await clipSpans(clipRows);
+  const sourceRecordingIds = [...new Set(clipRows.flatMap((clip) => clip.sourceRecordingId === null ? [] : [clip.sourceRecordingId]))];
+  const requestIds = [...new Set(clipRows.flatMap((clip) => clip.footageRequestId === null ? [] : [clip.footageRequestId]))];
+  const clipRecordingQuery = sourceRecordingIds.length
+    ? db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl })
+      .from(recordingsTable).where(inArray(recordingsTable.id, sourceRecordingIds))
+    : Promise.resolve([] as Array<{ id: number; videoUrl: string }>);
+  const clipRequestQuery = requestIds.length
+    ? db.select({ id: footageRequestsTable.id, shareToken: footageRequestsTable.shareToken })
+      .from(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds))
+    : Promise.resolve([] as Array<{ id: number; shareToken: string | null }>);
+  const [clipRecordings, clipRequests] = await Promise.all([
+    clipRecordingQuery,
+    clipRequestQuery,
+  ]);
+  const streamlessRecordingIds = new Set(
+    clipRecordings.filter((recording) => isStreamlessStorageVideoUrl(recording.videoUrl)).map((recording) => recording.id),
+  );
+  const streamlessRequestIds = new Set(
+    clipRequests.filter((request) => /^s-[a-f0-9]{32}$/i.test(request.shareToken ?? "")).map((request) => request.id),
+  );
   const clips = clipRows
     .filter((c) => !c.hiddenReason && !c.videoId.startsWith("live:") && academyClipStatus(c) !== "expired")
     .map((clip) => {
@@ -625,13 +651,20 @@ export async function libraryPlayerMedia(academyId: number, playerId: number, sh
       const start = span?.startSec ?? 0;
       const end = span?.endSec ?? 0;
       const thumbTime = span?.thumbSec ?? start;
+      const streamlessStorage = (
+        clip.sourceRecordingId !== null && streamlessRecordingIds.has(clip.sourceRecordingId)
+      ) || (
+        clip.footageRequestId !== null && streamlessRequestIds.has(clip.footageRequestId)
+      );
       return {
         clipId: clip.id,
         title: showNames ? clip.title.slice(0, 80) : null,
         date: ammanDate(clip.createdAt),
         durationMs: Math.max(0, Math.round((end - start) * 1000)),
         source: { type: "clip", clipId: clip.id } as Extract<MediaSource, { type: "clip" }>,
-        thumbnailUrl: isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
+        thumbnailUrl: streamlessStorage
+          ? isBunnyStorageConfigured() ? storageThumbnailProxyUrl(clip.videoId) : null
+          : isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
       };
     });
 

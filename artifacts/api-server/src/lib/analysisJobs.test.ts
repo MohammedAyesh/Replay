@@ -11,6 +11,7 @@ import {
   normaliseParams,
   queuePosition,
   reclaimDecision,
+  sourceVideoGuidFromUrl,
   validateMatchStart,
   validateSources,
   workerKeyMatches,
@@ -122,6 +123,15 @@ describe("describing a source for the worker", () => {
       .toBe("1e2f3a4b-5c6d-7e8f-9a0b-1c2d3e4f5a6b");
     expect(bunnyGuidFromUrl("https://example.test/not-a-guid/playlist.m3u8")).toBeNull();
     expect(bunnyGuidFromUrl(null)).toBeNull();
+  });
+
+  it("extracts a Storage source ID without treating it as a Stream URL", () => {
+    const id = "95a477cd-6639-42dd-ad06-554eb3ff0c0c";
+    const url = `https://storage.example.com/vod/${id}/8k.m3u8`;
+    expect(sourceVideoGuidFromUrl(url)).toBe(id);
+    expect(sourceVideoGuidFromUrl(`/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`)).toBe(id);
+    expect(bunnyGuidFromUrl(url)).toBeNull();
+    expect(describeSource(source(1, { videoUrl: url })).videoGuid).toBe(id);
   });
 
   it("rebuilds the Bunny title the import parsed the row out of", () => {

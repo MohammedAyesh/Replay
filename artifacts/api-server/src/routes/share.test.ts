@@ -44,6 +44,8 @@ let ownerFieldId: number;
 let ownerRequestIds: number[] = [];
 let dir: string;
 let mp4: Buffer;
+let ensureClipPoster: typeof import("./share").ensureClipPoster;
+const bunnyStreamRequests: string[] = [];
 
 /** Objects the fake Bunny Storage holds, keyed by path. */
 const stored = new Map<string, Buffer>();
@@ -83,10 +85,17 @@ beforeAll(async () => {
   realFetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any, init?: any) => {
     const url = typeof input === "string" ? input : input.url;
+    if (url.includes("video.bunnycdn.com")) bunnyStreamRequests.push(url);
     const storagePlaylist = url.match(/^https:\/\/fake-pullzone\.local\/vod\/[^/]+\/(8k|4k|h264)\.m3u8$/);
     if (storagePlaylist) {
       const rendition = storagePlaylist[1];
       return new Response(`#EXTM3U\n#EXT-X-MAP:URI=\"${rendition}.mp4\"\n#EXTINF:12,\n${rendition}.mp4\n`, {
+        status: 200,
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    }
+    if (url.startsWith(`${originUrl}/vod/`) && url.endsWith(".m3u8")) {
+      return new Response("#EXTM3U\n#EXTINF:12,\n8k.mp4\n", {
         status: 200,
         headers: { "content-type": "application/vnd.apple.mpegurl" },
       });
@@ -177,7 +186,8 @@ beforeAll(async () => {
     return new Response(body, { status: 200, headers: { "Content-Length": String(body.length) } });
   });
 
-  const { default: shareRouter } = await import("./share");
+  const { default: shareRouter, ensureClipPoster: poster } = await import("./share");
+  ensureClipPoster = poster;
   app = express();
   app.use(shareRouter);
 
@@ -317,6 +327,48 @@ describe("the card", () => {
     expect(row.posterPath).toBe(`posters/${readyClipId}-${shareToken(readyClipId)}.jpg`);
     expect(Number(row.posterAtSec)).toBeGreaterThan(0);
     expect(stored.has(row.posterPath!)).toBe(true);
+  }, 180_000);
+
+  it("generates a Storage-only clip poster without calling Bunny Stream", async () => {
+    const guid = "95a477cd-6639-42dd-ad06-554eb3ff0c0c";
+    const storageShareToken = `s-${"b".repeat(32)}`;
+    const [footage] = await db.insert(footageRequestsTable).values({
+      fieldId: ownerFieldId,
+      cameraId: "poster-camera",
+      requestedBy: userId,
+      startLocal: "2026-09-21 13:00",
+      endLocal: "2026-09-21 13:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: guid,
+      shareToken: storageShareToken,
+      shareExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    }).returning({ id: footageRequestsTable.id });
+    ownerRequestIds.push(footage.id);
+    const [clip] = await db.insert(userClipsTable).values({
+      userId,
+      videoId: guid,
+      title: "Storage-only poster",
+      startTime: "0",
+      endTime: "1",
+      cropPath: [],
+      aspectRatio: "16:9",
+      visibility: "private",
+      footageRequestId: footage.id,
+    } as never).returning();
+
+    const previousPullZone = process.env.BUNNY_REEL_CDN_URL;
+    const streamRequestCount = bunnyStreamRequests.length;
+    process.env.BUNNY_REEL_CDN_URL = originUrl;
+    try {
+      const posterPath = await ensureClipPoster(clip);
+      expect(posterPath).toBe(`posters/${clip.id}-${shareToken(clip.id)}.jpg`);
+      expect(bunnyStreamRequests).toHaveLength(streamRequestCount);
+      expect(stored.has(posterPath!)).toBe(true);
+    } finally {
+      if (previousPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
+      else process.env.BUNNY_REEL_CDN_URL = previousPullZone;
+    }
   }, 180_000);
 
   it("degrades to a poster-only card while the export is still rendering", async () => {

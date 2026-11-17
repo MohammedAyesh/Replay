@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { and, asc, eq, gt, inArray, isNull } from "drizzle-orm";
-import { db, fieldsTable, footageRequestsTable, userClipsTable, usersTable, varMarksTable } from "@workspace/db";
+import { db, fieldsTable, footageRequestsTable, recordingsTable, userClipsTable, usersTable, varMarksTable } from "@workspace/db";
 import { GetPortfolioClipMediaParams } from "@workspace/api-zod";
 import {
   BUNNY_STORAGE_API_KEY,
@@ -46,6 +46,7 @@ import {
   storageRenditionMediaUrl,
   STORAGE_RENDITIONS,
   type StorageRendition,
+  isStreamlessStorageVideoUrl,
   uhdMediaUrl,
 } from "../lib/uhdPlayback";
 import {
@@ -674,29 +675,26 @@ function ownerShareHtml(
     } catch { return false; }
   };
   const fallbackStage = (stage) => {
-    if (!streamless) return "cdn";
     if (stage === "8k" && availableUhd && smooth4k) return "uhd";
     if ((stage === "8k" || stage === "uhd") && availableH264 && smoothH264) return "hd";
-    return null;
+    if (stage === "hd" && !streamless) return "cdn";
+    return streamless ? null : "cdn";
   };
   const setQualityButton = () => {
-    if (!streamless) {
-      if (!availableUhd) return;
-      qualityButton.style.display = "block";
-      qualityButton.textContent = sourceStage === "uhd" ? "HD" : "4K";
-      qualityButton.setAttribute("aria-label", sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K");
+    const options = [
+      ...(available8k && smooth8k ? ["8k"] : []),
+      ...(availableUhd && smooth4k ? ["uhd"] : []),
+      ...(availableH264 && smoothH264 ? ["hd"] : []),
+      ...(!streamless ? ["cdn"] : []),
+    ];
+    if (options.length < 2) {
+      qualityButton.style.display = "none";
       return;
     }
-    const options = [
-      ...(availableUhd ? ["uhd"] : []),
-      ...(available8k && smooth8k ? ["8k"] : []),
-      ...(availableH264 && smoothH264 ? ["hd"] : []),
-    ];
-    if (options.length < 2) return;
     qualityButton.style.display = "block";
     qualityButton.textContent = sourceStage === "8k" ? "8K"
       : sourceStage === "uhd" ? "4K"
-      : "HD";
+      : sourceStage === "hd" ? "HD" : "Stream";
     qualityButton.setAttribute("aria-label", "Change video quality");
   };
   const startSource = (stage, position = null, paused = null, playbackRate = video.playbackRate) => {
@@ -717,7 +715,7 @@ function ownerShareHtml(
     }
     const source = stage === "8k" ? eightKManifest
       : stage === "uhd" ? uhdManifest
-      : streamless && stage === "hd" ? h264Manifest
+      : stage === "hd" ? h264Manifest
       : manifest;
     const restorePlayback = () => {
       if (position !== null && Number.isFinite(position)) video.currentTime = position;
@@ -731,7 +729,7 @@ function ownerShareHtml(
       const instance = hls;
       instance.on(window.Hls.Events.ERROR, (_event, data) => {
         const details = String(data.details ?? "");
-        if (instance !== hls || (sourceStage !== "uhd" && sourceStage !== "8k")
+        if (instance !== hls || (sourceStage !== "uhd" && sourceStage !== "8k" && sourceStage !== "hd")
           || (!data.fatal && details !== "bufferAddCodecError" && details !== "bufferIncompatibleCodecsError")) return;
         const next = fallbackStage(sourceStage);
         if (next) startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
@@ -747,7 +745,7 @@ function ownerShareHtml(
       video.src = source;
       video.addEventListener("loadedmetadata", restorePlayback, { once: true });
       video.onerror = () => {
-        if (sourceStage === "uhd" || sourceStage === "8k") {
+        if (sourceStage === "uhd" || sourceStage === "8k" || sourceStage === "hd") {
           const next = fallbackStage(sourceStage);
           if (next) startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
         }
@@ -760,21 +758,16 @@ function ownerShareHtml(
     setQualityButton();
   };
   qualityButton.addEventListener("click", () => {
-    if (streamless) {
-      const options = [
-        ...(availableUhd ? ["uhd"] : []),
-        ...(available8k && smooth8k ? ["8k"] : []),
-        ...(availableH264 && smoothH264 ? ["hd"] : []),
-      ];
-      if (options.length < 2) return;
-      const next = options[(options.indexOf(sourceStage) + 1) % options.length];
-      savePreference(next === "uhd" ? "4k" : next === "8k" ? "8k" : "hd");
-      startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
-      return;
-    }
-    const next = sourceStage === "uhd" ? "hd" : "4k";
-    savePreference(next);
-    startSource(next === "4k" ? "uhd" : "cdn", Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
+    const options = [
+      ...(available8k && smooth8k ? ["8k"] : []),
+      ...(availableUhd && smooth4k ? ["uhd"] : []),
+      ...(availableH264 && smoothH264 ? ["hd"] : []),
+      ...(!streamless ? ["cdn"] : []),
+    ];
+    if (options.length < 2) return;
+    const next = options[(options.indexOf(sourceStage) + 1) % options.length];
+    if (next !== "cdn") savePreference(next === "uhd" ? "4k" : next === "8k" ? "8k" : "hd");
+    startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
   });
   const recoverUhdStall = () => {
     waiting = false;
@@ -788,12 +781,12 @@ function ownerShareHtml(
     recoverUhdStall();
   };
   const onWait = () => {
-    if ((sourceStage !== "uhd" && sourceStage !== "8k") || !hasPlayed || waiting) return;
+    if ((sourceStage !== "uhd" && sourceStage !== "8k" && sourceStage !== "hd") || !hasPlayed || waiting) return;
     waiting = true;
     countedWait = false;
     waitTimer = window.setTimeout(() => {
       waitTimer = null;
-      if (!waiting || countedWait || (sourceStage !== "uhd" && sourceStage !== "8k")) return;
+      if (!waiting || countedWait || (sourceStage !== "uhd" && sourceStage !== "8k" && sourceStage !== "hd")) return;
       countedWait = true;
       const now = Date.now();
       longStalls = longStalls.filter((stamp) => now - stamp <= 60000);
@@ -820,12 +813,14 @@ function ownerShareHtml(
       [smooth8k, smoothH264] = await Promise.all([canDecode8k(), canDecodeH264()]);
       smooth4k = availableUhd && await canDecodeUhd();
       const saved = savedPreference();
-      const stage = saved === "8k" && available8k && smooth8k ? "8k"
+      const stage = saved === "stream" && !streamless ? "cdn"
+        : saved === "8k" && available8k && smooth8k ? "8k"
         : saved === "4k" && smooth4k ? "uhd"
         : saved === "hd" && availableH264 && smoothH264 ? "hd"
+        : available8k && smooth8k ? "8k"
         : smooth4k ? "uhd"
         : availableH264 && smoothH264 ? "hd"
-        : available8k && smooth8k ? "8k"
+        : !streamless ? "cdn"
         : null;
       setQualityButton();
       if (stage) startSource(stage);
@@ -837,16 +832,24 @@ function ownerShareHtml(
       }
       return;
     }
-    const capable = await canDecodeUhd();
-    if (capable) {
-      try {
-        const response = await fetch(uhdManifest, { credentials: "include", cache: "no-store" });
-        availableUhd = response.ok;
-        try { await response.body?.cancel(); } catch {}
-      } catch { availableUhd = false; }
-    }
+    [availableUhd, available8k, availableH264] = await Promise.all([
+      playlistAvailable(uhdManifest),
+      playlistAvailable(eightKManifest),
+      playlistAvailable(h264Manifest),
+    ]);
+    [smooth8k, smoothH264] = await Promise.all([canDecode8k(), canDecodeH264()]);
+    smooth4k = availableUhd && await canDecodeUhd();
     setQualityButton();
-    startSource(availableUhd && savedPreference() !== "hd" ? "uhd" : "cdn");
+    const saved = savedPreference();
+    const stage = saved === "stream" ? "cdn"
+      : saved === "8k" && available8k && smooth8k ? "8k"
+      : saved === "4k" && smooth4k ? "uhd"
+      : saved === "hd" && availableH264 && smoothH264 ? "hd"
+      : available8k && smooth8k ? "8k"
+      : smooth4k ? "uhd"
+      : availableH264 && smoothH264 ? "hd"
+      : "cdn";
+    startSource(stage);
   })();
 })();
 </script>
@@ -1058,7 +1061,7 @@ router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (re
     return;
   }
   if (isStreamlessShare(share)) {
-    for (const rendition of ["4k", "h264", "8k"] as const) {
+    for (const rendition of ["8k", "4k", "h264"] as const) {
       try {
         const playlist = await getStoragePlaylist(share.videoId!, rendition);
         if (!playlist) continue;
@@ -1265,23 +1268,56 @@ export async function ensureClipPoster(clip: ClipRow): Promise<string | null> {
         sourceAspect: clip.aspectRatio === "9:16" ? 9 / 16 : 16 / 9,
       });
     } else {
-      const { duration, hasMP4Fallback, availableResolutions } = await getBunnyVideoInfo(clip.videoId);
-      const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
-      const source = await selectExportSource({
-        videoId: clip.videoId,
-        hasMP4Fallback,
-        availableResolutions,
-        referer,
-      });
-      const startSec = Math.max(0, Number.parseFloat(clip.startTime) * duration);
-      const endSec = Math.min(duration, Number.parseFloat(clip.endTime) * duration);
-      result = await generatePosterFrame({
-        sourceUrl: source.url,
-        referer,
-        startSec,
-        endSec,
-        crop: posterCropForClip(clip.cropPath ?? [], clip.aspectRatio),
-      });
+      const [recording, request] = await Promise.all([
+        clip.sourceRecordingId
+          ? db.select({ videoUrl: recordingsTable.videoUrl }).from(recordingsTable)
+            .where(eq(recordingsTable.id, clip.sourceRecordingId)).limit(1)
+          : Promise.resolve([]),
+        clip.footageRequestId
+          ? db.select({ shareToken: footageRequestsTable.shareToken }).from(footageRequestsTable)
+            .where(eq(footageRequestsTable.id, clip.footageRequestId)).limit(1)
+          : Promise.resolve([]),
+      ]);
+      const streamlessStorage = isStreamlessStorageVideoUrl(recording[0]?.videoUrl)
+        || /^s-[a-f0-9]{32}$/i.test(request[0]?.shareToken ?? "");
+      if (streamlessStorage) {
+        let sourceUrl: string | null = null;
+        for (const rendition of ["8k", "4k", "h264"] as const) {
+          if (await getStoragePlaylist(clip.videoId, rendition)) {
+            sourceUrl = storageRenditionMediaUrl(clip.videoId, rendition);
+            break;
+          }
+        }
+        if (!sourceUrl) throw new Error("No Storage rendition is ready for this clip poster");
+        const duration = await probeDuration(sourceUrl);
+        const startSec = Math.max(0, Number.parseFloat(clip.startTime) * duration);
+        const endSec = Math.min(duration, Number.parseFloat(clip.endTime) * duration);
+        result = await generatePosterFrame({
+          sourceUrl,
+          referer: `${new URL(sourceUrl).origin}/`,
+          startSec,
+          endSec,
+          crop: posterCropForClip(clip.cropPath ?? [], clip.aspectRatio),
+        });
+      } else {
+        const { duration, hasMP4Fallback, availableResolutions } = await getBunnyVideoInfo(clip.videoId);
+        const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
+        const source = await selectExportSource({
+          videoId: clip.videoId,
+          hasMP4Fallback,
+          availableResolutions,
+          referer,
+        });
+        const startSec = Math.max(0, Number.parseFloat(clip.startTime) * duration);
+        const endSec = Math.min(duration, Number.parseFloat(clip.endTime) * duration);
+        result = await generatePosterFrame({
+          sourceUrl: source.url,
+          referer,
+          startSec,
+          endSec,
+          crop: posterCropForClip(clip.cropPath ?? [], clip.aspectRatio),
+        });
+      }
     }
 
     const path = posterStoragePath(clip.id, shareToken(clip.id));

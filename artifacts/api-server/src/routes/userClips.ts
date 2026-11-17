@@ -124,8 +124,11 @@ import {
   validateCamera4kReclip,
   type Camera4kReclipValidation,
 } from "../lib/camera4kReclipValidation";
-import { isStreamlessStorageVideoUrl } from "../lib/uhdPlayback";
-import { storagePlaybackProxyUrl, storageThumbnailProxyUrl } from "../lib/uhdPlayback";
+import {
+  isStreamlessStorageVideoUrl,
+  storagePlaybackProxyUrl,
+  storageThumbnailProxyUrl,
+} from "../lib/uhdPlayback";
 import { contentAddressedHashPrefix, inspectRenderedVideo, saveRenderSnapshotBestEffort, sha256File } from "../lib/renderSnapshots";
 import { clipRenderOptionsFromSnapshot } from "../lib/clipRenderSnapshot";
 
@@ -317,15 +320,17 @@ type StreamlessClipIdentity = Pick<
 export async function streamlessStorageClipIds(clips: readonly StreamlessClipIdentity[]): Promise<Set<number>> {
   const recordingIds = [...new Set(clips.flatMap((clip) => clip.sourceRecordingId === null ? [] : [clip.sourceRecordingId]))];
   const requestIds = [...new Set(clips.flatMap((clip) => clip.footageRequestId === null ? [] : [clip.footageRequestId]))];
+  const recordingQuery = recordingIds.length
+    ? db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl })
+      .from(recordingsTable).where(inArray(recordingsTable.id, recordingIds))
+    : Promise.resolve([] as Array<{ id: number; videoUrl: string }>);
+  const requestQuery = requestIds.length
+    ? db.select({ id: footageRequestsTable.id, shareToken: footageRequestsTable.shareToken })
+      .from(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds))
+    : Promise.resolve([] as Array<{ id: number; shareToken: string | null }>);
   const [recordings, requests] = await Promise.all([
-    recordingIds.length
-      ? db.select({ id: recordingsTable.id, videoUrl: recordingsTable.videoUrl })
-        .from(recordingsTable).where(inArray(recordingsTable.id, recordingIds))
-      : Promise.resolve([]),
-    requestIds.length
-      ? db.select({ id: footageRequestsTable.id, shareToken: footageRequestsTable.shareToken })
-        .from(footageRequestsTable).where(inArray(footageRequestsTable.id, requestIds))
-      : Promise.resolve([]),
+    recordingQuery,
+    requestQuery,
   ]);
   const storageRecordingIds = new Set(
     recordings.filter((recording) => isStreamlessStorageVideoUrl(recording.videoUrl)).map((recording) => recording.id),
@@ -1943,8 +1948,8 @@ router.post("/user-clips", async (req, res): Promise<void> => {
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
   const isLive = isLiveVideoId(row.videoId);
-  const thumbnailUrl = !isLive && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = !isLive && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null;
+  const media = clipMediaUrls(row, thumbnailTime, await isStreamlessStorageClip(row));
+  const { thumbnailUrl, playbackUrl } = media;
   // Intro is intentionally suppressed in playback responses — it appears only
   // in the downloaded export file (see the renderClip call below). The player
   // treats null as "start the clip immediately", so no buffering delay occurs.
@@ -2031,8 +2036,10 @@ router.get("/user-clips", async (req, res): Promise<void> => {
   // Intro is intentionally suppressed in all playback responses — it appears
   // only in downloaded export files. Skip the intro DB queries entirely.
 
+  const streamlessIds = await streamlessStorageClipIds(rows);
   const result = rows.map((row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
+    const media = clipMediaUrls(row, thumbnailTime, streamlessIds.has(row.id));
     return {
       id: row.id,
       userId: row.userId,
@@ -2051,8 +2058,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       shareCount: row.shareCount,
       score: row.score,
       thumbnailTime,
-      thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null,
-      playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null,
+      thumbnailUrl: media.thumbnailUrl,
+      playbackUrl: media.playbackUrl,
       exportStatus: publicExportStatus(row.exportStatus),
       exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
@@ -2196,8 +2203,8 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
 
   const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
   const isLiveUpdate = isLiveVideoId(row.videoId);
-  const thumbnailUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId, thumbnailTime) : null;
-  const playbackUrl = !isLiveUpdate && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null;
+  const media = clipMediaUrls(row, thumbnailTime, await isStreamlessStorageClip(row));
+  const { thumbnailUrl, playbackUrl } = media;
   // Intro is intentionally suppressed in playback responses — it appears only
   // in the downloaded export file (see the renderClip call below). The player
   // treats null as "start the clip immediately", so no buffering delay occurs.
@@ -2440,6 +2447,8 @@ router.get("/feed", async (req, res): Promise<void> => {
       visibility: userClipsTable.visibility,
       isHidden: userClipsTable.isHidden,
       createdAt: userClipsTable.createdAt,
+      sourceRecordingId: userClipsTable.sourceRecordingId,
+      footageRequestId: userClipsTable.footageRequestId,
       creatorId: usersTable.id,
       creatorName: usersTable.name,
       creatorPosition: usersTable.position,
@@ -2509,7 +2518,10 @@ router.get("/feed", async (req, res): Promise<void> => {
     }
   }
 
-  const result = visible.map((row) => ({
+  const streamlessIds = await streamlessStorageClipIds(visible);
+  const result = visible.map((row) => {
+    const media = clipMediaUrls(row, null, streamlessIds.has(row.id));
+    return ({
     id: row.id,
     userId: row.userId,
     videoId: row.videoId,
@@ -2524,14 +2536,15 @@ router.get("/feed", async (req, res): Promise<void> => {
     score: row.score,
     isLiked: likedSet.has(row.id),
     visibility: row.visibility,
-    thumbnailUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(row.videoId) : null,
-    playbackUrl: !isLiveVideoId(row.videoId) && isBunnyConfigured() ? getBunnyProxiedPlaybackUrl(row.videoId) : null,
+    thumbnailUrl: media.thumbnailUrl,
+    playbackUrl: media.playbackUrl,
     createdAt: row.createdAt.toISOString(),
     creatorId: row.creatorId,
     creatorName: row.creatorName,
     creatorPosition: row.creatorPosition ?? null,
     socialLikes: socialLikesMap.get(row.id) ?? [],
-  }));
+    });
+  });
 
   res.json(GetFeedResponse.parse(result));
 });

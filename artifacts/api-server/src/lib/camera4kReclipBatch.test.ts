@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { isReplayableCamera4kClipSnapshot } from "./camera4kReclipEligibility";
-import { camera4kReclipRevision, isCamera4kReclipWindow } from "./camera4kReclipBatch";
+import {
+  camera4kReclipRevision,
+  camera4kVideoIdFromRecordingUrl,
+  isCamera4kReclipWindow,
+} from "./camera4kReclipBatch";
+
+describe("camera 4K source ID extraction", () => {
+  it("accepts canonical and compact Storage UUIDs", () => {
+    expect(camera4kVideoIdFromRecordingUrl(
+      "https://storage.example.com/vod/123e4567-e89b-12d3-a456-426614174000/4k.m3u8",
+    )).toBe("123e4567-e89b-12d3-a456-426614174000");
+    expect(camera4kVideoIdFromRecordingUrl(
+      "https://storage.example.com/vod/123e4567e89b12d3a456426614174000/4k.m3u8",
+    )).toBe("123e4567e89b12d3a456426614174000");
+  });
+});
 
 describe("camera 4K re-clip batch timing", () => {
   it("allows only the 22:00–06:00 UTC window", () => {

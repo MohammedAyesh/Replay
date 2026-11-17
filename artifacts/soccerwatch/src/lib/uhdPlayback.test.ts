@@ -5,6 +5,7 @@ import {
   canUse8kDirect,
   canUse8kPlayback,
   canUseH264Playback,
+  chooseRecordedPlaybackStage,
   hasSavedPlaybackPreference,
   canUseUhdPlayback,
   createUhdStallGuard,
@@ -24,6 +25,49 @@ import {
 import { decidePlaybackRecovery } from "../components/clip-player/playbackRecovery";
 
 describe("recorded UHD playback eligibility and fallback", () => {
+  it("prefers smooth 8K, then 4K, H.264, and finally Stream", () => {
+    expect(chooseRecordedPlaybackStage({
+      preference: "4k",
+      hasSavedPreference: false,
+      available8k: true,
+      available4k: true,
+      availableH264: true,
+      streamless: false,
+    })).toBe("8k");
+    expect(chooseRecordedPlaybackStage({
+      preference: "4k",
+      hasSavedPreference: true,
+      available8k: true,
+      available4k: true,
+      availableH264: true,
+      streamless: false,
+    })).toBe("uhd");
+    expect(chooseRecordedPlaybackStage({
+      preference: "hd",
+      hasSavedPreference: true,
+      available8k: false,
+      available4k: false,
+      availableH264: true,
+      streamless: false,
+    })).toBe("h264");
+    expect(chooseRecordedPlaybackStage({
+      preference: "4k",
+      hasSavedPreference: false,
+      available8k: false,
+      available4k: false,
+      availableH264: false,
+      streamless: false,
+    })).toBe("stream");
+    expect(chooseRecordedPlaybackStage({
+      preference: "4k",
+      hasSavedPreference: false,
+      available8k: false,
+      available4k: false,
+      availableH264: false,
+      streamless: true,
+    })).toBeNull();
+  });
+
   it("offers 8K only when MediaCapabilities reports smooth native 8K decoding", async () => {
     const smoothCapabilities = {
       decodingInfo: vi.fn().mockResolvedValue({ supported: true, smooth: true }),
@@ -163,6 +207,9 @@ describe("recorded UHD playback eligibility and fallback", () => {
       .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
     expect(isStreamlessStorageUrl("https://storage.example.com/vod/123e4567-e89b-12d3-a456-426614174000/8k.m3u8")).toBe(true);
     expect(isStreamlessStorageUrl("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8")).toBe(true);
+    expect(isStreamlessStorageUrl(
+      "/api/hls-proxy/manifest?url=https%3A%2F%2Fstorage.example.com%2Fvod%2F123e4567-e89b-12d3-a456-426614174000%2F8k.m3u8",
+    )).toBe(true);
     expect(isStreamlessStorageUrl("/api/hls-proxy/manifest?url=https://vz-123.b-cdn.net/video/playlist.m3u8")).toBe(false);
   });
 

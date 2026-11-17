@@ -17,7 +17,8 @@ import {
   type VenueIgAward,
 } from "@workspace/db";
 import { requireAcademyConsoleUser, requireAcademyMembership, type AcademyConsoleUser } from "../lib/academyAccess";
-import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
+import { getBunnyProxiedThumbnailUrl, isBunnyConfigured, isBunnyStorageConfigured } from "../lib/bunny";
+import { isStreamlessStorageVideoUrl, storageThumbnailProxyUrl } from "../lib/uhdPlayback";
 import { creativeClipStillUrl } from "../lib/creative/library";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { mayConfirmGoalsInRoom } from "../lib/goalRights";
@@ -91,6 +92,9 @@ async function admin(req: Request, res: Response) {
 const thumb = (recordingId: number, videoUrls: Map<number, string>, atMs: number) => {
   const url = videoUrls.get(recordingId) ?? "";
   const id = /\/([0-9a-f-]{36})\//i.exec(url)?.[1];
+  if (id && isStreamlessStorageVideoUrl(url)) {
+    return isBunnyStorageConfigured() ? storageThumbnailProxyUrl(id) : null;
+  }
   return id && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(id, Math.max(0, atMs / 1000)) : null;
 };
 

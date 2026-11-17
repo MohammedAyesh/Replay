@@ -1,4 +1,31 @@
 export type UhdPlaybackPreference = "8k" | "4k" | "hd";
+export type RecordedPlaybackStage = "8k" | "uhd" | "h264" | "stream";
+
+export function chooseRecordedPlaybackStage(options: {
+  preference: UhdPlaybackPreference;
+  hasSavedPreference: boolean;
+  available8k: boolean;
+  available4k: boolean;
+  availableH264: boolean;
+  streamless: boolean;
+}): RecordedPlaybackStage | null {
+  const {
+    preference,
+    hasSavedPreference,
+    available8k,
+    available4k,
+    availableH264,
+    streamless,
+  } = options;
+
+  if (hasSavedPreference && preference === "8k" && available8k) return "8k";
+  if (hasSavedPreference && preference === "4k" && available4k) return "uhd";
+  if (hasSavedPreference && preference === "hd" && availableH264) return "h264";
+  if (available8k) return "8k";
+  if (available4k) return "uhd";
+  if (availableH264) return "h264";
+  return streamless ? null : "stream";
+}
 
 export const UHD_PLAYBACK_PREFERENCE_KEY = "replay.playback-quality";
 export const UHD_HEVC_CODEC = "hvc1.1.6.L153.B0";

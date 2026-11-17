@@ -193,7 +193,7 @@ export function browserVideoUrl(videoUrl: string): string {
   try {
     const parsed = new URL(videoUrl);
     if (isStreamlessStorageVideoUrl(videoUrl)) {
-      const match = parsed.pathname.match(/\/vod\/([0-9a-f-]{36})\/(8k|4k|h264)\.m3u8$/i);
+      const match = parsed.pathname.match(/\/vod\/((?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}))\/(8k|4k|h264)\.m3u8$/i);
       if (match) {
         return storagePlaybackProxyUrl(match[1], match[2].toLowerCase() as "8k" | "4k" | "h264") ?? videoUrl;
       }

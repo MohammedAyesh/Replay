@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrackingManifest } from "@workspace/db";
-import { applyCuts, ballFocus, goalCardsFor, momentNumbers, notMeCut, partsFocus, trackIndex, unsureMoments, CHECK } from "./checkDeck";
+import { applyCuts, ballFocus, browserVideoUrl, goalCardsFor, momentNumbers, notMeCut, partsFocus, trackIndex, unsureMoments, CHECK } from "./checkDeck";
 import type { Lab } from "./matchPlay";
 import type { PersonalMoment } from "./personalMoments";
 import type { ReviewedGoal } from "./goalReview";
@@ -23,6 +23,17 @@ const track = (id: string, f0: number, f1: number, pos: (f: number) => [number, 
 const WHITE: Lab = [200, 128, 128];
 const BLACK: Lab = [20, 128, 128];
 const moment = (id: string, kind: string, t: number, title = "x"): PersonalMoment => ({ id, kind, title, momentSeconds: t, status: "ready" });
+
+describe("match playback URLs", () => {
+  it("keeps streamless Storage footage on the protected rendition proxy", () => {
+    expect(browserVideoUrl("https://storage.example.com/vod/123e4567-e89b-12d3-a456-426614174000/8k.m3u8"))
+      .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/8k.m3u8");
+    expect(browserVideoUrl("https://vz-123.b-cdn.net/123e4567-e89b-12d3-a456-426614174000/playlist.m3u8"))
+      .toContain("/api/hls-proxy/manifest?url=");
+    expect(browserVideoUrl("https://storage.example.com/vod/123e4567e89b12d3a456426614174000/h264.m3u8"))
+      .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
+  });
+});
 
 describe("unsure moments: where his piece can be someone else", () => {
   // he runs along y = 10 for 100 s; a team-mate brushes past at t = 50; an

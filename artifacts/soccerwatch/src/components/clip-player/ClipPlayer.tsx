@@ -68,9 +68,9 @@ import {
 } from "./playbackRecovery";
 import {
   canDecodeUhd,
-  canUse8kDirect,
   canUse8kPlayback,
   canUseH264Playback,
+  chooseRecordedPlaybackStage,
   createUhdStallGuard,
   isUhdPlaylistAvailable,
   isStreamlessStorageUrl,
@@ -338,14 +338,17 @@ export function ClipPlayer({
     isStreamlessStorageUrl(src)
     || (source.kind === "ownerShare" && source.token.startsWith("s-"))
   );
-  const uhdSrc = isLive ? null : suppliedUhdPlaybackUrl ?? uhdPlaybackUrlForSource(source, isLive);
+  const storageBackedSource = !isLive && (source.kind === "bunny" || source.kind === "ownerShare");
+  const uhdSrc = isLive ? null : storageBackedSource
+    ? storagePlaybackUrlForSource(source, "4k", isLive)
+    : suppliedUhdPlaybackUrl ?? uhdPlaybackUrlForSource(source, isLive);
   // The camera's 8K original plays straight from the Storage pull zone when it exists and the
   // phone decodes it smoothly; Bunny Stream stays the alternate for recordings that have one.
-  const eightKSrc = streamlessStorage || (!isLive && source.kind === "bunny")
+  const eightKSrc = storageBackedSource
     ? storagePlaybackUrlForSource(source, "8k", isLive)
     : null;
-  const wantsStorageCheck = !isLive && Boolean(uhdSrc || eightKSrc) && readUhdPlaybackPreference() !== "hd";
-  const h264Src = streamlessStorage ? storagePlaybackUrlForSource(source, "h264", isLive) : null;
+  const h264Src = storageBackedSource ? storagePlaybackUrlForSource(source, "h264", isLive) : null;
+  const wantsStorageCheck = !isLive && Boolean(uhdSrc || eightKSrc || h264Src);
   const streamSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
   const [initialSourceStage] = useState<PlaybackSourceStage>(() =>
     streamlessStorage || wantsStorageCheck
@@ -628,45 +631,7 @@ export function ClipPlayer({
   useEffect(() => {
     let active = true;
     const element = videoRef.current;
-    if (streamlessStorage && element) {
-      void (async () => {
-        const [available4k, available8k, availableH264] = await Promise.all([
-          uhdSrc
-            ? Promise.all([canDecodeUhd(element), isUhdPlaylistAvailable(uhdSrc)]).then(([smooth, available]) => smooth && available)
-            : false,
-          canUse8kPlayback(element, eightKSrc),
-          canUseH264Playback(element, h264Src),
-        ]);
-        if (!active) return;
-        setUhdAvailable(available4k);
-        setEightKAvailable(available8k);
-        setH264Available(availableH264);
-        const preference = readUhdPlaybackPreference();
-        const preferredStage: PlaybackSourceStage | null = preference === "8k" && available8k
-          ? "8k"
-          : preference === "4k" && available4k
-            ? "uhd"
-            : preference === "hd" && availableH264
-              ? "h264"
-              : available4k
-                ? "uhd"
-                : availableH264
-                  ? "h264"
-                  : available8k
-                    ? "8k"
-                    : null;
-        if (sourceStageRef.current === "checking") {
-          setStorageOnlyUnavailable(!preferredStage);
-          if (preferredStage) setPlaybackSourceStage(preferredStage);
-          else {
-            setPlaybackUiState("error");
-            setPlaybackDiagnostic(null);
-          }
-        }
-      })();
-      return () => { active = false; };
-    }
-    if ((!uhdSrc && !eightKSrc) || isLive || !element) {
+    if ((!uhdSrc && !eightKSrc && !h264Src) || isLive || !element) {
       setUhdAvailable(false);
       setEightKAvailable(false);
       setH264Available(false);
@@ -674,26 +639,34 @@ export function ClipPlayer({
       return () => { active = false; };
     }
 
-    const preference = readUhdPlaybackPreference();
-    const picked = hasSavedPlaybackPreference();
     void (async () => {
-      const [available, available8k] = await Promise.all([
-        uhdSrc ? canDecodeUhd(element).then((capable) => capable && isUhdPlaylistAvailable(uhdSrc)) : Promise.resolve(false),
-        preference === "hd" ? Promise.resolve(false) : canUse8kDirect(eightKSrc),
+      const [available4k, available8k, availableH264] = await Promise.all([
+        uhdSrc
+          ? Promise.all([canDecodeUhd(element), isUhdPlaylistAvailable(uhdSrc)]).then(([smooth, available]) => smooth && available)
+          : Promise.resolve(false),
+        canUse8kPlayback(element, eightKSrc),
+        canUseH264Playback(element, h264Src),
       ]);
       if (!active) return;
-      setUhdAvailable(available);
+      setUhdAvailable(available4k);
       setEightKAvailable(available8k);
+      setH264Available(availableH264);
+      const selected = chooseRecordedPlaybackStage({
+        preference: readUhdPlaybackPreference(),
+        hasSavedPreference: hasSavedPlaybackPreference(),
+        available8k,
+        available4k,
+        availableH264,
+        streamless: streamlessStorage,
+      });
+      const next = selected === "stream" ? streamSourceStage : selected;
       if (sourceStageRef.current === "checking") {
-        // Unpicked or 8K: the original 8K first. 4K picked: 4K. Otherwise, or if neither exists: Stream.
-        const next: PlaybackSourceStage = preference === "hd"
-          ? streamSourceStage
-          : (preference === "8k" || !picked) && available8k
-            ? "8k"
-            : available
-              ? "uhd"
-              : streamSourceStage;
-        setPlaybackSourceStage(next);
+        setStorageOnlyUnavailable(streamlessStorage && !next);
+        if (next) setPlaybackSourceStage(next as PlaybackSourceStage);
+        else {
+          setPlaybackUiState("error");
+          setPlaybackDiagnostic(null);
+        }
       }
     })();
     return () => { active = false; };
@@ -1003,10 +976,10 @@ export function ClipPlayer({
         );
       }
     };
-    const uhdStallGuard = sourceStage === "uhd" || sourceStage === "8k"
+    const uhdStallGuard = sourceStage === "uhd" || sourceStage === "8k" || sourceStage === "h264"
       ? createUhdStallGuard({
         onRepeatedStall: () => {
-          if (disposed || (sourceStageRef.current !== "uhd" && sourceStageRef.current !== "8k")) return;
+          if (disposed || (sourceStageRef.current !== "uhd" && sourceStageRef.current !== "8k" && sourceStageRef.current !== "h264")) return;
           preservePosition();
           const currentStage = sourceStageRef.current;
           if (streamlessStorage) {
@@ -1032,6 +1005,15 @@ export function ClipPlayer({
               title: locale === "ar"
                 ? "حوّلنا لـ 4K عشان يمشي الفيديو أسلس"
                 : "Switched to 4K for smoother playback",
+            });
+            return;
+          }
+          if ((currentStage === "8k" || currentStage === "uhd") && h264Available) {
+            setPlaybackSourceStage("h264");
+            toast({
+              title: locale === "ar"
+                ? "حوّلنا لجودة أقل عشان يمشي الفيديو أسلس"
+                : "Switched to a lower quality for smoother playback",
             });
             return;
           }
@@ -1081,9 +1063,19 @@ export function ClipPlayer({
         return;
       }
       if (currentStage === "8k") {
-        // 8K didn't load: 4K if it's there, else Bunny Stream.
+        // 8K didn't load: try 4K, then H.264, then the Stream source.
         preservePosition();
-        setPlaybackSourceStage(uhdAvailable ? "uhd" : cdnSrc ? "cdn" : streamSourceStage);
+        setPlaybackSourceStage(uhdAvailable ? "uhd" : h264Available ? "h264" : streamSourceStage);
+        return;
+      }
+      if (currentStage === "uhd" && h264Available) {
+        preservePosition();
+        setPlaybackSourceStage("h264");
+        return;
+      }
+      if (currentStage === "h264") {
+        preservePosition();
+        setPlaybackSourceStage(streamSourceStage);
         return;
       }
       try {
@@ -1461,9 +1453,9 @@ export function ClipPlayer({
     uhdSrc,
   ]);
 
-  const switchPlaybackQuality = (preference: "8k" | "4k" | "hd") => {
+  const switchPlaybackQuality = (preference: "8k" | "4k" | "hd" | "stream") => {
     if (isLive) return;
-    writeUhdPlaybackPreference(preference);
+    if (preference !== "stream") writeUhdPlaybackPreference(preference);
     const element = videoRef.current;
     if (element && !isLive) {
       resumePositionRef.current = playbackPositionForRestore(
@@ -1473,9 +1465,13 @@ export function ClipPlayer({
       restorePausedRef.current = hasPlayedOnceRef.current && element.paused;
     }
     setStorageOnlyUnavailable(false);
-    setPlaybackSourceStage(streamlessStorage
-      ? preference === "8k" ? "8k" : preference === "4k" ? "uhd" : "h264"
-      : preference === "8k" && eightKAvailable ? "8k" : preference === "4k" ? "uhd" : streamSourceStage);
+    setPlaybackSourceStage(preference === "stream"
+      ? streamSourceStage
+      : preference === "8k"
+        ? "8k"
+        : preference === "4k"
+          ? "uhd"
+          : h264Available ? "h264" : streamSourceStage);
   };
 
   const onLoadedMetadata = (event: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -2130,20 +2126,24 @@ export function ClipPlayer({
                 >
                   {playbackRate}×
                 </button>
-                {!isLive && sourceStage !== "checking" && streamlessStorage
-                  && [uhdAvailable, eightKAvailable, h264Available].filter(Boolean).length > 1 && (
+                {!isLive && sourceStage !== "checking"
+                  && [uhdAvailable, eightKAvailable, h264Available, !streamlessStorage].filter(Boolean).length > 1 && (
                   <button
                     type="button"
                     data-testid="button-playback-uhd-toggle"
-                    aria-label={`Current quality: ${sourceStage === "8k" ? "8K" : sourceStage === "uhd" ? "4K" : "HD"}. Switch quality`}
+                    aria-label={`Current quality: ${sourceStage === "8k" ? "8K" : sourceStage === "uhd" ? "4K" : sourceStage === "h264" ? "H.264" : "Stream"}. Switch quality`}
                     title="Change video quality"
                     onClick={() => {
                       const options = [
-                        ...(uhdAvailable ? ["4k" as const] : []),
                         ...(eightKAvailable ? ["8k" as const] : []),
+                        ...(uhdAvailable ? ["4k" as const] : []),
                         ...(h264Available ? ["hd" as const] : []),
+                        ...(!streamlessStorage ? ["stream" as const] : []),
                       ];
-                      const current = sourceStage === "8k" ? "8k" : sourceStage === "uhd" ? "4k" : "hd";
+                      const current = sourceStage === "8k" ? "8k"
+                        : sourceStage === "uhd" ? "4k"
+                        : sourceStage === "h264" ? "hd"
+                        : "stream";
                       const next = options[(options.indexOf(current) + 1) % options.length];
                       if (next) switchPlaybackQuality(next);
                     }}
@@ -2152,22 +2152,9 @@ export function ClipPlayer({
                       sourceStage === "uhd" || sourceStage === "8k" ? "border-primary bg-primary/20" : "border-white/20 bg-white/10",
                     )}
                   >
-                    {sourceStage === "8k" ? "8K" : sourceStage === "uhd" ? "4K" : "HD"}
-                  </button>
-                )}
-                {!isLive && !streamlessStorage && uhdAvailable && uhdSrc && sourceStage !== "checking" && (
-                  <button
-                    type="button"
-                    data-testid="button-playback-uhd-toggle"
-                    aria-label={sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K"}
-                    title={sourceStage === "uhd" ? "Switch to HD" : "Switch to 4K"}
-                    onClick={() => switchPlaybackQuality(sourceStage === "uhd" ? "hd" : "4k")}
-                    className={cn(
-                      "h-10 min-w-10 shrink-0 rounded-full border px-2 text-[11px] font-bold text-white",
-                      sourceStage === "uhd" ? "border-primary bg-primary/20" : "border-white/20 bg-white/10",
-                    )}
-                  >
-                    {sourceStage === "uhd" ? "4K" : "HD"}
+                    {sourceStage === "8k" ? "8K"
+                      : sourceStage === "uhd" ? "4K"
+                      : sourceStage === "h264" ? "H.264" : "Stream"}
                   </button>
                 )}
                 {!usingFallback && /\.m3u8(?:$|\?)/i.test(activeSrc) && (

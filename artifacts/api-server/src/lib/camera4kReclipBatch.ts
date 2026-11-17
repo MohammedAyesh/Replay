@@ -33,7 +33,11 @@ const BATCH_REVISION_PREFIX = "camera4k-20261108";
 const LEASE_MS = 5 * 60_000;
 const HEARTBEAT_MS = 30_000;
 const TICK_MS = 60_000;
-const GUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
+const GUID_RE = /((?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))/i;
+
+export function camera4kVideoIdFromRecordingUrl(videoUrl: string): string | null {
+  return videoUrl.match(GUID_RE)?.[1]?.toLowerCase() ?? null;
+}
 
 export function isCamera4kReclipWindow(at: Date): boolean {
   const hour = at.getUTCHours();
@@ -70,7 +74,7 @@ async function probeRecording(recording: {
   timeSlot: string;
   videoUrl: string;
 }): Promise<Camera4kSourceProbe | null> {
-  const videoId = recording.videoUrl.match(GUID_RE)?.[1]?.toLowerCase();
+  const videoId = camera4kVideoIdFromRecordingUrl(recording.videoUrl);
   if (!videoId) return null;
   try {
     await waitForCamera4kSource(videoId, { timeoutMs: 8_000, pollIntervalMs: 750 });

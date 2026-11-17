@@ -292,7 +292,7 @@ export function isStreamlessStorageVideoUrl(value: string | null | undefined): b
   if (!value) return false;
   try {
     const url = new URL(value);
-    return /\/vod\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:8k|4k|h264)\.m3u8$/i
+    return /\/vod\/(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(?:8k|4k|h264)\.m3u8$/i
       .test(url.pathname);
   } catch {
     return false;

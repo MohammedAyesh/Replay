@@ -9,9 +9,10 @@ import {
   ToggleLikeResponse,
 } from "@workspace/api-zod";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
-import { getBunnyPlaybackUrl, getBunnyProxiedPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../lib/bunny";
+import { getBunnyPlaybackUrl, isBunnyConfigured, isBunnyStorageConfigured } from "../lib/bunny";
 import { introPlaybackPath } from "./clipIntro";
-import { createPublicFootageContext, isPublicRecordingInContext, type PublicFootageContext } from "../lib/publicFootage";
+import { createPublicFootageContext, extractBunnyVideoId, isPublicRecordingInContext, type PublicFootageContext } from "../lib/publicFootage";
+import { isStreamlessStorageVideoUrl, storagePlaybackProxyUrl } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 
@@ -78,7 +79,11 @@ async function buildClip(
   // Derive Bunny playback URL from videoId when Bunny is configured,
   // falling back to the stored URL, then the legacy videoUrl.
   let bunnyPlaybackUrl = clip.bunnyPlaybackUrl ?? null;
-  if (clip.bunnyVideoId && isBunnyConfigured()) {
+  const streamlessStorage = isStreamlessStorageVideoUrl(recording?.videoUrl);
+  if (streamlessStorage && isBunnyStorageConfigured()) {
+    const videoId = extractBunnyVideoId(recording?.videoUrl);
+    bunnyPlaybackUrl = storagePlaybackProxyUrl(videoId, "8k");
+  } else if (clip.bunnyVideoId && isBunnyConfigured()) {
     bunnyPlaybackUrl = getBunnyPlaybackUrl(clip.bunnyVideoId);
   }
 

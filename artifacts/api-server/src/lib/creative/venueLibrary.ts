@@ -29,7 +29,8 @@ import {
   type UserClipRow,
 } from "@workspace/db";
 import type { MediaSource } from "@workspace/api-zod";
-import { getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { getBunnyProxiedThumbnailUrl, isBunnyConfigured, isBunnyStorageConfigured } from "../bunny";
+import { isStreamlessStorageVideoUrl, storageThumbnailProxyUrl } from "../uhdPlayback";
 import { clipSpans } from "./clipSpan";
 import { logger } from "../logger";
 import { academyClipStatus } from "../userClipExportState";
@@ -152,7 +153,11 @@ function recordingStart(r: Pick<VenueRecording, "date" | "timeSlot" | "createdAt
 
 function thumbAt(videoUrl: string | null | undefined, seconds: number): string | null {
   const id = bunnyVideoIdOf(videoUrl);
-  if (!id || !isBunnyConfigured()) return null;
+  if (!id) return null;
+  if (isStreamlessStorageVideoUrl(videoUrl)) {
+    return isBunnyStorageConfigured() ? storageThumbnailProxyUrl(id) : null;
+  }
+  if (!isBunnyConfigured()) return null;
   return getBunnyProxiedThumbnailUrl(id, Math.max(0, seconds));
 }
 

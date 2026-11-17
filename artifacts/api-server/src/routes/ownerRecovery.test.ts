@@ -211,8 +211,8 @@ describe("failed owner footage recovery", () => {
       videoId,
       shareToken: expect.stringMatching(/^s-[0-9a-f]{32}$/),
     });
-    expect(h.queueAnalysis).toHaveBeenCalledWith(row, videoId, row.requestedSeconds, true);
-    expect(h.attachAcademy).toHaveBeenCalledWith(row, videoId, row.requestedSeconds, true);
+    expect(h.queueAnalysis).toHaveBeenCalledWith(row, videoId, null, true);
+    expect(h.attachAcademy).toHaveBeenCalledWith(row, videoId, null, true);
   });
 
   it("lists eligible recent failures for admins only", async () => {

@@ -34,6 +34,7 @@ const GUID_REUSE_AUTO = "2f2e2d2c-2b2a-4928-8726-252423222120";
 const GUID_REUSE_ADMIN = "3f3e3d3c-3b3a-4938-8736-353433323130";
 const GUID_TRAINING = "4f4e4d4c-4b4a-4948-8746-454443424140";
 const GUID_ACADEMY_MATCH = "5f5e5d5c-5b5a-4958-8756-555453525150";
+const GUID_STREAMLESS = "6f6e5d4c-3b2a-4968-8766-656463626160";
 let userId: number;
 let adminId: number;
 let fieldId: number;
@@ -43,6 +44,8 @@ let sessionIds: number[] = [];
 let extraRecordingIds: number[] = [];
 let extraJobIds: number[] = [];
 let videoForJob = new Map<string, string>();
+let streamlessJobs = new Set<string>();
+let streamFetches: string[] = [];
 let realFetch: typeof fetch;
 let recordPosts: string[] = [];
 let app: Express;
@@ -140,6 +143,7 @@ beforeAll(async () => {
   realFetch = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes("video.bunnycdn.com")) streamFetches.push(url);
     if (url.includes("/record-hq/") && init?.method === "POST") {
       recordPosts.push(url);
       return new Response(JSON.stringify({ status: "scheduled", jobId: `posted-${recordPosts.length}` }),
@@ -148,6 +152,7 @@ beforeAll(async () => {
     const m = /\/record-hq\/[^/]+\/([^/?]+)/.exec(url);
     if (m && videoForJob.has(m[1])) {
       return new Response(JSON.stringify({ status: "done", videoId: videoForJob.get(m[1]),
+        streamless: streamlessJobs.has(m[1]),
         durationSeconds: 3600, updatedAt: new Date().toISOString() }),
       { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -157,6 +162,8 @@ beforeAll(async () => {
 
 beforeEach(() => {
   videoForJob = new Map();
+  streamlessJobs = new Set();
+  streamFetches = [];
   recordPosts = [];
   vi.mocked(getLocalUserRecord).mockResolvedValue({
     id: adminId,
@@ -166,7 +173,7 @@ beforeEach(() => {
 });
 
 afterAll(async () => {
-  for (const guid of [GUID_ON, GUID_OFF, GUID_TRAINING, GUID_ACADEMY_MATCH]) {
+  for (const guid of [GUID_ON, GUID_OFF, GUID_TRAINING, GUID_ACADEMY_MATCH, GUID_STREAMLESS]) {
     const { recs } = await jobsFor(guid);
     if (recs.length) {
       await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.recordingId, recs.map((r) => r.id)));
@@ -213,6 +220,23 @@ describe("analysing bookings during the match", () => {
     // a later refresh of the same (already ready) booking queues nothing more
     await refreshOwnerRequest({ ...row, status: "ready" }, "cam1");
     expect((await jobsFor(GUID_ON)).jobs).toHaveLength(1);
+  });
+
+  it("creates a Storage-backed analysis recording when a failed job recovers as streamless", async () => {
+    await setLive(true);
+    const row = await booking(`vps-streamless-${TAG}`, "failed");
+    videoForJob.set(row.vpsJobId!, GUID_STREAMLESS);
+    streamlessJobs.add(row.vpsJobId!);
+
+    await refreshOwnerRequest(row, "cam1", Date.now(), true);
+
+    const [done] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, row.id));
+    const { recs, jobs } = await jobsFor(GUID_STREAMLESS);
+    expect(done.status).toBe("ready");
+    expect(recs).toHaveLength(1);
+    expect(recs[0].videoUrl).toMatch(new RegExp(`/vod/${GUID_STREAMLESS}/8k\\.m3u8$`));
+    expect(jobs).toHaveLength(1);
+    expect(streamFetches).toEqual([]);
   });
 
   it("enables training mode for academy training footage but not academy matches", async () => {

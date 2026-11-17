@@ -39,6 +39,8 @@ import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } fro
 import { logger } from "../lib/logger";
 import { renderStudioPng, type StudioContent, type StudioLocale } from "../lib/studio/posts";
 import { academyClipStatus } from "../lib/userClipExportState";
+import { streamlessStorageClipIds } from "./userClips";
+import { storageThumbnailProxyUrl } from "../lib/uhdPlayback";
 import {
   inspectRenderedPng,
   saveRenderSnapshotBestEffort,
@@ -567,6 +569,7 @@ router.get(`${base}/clips`, async (req, res): Promise<void> => {
     // A field: every clip cut from its footage, by players or by Replay.
     const origin = req.query.origin === "auto" || req.query.origin === "player" ? req.query.origin : null;
     const { rows } = await venueClipRows(fieldIds, { origin, limit: 300 });
+    const storageClipIds = await streamlessStorageClipIds(rows.map(({ clip }) => clip));
     res.json({
       clips: rows.map(({ clip, creatorName, origin: o }) => {
         const isLive = clip.videoId.startsWith("live:");
@@ -578,7 +581,12 @@ router.get(`${base}/clips`, async (req, res): Promise<void> => {
           status: clipStatus(clip),
           createdAt: clip.createdAt.toISOString(),
           durationSeconds: Math.max(0, Math.round(Number(clip.endTime) - Number(clip.startTime))),
-          thumbnailUrl: !isLive && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
+          thumbnailUrl: isLive ? null
+            : storageClipIds.has(clip.id) && isBunnyStorageConfigured()
+              ? storageThumbnailProxyUrl(clip.videoId)
+              : !storageClipIds.has(clip.id) && isBunnyConfigured()
+                ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime)
+                : null,
           creator: { id: clip.userId, name: o === "auto" ? "Replay" : firstNameOf(creatorName) ?? "Player", role: o === "auto" ? "replay" : "player", isYou: clip.userId === access.user.id },
           origin: o,
         };
@@ -598,6 +606,7 @@ router.get(`${base}/clips`, async (req, res): Promise<void> => {
     .orderBy(desc(userClipsTable.createdAt), desc(userClipsTable.id))
     .limit(200);
   const seen = new Set<number>();
+  const storageClipIds = await streamlessStorageClipIds(rows.map(({ clip }) => clip));
   const clips = [];
   for (const { clip, creatorName, role } of rows) {
     // A member with two roles appears twice in the join.
@@ -612,7 +621,12 @@ router.get(`${base}/clips`, async (req, res): Promise<void> => {
       status: clipStatus(clip),
       createdAt: clip.createdAt.toISOString(),
       durationSeconds: Math.max(0, Math.round(Number(clip.endTime) - Number(clip.startTime))),
-      thumbnailUrl: !isLive && isBunnyConfigured() ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime) : null,
+      thumbnailUrl: isLive ? null
+        : storageClipIds.has(clip.id) && isBunnyStorageConfigured()
+          ? storageThumbnailProxyUrl(clip.videoId)
+          : !storageClipIds.has(clip.id) && isBunnyConfigured()
+            ? getBunnyProxiedThumbnailUrl(clip.videoId, thumbTime)
+            : null,
       creator: { id: clip.userId, name: creatorName, role, isYou: clip.userId === access.user.id },
     });
   }
