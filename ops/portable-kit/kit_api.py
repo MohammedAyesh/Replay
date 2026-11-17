@@ -28,6 +28,8 @@ from fastapi import APIRouter, Body, Header, HTTPException, Response
 router = APIRouter()
 
 DEFAULT_HOSTS = {"cam1": "192.168.66.101", "cam2": "192.168.66.102", "cam3": "192.168.66.103"}
+# cam3 has its own password (and firmware 4989 may refuse the plain login anyway).
+DEFAULT_PASS_ENV = {"cam3": "/etc/replay/cam3.env:CAM3_PASS"}
 KITS_FILE = "/etc/replay/kits.json"
 TIMEOUT = 8
 
@@ -68,8 +70,9 @@ def _camera(cam):
     if not host:
         raise HTTPException(404, "unknown camera")
     password = None
-    if entry.get("passEnv"):
-        path, _, name = entry["passEnv"].partition(":")
+    pass_env = entry.get("passEnv") or DEFAULT_PASS_ENV.get(short)
+    if pass_env:
+        path, _, name = pass_env.partition(":")
         password = _env_value(path, name)
     if password is None:
         password = _env_value("/opt/replay/env", "CAM_PASS")

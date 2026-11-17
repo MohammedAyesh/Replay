@@ -98,9 +98,18 @@ export function recordingWindow(now: Date, minutes: number): { startLocal: strin
 
 // ─── Kits ────────────────────────────────────────────────────────────────────
 
-/** The kit's hidden field, which its recordings are filed under. Created once. */
+/**
+ * The field the kit's recordings are filed under. A camera that already has a field (a fixed
+ * camera taken off its pole) keeps it, so no second field ever shares a camera; a new camera
+ * gets a hidden one. Decided once.
+ */
 export async function ensureKitField(kit: CameraKit): Promise<number> {
   if (kit.fieldId) return kit.fieldId;
+  const [existing] = await db.select({ id: fieldsTable.id }).from(fieldsTable).where(eq(fieldsTable.cameraId, kit.cameraId)).orderBy(fieldsTable.id).limit(1);
+  if (existing) {
+    await db.update(cameraKitsTable).set({ fieldId: existing.id, updatedAt: new Date() }).where(eq(cameraKitsTable.id, kit.id));
+    return existing.id;
+  }
   const [field] = await db.insert(fieldsTable).values({
     name: `${kit.name} (portable)`,
     location: "",
