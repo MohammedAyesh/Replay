@@ -18,7 +18,6 @@ import { ChevronLeft, ChevronRight, Play, CheckCircle2, Video, Clock } from "luc
 import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
-import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { isStreamlessStorageUrl } from "@/lib/uhdPlayback";
 import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
@@ -739,8 +738,6 @@ export default function FieldDetail() {
         {activeVideo && (
           <ClipPlayer
             src={activeVideo.playbackUrl}
-            proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(activeVideo.playbackUrl)}`}
-            fallbackSrc={getBunnyMp4FallbackSource(activeVideo.playbackUrl)}
             defaultPlaybackQuality={isStreamlessStorageUrl(activeVideo.playbackUrl) ? "4k" : undefined}
             title={activeVideo.title}
             source={{ kind: "bunny", videoId: activeVideo.guid }}

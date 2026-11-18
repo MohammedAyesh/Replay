@@ -458,10 +458,8 @@ function AdminClipPlayer({
     ? clip.exportStatus ?? "unknown"
     : "missing";
   const isPortrait = clip.aspectRatio === "9:16" || clip.aspectRatio === "9/16";
-  // The route sends a finished export straight to Bunny's CDN; `?relay=1`
-  // is the server relay, tried once if the CDN copy does not play.
-  const [useRelay, setUseRelay] = useState(false);
-  const playbackUrl = `${basePath}/api/admin/clips/${clip.id}/playback${useRelay ? "?relay=1" : ""}`;
+  // The authorization endpoint redirects to Bunny; video bytes stay on its CDN.
+  const playbackUrl = `${basePath}/api/admin/clips/${clip.id}/playback`;
   const [playbackError, setPlaybackError] = useState(false);
 
   return (
@@ -495,14 +493,13 @@ function AdminClipPlayer({
                 </p>
               ) : (
                 <video
-                  key={`${clip.id}:${clip.exportedUrl}:${useRelay ? "relay" : "cdn"}`}
+                  key={`${clip.id}:${clip.exportedUrl}`}
                   src={playbackUrl}
                   controls
                   playsInline
                   preload="metadata"
                   onError={() => {
-                    if (!useRelay) setUseRelay(true);
-                    else setPlaybackError(true);
+                    setPlaybackError(true);
                   }}
                   className="max-h-[72vh] max-w-full rounded-lg bg-black object-contain"
                   style={{
@@ -5110,7 +5107,7 @@ function LiveJobCard({
           {playbackUrl && (
             <div className="space-y-1.5">
               <a
-                href={`${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(playbackUrl)}`}
+                href={playbackUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 text-xs text-green-400 hover:text-green-300 transition-colors font-medium"
@@ -5126,7 +5123,7 @@ function LiveJobCard({
               </button>
               {showPlayer && (
                 <HlsPlayer
-                  url={`${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(playbackUrl)}`}
+                  url={playbackUrl}
                   uhdUrl={uhdPlaybackUrlForGuid(job.videoId)}
                   hasUhdPlayback={Boolean(job.videoId)}
                   storageVideoId={job.videoId}
@@ -5781,7 +5778,7 @@ function SdPullSection({ adminPassword }: { adminPassword: string }) {
                   </div>
                   {isDone && playbackUrl && (
                     <a
-                      href={`${basePath}/api/hls-proxy/manifest?url=${encodeURIComponent(playbackUrl)}`}
+                      href={playbackUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="flex-shrink-0 flex items-center gap-1 text-xs text-green-400 hover:text-green-300 transition-colors py-1"

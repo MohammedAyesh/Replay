@@ -11,7 +11,7 @@ import {
 import {
   isStreamlessStorageVideoUrl,
   normalizeUhdVideoGuid,
-  storagePlaybackProxyUrl,
+  streamlessStoragePlaylistUrl,
   storageThumbnailProxyUrl,
 } from "../lib/uhdPlayback";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
@@ -201,23 +201,23 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
   // Owner-request footage is stored in Bunny Storage rather than Bunny Stream,
   // so it never appears in the collection API response. Include it in the same
   // archive only when its recording row is explicitly visible.
-  const storageVideos = dbRecordings
+  const storageVideos = (await Promise.all(dbRecordings
     .filter((recording) =>
       isStreamlessStorageVideoUrl(recording.videoUrl)
       && isPublicRecordingInContext(recording, dbField, context),
     )
-    .flatMap((recording) => {
+    .map(async (recording) => {
       const videoId = normalizeUhdVideoGuid(extractBunnyVideoId(recording.videoUrl));
-      const playbackUrl = storagePlaybackProxyUrl(videoId, "4k");
+      const playbackUrl = await streamlessStoragePlaylistUrl(recording.videoUrl);
       const thumbnailUrl = storageThumbnailProxyUrl(videoId);
-      if (!videoId || !playbackUrl || !thumbnailUrl) return [];
+      if (!videoId || !playbackUrl || !thumbnailUrl) return null;
 
       const durationParts = recording.duration.split(":").map(Number);
       const duration = durationParts.every(Number.isFinite)
         ? durationParts.reduce((seconds, part) => seconds * 60 + part, 0)
         : 0;
       const title = `${recording.date}_${recording.timeSlot}`;
-      return [{
+      return {
         guid: videoId,
         title,
         thumbnailUrl,
@@ -225,8 +225,8 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
         embedUrl: playbackUrl,
         views: 0,
         duration,
-      }];
-    });
+      };
+    }))).filter((video) => video !== null);
 
   const raw = isBunnyConfigured()
     ? await bunnyGet(

@@ -1,16 +1,10 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import Hls from "hls.js";
-import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
+import { directStoragePlaylistForSourceUrl, isStreamlessStorageUrl } from "@/lib/uhdPlayback";
 
-/** The stream copy through the API's proxy (Bunny Stream needs its referer). */
+/** Keep browser playback on the supplied CDN URL; API relay URLs are not playable here. */
 export function proxiedStreamUrl(videoUrl: string): string {
-  try {
-    const u = new URL(videoUrl);
-    if (u.hostname.endsWith(".b-cdn.net") && u.pathname.endsWith(".m3u8")) return `/api/hls-proxy/manifest?url=${encodeURIComponent(videoUrl)}`;
-  } catch {
-    // relative: already ours
-  }
-  return videoUrl;
+  return /\/api\/hls-proxy\//.test(videoUrl) ? "" : videoUrl;
 }
 
 /**
@@ -32,8 +26,15 @@ export function useCoachVideo(videoRef: RefObject<HTMLVideoElement | null>, vide
     let cancelled = false;
     let hls: Hls | null = null;
     let fellBack = false;
-    const stream = proxiedStreamUrl(videoUrl);
-    const uhd = uhdPlaybackUrlForStreamUrl(videoUrl);
+    const streamless = isStreamlessStorageUrl(videoUrl);
+    const stream = streamless
+      ? directStoragePlaylistForSourceUrl(videoUrl, "h264")
+        ?? directStoragePlaylistForSourceUrl(videoUrl, "4k")
+        ?? ""
+      : proxiedStreamUrl(videoUrl);
+    const fallback = streamless && stream !== directStoragePlaylistForSourceUrl(videoUrl, "4k")
+      ? directStoragePlaylistForSourceUrl(videoUrl, "4k")
+      : null;
 
     const onReady = () => {
       if (cancelled) return;
@@ -52,9 +53,9 @@ export function useCoachVideo(videoRef: RefObject<HTMLVideoElement | null>, vide
       if (cancelled) return;
       if (hls) { hls.destroy(); hls = null; }
       const fail = () => {
-        if (isUhd && !fellBack) {
+        if (!isUhd && fallback && !fellBack) {
           fellBack = true;
-          start(stream, false, video.currentTime || at);
+          start(fallback, true, video.currentTime || at);
           return;
         }
         setError("video");
@@ -73,7 +74,8 @@ export function useCoachVideo(videoRef: RefObject<HTMLVideoElement | null>, vide
     };
 
     video.addEventListener("canplay", onReady);
-    void canUseUhdPlayback(video, uhd).catch(() => false).then((ok) => start(ok && uhd ? uhd : stream, Boolean(ok && uhd), startRef.current));
+    if (stream) start(stream, false, startRef.current);
+    else setError("video");
     return () => {
       cancelled = true;
       video.removeEventListener("canplay", onReady);

@@ -68,7 +68,7 @@ describe("recorded UHD playback eligibility and fallback", () => {
     })).toBeNull();
   });
 
-  it("uses a caller-selected default quality without overriding a saved preference", () => {
+  it("keeps Storage playback on H.264 first regardless of saved quality preference", () => {
     const available = {
       preference: "4k" as const,
       hasSavedPreference: false,
@@ -78,16 +78,16 @@ describe("recorded UHD playback eligibility and fallback", () => {
       streamless: true,
       defaultQuality: "4k" as const,
     };
-    expect(chooseRecordedPlaybackStage(available)).toBe("uhd");
+    expect(chooseRecordedPlaybackStage(available)).toBe("h264");
     expect(chooseRecordedPlaybackStage({
       ...available,
       hasSavedPreference: true,
       preference: "8k",
-    })).toBe("8k");
+    })).toBe("h264");
     expect(chooseRecordedPlaybackStage({
       ...available,
       available4k: false,
-    })).toBe("8k");
+    })).toBe("h264");
   });
 
   it("offers 8K only when MediaCapabilities reports smooth native 8K decoding", async () => {
@@ -236,16 +236,16 @@ describe("recorded UHD playback eligibility and fallback", () => {
     expect(isStreamlessStorageUrl("/api/hls-proxy/manifest?url=https://vz-123.b-cdn.net/video/playlist.m3u8")).toBe(false);
   });
 
-  it("tries UHD before Stream and falls directly back to the Stream CDN stage", async () => {
+  it("does not recover a failed source by switching to a relay", async () => {
     expect(RECORDED_PLAYBACK_STAGE_ORDER).toEqual(["uhd", "cdn", "proxy", "fallback"]);
-    expect(stageAfterUhd(true, true)).toBe("cdn");
-    expect(stageAfterUhd(false, true)).toBe("proxy");
+    expect(stageAfterUhd(true, true)).toBe("h264");
+    expect(stageAfterUhd(false, true)).toBe("direct");
     expect(await decidePlaybackRecovery({
       currentStage: "uhd",
       hasCdn: true,
       hasProxy: true,
       currentRetryAttempted: false,
-    })).toEqual({ type: "switch-source", stage: "cdn" });
+    })).toEqual({ type: "retry-current" });
   });
 
   it("switches only after two separate rebuffer stalls longer than two seconds", () => {

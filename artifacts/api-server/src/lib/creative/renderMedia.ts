@@ -47,11 +47,11 @@ import { tintKey, tintPicture } from "./renderTint";
 import { Camera4kNotReadyError, waitForCamera4kSource } from "../clipExportSource";
 import { bufferCameraHlsClip, probeVideoDimensions } from "../ffmpegExport";
 import { fetchExportObject, probeExportObject } from "../backupExport";
-import { getBunnyPlaybackUrl, getBunnyProxiedPlaybackUrl, getBunnyProxiedThumbnailUrl, isBunnyConfigured } from "../bunny";
+import { getBunnyPlaybackUrl, getBunnyProxiedThumbnailUrl, getClipExportCdnUrl, isBunnyConfigured } from "../bunny";
 import {
   isStreamlessStorageVideoUrl,
-  uhdPlaybackUrl,
-  uhdPlaybackWindowUrl,
+  storageRenditionPlaylistUrl,
+  streamlessStoragePlaylistUrl,
 } from "../uhdPlayback";
 
 /**
@@ -293,19 +293,17 @@ export async function browserPlaybackSources(
   const rec = await academyRecording(access.academyId, src.recordingId);
   const videoId = videoIdOf(rec?.videoUrl);
   if (!rec || !videoId || videoId.startsWith("live:")) return null;
-  const camera4kUrl = uhdPlaybackWindowUrl(videoId, src.fromMs, src.toMs);
-  if (!camera4kUrl) return null;
-
-  const fullUrl = uhdPlaybackUrl(videoId);
   const streamless = isStreamlessStorageVideoUrl(rec.videoUrl);
-  const sources: BrowserPlaybackSource[] = [{
-    kind: "camera-4k",
-    url: camera4kUrl,
-    ...(fullUrl ? { fullUrl } : {}),
-  }];
-  if (!streamless && isBunnyConfigured()) {
-    sources.push({ kind: "stream", url: getBunnyProxiedPlaybackUrl(videoId) });
+  if (streamless) {
+    const h264Url = await streamlessStoragePlaylistUrl(storageRenditionPlaylistUrl(videoId, "h264"));
+    if (!h264Url) return null;
+    return [{ kind: "stream", url: h264Url }];
   }
+  const streamUrl = getBunnyPlaybackUrl(videoId);
+  const sources: BrowserPlaybackSource[] = [{
+    kind: "stream",
+    url: streamUrl,
+  }];
   return sources;
 }
 
@@ -348,6 +346,7 @@ export type CreativeResolvedVideoSource = {
 const STREAM_PROBE_TIMEOUT_MS = 8_000;
 const STREAM_BUFFER_TIMEOUT_MS = 20 * 60_000;
 const CREATIVE_EXPORT_DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
+const MAX_BROWSER_WINDOW_MS = 10 * 60_000;
 
 /**
  * Confirm Stream has a real media playlist and at least one retrievable
@@ -883,11 +882,9 @@ async function crestPng(look: BrandLook): Promise<Buffer> {
   return canvas.toBuffer("image/png");
 }
 
-const MAX_BROWSER_WINDOW_MS = 10 * 60_000;
-
 /**
  * A URL (or bytes) the browser can load for a scene source: an image for
- * want=still, a playable MP4 for want=video. Null is a 404.
+ * want=still, or the direct Bunny CDN media source for want=video. Null is a 404.
  */
 export async function browserMedia(
   access: AcademyOwnerAccess, src: ConcreteSource, want: "still" | "video", temps: string[], format?: CreativeFormat,
@@ -937,21 +934,13 @@ export async function browserMedia(
         if (!span || !stream) return null;
         return { redirect: getBunnyProxiedThumbnailUrl(clip.videoId, span.thumbSec ?? span.startSec) };
       }
-      const resolved = await resolveClipVideo(clip, temps, CAMERA_4K_WAIT_MS);
-      if (resolved.kind === "saved-file") return { file: resolved.path, type: "video/mp4" };
-      const start = resolved.span.startSec;
-      const end = resolved.span.endSec;
-      const to = Math.min(end, start + MAX_BROWSER_WINDOW_MS / 1000);
-      if (to <= start) return null;
-      if (resolved.kind === "camera-4k") {
-        const buffered = await bufferCamera4kWindow(resolved.source, start, to, temps);
-        return { file: buffered.bufferPath, type: "video/mp4" };
+      const savedExport = clip.exportStatus === "done" ? getClipExportCdnUrl(clip.id, clip.exportedUrl) : null;
+      if (savedExport) return { redirect: savedExport };
+      if (await clipUsesStreamlessStorage(clip)) {
+        const directUrl = await streamlessStoragePlaylistUrl(storageRenditionPlaylistUrl(clip.videoId, "h264"));
+        return directUrl ? { redirect: directUrl } : null;
       }
-      if (resolved.kind === "stream") {
-        const buffered = await bufferStreamClip(resolved.url, resolved.referer, start, to - start, temps);
-        return { file: buffered.bufferPath, type: "video/mp4" };
-      }
-      return null;
+      return { redirect: getBunnyPlaybackUrl(clip.videoId) };
     }
     case "recording":
     case "frame": {
@@ -965,10 +954,11 @@ export async function browserMedia(
       }
       const to = Math.min(src.toMs, src.fromMs + MAX_BROWSER_WINDOW_MS);
       if (to <= src.fromMs) return null;
-      const stream = await playableStream(id);
-      if (!stream) return null;
-      const buffered = await bufferStreamClip(stream.url, stream.referer, src.fromMs / 1000, (to - src.fromMs) / 1000, temps);
-      return { file: buffered.bufferPath, type: "video/mp4" };
+      if (isStreamlessStorageVideoUrl(rec.videoUrl)) {
+        const directUrl = await streamlessStoragePlaylistUrl(rec.videoUrl);
+        return directUrl ? { redirect: directUrl } : null;
+      }
+      return { redirect: getBunnyPlaybackUrl(id) };
     }
   }
 }

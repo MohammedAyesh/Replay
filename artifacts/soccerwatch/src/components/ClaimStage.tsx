@@ -434,16 +434,7 @@ function formatClock(seconds: number) {
 }
 
 function browserSafeVideoUrl(url: string | undefined) {
-  if (!url) return undefined;
-  if (url.startsWith("/api/hls-proxy/")) return url;
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
-      return `/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`;
-    }
-  } catch {
-    // Relative and non-URL sources are already handled by the existing player.
-  }
+  if (!url || /\/api\/hls-proxy\//.test(url)) return undefined;
   return url;
 }
 

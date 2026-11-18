@@ -7,7 +7,6 @@ import { useAuth } from "@/lib/auth";
 import { useFamilyMatch, useFamilyPlayerHistory, type FamilyPlayerHistory } from "@/lib/academy-matches-api";
 import { METRICS, combine, ratingsFor, type MetricKey } from "@/lib/academy-match-metrics";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
-import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { CompareBars, PlayerStatsTable, TeamStatsBars, matchValues, scoreLine } from "@/components/academy-matches/match-stats-views";
 import { cn } from "@/lib/utils";
 
@@ -154,8 +153,6 @@ export default function AcademyMatchPage() {
       {playing && data.recording?.videoUrl && <AnimatePresence>
         <ClipPlayer
           src={data.recording.videoUrl}
-          proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(data.recording.videoUrl)}`}
-          fallbackSrc={getBunnyMp4FallbackSource(data.recording.videoUrl)}
           title={`${data.academy.name} · ${title}`}
           source={{ kind: "bunny", videoId: bunnyVideoId(data.recording.videoUrl) }}
           layout="overlay"

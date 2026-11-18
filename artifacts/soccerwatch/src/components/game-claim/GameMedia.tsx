@@ -69,28 +69,8 @@ export function boxesAt(chunks: Record<number, Chunk>, k: number, lt: number): B
   return out;
 }
 
-/**
- * The playlist still goes through the proxy (it checks the viewer may see the
- * video), but `direct=1` asks for segment lines that point straight at Bunny,
- * so the video itself is not relayed through Replit. The server honours it only
- * on replayjo.com; preview hosts keep proxied segments.
- */
-function withDirectSegments(url: string): string {
-  if (!url.startsWith("/api/hls-proxy/manifest?") || /[?&]direct=1(&|$)/.test(url)) return url;
-  return `${url}&direct=1`;
-}
-
 function browserSafeVideoUrl(url: string | undefined | null): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith("/api/hls-proxy/")) return withDirectSegments(url);
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
-      return withDirectSegments(`/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`);
-    }
-  } catch {
-    // relative sources play as they are
-  }
+  if (!url || /\/api\/hls-proxy\//.test(url)) return undefined;
   return url;
 }
 

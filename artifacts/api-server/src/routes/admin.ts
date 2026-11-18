@@ -77,7 +77,7 @@ import {
 import {
   hasUhdPlaylist,
   isStreamlessStorageVideoUrl,
-  storagePlaybackProxyUrl,
+  streamlessStoragePlaylistUrl,
   storageThumbnailProxyUrl,
 } from "../lib/uhdPlayback";
 import multer from "multer";
@@ -508,7 +508,7 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
     requests.filter((request) => /^s-[0-9a-f]{32}$/i.test(request.shareToken ?? "")).map((request) => request.id),
   );
 
-  const result = rows.map((row) => {
+  const result = await Promise.all(rows.map(async (row) => {
     const thumbnailTime = row.thumbnailTime != null ? parseFloat(row.thumbnailTime) : null;
     const sourceRecording = recordings.find((recording) => recording.id === row.sourceRecordingId)
       ?? recordings.find((recording) =>
@@ -518,6 +518,9 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
     const streamlessStorage = isStreamlessStorageVideoUrl(sourceRecording?.videoUrl)
       || (row.footageRequestId !== null && streamlessRequestIds.has(row.footageRequestId));
     const storageReady = streamlessStorage && isBunnyStorageConfigured();
+    const directStoragePlayback = storageReady && sourceRecording?.videoUrl
+      ? await streamlessStoragePlaylistUrl(sourceRecording.videoUrl)
+      : null;
     return {
       id: row.id,
       recordingId,
@@ -551,14 +554,14 @@ router.get("/admin/clips", async (req, res): Promise<void> => {
       playbackUrl: isLiveVideoId(row.videoId)
         ? null
         : storageReady
-          ? storagePlaybackProxyUrl(row.videoId, "8k")
+          ? directStoragePlayback
           : !streamlessStorage && isBunnyConfigured()
             ? getBunnyProxiedPlaybackUrl(row.videoId)
             : null,
       userName: row.userName,
       userEmail: row.userEmail,
     };
-  });
+  }));
 
   res.json(result);
 });

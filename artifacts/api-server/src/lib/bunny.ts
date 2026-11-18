@@ -74,17 +74,9 @@ export function getBunnyThumbnailUrl(videoId: string, time?: number | null): str
   return time != null ? `${base}?time=${Math.floor(time)}` : base;
 }
 
-/**
- * Playback URL routed through the server-side HLS proxy.
- * Bunny CDN blocks direct browser requests (403) unless the Referer matches
- * the CDN hostname — a constraint the browser cannot satisfy on its own.
- * The HLS proxy (/api/hls-proxy/manifest) adds the correct Referer and
- * rewrites every segment URL so the entire stream stays proxied.
- * Use this for any URL that will be handed to a browser <video> element.
- * Use getBunnyPlaybackUrl() (raw CDN URL) only for server-side FFmpeg calls.
- */
+/** Kept for existing callsites; browser playback stays on Bunny's CDN. */
 export function getBunnyProxiedPlaybackUrl(videoId: string): string {
-  return `/api/hls-proxy/manifest?url=${encodeURIComponent(getBunnyPlaybackUrl(videoId))}`;
+  return getBunnyPlaybackUrl(videoId);
 }
 
 /**

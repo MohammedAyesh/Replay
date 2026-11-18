@@ -23,7 +23,7 @@ import { interpolatePitchPosition } from "./pitchModel";
 import { kitDistance, type ClaimedPart, type Lab } from "./matchPlay";
 import type { PersonalMoment } from "./personalMoments";
 import type { ReviewedGoal } from "./goalReview";
-import { isStreamlessStorageVideoUrl, storagePlaybackProxyUrl } from "./uhdPlayback";
+import { isStreamlessStorageVideoUrl, storageRenditionPlaylistUrl } from "./uhdPlayback";
 
 export const CHECK = {
   /**
@@ -188,18 +188,15 @@ export function applyCuts<T extends ClaimedPart>(parts: readonly T[], cuts: read
   return out;
 }
 
-/** A Bunny Stream playlist goes through the API's HLS proxy (the pull zone wants a Referer); anything else plays as it is. */
+/** Return the recording's CDN URL for browser playback; never relay video through the API. */
 export function browserVideoUrl(videoUrl: string): string {
   try {
     const parsed = new URL(videoUrl);
     if (isStreamlessStorageVideoUrl(videoUrl)) {
       const match = parsed.pathname.match(/\/vod\/((?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}))\/(8k|4k|h264)\.m3u8$/i);
       if (match) {
-        return storagePlaybackProxyUrl(match[1], "h264") ?? videoUrl;
+        return storageRenditionPlaylistUrl(match[1], "h264");
       }
-    }
-    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
-      return `/api/hls-proxy/manifest?url=${encodeURIComponent(videoUrl)}`;
     }
   } catch {
     // a relative source plays as it is

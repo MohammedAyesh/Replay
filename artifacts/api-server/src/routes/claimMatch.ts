@@ -65,7 +65,7 @@ import {
 import { getBunnyProxiedPlaybackUrl } from "../lib/bunny";
 import { logger } from "../lib/logger";
 import { extractBunnyVideoId } from "../lib/publicFootage";
-import { uhdPlaybackUrl } from "../lib/uhdPlayback";
+import { isStreamlessStorageVideoUrl, streamlessStoragePlaylistUrl } from "../lib/uhdPlayback";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import {
@@ -1095,19 +1095,13 @@ function recordingIdFromRequest(value: string | string[]): number | null {
   return id;
 }
 
-function toRecording(
+async function toRecording(
   recording: typeof recordingsTable.$inferSelect,
   fieldName: string | null,
 ) {
-  let clientVideoUrl = recording.videoUrl;
-  try {
-    const parsed = new URL(recording.videoUrl);
-    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) {
-      clientVideoUrl = `/api/hls-proxy/manifest?url=${encodeURIComponent(recording.videoUrl)}`;
-    }
-  } catch {
-    // Non-URL sources (for example an internal MP4) are already browser-safe.
-  }
+  const clientVideoUrl = isStreamlessStorageVideoUrl(recording.videoUrl)
+    ? await streamlessStoragePlaylistUrl(recording.videoUrl)
+    : recording.videoUrl;
   return {
     id: recording.id,
     fieldId: recording.fieldId,
@@ -1116,8 +1110,9 @@ function toRecording(
     timeSlot: recording.timeSlot,
     duration: recording.duration,
     score: recording.score ?? null,
-    videoUrl: clientVideoUrl,
-    uhdPlaybackUrl: uhdPlaybackUrl(extractBunnyVideoId(recording.videoUrl)),
+    videoUrl: clientVideoUrl ?? recording.videoUrl,
+    // The direct source is already H.264, or 4K only when H.264 is missing.
+    uhdPlaybackUrl: null,
     highlightMoment: recording.highlightMoment ?? null,
     fieldName,
   };
@@ -2333,7 +2328,7 @@ router.get("/recordings/:id/claim-match", async (req, res): Promise<void> => {
 
   res.json(GetClaimMatchResponse.parse({
     identitiesFingerprint: identitiesFingerprint(manifest.identities),
-    recording: toRecording(row.recording, row.fieldName ?? null),
+    recording: await toRecording(row.recording, row.fieldName ?? null),
     // Bundles uploaded before videoStartSeconds existed have no value for it.
     // Default to 0 rather than failing the response, but that default is a
     // guess and it is almost always wrong on a recording longer than the

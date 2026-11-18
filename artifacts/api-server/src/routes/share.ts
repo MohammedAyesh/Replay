@@ -39,15 +39,14 @@ import {
 } from "../lib/posterFrame";
 import {
   getStoragePlaylist,
-  getUhdPlaylist,
   normalizeUhdVideoGuid,
-  rewriteStoragePlaylist,
-  rewriteUhdPlaylist,
   storageRenditionMediaUrl,
   STORAGE_RENDITIONS,
   type StorageRendition,
   isStreamlessStorageVideoUrl,
   storageH264Or4kSource,
+  storageRenditionPlaylistUrl,
+  streamlessStoragePlaylistUrl,
   uhdMediaUrl,
 } from "../lib/uhdPlayback";
 import {
@@ -98,6 +97,8 @@ type OwnerShareRow = typeof footageRequestsTable.$inferSelect;
 export type OwnerShareMeta = {
   token: string;
   streamless: boolean;
+  playbackUrl: string | null;
+  directStoragePlayback: { fourKUrl: string; h264Url: string } | null;
   fieldName: string;
   startLocal: string;
   endLocal: string;
@@ -276,9 +277,22 @@ async function ownerShareMeta(share: OwnerShareRow & { fieldName: string }): Pro
     .where(eq(varMarksTable.footageRequestId, share.id))
     .orderBy(asc(varMarksTable.atUtc), asc(varMarksTable.id));
   const startInstant = ammanLocalInstant(share.startLocal);
+  const streamless = isStreamlessShare(share);
+  const storageGuid = streamless ? normalizeUhdVideoGuid(share.videoId) : null;
+  const directStoragePlayback = storageGuid
+    ? {
+      fourKUrl: storageRenditionPlaylistUrl(storageGuid, "4k"),
+      h264Url: storageRenditionPlaylistUrl(storageGuid, "h264"),
+    }
+    : null;
+  const playbackUrl = streamless
+    ? directStoragePlayback ? await streamlessStoragePlaylistUrl(directStoragePlayback.h264Url) : null
+    : getBunnyPlaybackUrl(share.videoId!);
   return {
     token: share.shareToken!,
-    streamless: isStreamlessShare(share),
+    streamless,
+    playbackUrl,
+    directStoragePlayback,
     fieldName: share.fieldName,
     startLocal: share.startLocal,
     endLocal: share.endLocal,
@@ -671,17 +685,26 @@ function ownerShareHtml(
     try {
       const response = await fetch(url, { credentials: "include", cache: "no-store" });
       const available = response.ok;
+      if (!available) console.warn("[owner-share] Direct CDN playlist rejected", { url: response.url || url, status: response.status });
       try { await response.body?.cancel(); } catch {}
       return available;
-    } catch { return false; }
+    } catch (error) {
+      console.warn("[owner-share] Direct CDN playlist request failed", { url, status: null, error: String(error) });
+      return false;
+    }
   };
   const fallbackStage = (stage) => {
-    if (stage === "8k" && availableUhd && smooth4k) return "uhd";
-    if ((stage === "8k" || stage === "uhd") && availableH264 && smoothH264) return "hd";
+    if (streamless && stage === "hd" && availableUhd && smooth4k) return "uhd";
+    if (!streamless && stage === "8k" && availableUhd && smooth4k) return "uhd";
+    if (!streamless && (stage === "8k" || stage === "uhd") && availableH264 && smoothH264) return "hd";
     if (stage === "hd" && !streamless) return "cdn";
     return streamless ? null : "cdn";
   };
   const setQualityButton = () => {
+    if (streamless) {
+      qualityButton.style.display = "none";
+      return;
+    }
     const options = [
       ...(available8k && smooth8k ? ["8k"] : []),
       ...(availableUhd && smooth4k ? ["uhd"] : []),
@@ -730,6 +753,13 @@ function ownerShareHtml(
       const instance = hls;
       instance.on(window.Hls.Events.ERROR, (_event, data) => {
         const details = String(data.details ?? "");
+        if (data.fatal) {
+          console.error("[owner-share] Direct CDN playback failed", {
+            url: data.frag?.url ?? data.url ?? source,
+            status: data.response?.code ?? null,
+            details,
+          });
+        }
         if (instance !== hls || (sourceStage !== "uhd" && sourceStage !== "8k" && sourceStage !== "hd")
           || (!data.fatal && details !== "bufferAddCodecError" && details !== "bufferIncompatibleCodecsError")) return;
         const next = fallbackStage(sourceStage);
@@ -759,6 +789,7 @@ function ownerShareHtml(
     setQualityButton();
   };
   qualityButton.addEventListener("click", () => {
+    if (streamless) return;
     const options = [
       ...(available8k && smooth8k ? ["8k"] : []),
       ...(availableUhd && smooth4k ? ["uhd"] : []),
@@ -806,23 +837,13 @@ function ownerShareHtml(
   video.addEventListener("pause", recoverUhdStall);
   void (async () => {
     if (streamless) {
-      [availableUhd, available8k, availableH264] = await Promise.all([
+      [availableUhd, availableH264] = await Promise.all([
         playlistAvailable(uhdManifest),
-        playlistAvailable(eightKManifest),
         playlistAvailable(h264Manifest),
       ]);
-      [smooth8k, smoothH264] = await Promise.all([canDecode8k(), canDecodeH264()]);
+      smoothH264 = await canDecodeH264();
       smooth4k = availableUhd && await canDecodeUhd();
-      const saved = savedPreference();
-      const stage = saved === "stream" && !streamless ? "cdn"
-        : saved === "8k" && available8k && smooth8k ? "8k"
-        : saved === "4k" && smooth4k ? "uhd"
-        : saved === "hd" && availableH264 && smoothH264 ? "hd"
-        : available8k && smooth8k ? "8k"
-        : smooth4k ? "uhd"
-        : availableH264 && smoothH264 ? "hd"
-        : !streamless ? "cdn"
-        : null;
+      const stage = availableH264 && smoothH264 ? "hd" : smooth4k ? "uhd" : null;
       setQualityButton();
       if (stage) startSource(stage);
       else {
@@ -1099,37 +1120,18 @@ router.get(["/w/:token/manifest.m3u8", "/api/w/:token/manifest.m3u8"], async (re
     return;
   }
   if (isStreamlessShare(share)) {
-    for (const rendition of ["8k", "4k", "h264"] as const) {
-      try {
-        const playlist = await getStoragePlaylist(share.videoId!, rendition);
-        if (!playlist) continue;
-        res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-        res.setHeader("Cache-Control", "no-store");
-        res.send(rewriteStoragePlaylist(playlist, rendition, `/w/${token}/${rendition}.mp4`));
-        return;
-      } catch (error) {
-        req.log?.warn({ err: error, rendition }, "Owner-share Storage playlist fetch failed");
-      }
+    const source = await storageH264Or4kSource(share.videoId!);
+    if (!source) {
+      res.status(404).type("text/plain").send("The recording is still processing");
+      return;
     }
-    res.status(404).type("text/plain").send("The recording is still processing");
+    res.redirect(302, source.url);
     return;
   }
-  const rawUrl = getBunnyPlaybackUrl(share.videoId!);
-  const response = await fetch(rawUrl, {
-    headers: { Referer: `https://${new URL(rawUrl).hostname}/` },
-    signal: AbortSignal.timeout(30_000),
-  }).catch(() => null);
-  if (!response?.ok) {
-    res.status(404).type("text/plain").send("Not found");
-    return;
-  }
-  const manifest = await response.text();
-  res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-  res.setHeader("Cache-Control", "no-store");
-  res.send(rewriteOwnerManifest(token, manifest, rawUrl, ownerShareDirect(req)));
+  res.redirect(302, getBunnyPlaybackUrl(share.videoId!));
 });
 
-for (const rendition of ["8k", "h264"] as const) {
+for (const rendition of ["h264"] as const) {
   router.get([`/w/:token/${rendition}.m3u8`, `/api/w/:token/${rendition}.m3u8`], async (req, res): Promise<void> => {
     const token = String(req.params.token ?? "");
     const share = await resolveOwnerShare(token);
@@ -1137,19 +1139,7 @@ for (const rendition of ["8k", "h264"] as const) {
       res.status(404).type("text/plain").send("Not found");
       return;
     }
-    try {
-      const playlist = await getStoragePlaylist(share.videoId!, rendition);
-      if (!playlist) {
-        res.status(404).type("text/plain").send("Not found");
-        return;
-      }
-      res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-      res.setHeader("Cache-Control", "no-store");
-      res.send(rewriteStoragePlaylist(playlist, rendition, `/w/${token}/${rendition}.mp4`));
-    } catch (error) {
-      req.log?.warn({ err: error, rendition }, "Owner-share Storage playlist fetch failed");
-      res.status(502).type("text/plain").send("Not found");
-    }
+    res.redirect(302, storageRenditionPlaylistUrl(share.videoId!, rendition));
   });
 }
 
@@ -1160,22 +1150,10 @@ router.get(["/w/:token/4k.m3u8", "/api/w/:token/4k.m3u8"], async (req, res): Pro
     res.status(404).type("text/plain").send("Not found");
     return;
   }
-  try {
-    const playlist = await getUhdPlaylist(share.videoId!);
-    if (playlist === null) {
-      res.status(404).type("text/plain").send("Not found");
-      return;
-    }
-    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-    res.setHeader("Cache-Control", "no-store");
-    res.send(rewriteStoragePlaylist(playlist, "4k", `/w/${token}/4k.mp4`));
-  } catch (error) {
-    req.log?.warn({ err: error }, "Owner-share 4K playlist fetch failed");
-    res.status(502).type("text/plain").send("Not found");
-  }
+  res.redirect(302, storageRenditionPlaylistUrl(share.videoId!, "4k"));
 });
 
-for (const rendition of ["8k", "h264"] as const) {
+for (const rendition of ["h264"] as const) {
   router.get([`/w/:token/${rendition}.mp4`, `/api/w/:token/${rendition}.mp4`], async (req, res): Promise<void> => {
     const token = String(req.params.token ?? "");
     const share = await resolveOwnerShare(token);
@@ -1184,13 +1162,7 @@ for (const rendition of ["8k", "h264"] as const) {
       res.status(404).type("text/plain").send("Not found");
       return;
     }
-    await proxyOwnerShareStorageMedia(
-      req,
-      res,
-      share,
-      storageRenditionMediaUrl(guid, rendition),
-      "video/mp4",
-    );
+    res.redirect(302, storageRenditionMediaUrl(guid, rendition));
   });
 }
 
@@ -1209,7 +1181,7 @@ router.get(["/w/:token/4k.mp4", "/api/w/:token/4k.mp4"], async (req, res): Promi
     res.status(404).type("text/plain").send("Not found");
     return;
   }
-  await proxyOwnerShareStorageMedia(req, res, share, mediaUrl, "video/mp4");
+  res.redirect(302, mediaUrl);
 });
 
 router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceId"], async (req, res): Promise<void> => {
@@ -1530,7 +1502,7 @@ router.get(
       return;
     }
 
-    await proxyStorageObject(req, res, storagePath, "video/mp4", 0, "private, no-store");
+    res.redirect(302, `${storagePullZoneBase()}/${storagePath}`);
   },
 );
 

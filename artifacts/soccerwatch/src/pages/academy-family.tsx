@@ -17,7 +17,6 @@ import { useFamilyMatches } from "@/lib/academy-matches-api";
 import { useMatchesCopy } from "@/i18n/matches-strings";
 import { AcademyLiveOverlay } from "@/components/academy-console/AcademyLiveOverlay";
 import { formatAmmanClock, useAcademyLiveStatus } from "@/components/academy-console/use-academy-live-status";
-import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
 import { nextFamilyClaimKey } from "@/lib/academy-family-claim";
 import { getRecordingViewInput } from "@/lib/recording-view-tracking";
 import { useRecordingViewTracking } from "@/lib/use-recording-view-tracking";
@@ -591,8 +590,6 @@ export default function AcademyFamilyPage({ source = "token" }: { source?: "toke
       {playing && <AnimatePresence>
         <ClipPlayer
           src={playing.recording.videoUrl}
-          proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(playing.recording.videoUrl)}`}
-          fallbackSrc={getBunnyMp4FallbackSource(playing.recording.videoUrl)}
           title={`${family?.academy.name ?? "Academy"} · ${playing.location} · ${playing.recording.date} ${playing.recording.timeSlot}`}
           source={{ kind: "bunny", videoId: extractBunnyVideoId(playing.recording.videoUrl) }}
           layout="overlay"

@@ -76,8 +76,7 @@ import {
   isStreamlessStorageUrl,
   hasSavedPlaybackPreference,
   readUhdPlaybackPreference,
-  storagePlaybackUrlForSource,
-  uhdPlaybackUrlForSource,
+  directStoragePlaylistForSourceUrl,
   writeUhdPlaybackPreference,
 } from "@/lib/uhdPlayback";
 import {
@@ -344,20 +343,17 @@ export function ClipPlayer({
     isStreamlessStorageUrl(src)
     || (source.kind === "ownerShare" && source.token.startsWith("s-"))
   );
-  const storageBackedSource = !isLive && (source.kind === "bunny" || source.kind === "ownerShare");
-  const uhdSrc = isLive ? null : storageBackedSource
-    ? directStoragePlayback?.fourKUrl ?? storagePlaybackUrlForSource(source, "4k", isLive)
-    : suppliedUhdPlaybackUrl ?? uhdPlaybackUrlForSource(source, isLive);
-  // The camera's 8K original plays straight from the Storage pull zone when it exists and the
-  // phone decodes it smoothly; Bunny Stream stays the alternate for recordings that have one.
-  const eightKSrc = storageBackedSource && !directStoragePlayback
-    ? storagePlaybackUrlForSource(source, "8k", isLive)
-    : null;
-  const h264Src = storageBackedSource
-    ? directStoragePlayback?.h264Url ?? storagePlaybackUrlForSource(source, "h264", isLive)
+  const uhdSrc = isLive ? null
+    : directStoragePlayback?.fourKUrl
+      ?? directStoragePlaylistForSourceUrl(src, "4k")
+      ?? (source.kind === "ownerShare" && !streamlessStorage ? suppliedUhdPlaybackUrl : null);
+  // Customer-facing Storage playback is H.264 first; the original 8K source is never selected.
+  const eightKSrc = null;
+  const h264Src = !isLive
+    ? directStoragePlayback?.h264Url ?? directStoragePlaylistForSourceUrl(src, "h264")
     : null;
   const wantsStorageCheck = !isLive && Boolean(uhdSrc || eightKSrc || h264Src);
-  const streamSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
+  const streamSourceStage = initialPlaybackSourceStage({ isLive, src });
   const [initialSourceStage] = useState<PlaybackSourceStage>(() =>
     streamlessStorage || wantsStorageCheck
       ? "checking"
@@ -611,7 +607,7 @@ export function ClipPlayer({
   }, [sourceKey]);
   const isLiveDvr = Boolean(liveDvr);
   const maxLiveClipSeconds = Math.max(1, Math.min(600, liveDvr?.maxDurationSeconds ?? 600));
-  const cdnSrc = cdnPlaybackSource({ isLive, proxySrc, src });
+  const cdnSrc = cdnPlaybackSource({ isLive, src });
   const activeSrc = sourceStage === "fallback"
     ? fallbackSrc ?? src
     : sourceStage === "8k"
@@ -621,9 +617,9 @@ export function ClipPlayer({
     : sourceStage === "h264"
       ? h264Src ?? src
     : sourceStage === "cdn"
-      ? cdnSrc ?? proxySrc ?? src
+      ? cdnSrc ?? src
       : sourceStage === "proxy"
-        ? proxySrc ?? src
+        ? src
         : sourceStage === "checking" ? "" : src;
   const usingFallback = sourceStage === "fallback";
 
@@ -728,7 +724,7 @@ export function ClipPlayer({
     setPlaybackDiagnostic(null);
     setIsPlaying(false);
     setStorageOnlyUnavailable(false);
-  }, [isLive, proxySrc, setPlaybackSourceStage, src, streamSourceStage, streamlessStorage, uhdSrc]);
+  }, [isLive, setPlaybackSourceStage, src, streamSourceStage, streamlessStorage, uhdSrc]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.playbackRate = playbackRate;
@@ -1069,6 +1065,11 @@ export function ClipPlayer({
           startStartupTimer();
           return;
         }
+        if (currentStage === "h264" && uhdAvailable) {
+          preservePosition();
+          setPlaybackSourceStage("uhd");
+          return;
+        }
         showPlaybackError();
         return;
       }
@@ -1092,7 +1093,7 @@ export function ClipPlayer({
         const decision = await decidePlaybackRecovery({
           currentStage,
           hasCdn: Boolean(cdnSrc),
-          hasProxy: Boolean(proxySrc && proxySrc !== src),
+          hasProxy: false,
           fallbackSrc,
           currentRetryAttempted: currentSourceRetryRef.current,
         });
@@ -1372,6 +1373,8 @@ export function ClipPlayer({
           details: data.details,
           reason: data.reason,
           responseCode: data.response?.code,
+          playlistUrl: activeSrc,
+          requestUrl: data.frag?.url ?? data.url,
           responseText: typeof data.response?.text === "string"
             ? data.response.text.slice(0, 300)
             : undefined,

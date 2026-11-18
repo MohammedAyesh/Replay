@@ -129,7 +129,7 @@ describe("ClipPlayer playback recovery", () => {
     watchdog.dispose();
   });
 
-  it("switches a failed direct source to the proxy and preserves its playhead", async () => {
+  it("retries the direct source without switching to an API relay", async () => {
     const decision = await decidePlaybackRecovery({
       currentStage: "direct",
       hasProxy: true,
@@ -138,47 +138,46 @@ describe("ClipPlayer playback recovery", () => {
       isFallbackAvailable: vi.fn(),
     });
 
-    expect(decision).toEqual({ type: "switch-source", stage: "proxy" });
+    expect(decision).toEqual({ type: "retry-current" });
     expect(playbackPositionForRestore(2_530, 2_520)).toBe(2_530);
     expect(playbackPositionForRestore(0, 2_530)).toBe(2_530);
     expect(clampPlaybackPosition(2_530, 3_600)).toBe(2_530);
   });
 
-  it("starts archived playback on the CDN-segment playlist", () => {
+  it("starts archived playback on its direct CDN playlist", () => {
     const options = {
       isLive: false,
       proxySrc: "/api/hls-proxy/manifest?url=encoded",
       src: "https://cdn.example.test/playlist.m3u8",
     };
-    expect(initialPlaybackSourceStage(options)).toBe("cdn");
-    expect(cdnPlaybackSource(options)).toBe("/api/hls-proxy/manifest?url=encoded&direct=1");
+    expect(initialPlaybackSourceStage(options)).toBe("direct");
+    expect(cdnPlaybackSource(options)).toBe("https://cdn.example.test/playlist.m3u8");
   });
 
-  it("starts an owner share link on its CDN-segment playlist", () => {
-    const options = { isLive: false, src: "/w/abc123/manifest.m3u8" };
-    expect(initialPlaybackSourceStage(options)).toBe("cdn");
-    expect(cdnPlaybackSource(options)).toBe("/w/abc123/manifest.m3u8?direct=1");
+  it("rejects API relay sources instead of loading them as video", () => {
+    const options = { isLive: false, src: "/api/hls-proxy/manifest?url=encoded" };
+    expect(initialPlaybackSourceStage(options)).toBe("direct");
+    expect(cdnPlaybackSource(options)).toBeNull();
   });
 
   it("keeps a proxy-less, non-app source on it as before", () => {
     expect(initialPlaybackSourceStage({ isLive: false, src: "https://cdn.example.test/a.m3u8" })).toBe("direct");
   });
 
-  it("drops a failed CDN source to the relayed playlist without retrying it", async () => {
+  it("retries a failed CDN source and never switches to the relayed playlist", async () => {
     expect(await decidePlaybackRecovery({
       currentStage: "cdn",
       hasProxy: true,
       fallbackSrc: "/api/hls-proxy/mp4?url=x",
       currentRetryAttempted: false,
       isFallbackAvailable: vi.fn(),
-    })).toEqual({ type: "switch-source", stage: "proxy" });
-    // A share link has no separate proxy: its plain playlist is `src`.
+    })).toEqual({ type: "retry-current" });
     expect(await decidePlaybackRecovery({
       currentStage: "cdn",
       hasProxy: false,
       currentRetryAttempted: false,
       isFallbackAvailable: vi.fn(),
-    })).toEqual({ type: "switch-source", stage: "direct" });
+    })).toEqual({ type: "retry-current" });
   });
 
   it("keeps live playback on its live source", () => {
@@ -246,12 +245,12 @@ describe("ClipPlayer playback recovery", () => {
     })).resolves.toEqual({ type: "error" });
   });
 
-  it("tries the MP4 fallback only after the proxied HLS source has been retried", async () => {
+  it("rejects an API MP4 relay and allows a direct CDN MP4 fallback", async () => {
     const isFallbackAvailable = vi.fn(async () => true);
     const options = {
       currentStage: "proxy" as const,
       hasProxy: true,
-      fallbackSrc: "/api/hls-proxy/segment?url=encoded",
+      fallbackSrc: "https://cdn.example.test/clip.mp4",
       isFallbackAvailable,
     };
 
@@ -266,5 +265,15 @@ describe("ClipPlayer playback recovery", () => {
       currentRetryAttempted: true,
     })).resolves.toEqual({ type: "switch-source", stage: "fallback" });
     expect(isFallbackAvailable).toHaveBeenCalledTimes(1);
+
+    const relayProbe = vi.fn(async () => true);
+    await expect(decidePlaybackRecovery({
+      currentStage: "proxy",
+      hasProxy: true,
+      fallbackSrc: "/api/hls-proxy/segment?url=encoded",
+      currentRetryAttempted: true,
+      isFallbackAvailable: relayProbe,
+    })).resolves.toEqual({ type: "error" });
+    expect(relayProbe).not.toHaveBeenCalled();
   });
 });

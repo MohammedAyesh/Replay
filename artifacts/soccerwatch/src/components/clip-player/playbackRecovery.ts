@@ -1,10 +1,7 @@
-import { canPlayDirect, withDirectSegments } from "@/lib/directSegments";
-
 /**
- * Where the player is reading from, in the order it tries them:
- * "cdn" (the app's playlist with segments straight from Bunny), then "proxy"
- * (the same playlist with every segment relayed), then "fallback" (the MP4).
- * "direct" is the bare `src`, used for live and for players given no proxy.
+ * Recorded media plays from the supplied CDN URL. Proxy and API media-relay
+ * stages remain in the union for compatibility with stored player state, but
+ * recovery never switches to them.
  */
 export type PlaybackSourceStage = "checking" | "8k" | "uhd" | "h264" | "cdn" | "direct" | "proxy" | "fallback";
 
@@ -28,8 +25,8 @@ export function cdnPlaybackSource(options: {
   src?: string;
 }): string | null {
   if (options.isLive) return null;
-  const playlist = options.proxySrc ?? options.src;
-  return playlist && canPlayDirect(playlist) ? withDirectSegments(playlist) : null;
+  const playlist = options.src;
+  return playlist && !/\/api\/hls-proxy\//.test(playlist) ? playlist : null;
 }
 
 export function initialPlaybackSourceStage(options: {
@@ -37,10 +34,7 @@ export function initialPlaybackSourceStage(options: {
   proxySrc?: string;
   src?: string;
 }): PlaybackSourceStage {
-  if (cdnPlaybackSource(options)) return "cdn";
-  return !options.isLive && Boolean(options.proxySrc && options.proxySrc !== options.src)
-    ? "proxy"
-    : "direct";
+  return "direct";
 }
 
 export function summarizeFatalHlsError(error: {
@@ -67,29 +61,20 @@ export async function decidePlaybackRecovery(options: {
   currentRetryAttempted: boolean;
   isFallbackAvailable?: (url: string) => Promise<boolean>;
 }): Promise<RecoveryDecision> {
-  // A failure in the original HEVC file silently falls back to the first
-  // Stream stage. It does not spend a retry on a source the browser failed.
-  if (options.currentStage === "uhd") {
-    return { type: "switch-source", stage: options.hasCdn ? "cdn" : options.hasProxy ? "proxy" : "direct" };
-  }
   if (options.currentStage === "checking") return { type: "retry-current" };
 
-  // A CDN failure (Referer refused, a CORS or network fault) goes straight to
-  // the relayed playlist, with no retry of the CDN first.
-  if (options.currentStage === "cdn") {
-    return { type: "switch-source", stage: options.hasProxy ? "proxy" : "direct" };
-  }
-  if (options.currentStage === "direct" && options.hasProxy) {
-    return { type: "switch-source", stage: "proxy" };
-  }
-
-  // Give the active HLS source one short retry before falling through to the
-  // progressive MP4. A switch to the fallback begins a fresh per-source retry.
   if (!options.currentRetryAttempted) {
     return { type: "retry-current" };
   }
 
-  if (options.currentStage !== "fallback" && options.fallbackSrc) {
+  // A fallback is acceptable only when the caller supplied a public CDN URL,
+  // never a Replit/API relay.
+  if (
+    options.currentStage !== "fallback"
+    && options.fallbackSrc
+    && /^https?:\/\//i.test(options.fallbackSrc)
+    && !/\/api\/hls-proxy\//i.test(options.fallbackSrc)
+  ) {
     const probe = options.isFallbackAvailable ?? isFallbackSourceAvailable;
     if (await probe(options.fallbackSrc)) {
       return { type: "switch-source", stage: "fallback" };

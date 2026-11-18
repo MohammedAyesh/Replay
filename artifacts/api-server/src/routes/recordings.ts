@@ -40,6 +40,8 @@ import {
   hasUhdPlaylist,
   isStreamlessStorageVideoUrl,
   normalizeUhdVideoGuid,
+  streamlessStoragePlaylistUrl,
+  storageRenditionPlaylistUrl,
   storagePlaybackProxyUrl,
   storageThumbnailProxyUrl,
   uhdPlaybackUrl,
@@ -197,10 +199,11 @@ router.get("/admin/owner-recordings", async (req, res): Promise<void> => {
     ))
     .orderBy(desc(footageRequestsTable.readyAt), desc(footageRequestsTable.createdAt));
 
-  const response = rows.flatMap(({ request, fieldName }) => {
+  const response = (await Promise.all(rows.map(async ({ request, fieldName }) => {
     if (!/^s-[a-f0-9]{32}$/i.test(request.shareToken ?? "")) return [];
     const videoId = normalizeUhdVideoGuid(request.videoId);
     if (!videoId) return [];
+    const playbackUrl = await streamlessStoragePlaylistUrl(storageRenditionPlaylistUrl(videoId, "h264"));
     return [{
       id: request.id,
       fieldId: request.fieldId,
@@ -212,9 +215,9 @@ router.get("/admin/owner-recordings", async (req, res): Promise<void> => {
       readyAt: request.readyAt?.toISOString() ?? null,
       videoId,
       thumbnailUrl: storageThumbnailProxyUrl(videoId),
-      playbackUrl: storagePlaybackProxyUrl(videoId, "4k"),
+      playbackUrl: playbackUrl ?? "",
     }];
-  });
+  }))).flat();
 
   res.json(ListAdminOwnerRecordingsResponse.parse(response));
 });
@@ -489,16 +492,14 @@ router.get("/demo/media", async (req, res): Promise<void> => {
     .orderBy(desc(clipsTable.id))
     .limit(8);
 
-  const toDemoMedia = (source: string, preferredVideoId?: string | null) => {
+  const toDemoMedia = async (source: string, preferredVideoId?: string | null) => {
     let videoId = preferredVideoId ?? null;
     if (isStreamlessStorageVideoUrl(source)) {
       videoId ??= extractBunnyVideoId(source);
-      const rendition = new URL(source).pathname.match(/\/(8k|4k|h264)\.m3u8$/i)?.[1]?.toLowerCase() as "8k" | "4k" | "h264" | undefined;
+      const directUrl = await streamlessStoragePlaylistUrl(source);
       return {
-        src: videoId && rendition && isBunnyStorageConfigured()
-          ? storagePlaybackProxyUrl(videoId, rendition) ?? source
-          : source,
-        rawSrc: source,
+        src: directUrl ?? "",
+        rawSrc: directUrl ?? "",
         poster: videoId && isBunnyStorageConfigured() ? storageThumbnailProxyUrl(videoId) : null,
       };
     }
@@ -526,20 +527,20 @@ router.get("/demo/media", async (req, res): Promise<void> => {
   const first = safeRows[0];
   const panorama = {
     id: first.recording.id,
-    ...toDemoMedia(first.recording.videoUrl),
+    ...await toDemoMedia(first.recording.videoUrl),
     date: first.recording.date,
     timeSlot: first.recording.timeSlot,
   };
 
-  const clips = clipRows.flatMap((clip) => {
+  const clipResults = await Promise.all(clipRows.map(async (clip) => {
     const sourceRecording = safeRecordingById.get(clip.recordingId);
-    if (!sourceRecording) return [];
+    if (!sourceRecording) return null;
     const hasDedicatedPlayback = Boolean(clip.bunnyPlaybackUrl || clip.bunnyVideoId);
-    const media = toDemoMedia(
+    const media = await toDemoMedia(
       clip.bunnyPlaybackUrl ?? sourceRecording.recording.videoUrl,
       clip.bunnyVideoId,
     );
-    return [{
+    return {
       id: clip.id,
       title: clip.momentLabel,
       ...media,
@@ -549,8 +550,9 @@ router.get("/demo/media", async (req, res): Promise<void> => {
       endTime: Number(clip.endTime),
       playbackStartTime: hasDedicatedPlayback ? undefined : Number(clip.startTime),
       playbackEndTime: hasDedicatedPlayback ? undefined : Number(clip.endTime),
-    }];
-  });
+    };
+  }));
+  const clips = clipResults.filter((clip) => clip !== null);
 
   res.json({ panorama, clips });
 });

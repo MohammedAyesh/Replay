@@ -199,12 +199,7 @@ function pickMime(): string | null {
 }
 
 function browserSafeVideoUrl(url: string | null | undefined): string | undefined {
-  if (!url) return undefined;
-  if (url.startsWith("/api/hls-proxy/")) return url;
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname.endsWith(".b-cdn.net") && parsed.pathname.endsWith(".m3u8")) return `/api/hls-proxy/manifest?url=${encodeURIComponent(url)}`;
-  } catch { /* relative */ }
+  if (!url || /\/api\/hls-proxy\//.test(url)) return undefined;
   return url;
 }
 

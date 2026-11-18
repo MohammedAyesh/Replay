@@ -184,7 +184,7 @@ describe("POST …/creative/playback-telemetry", () => {
 describe("GET …/creative/media for plates and tints", () => {
   const plate = (n = 1) => encodeURIComponent(JSON.stringify({ type: "artwork", key: `bg/broadcast/${n}` }));
 
-  it("returns owner-scoped HLS source choices for a recording moment", async () => {
+  it("returns owner-scoped direct CDN HLS sources for a recording moment", async () => {
     const videoId = "123e4567-e89b-12d3-a456-426614174000";
     const [recording] = await db.insert(recordingsTable).values({
       fieldId,
@@ -207,12 +207,15 @@ describe("GET …/creative/media for plates and tints", () => {
       .set(auth(ownerId))
       .expect(200);
 
-    expect(response.body.sources[0]).toEqual({
-      kind: "camera-4k",
-      url: `/api/hls-proxy/uhd/${videoId}.m3u8?fromMs=2700000&toMs=2715000`,
-      fullUrl: `/api/hls-proxy/uhd/${videoId}.m3u8`,
-    });
-    expect(response.body.sources.every((item: { url: string }) => item.url.startsWith("/api/hls-proxy/"))).toBe(true);
+    expect(response.body.sources).toHaveLength(1);
+    expect(response.body.sources[0].kind).toBe("stream");
+    expect(response.body.sources[0].url).toMatch(/^https:\/\/.+\.b-cdn\.net\/.+\/playlist\.m3u8$/);
+    expect(response.body.sources.every((item: { url: string }) => item.url.startsWith("https://"))).toBe(true);
+    const directPreview = await request(app)
+      .get(url(`/media?src=${source}&want=video`))
+      .set(auth(ownerId))
+      .expect(302);
+    expect(directPreview.headers.location).toMatch(/^https:\/\/.+\.b-cdn\.net\/.+\/playlist\.m3u8$/);
     expect((await request(app).get(url(`/media?src=${source}&want=video&sources=1`)).set(auth(coachId))).status).toBe(403);
   });
 

@@ -22,6 +22,8 @@ import { cn } from "@/lib/utils";
 export type OwnerShareMeta = {
   token: string;
   streamless?: boolean;
+  playbackUrl?: string | null;
+  directStoragePlayback?: { fourKUrl: string; h264Url: string } | null;
   fieldName: string;
   startLocal: string;
   endLocal: string;
@@ -134,6 +136,7 @@ export default function OwnerShare() {
   // the viewer's touches, passes, shots and dribbles, on the seek bar and listed.
   const moments = useMatchMoments(matchCode, flags, isArabic);
   const activeRoomStoragePlayback = roomStoragePlayback?.roomCode === matchCode ? roomStoragePlayback : null;
+  const directStoragePlayback = activeRoomStoragePlayback ?? meta?.directStoragePlayback ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -344,9 +347,8 @@ export default function OwnerShare() {
           </div>
         ) : (
           <ClipPlayer
-            src={activeRoomStoragePlayback?.fourKUrl ?? `/w/${token}/manifest.m3u8`}
-            directStoragePlayback={activeRoomStoragePlayback ?? undefined}
-            defaultPlaybackQuality={activeRoomStoragePlayback ? "4k" : undefined}
+            src={directStoragePlayback?.h264Url ?? meta?.playbackUrl ?? `/w/${token}/manifest.m3u8`}
+            directStoragePlayback={directStoragePlayback ?? undefined}
             title={meta.fieldName}
             source={{ kind: "ownerShare", token }}
             layout="inline"

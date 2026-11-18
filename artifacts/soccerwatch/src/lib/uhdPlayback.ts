@@ -20,6 +20,14 @@ export function chooseRecordedPlaybackStage(options: {
     streamless,
   } = options;
 
+  // Storage recordings are always direct H.264 first; 4K is only the missing-H.264 fallback.
+  // Never select the 8K original for customer-facing playback.
+  if (streamless) {
+    if (availableH264) return "h264";
+    if (available4k) return "uhd";
+    return null;
+  }
+
   if (hasSavedPreference && preference === "8k" && available8k) return "8k";
   if (hasSavedPreference && preference === "4k" && available4k) return "uhd";
   if (hasSavedPreference && preference === "hd" && availableH264) return "h264";
@@ -127,6 +135,25 @@ export function storagePlaybackUrlForGuid(
   }
   if (rendition === "4k") return uhdPlaybackUrlForGuid(guid);
   return `/api/hls-proxy/storage/${encodeURIComponent(guid)}/${rendition}.m3u8`;
+}
+
+/** Replace a Storage playlist rendition while preserving its CDN host and path prefix. */
+export function directStoragePlaylistForSourceUrl(
+  sourceUrl: string | null | undefined,
+  rendition: "4k" | "h264",
+): string | null {
+  if (!sourceUrl) return null;
+  try {
+    const parsed = new URL(sourceUrl, typeof window === "undefined" ? "https://replayjo.com" : window.location.origin);
+    const match = parsed.pathname.match(/^(.*\/vod\/(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})\/)(?:8k|4k|h264)\.m3u8$/i);
+    if (!match) return null;
+    parsed.pathname = `${match[1]}${rendition}.m3u8`;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
 }
 
 export function uhdPlaybackUrlForGuid(videoGuid: string | null | undefined): string | null {
@@ -379,9 +406,8 @@ export function createUhdStallGuard(options: {
   };
 }
 
-export const RECORDED_PLAYBACK_STAGE_ORDER = ["uhd", "cdn", "proxy", "fallback"] as const;
+export const RECORDED_PLAYBACK_STAGE_ORDER = ["h264", "uhd", "direct"] as const;
 
-export function stageAfterUhd(hasCdn: boolean, hasProxy: boolean): "cdn" | "proxy" | "direct" {
-  if (hasCdn) return "cdn";
-  return hasProxy ? "proxy" : "direct";
+export function stageAfterUhd(hasH264: boolean, _hasProxy: boolean): "h264" | "direct" {
+  return hasH264 ? "h264" : "direct";
 }

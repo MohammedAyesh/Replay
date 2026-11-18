@@ -82,6 +82,12 @@ export const ReelVideo = memo(function ReelVideo({
         hls = new Hls({ enableWorker: true, maxBufferLength: 20, startPosition: from });
         capPlaybackQuality(hls);
         hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) console.error("[ReelVideo] Direct CDN playback failed", {
+            playlistUrl: src,
+            requestUrl: data.frag?.url ?? data.url,
+            status: data.response?.code ?? null,
+            details: data.details,
+          });
           if (data.fatal && !gone) report.current?.(card.id, "failed");
         });
         hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(src));

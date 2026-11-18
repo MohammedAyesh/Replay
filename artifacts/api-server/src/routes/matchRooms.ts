@@ -72,18 +72,17 @@ import {
 import { setGoalVote } from "../lib/goalReview";
 import { loadRecordingPlay } from "../lib/matchPlayLoad";
 import { browserVideoUrl } from "../lib/checkDeck";
+import { isStreamlessStorageVideoUrl, streamlessStoragePlaylistUrl } from "../lib/uhdPlayback";
 import { REEL, reelCards, reelWindow, type ReelPlay, type ReelRecording } from "../lib/goalReel";
-import { reelClip, reelClipOnBunny, storedReelClip } from "../lib/goalReelClip";
 import { momentReelCards, type MomentInput } from "../lib/momentReel";
 import { parseRecordingDuration } from "./userClips";
-import { MOMENT_TILES, TILE_RECIPE, TILE_SECONDS, momentPiece, momentTiles, pieceAt, tileFocus, tileInPiece, tileWindow, type MomentPiece } from "../lib/momentTiles";
+import { MOMENT_TILES, TILE_SECONDS, momentPiece, momentTiles, pieceAt, tileFocus, tileInPiece, tileWindow, type MomentPiece } from "../lib/momentTiles";
 import { resyncChainClaimsForRecording } from "./claimChain";
 import { matchStats, matchReplay, queueUncachedRecentMatchStats, recordingsForRoom, type FieldRecordingCache } from "../lib/matchFeed";
 import { buildMatchCompetition, cachedCompetitionSummariesForUser, invalidateMatchStatsCacheForRecording, playerMatchForm } from "../lib/matchStatsCache";
 import { canViewMatchPlayerRows } from "../lib/matchStatsRules";
 import { loadStatTiles } from "../lib/homeStatTileLoad";
 import { freeMatchStatus } from "../lib/freeMatch";
-import { isStreamlessStorageVideoUrl, streamlessStoragePlaylistUrl } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 6 * 1024 * 1024 } });
@@ -761,13 +760,15 @@ router.get("/m/:code/goals/reel", async (req, res): Promise<void> => {
       const play = await loadRecordingPlay(row.id);
       if (!play) continue;
       plays.set(row.id, { manifest: play.manifest, ball: play.sidecars.flatMap((sc) => sc?.ball ?? []) });
-      recordings.push({ recordingId: row.id, videoUrl: browserVideoUrl(row.videoUrl), srcW: play.manifest.width, srcH: play.manifest.height });
+      const directUrl = isStreamlessStorageVideoUrl(row.videoUrl)
+        ? await streamlessStoragePlaylistUrl(row.videoUrl)
+        : browserVideoUrl(row.videoUrl);
+      if (directUrl) recordings.push({ recordingId: row.id, videoUrl: directUrl, srcW: play.manifest.width, srcH: play.manifest.height });
     }
     const cards = reelCards(replay.review, plays);
     const raw = new Map(rows.map((row) => [row.id, row.videoUrl]));
-    // Resolve one direct H.264/4K playlist per streamless recording. Those
-    // cards stay as time windows on the original CDN source; only Bunny Stream
-    // recordings use the cut-once-and-store path below.
+    // Resolve one direct H.264/4K playlist per Storage recording. Every card
+    // remains a seek window on the original CDN recording; no cuts are made.
     const streamlessSources = new Map<number, Promise<string | null>>();
     for (const card of cards) {
       const videoUrl = raw.get(card.recordingId);
@@ -775,30 +776,18 @@ router.get("/m/:code/goals/reel", async (req, res): Promise<void> => {
         streamlessSources.set(card.recordingId, streamlessStoragePlaylistUrl(videoUrl));
       }
     }
-    const stored = await Promise.all(cards.map(async (card) => {
+    const clips = await Promise.all(cards.map(async (card) => {
       const videoUrl = raw.get(card.recordingId);
       if (!videoUrl) return null;
-      if (isStreamlessStorageVideoUrl(videoUrl)) {
-        const url = await streamlessSources.get(card.recordingId);
-        return url ? { status: "ready" as const, type: "hls" as const, url, offset: 0, start: card.start, end: card.end } : null;
-      }
-      return storedReelClip(card.recordingId, videoUrl, card.start, card.end);
+      const url = isStreamlessStorageVideoUrl(videoUrl)
+        ? await streamlessSources.get(card.recordingId)
+        : browserVideoUrl(videoUrl);
+      return url ? { url, offset: 0, type: "hls" as const, start: card.start, end: card.end } : null;
     }));
     res.json({
       recordings,
-      cards: cards.map((card, k) => ({ ...card, clip: stored[k] })),
+      cards: cards.map((card, k) => ({ ...card, clip: clips[k] })),
       open: replay.review.filter((g) => g.status === "open").length,
-    });
-    // The page fetches this list as soon as the button shows, so cut every
-    // card that is not on Bunny yet, in reel order: the first ones are there by
-    // the time the reel opens, and the rest stay ahead of a quick thumb (one
-    // tap a second outran on-demand cuts on 1 Nov). These queue behind any
-    // card a page is waiting for (goalReelClip.ts). Each is cut once, ever.
-    cards.forEach((card, k) => {
-      const videoUrl = raw.get(card.recordingId);
-      if (videoUrl && !isStreamlessStorageVideoUrl(videoUrl) && !stored[k]) {
-        void reelClipOnBunny(card.recordingId, videoUrl, card.start, card.end, { ahead: true }).catch(() => { /* the page asks again */ });
-      }
     });
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "goal reel failed");
@@ -852,55 +841,16 @@ async function reelClipRequest(req: Request, res: Response): Promise<{ ctx: Room
 router.get("/m/:code/goals/reel/clip", async (req, res): Promise<void> => {
   const found = await reelClipRequest(req, res);
   if (!found) return;
-  const { ctx, recordingId, key, videoUrl, win } = found;
-  try {
-    if (isStreamlessStorageVideoUrl(videoUrl)) {
-      const url = await streamlessStoragePlaylistUrl(videoUrl);
-      if (!url) {
-        res.status(503).json({ status: "unavailable", error: "No H.264 or 4K playlist is available" });
-        return;
-      }
-      res.setHeader("Cache-Control", "private, max-age=60");
-      res.json({ status: "ready", type: "hls", url, offset: 0, start: win.start, end: win.end });
-      return;
-    }
-    const onBunny = await reelClipOnBunny(recordingId, videoUrl, win.start, win.end);
-    if (onBunny) {
-      res.setHeader("Cache-Control", "private, max-age=3600");
-      res.json(onBunny);
-      return;
-    }
-    res.json({
-      url: `/api/m/${encodeURIComponent(ctx.room.code)}/goals/reel/clip/file?recordingId=${recordingId}&key=${key}`,
-      offset: win.start,
-    });
-  } catch (error) {
-    logger.warn({ code: ctx.room.code, recordingId, key, err: error }, "goal reel clip failed");
-    res.status(502).json({ error: "Could not cut the clip" });
-  }
-});
-
-/** The card's MP4 from this server's disk: only where Bunny Storage is not set up. */
-router.get("/m/:code/goals/reel/clip/file", async (req, res): Promise<void> => {
-  const found = await reelClipRequest(req, res);
-  if (!found) return;
-  const { ctx, recordingId, key, videoUrl, win } = found;
-  if (isStreamlessStorageVideoUrl(videoUrl)) {
-    res.status(409).json({ error: "Streamless Storage clips play directly from their source playlist" });
+  const { videoUrl, win } = found;
+  const url = isStreamlessStorageVideoUrl(videoUrl)
+    ? await streamlessStoragePlaylistUrl(videoUrl)
+    : browserVideoUrl(videoUrl);
+  if (!url) {
+    res.status(503).json({ error: "No direct CDN playlist is available for this recording" });
     return;
   }
-  try {
-    const clip = await reelClip(videoUrl, win.start, win.end);
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.setHeader("X-Clip-Offset", clip.offset.toFixed(3));
-    res.sendFile(clip.path, (error) => {
-      if (error && !res.headersSent) res.status(500).json({ error: "Could not send the clip" });
-    });
-  } catch (error) {
-    logger.warn({ code: ctx.room.code, recordingId, key, err: error }, "goal reel clip file failed");
-    res.status(502).json({ error: "Could not cut the clip" });
-  }
+  res.setHeader("Cache-Control", "private, max-age=60");
+  res.json({ url, offset: 0, type: "hls", start: win.start, end: win.end });
 });
 
 /**
@@ -966,30 +916,22 @@ router.get("/m/:code/moments/reel", async (req, res): Promise<void> => {
         streamlessSources.set(card.recordingId, streamlessStoragePlaylistUrl(videoUrl));
       }
     }
-    const stored = await Promise.all(cards.map(async (card) => {
+    const clips = await Promise.all(cards.map(async (card) => {
       const videoUrl = videoUrls.get(card.recordingId);
       if (!videoUrl) return null;
-      if (isStreamlessStorageVideoUrl(videoUrl)) {
-        const url = await streamlessSources.get(card.recordingId);
-        return url ? { status: "ready" as const, type: "hls" as const, url, offset: 0, start: card.start, end: card.end } : null;
-      }
-      return storedReelClip(card.recordingId, videoUrl, card.start, card.end);
+      const url = isStreamlessStorageVideoUrl(videoUrl)
+        ? await streamlessSources.get(card.recordingId)
+        : browserVideoUrl(videoUrl);
+      return url ? { url, offset: 0, type: "hls" as const, start: card.start, end: card.end } : null;
     }));
-    res.json({ recordings, cards: cards.map((card, k) => ({ ...card, clip: stored[k] })) });
-    // cut the rest now, in order, so they are on Bunny before he gets to them
-    cards.forEach((card, k) => {
-      const videoUrl = videoUrls.get(card.recordingId);
-      if (videoUrl && !isStreamlessStorageVideoUrl(videoUrl) && !stored[k]) {
-        void reelClipOnBunny(card.recordingId, videoUrl, card.start, card.end, { ahead: true }).catch(() => { /* the page asks again */ });
-      }
-    });
+    res.json({ recordings, cards: cards.map((card, k) => ({ ...card, clip: clips[k] })) });
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "moment reel failed");
     res.status(500).json({ error: "Could not build your moments" });
   }
 });
 
-/** GET /m/:code/moments/reel/clip?recordingId=&momentId= -- { url, offset } of one of his moment cards, on Bunny's CDN. */
+/** GET /m/:code/moments/reel/clip?recordingId=&momentId= -- direct CDN playlist and seek window. */
 router.get("/m/:code/moments/reel/clip", async (req, res): Promise<void> => {
   const ctx = await loadOr404(req, res);
   if (!ctx) return;
@@ -1009,58 +951,18 @@ router.get("/m/:code/moments/reel/clip", async (req, res): Promise<void> => {
       res.status(404).json({ error: "That moment is not yours in this match" });
       return;
     }
-    if (isStreamlessStorageVideoUrl(videoUrl)) {
-      const url = await streamlessStoragePlaylistUrl(videoUrl);
-      if (!url) {
-        res.status(503).json({ status: "unavailable", error: "No H.264 or 4K playlist is available" });
-        return;
-      }
-      res.setHeader("Cache-Control", "private, max-age=60");
-      res.json({ status: "ready", type: "hls", url, offset: 0, start: card.start, end: card.end });
+    const url = isStreamlessStorageVideoUrl(videoUrl)
+      ? await streamlessStoragePlaylistUrl(videoUrl)
+      : browserVideoUrl(videoUrl);
+    if (!url) {
+      res.status(503).json({ error: "No direct CDN playlist is available for this recording" });
       return;
     }
-    const onBunny = await reelClipOnBunny(recordingId, videoUrl, card.start, card.end);
-    if (!onBunny) {
-      // development, without Bunny Storage: the cut comes from this server's disk
-      res.json({ url: `/api/m/${encodeURIComponent(ctx.room.code)}/moments/reel/clip/file?recordingId=${recordingId}&momentId=${encodeURIComponent(momentId)}`, offset: card.start });
-      return;
-    }
-    res.setHeader("Cache-Control", "private, max-age=3600");
-    res.json(onBunny);
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.json({ url, offset: 0, type: "hls", start: card.start, end: card.end });
   } catch (error) {
     logger.warn({ code: ctx.room.code, recordingId, momentId, err: error }, "moment reel clip failed");
-    res.status(502).json({ error: "Could not cut the clip" });
-  }
-});
-
-router.get("/m/:code/moments/reel/clip/file", async (req, res): Promise<void> => {
-  const ctx = await loadOr404(req, res);
-  if (!ctx) return;
-  const user = await requirePlayer(req, res);
-  if (!user) return;
-  const recordingId = Number(req.query.recordingId);
-  const momentId = typeof req.query.momentId === "string" ? req.query.momentId : "";
-  try {
-    const { cards, videoUrls } = await momentReelFor(ctx, user.id);
-    const card = cards.find((c) => c.recordingId === recordingId && c.momentId === momentId);
-    const videoUrl = videoUrls.get(recordingId);
-    if (!card || !videoUrl) {
-      res.status(404).json({ error: "That moment is not yours in this match" });
-      return;
-    }
-    if (isStreamlessStorageVideoUrl(videoUrl)) {
-      res.status(409).json({ error: "Streamless Storage clips play directly from their source playlist" });
-      return;
-    }
-    const clip = await reelClip(videoUrl, card.start, card.end);
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.sendFile(clip.path, (error) => {
-      if (error && !res.headersSent) res.status(500).json({ error: "Could not send the clip" });
-    });
-  } catch (error) {
-    logger.warn({ code: ctx.room.code, recordingId, momentId, err: error }, "moment reel clip file failed");
-    res.status(502).json({ error: "Could not cut the clip" });
+    res.status(502).json({ error: "Could not resolve the direct CDN playlist" });
   }
 });
 
@@ -1170,18 +1072,12 @@ router.post("/m/:code/moments/footage", async (req, res): Promise<void> => {
     const byId = new Map(sources.map((s) => [s.piece.recordingId, s]));
     const pieces = sources.map((s) => s.piece);
     const reach = new Map<string, { source: MomentSource; k: number }>();
-    const core: Array<{ source: MomentSource; k: number }> = [];
-    const coreSeen = new Set<string>();
     for (const at of body.data.at) {
       const piece = pieceAt(pieces, at);
       const source = piece ? byId.get(piece.recordingId) : undefined;
       if (!piece || !source) continue;
       const t = momentTiles(piece, at);
       for (const k of t.reach) reach.set(`${piece.recordingId}:${k}`, { source, k });
-      for (const k of t.core) {
-        const id = `${piece.recordingId}:${k}`;
-        if (!coreSeen.has(id)) { coreSeen.add(id); core.push({ source, k }); }
-      }
     }
     const tiles: Record<string, { url: string | null; focus: ReturnType<typeof tileFocus>; type?: "hls"; offset?: number; start?: number; end?: number }> = {};
     const streamlessSources = new Map<number, Promise<string | null>>();
@@ -1192,27 +1088,17 @@ router.post("/m/:code/moments/footage", async (req, res): Promise<void> => {
     }
     await Promise.all([...reach.entries()].map(async ([id, { source, k }]) => {
       const w = tileWindow(k);
-      if (isStreamlessStorageVideoUrl(source.videoUrl)) {
-        const url = await streamlessSources.get(source.piece.recordingId);
-        tiles[id] = {
-          url: url ?? null,
-          focus: tileFocus(source.ball, source.manifest, k, source.manifest.videoStartSeconds ?? 0),
-          ...(url ? { type: "hls", offset: 0, start: w.start, end: w.end } : {}),
-        };
-        return;
-      }
-      const stored = await storedReelClip(source.piece.recordingId, source.videoUrl, w.start, w.end, TILE_RECIPE);
-      tiles[id] = { url: stored?.url ?? null, focus: tileFocus(source.ball, source.manifest, k, source.manifest.videoStartSeconds ?? 0) };
+      const url = isStreamlessStorageVideoUrl(source.videoUrl)
+        ? await streamlessSources.get(source.piece.recordingId)
+        : browserVideoUrl(source.videoUrl);
+      tiles[id] = {
+        url: url ?? null,
+        focus: tileFocus(source.ball, source.manifest, k, source.manifest.videoStartSeconds ?? 0),
+        ...(url ? { type: "hls", offset: 0, start: w.start, end: w.end } : {}),
+      };
     }));
     res.setHeader("Cache-Control", "private, max-age=60");
     res.json({ tileSeconds: TILE_SECONDS, lead: MOMENT_TILES.lead, pieces, tiles });
-    // Cut each moment's opening tiles ahead, in the tab's order, behind any tile a page is waiting for.
-    for (const { source, k } of core) {
-      if (tiles[`${source.piece.recordingId}:${k}`]?.url) continue;
-      if (isStreamlessStorageVideoUrl(source.videoUrl)) continue;
-      const w = tileWindow(k);
-      void reelClipOnBunny(source.piece.recordingId, source.videoUrl, w.start, w.end, { ahead: true, ...TILE_RECIPE }).catch(() => { /* the popup asks again */ });
-    }
   } catch (error) {
     logger.error({ code: ctx.room.code, err: error }, "moment footage failed");
     res.status(500).json({ error: "Could not load the match footage" });
@@ -1237,10 +1123,8 @@ async function momentTileRequest(req: Request, res: Response): Promise<{ ctx: Ro
 }
 
 /**
- * GET /m/:code/moments/tile?recordingId=&k= -- one tile: { url, offset, focus }.
- * Cut now if it has not been (a page is waiting, so it goes first), stored on
- * Bunny, and played from Bunny's edge. Without Bunny Storage (development) the
- * url is .../tile/file, served from this server's disk.
+ * GET /m/:code/moments/tile?recordingId=&k= -- direct CDN playlist and
+ * source-time window, with a focus path for the player.
  */
 router.get("/m/:code/moments/tile", async (req, res): Promise<void> => {
   const found = await momentTileRequest(req, res);
@@ -1249,48 +1133,18 @@ router.get("/m/:code/moments/tile", async (req, res): Promise<void> => {
   const w = tileWindow(k);
   const focus = tileFocus(source.ball, source.manifest, k, source.manifest.videoStartSeconds ?? 0);
   try {
-    if (isStreamlessStorageVideoUrl(source.videoUrl)) {
-      const url = await streamlessStoragePlaylistUrl(source.videoUrl);
-      if (!url) {
-        res.status(503).json({ error: "No H.264 or 4K playlist is available" });
-        return;
-      }
-      res.setHeader("Cache-Control", "private, max-age=60");
-      res.json({ url, type: "hls", offset: 0, start: w.start, end: w.end, focus });
+    const url = isStreamlessStorageVideoUrl(source.videoUrl)
+      ? await streamlessStoragePlaylistUrl(source.videoUrl)
+      : browserVideoUrl(source.videoUrl);
+    if (!url) {
+      res.status(503).json({ error: "No direct CDN playlist is available for this recording" });
       return;
     }
-    const onBunny = await reelClipOnBunny(source.piece.recordingId, source.videoUrl, w.start, w.end, TILE_RECIPE);
-    res.setHeader("Cache-Control", "private, max-age=3600");
-    res.json(onBunny
-      ? { url: onBunny.url, offset: onBunny.offset, focus }
-      : { url: `/api/m/${encodeURIComponent(ctx.room.code)}/moments/tile/file?recordingId=${source.piece.recordingId}&k=${k}`, offset: w.start, focus });
+    res.setHeader("Cache-Control", "private, max-age=60");
+    res.json({ url, type: "hls", offset: 0, start: w.start, end: w.end, focus });
   } catch (error) {
     logger.warn({ code: ctx.room.code, recordingId: source.piece.recordingId, k, err: error }, "moment tile failed");
-    res.status(502).json({ error: "Could not cut the footage" });
-  }
-});
-
-/** A tile's MP4 from this server's disk: only where Bunny Storage is not set up. */
-router.get("/m/:code/moments/tile/file", async (req, res): Promise<void> => {
-  const found = await momentTileRequest(req, res);
-  if (!found) return;
-  const { ctx, source, k } = found;
-  const w = tileWindow(k);
-  if (isStreamlessStorageVideoUrl(source.videoUrl)) {
-    res.status(409).json({ error: "Streamless Storage tiles play directly from their source playlist" });
-    return;
-  }
-  try {
-    const clip = await reelClip(source.videoUrl, w.start, w.end, TILE_RECIPE);
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Cache-Control", "private, max-age=86400");
-    res.setHeader("X-Clip-Offset", clip.offset.toFixed(3));
-    res.sendFile(clip.path, (error) => {
-      if (error && !res.headersSent) res.status(500).json({ error: "Could not send the footage" });
-    });
-  } catch (error) {
-    logger.warn({ code: ctx.room.code, recordingId: source.piece.recordingId, k, err: error }, "moment tile file failed");
-    res.status(502).json({ error: "Could not cut the footage" });
+    res.status(502).json({ error: "Could not resolve the direct CDN playlist" });
   }
 });
 

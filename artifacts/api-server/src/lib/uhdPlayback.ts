@@ -39,7 +39,7 @@ export function normalizeUhdVideoGuid(value: string | null | undefined): string 
 
 export function uhdPlaybackUrl(videoGuid: string | null | undefined): string | null {
   const guid = normalizeUhdVideoGuid(videoGuid);
-  return guid ? `/api/hls-proxy/uhd/${encodeURIComponent(guid)}.m3u8` : null;
+  return guid ? storageRenditionPlaylistUrl(guid, "4k") : null;
 }
 
 export function storagePlaybackUrl(
@@ -48,8 +48,7 @@ export function storagePlaybackUrl(
 ): string | null {
   const guid = normalizeUhdVideoGuid(videoGuid);
   if (!guid) return null;
-  if (rendition === "4k") return uhdPlaybackUrl(guid);
-  return `/api/hls-proxy/storage/${encodeURIComponent(guid)}/${rendition}.m3u8`;
+  return storageRenditionPlaylistUrl(guid, rendition);
 }
 
 export function storagePlaybackProxyUrl(
@@ -58,8 +57,7 @@ export function storagePlaybackProxyUrl(
 ): string | null {
   const guid = normalizeUhdVideoGuid(videoGuid);
   if (!guid) return null;
-  if (rendition === "4k") return uhdPlaybackUrl(guid);
-  return `/api/hls-proxy/storage/${encodeURIComponent(guid)}/${rendition}.m3u8`;
+  return storageRenditionPlaylistUrl(guid, rendition);
 }
 
 export function storageThumbnailProxyUrl(videoGuid: string | null | undefined): string | null {

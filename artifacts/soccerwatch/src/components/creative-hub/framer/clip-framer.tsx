@@ -86,16 +86,27 @@ function parsePlaybackSources(value: unknown): CreativePlaybackSource[] {
     if (
       (source.kind !== "camera-4k" && source.kind !== "stream")
       || typeof source.url !== "string"
-      || !source.url.startsWith("/api/hls-proxy/")
+      || !isDirectPlaybackUrl(source.url)
     ) return [];
     return [{
       kind: source.kind,
       url: source.url,
-      ...(typeof source.fullUrl === "string" && source.fullUrl.startsWith("/api/hls-proxy/uhd/")
+      ...(typeof source.fullUrl === "string" && isDirectPlaybackUrl(source.fullUrl)
         ? { fullUrl: source.fullUrl }
         : {}),
     }];
   });
+}
+
+function isDirectPlaybackUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:"
+      && url.hostname.endsWith(".b-cdn.net")
+      && url.pathname.endsWith(".m3u8");
+  } catch {
+    return false;
+  }
 }
 
 const clock = (ms: number) => {

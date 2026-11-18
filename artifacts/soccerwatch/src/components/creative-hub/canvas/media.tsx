@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Film, ImageIcon } from "lucide-react";
+import Hls from "hls.js";
 import { framingWindow, type BallTrailSample, type SceneLayer } from "@workspace/api-zod";
 import { BallTrailOverlay } from "@/components/clip-player/BallTrailOverlay";
 import { framedVideoStyle } from "@/lib/creative-framing";
@@ -71,6 +72,36 @@ export function VideoView({ layer, url, timeMs, playing, blurPx = 0, trail = nul
   );
 
   useEffect(() => {
+    const video = ref.current;
+    if (!video || !url) return;
+    let hls: Hls | null = null;
+    const isHls = /\.m3u8(?:$|[?#])/i.test(url);
+    if (isHls && Hls.isSupported()) {
+      hls = new Hls({ enableWorker: true, startPosition: -1 });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal) return;
+        console.error("[CreativeVideoView] Direct CDN playback failed", {
+          playlistUrl: url,
+          requestUrl: data.frag?.url ?? data.url,
+          status: data.response?.code ?? null,
+          details: data.details,
+        });
+        setFailed(url);
+      });
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(url));
+    } else {
+      video.src = url;
+    }
+    return () => {
+      hls?.destroy();
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [url]);
+
+  useEffect(() => {
     const v = ref.current;
     if (!v || !url) return;
     const at = sourceTimeAt(parts, timeMs - (layer.startMs ?? 0));
@@ -113,7 +144,7 @@ export function VideoView({ layer, url, timeMs, playing, blurPx = 0, trail = nul
   if (!url || failed === url) return <MediaPlaceholder layer={layer} />;
   return (
     <div className="absolute inset-0 overflow-hidden" style={blurPx > 0 ? { filter: `blur(${blurPx}px)` } : undefined}>
-      <video ref={ref} src={url} muted={layer.muted || !playing} playsInline preload="auto" disablePictureInPicture
+      <video ref={ref} muted={layer.muted || !playing} playsInline preload="auto" disablePictureInPicture
         onError={() => setFailed(url)}
         onLoadedMetadata={(e) => {
           const d = e.currentTarget.duration;

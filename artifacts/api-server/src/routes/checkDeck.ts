@@ -42,6 +42,7 @@ import { momentChecksFor, saveMomentCheck } from "../lib/momentChecks";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { resyncChainClaimsForRecording } from "./claimChain";
 import { logger } from "../lib/logger";
+import { isStreamlessStorageVideoUrl, streamlessStoragePlaylistUrl } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 
@@ -82,9 +83,14 @@ router.get("/recordings/:id/claim-match/check-deck", async (req, res): Promise<v
   try {
     const [recording] = await db.select().from(recordingsTable).where(eq(recordingsTable.id, ctx.recordingId));
     const deck = await deckState(ctx);
+    const directVideoUrl = recording
+      ? isStreamlessStorageVideoUrl(recording.videoUrl)
+        ? await streamlessStoragePlaylistUrl(recording.videoUrl)
+        : browserVideoUrl(recording.videoUrl)
+      : null;
     const base = {
       recordingId: ctx.recordingId,
-      videoUrl: recording ? browserVideoUrl(recording.videoUrl) : null,
+      videoUrl: directVideoUrl,
       srcW: ctx.manifest.width,
       srcH: ctx.manifest.height,
       videoStartSeconds: ctx.manifest.videoStartSeconds ?? 0,

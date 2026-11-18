@@ -246,6 +246,12 @@ function Stage({ code, footage, moments, index, onPrev, onNext, onClose }: {
         capPlaybackQuality(hls);
         hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(file.url));
         hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal) console.error("[MomentPlayer] Direct CDN playback failed", {
+            playlistUrl: file.url,
+            requestUrl: data.frag?.url ?? data.url,
+            status: data.response?.code ?? null,
+            details: data.details,
+          });
           if (data.fatal && activeRef.current === id) setFailed(true);
         });
         hls.attachMedia(el);
