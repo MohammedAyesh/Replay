@@ -34,7 +34,9 @@ import {
   isBunnyConfigured,
   isBunnyStorageConfigured,
 } from "../lib/bunny";
+import { courtFromCamera } from "../lib/liveAnalysis";
 import {
+  hasStoragePlaylist,
   hasUhdPlaylist,
   isStreamlessStorageVideoUrl,
   normalizeUhdVideoGuid,
@@ -125,19 +127,51 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
     )
     .orderBy(desc(recordingsTable.createdAt));
 
+  const ownerRequests = await db.select({
+    id: footageRequestsTable.id,
+    videoId: footageRequestsTable.videoId,
+    cameraId: footageRequestsTable.cameraId,
+    startLocal: footageRequestsTable.startLocal,
+    shareToken: footageRequestsTable.shareToken,
+  }).from(footageRequestsTable)
+    .where(and(
+      isNull(footageRequestsTable.academyId),
+      inArray(footageRequestsTable.status, ["ready", "partial"]),
+      isNotNull(footageRequestsTable.videoId),
+    ));
+  const ownerTitlesByVideoId = new Map<string, string>();
+  for (const ownerRequest of ownerRequests) {
+    if (!/^s-[a-f0-9]{32}$/i.test(ownerRequest.shareToken ?? "") || !ownerRequest.videoId) continue;
+    ownerTitlesByVideoId.set(
+      ownerRequest.videoId.toLowerCase(),
+      `${courtFromCamera(ownerRequest.cameraId)}_owner-${ownerRequest.id}_${ownerRequest.startLocal.trim().replace(/\s+/g, "_")}`,
+    );
+  }
+
   const response: Array<ReturnType<typeof toAdminRecording> & {
     uhdPlaybackUrl: string | null;
     hasUhdPlayback: boolean;
+    has8kPlayback: boolean;
+    ownerBookingTitle: string | null;
   }> = [];
   for (let offset = 0; offset < rows.length; offset += 8) {
     const batch = await Promise.all(rows.slice(offset, offset + 8).map(async ({
       recording, fieldName, hasTrackingBundle, trackingManifest,
     }) => {
       const videoId = extractBunnyVideoId(recording.videoUrl ?? "");
+      const streamlessStorage = isStreamlessStorageVideoUrl(recording.videoUrl);
+      const [hasUhdPlayback, has8kPlayback] = videoId
+        ? await Promise.all([
+          hasUhdPlaylist(videoId),
+          streamlessStorage ? hasStoragePlaylist(videoId, "8k") : Promise.resolve(false),
+        ])
+        : [false, false];
       return {
         ...toAdminRecording(recording, fieldName ?? null, hasTrackingBundle !== null, trackingManifest),
         uhdPlaybackUrl: uhdPlaybackUrl(videoId),
-        hasUhdPlayback: videoId ? await hasUhdPlaylist(videoId) : false,
+        hasUhdPlayback,
+        has8kPlayback,
+        ownerBookingTitle: videoId ? ownerTitlesByVideoId.get(videoId.toLowerCase()) ?? null : null,
       };
     }));
     response.push(...batch);

@@ -10,8 +10,9 @@ import {
   footageRequestsTable,
   varMarksTable,
   usersTable,
+  recordingsTable,
 } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, like } from "drizzle-orm";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserRecord: vi.fn(),
@@ -36,6 +37,7 @@ let fieldBId: number;
 let requestIds: number[] = [];
 let paymentIds: number[] = [];
 let realFetch: typeof fetch;
+let completedVideoId = "video-owner-test";
 let availableHours = Array.from({ length: 24 }, (_, hour) => ({ hour }));
 let availabilityByDate = new Map<string, Array<{ hour: number }>>();
 let recordPostUrls: string[] = [];
@@ -184,7 +186,7 @@ beforeAll(async () => {
     if (url.includes("/record-hq/")) {
       return jsonResponse({
         status: "done",
-        videoId: "video-owner-test",
+        videoId: url.includes("/job-owner-test") ? completedVideoId : "video-owner-test",
         updatedAt: "2026-09-21T12:00:00.000Z",
       });
     }
@@ -198,6 +200,7 @@ beforeEach(() => {
   recordPostUrls = [];
   varUrls = [];
   abortedSegment = false;
+  completedVideoId = "video-owner-test";
   mockedGetLocalUserRecord.mockResolvedValue({
     id: ownerId,
     isGuest: false,
@@ -213,6 +216,7 @@ afterAll(async () => {
   if (paymentIds.length) {
     await db.delete(footagePaymentsTable).where(inArray(footagePaymentsTable.id, paymentIds));
   }
+  await db.delete(recordingsTable).where(inArray(recordingsTable.fieldId, [fieldAId, fieldBId]));
   await db.delete(fieldOwnersTable).where(inArray(fieldOwnersTable.fieldId, [fieldAId, fieldBId]));
   await db.delete(fieldsTable).where(inArray(fieldsTable.id, [fieldAId, fieldBId]));
   await db.delete(usersTable).where(inArray(usersTable.id, [ownerId, otherUserId, adminId]));
@@ -389,6 +393,7 @@ describe("owner request status sync", () => {
   });
 
   it("transitions a completed VPS request to ready with a charge and token", async () => {
+    completedVideoId = `owner-status-${TAG}`;
     const [inserted] = await db.insert(footageRequestsTable).values({
       fieldId: fieldAId,
       cameraId: `owner-camera-a-${TAG}`,
@@ -416,6 +421,13 @@ describe("owner request status sync", () => {
     expect(result.playbackManifestUrl).toBe(
       `https://owner.example.test/w/${result.shareUrl.split("/").pop()}/manifest.m3u8`,
     );
+    const [recording] = await db.select().from(recordingsTable)
+      .where(like(recordingsTable.videoUrl, `%/${completedVideoId}/%`));
+    expect(recording).toMatchObject({
+      fieldId: fieldAId,
+      isVisible: false,
+    });
+    expect(recording.videoUrl).toContain(`/${completedVideoId}/playlist.m3u8`);
   });
 
   it("rejects VAR playlist access for a non-owner", async () => {

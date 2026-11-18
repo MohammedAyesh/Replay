@@ -26,7 +26,11 @@ import { chooseFootageSource, gapPullPath, remoteJobPath, withGapStore } from ".
 import { logger } from "../lib/logger";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
 import { ensureRoomForRequest, isRosterMemberOfRequest, randomToken } from "../lib/matchRooms";
-import { liveAnalysisEnabled, queueLiveAnalysisForBooking } from "../lib/liveAnalysis";
+import {
+  ensureRecordingForVideo,
+  liveAnalysisEnabled,
+  queueLiveAnalysisForBooking,
+} from "../lib/liveAnalysis";
 import { attachAcademyRecordingsForFootageRequest } from "../lib/academyFootage";
 import { markKitFootageReady } from "../lib/cameraKits";
 import {
@@ -702,6 +706,19 @@ async function completeRequest(
     )).returning({ id: footageRequestsTable.id });
 
   if (completed.length === 0) return false;
+
+  if (row.academyId === null && videoId) {
+    try {
+      await ensureRecordingForVideo(
+        row,
+        videoId,
+        deliveredSeconds ?? row.requestedSeconds,
+        streamless,
+      );
+    } catch (error) {
+      logger.warn({ requestId: row.id, videoId, error }, "Could not create the completed owner recording");
+    }
+  }
 
   // Only the call that actually completed the request queues its analysis.
   try {

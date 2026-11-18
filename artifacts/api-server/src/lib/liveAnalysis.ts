@@ -37,7 +37,7 @@ function durationLabel(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** The recordings row for a Bunny video, created (hidden) if the Bunny sync has not made one yet. */
+/** Ensures a completed booking has a hidden recordings row for its video. */
 export async function ensureRecordingForVideo(
   row: FootageRequest,
   videoId: string,
@@ -45,11 +45,18 @@ export async function ensureRecordingForVideo(
   streamlessStorage = false,
 ): Promise<number> {
   const [existing] = await db
-    .select({ id: recordingsTable.id })
+    .select({ id: recordingsTable.id, isVisible: recordingsTable.isVisible })
     .from(recordingsTable)
     .where(like(recordingsTable.videoUrl, `%/${videoId}/%`))
     .limit(1);
-  if (existing) return existing.id;
+  if (existing) {
+    if (row.academyId === null && existing.isVisible) {
+      await db.update(recordingsTable)
+        .set({ isVisible: false })
+        .where(eq(recordingsTable.id, existing.id));
+    }
+    return existing.id;
+  }
   const [date, time = ""] = row.startLocal.trim().split(/\s+/);
   const [inserted] = await db
     .insert(recordingsTable)

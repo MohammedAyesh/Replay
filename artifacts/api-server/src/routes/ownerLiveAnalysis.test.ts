@@ -320,17 +320,20 @@ describe("analysing bookings during the match", () => {
     expect(recordPosts[1]).not.toContain("live=");
   });
 
-  it("queues nothing while the setting is off", async () => {
+  it("creates a hidden Storage recording but queues no analysis while the setting is off", async () => {
     await setLive(false);
     const row = await booking(`vps-off-${TAG}`);
     videoForJob.set(row.vpsJobId!, GUID_OFF);
+    streamlessJobs.add(row.vpsJobId!);
 
     await refreshOwnerRequest(row, "cam1");
 
     const [done] = await db.select().from(footageRequestsTable).where(eq(footageRequestsTable.id, row.id));
     expect(done.status).toBe("ready");
     const { recs, jobs } = await jobsFor(GUID_OFF);
-    expect(recs).toHaveLength(0);
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toMatchObject({ isVisible: false, fieldId, court: "cam1", date: "2020-01-02", timeSlot: "22:00" });
+    expect(recs[0].videoUrl).toMatch(new RegExp(`/vod/${GUID_OFF}/8k\\.m3u8$`));
     expect(jobs).toHaveLength(0);
   });
 });

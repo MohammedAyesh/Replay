@@ -29,6 +29,7 @@ import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { buildRosterHintsForJob, type RosterHintCache, type RosterHints } from "../lib/rosterHints";
 import { controlFetch } from "./contabo";
 import { parseZipBundleDetailed, storeUploadBundle } from "./claimMatch";
+import { isStreamlessStorageVideoUrl } from "../lib/uhdPlayback";
 import {
   ACTIVE_STATUSES,
   MAX_ATTEMPTS,
@@ -601,16 +602,19 @@ router.patch("/admin/analysis-jobs/recordings/:id/title", async (req, res): Prom
     res.status(400).json({ error: "Title must contain 1 to 200 characters" });
     return;
   }
-  if (!BUNNY_API_KEY || !BUNNY_LIBRARY_ID) {
-    res.status(503).json({ error: "Bunny Stream is not configured" });
-    return;
-  }
-
   const [recording] = await db.select({
     id: recordingsTable.id,
     videoUrl: recordingsTable.videoUrl,
   }).from(recordingsTable).where(eq(recordingsTable.id, id));
   if (!recording) { res.status(404).json({ error: "Recording not found" }); return; }
+  if (isStreamlessStorageVideoUrl(recording.videoUrl)) {
+    res.status(409).json({ error: "Storage-only recordings cannot be renamed through Bunny Stream" });
+    return;
+  }
+  if (!BUNNY_API_KEY || !BUNNY_LIBRARY_ID) {
+    res.status(503).json({ error: "Bunny Stream is not configured" });
+    return;
+  }
 
   const videoGuid = bunnyGuidFromUrl(recording.videoUrl);
   if (!videoGuid) {

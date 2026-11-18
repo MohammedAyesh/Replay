@@ -319,6 +319,30 @@ describe("renaming analysis recordings", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("refuses to rename a Storage-only recording through Bunny Stream", async () => {
+    const [storageRecording] = await db.insert(recordingsTable).values({
+      fieldId,
+      court: "cam1",
+      date: "2026-09-02",
+      timeSlot: "20:00",
+      duration: "60:00",
+      videoUrl: `https://storage.example.test/vod/${guid(7)}/8k.m3u8`,
+      isVisible: false,
+    }).returning({ id: recordingsTable.id });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await request(app)
+        .patch(`/api/admin/analysis-jobs/recordings/${storageRecording.id}/title`)
+        .send({ title: "Do not send this to Bunny" })
+        .expect(409);
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await db.delete(recordingsTable).where(eq(recordingsTable.id, storageRecording.id));
+    }
+  });
+
   it("keeps the rename endpoint admin-only", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

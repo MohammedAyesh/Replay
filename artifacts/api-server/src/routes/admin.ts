@@ -1,5 +1,20 @@
 import { Router, type IRouter } from "express";
-import { eq, count, and, desc, sql, inArray, ne, gte, lte, ilike, isNotNull, like, or } from "drizzle-orm";
+import {
+  eq,
+  count,
+  and,
+  desc,
+  sql,
+  inArray,
+  ne,
+  gte,
+  lte,
+  ilike,
+  isNotNull,
+  isNull,
+  like,
+  or,
+} from "drizzle-orm";
 import { durationToSeconds } from "../lib/analysisJobs";
 import { z } from "zod/v4";
 import { db, adsTable, adImpressionsTable, adClicksTable, usersTable, userClipsTable, userClipAuditEventsTable, fieldsTable, recordingsTable, savedClipsTable, likesTable, followsTable, clipSettingsTable, recordingSchedulesTable, recordingTrackingBundlesTable, academiesTable, academyRecordingsTable, clipsTable, fieldOwnersTable, footageRequestsTable } from "@workspace/db";
@@ -45,6 +60,7 @@ import {
   getClipExportCdnUrl,
 } from "../lib/bunny";
 import { extractBunnyVideoId } from "../lib/publicFootage";
+import { ensureRecordingForVideo } from "../lib/liveAnalysis";
 import { isOwnerRequestedRecordingTitle } from "../lib/recordingVisibility";
 import { fetchExportObject, probeExportObject } from "../lib/backupExport";
 import { ADMIN_PREVIEW_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
@@ -2117,10 +2133,39 @@ router.post("/admin/recordings/import", async (req, res): Promise<void> => {
     }
   });
 
+  let ownerBackfilled = 0;
+  const completedOwnerRequests = await db.select().from(footageRequestsTable)
+    .where(and(
+      isNull(footageRequestsTable.academyId),
+      inArray(footageRequestsTable.status, ["ready", "partial"]),
+      isNotNull(footageRequestsTable.videoId),
+    ));
+  for (const ownerRequest of completedOwnerRequests) {
+    const videoId = ownerRequest.videoId?.trim().toLowerCase();
+    if (!videoId) continue;
+    const existing = await db.select({ id: recordingsTable.id }).from(recordingsTable)
+      .where(like(recordingsTable.videoUrl, `%/${videoId}/%`))
+      .limit(1);
+
+    try {
+      await ensureRecordingForVideo(
+        ownerRequest,
+        videoId,
+        ownerRequest.deliveredSeconds ?? ownerRequest.requestedSeconds,
+        /^s-[a-f0-9]{32}$/i.test(ownerRequest.shareToken ?? ""),
+      );
+      if (existing.length === 0) ownerBackfilled++;
+    } catch (error) {
+      warnings.push(`Could not create the recording row for owner request ${ownerRequest.id}.`);
+      logger.warn({ requestId: ownerRequest.id, videoId, error }, "Owner recording backfill failed during Bunny sync");
+    }
+  }
+
   res.json({
     imported,
     updated,
     deleted,
+    ownerBackfilled,
     warnings,
   });
 });

@@ -314,8 +314,11 @@ interface AdminRecording {
   score: string | null;
   videoUrl: string;
   bunnyTitle?: string | null;
+  ownerBookingTitle?: string | null;
+  thumbnailUrl?: string | null;
   uhdPlaybackUrl?: string | null;
   hasUhdPlayback?: boolean;
+  has8kPlayback?: boolean;
   isVisible: boolean;
   hasTrackingBundle?: boolean;
   trackingSegmentCount?: number | null;
@@ -436,11 +439,7 @@ interface FieldVideo {
 }
 
 function bunnyGuidFromRecordingUrl(videoUrl: string): string | null {
-  try {
-    return new URL(videoUrl).pathname.split("/").filter(Boolean)[0] ?? null;
-  } catch {
-    return null;
-  }
+  return videoUrl.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i)?.[0] ?? null;
 }
 
 function AdminClipPlayer({
@@ -6133,6 +6132,9 @@ function TrackingBundleUpload({
             {recording.hasUhdPlayback && (
               <span className="ms-1.5 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400">4K</span>
             )}
+            {recording.has8kPlayback && (
+              <span className="ms-1 rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-semibold text-sky-300">8K</span>
+            )}
           </p>
           <p className="text-[10px] text-zinc-500">
             {message || (hasBundle
@@ -6526,6 +6528,65 @@ function RenameRecordingAction({
   );
 }
 
+function StreamlessRecordingPreview({
+  recording,
+  isOpen,
+  onToggle,
+}: {
+  recording: AdminRecording;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  const videoId = bunnyGuidFromRecordingUrl(recording.videoUrl);
+  const eightKUrl = storagePlaybackUrlForGuid(videoId, "8k");
+  const fourKUrl = uhdPlaybackUrlForGuid(videoId);
+  if (!videoId || !eightKUrl || !fourKUrl) return null;
+
+  return (
+    <div className="mb-1 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/70">
+      <div className="flex items-center gap-3 p-2">
+        {recording.thumbnailUrl && (
+          <img
+            src={recording.thumbnailUrl}
+            alt=""
+            className="h-14 w-24 shrink-0 rounded bg-black object-cover"
+            loading="lazy"
+          />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] text-zinc-400">Private Storage recording</p>
+          <p className="mt-1 text-[10px] text-zinc-500">
+            {recording.hasUhdPlayback ? "4K available" : "4K unavailable"}
+            {recording.has8kPlayback ? " · 8K available" : ""}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={isOpen}
+          data-testid={`button-field-storage-preview-${recording.id}`}
+          className="shrink-0 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 hover:border-primary/60 hover:text-white"
+        >
+          {isOpen ? "Hide player" : "Play recording"}
+        </button>
+      </div>
+      {isOpen && (
+        <div className="border-t border-zinc-800 p-2">
+          <HlsPlayer
+            url={eightKUrl}
+            uhdUrl={fourKUrl}
+            hasUhdPlayback={recording.hasUhdPlayback ?? false}
+            storageVideoId={videoId}
+            storageOnly
+            defaultQuality="4k"
+            className="max-h-72"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FieldScheduleSection({
   fieldId, fieldName, recordings, schedules, onSchedulesChange, onVisibilityChange, onVideoReplaced, onTitleChanged,
 }: {
@@ -6548,6 +6609,7 @@ function FieldScheduleSection({
   const [newLabel, setNewLabel] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
+  const [previewRecordingId, setPreviewRecordingId] = useState<number | null>(null);
 
   const matchedCount = recordings.filter((r) => r.isVisible).length;
   const selectedSchedules = schedules.filter((s) => s.allowedDate === selectedDate);
@@ -6613,10 +6675,21 @@ function FieldScheduleSection({
                 <p className="break-all text-xs font-medium text-zinc-200">
                   {recording.bunnyTitle || [recording.court, recording.date, recording.timeSlot].filter(Boolean).join("_")}
                 </p>
-                <RenameRecordingAction recording={recording} onRenamed={onTitleChanged} />
+                {!isStreamlessStorageUrl(recording.videoUrl) && (
+                  <RenameRecordingAction recording={recording} onRenamed={onTitleChanged} />
+                )}
               </div>
+              {isStreamlessStorageUrl(recording.videoUrl) && (
+                <StreamlessRecordingPreview
+                  recording={recording}
+                  isOpen={previewRecordingId === recording.id}
+                  onToggle={() => setPreviewRecordingId((current) => current === recording.id ? null : recording.id)}
+                />
+              )}
               <TrackingBundleUpload recording={recording} onVisibilityChange={onVisibilityChange} />
-              <ReplaceVideoAction recording={recording} onApplied={onVideoReplaced} />
+              {!isStreamlessStorageUrl(recording.videoUrl) && (
+                <ReplaceVideoAction recording={recording} onApplied={onVideoReplaced} />
+              )}
               <RecordingViewers recordingId={recording.id} />
             </div>
           ))}
@@ -6866,7 +6939,9 @@ function RecordingsTab() {
       const titlesByGuid = new Map(bunnyVideos.map((video) => [video.guid, video.title]));
       setRecordings(recs.map((recording) => ({
         ...recording,
-        bunnyTitle: titlesByGuid.get(bunnyGuidFromRecordingUrl(recording.videoUrl) ?? "") ?? null,
+        bunnyTitle: recording.ownerBookingTitle
+          ?? titlesByGuid.get(bunnyGuidFromRecordingUrl(recording.videoUrl) ?? "")
+          ?? null,
       })));
       setSchedules(scheds);
       setFields(fieldRows);
@@ -6884,12 +6959,14 @@ function RecordingsTab() {
         imported: number;
         updated: number;
         deleted: number;
+        ownerBackfilled?: number;
         warnings?: string[];
       };
       const summary = [
         `Imported ${data.imported} new`,
         `refreshed ${data.updated}`,
         `removed ${data.deleted} deleted from Bunny`,
+        `backfilled ${data.ownerBackfilled ?? 0} owner recordings`,
       ].join(" · ");
       setImportResult(data.warnings?.length ? `${summary} · Warnings: ${data.warnings.join(" ")}` : summary);
       await load();
