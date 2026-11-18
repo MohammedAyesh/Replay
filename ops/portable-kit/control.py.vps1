@@ -1,0 +1,917 @@
+import os, subprocess, uuid, json, glob, time
+from fastapi import FastAPI, Header, HTTPException
+
+KEY = ""
+for line in open('/opt/replay/env'):
+    if line.startswith('CONTROL_KEY='):
+        KEY = line.split('=', 1)[1].strip()
+
+app = FastAPI()
+
+# VAR reads the rolling 30-minute DVR window through this API rather than off
+# livehttp.py's :8088, which is 0.0.0.0 with Access-Control-Allow-Origin: * and
+# no auth at all. See var_api.py. Added 2026-09-06.
+from var_api import router as var_router
+app.include_router(var_router)
+
+# Backup clip exporter (Method B) -- see clip_export_api.py. Added 2026-09-29.
+from clip_export_api import router as clip_export_router
+app.include_router(clip_export_router)
+
+# "Finish within" quotes for the analysis queue -- see analysis_quote_api.py. Added 2026-10-01.
+from analysis_quote_api import router as analysis_quote_router
+app.include_router(analysis_quote_router)
+
+# Off-schedule FTP gap store -- see /opt/reocam/gapstore/gapstore_api.py. Added 2026-10-30.
+import sys as _gs_sys
+_gs_sys.path.insert(0, "/opt/reocam/gapstore")
+from gapstore_api import router as gapstore_router
+app.include_router(gapstore_router)
+
+# Portable camera kits: status, snapshot, WiFi -- see kit_api.py. Added 2026-11-17.
+from kit_api import router as kit_router
+app.include_router(kit_router)
+
+
+def auth(k):
+    if k != KEY:
+        raise HTTPException(401)
+
+# --- live -------------------------------------------------------------------
+# Rebuilt 2026-08-23. The old path was live.sh: SRT from MediaMTX on the router
+# -> HLS -> PUT to Bunny Storage. MediaMTX went with the router reflash and
+# cannot come back (62 MB binary, 44 MB overlay).
+#
+# Every PULL transport was measured and rejected:
+#   RTSP/TCP        damaged bitstream - camera advertises a 64 KB send window
+#                   with no scaling; over the 62 ms tunnel that is ~3.5 Mbit/s
+#   RTSP/UDP        fast but lossy - UDP in UDP through WireGuard, no retransmit
+#   Baichuan preview clean packets, but its integrity check aborts the capture;
+#                   173 restarts in under two hours
+# FTP PUSH sustains 10.2 Mbit/s *while the camera encodes a match*, so live is
+# now built from the clips the camera pushes: replay-ftplive@<cam>.service
+# watches /opt/reocam/incoming/<cam>/upload, trims the ~2 s clip overlap,
+# transcodes H.265 -> H.264 (3 workers; one encoder runs at 0.46x realtime at
+# native 4096x1152, three keep up) and appends to a rolling HLS playlist with a
+# 1800 s DVR window, served on :8088.
+#
+# 2026-09-06: the window is kept ALWAYS, locally, whether or not anyone is
+# watching -- that is what VAR reads. Publishing to Bunny's CDN is a separate
+# switch, and it is what /live/start and /live/stop now toggle. Before this,
+# "live" meant "start building a window"; it now means "start publishing the
+# window that is already being built".
+LIVE_UNIT = "replay-ftplive@%s.service"
+LIVE_COPY_UNIT = "replay-ftplive-copy@%s.service"
+PUBLISH_UNIT = "replay-bunnylive@%s.service"
+
+# A feed is only live if something was written to it recently. Segments are 4 s;
+# 30 s is seven missed segments, which is a dead feed and not a hiccup.
+FEED_STALE_SEC = 30
+
+
+def _unit(cam):
+    return LIVE_UNIT % _short(cam)
+
+
+def _copy_unit(cam):
+    return LIVE_COPY_UNIT % _short(cam)
+
+
+def _publish_unit(cam):
+    return PUBLISH_UNIT % _short(cam)
+
+
+def _active(unit):
+    return subprocess.run(["systemctl", "is-active", "--quiet", unit]).returncode == 0
+
+
+@app.post("/live/start/{cam}")
+def start(cam, x_api_key: str = Header(None)):
+    """Start a live session: camera upload on, DVR writers running, CDN publisher on.
+
+    2026-09-24: this used to only (re)start the writers and the publisher and
+    answer {"status":"live"} - but the camera's FTP push is off outside booked
+    matches, so no footage could arrive and the stream never went live. The
+    session is now replay-livehold@<cam> (livehold.py), which owns the FTP
+    switch, the archive hold and a clip janitor, and reports a phase:
+    starting -> live (first fresh footage, usually 30-60 s) | stalled | failed.
+    """
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    if glob.glob("/opt/reocam/var-only/%s.*" % short):
+        raise HTTPException(409, "A booked match is using this camera privately right now.")
+    if short in ("cam1", "cam2"):
+        if not _active("replay-livehold@%s.service" % short):
+            # fresh state before the unit starts, so the first status poll never
+            # shows the previous session's startedAt (the UI's elapsed/progress)
+            try:
+                os.makedirs("/opt/replay/livehold", exist_ok=True)
+                f = "/opt/replay/livehold/%s.json" % short
+                json.dump({"cam": short, "phase": "starting", "startedAt": time.time(), "ftp": None,
+                           "note": "switching the camera's upload on", "firstFootageAt": None,
+                           "updatedAt": time.time()}, open(f + ".part", "w"))
+                os.replace(f + ".part", f)
+            except Exception:
+                pass
+        subprocess.run(["systemctl", "start", "replay-livehold@%s.service" % short], capture_output=True)
+    else:
+        for u in (_unit(cam), _copy_unit(cam), _publish_unit(cam)):
+            subprocess.run(["systemctl", "start", u], capture_output=True)
+    time.sleep(1)
+    out = status(cam, x_api_key)
+    out.update({"status": out.get("phase") or "starting", "cdn": "https://replayjo.b-cdn.net/%s/index.m3u8" % cam,
+                "var": "/var/%s/window" % short})
+    return out
+
+
+@app.post("/live/stop/{cam}")
+def stop(cam, x_api_key: str = Header(None)):
+    """Stop the live session: CDN publisher off, camera upload off (unless auto-pan
+    or a booking still needs it), live clips deleted. The DVR writers keep running
+    so VAR can still read whatever window exists."""
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    # both stops take a while (the publisher wipes ~200 CDN objects one by one,
+    # the session switches the camera off and waits for stragglers); never make
+    # the admin's request wait on them - it times out at 15 s in the app
+    subprocess.Popen(["systemctl", "stop", _publish_unit(cam)])
+    subprocess.Popen(["systemctl", "stop", "replay-livehold@%s.service" % short])
+    return {"status": "stopped", "phase": "stopping", "cam": cam,
+            "note": "camera upload is being switched off; the local DVR window stays for VAR",
+            "var": "/var/%s/window" % short}
+
+
+@app.get("/live/status/{cam}")
+def status(cam, x_api_key: str = Header(None)):
+    """Live requires BOTH a running unit AND a feed that is actually moving.
+
+    Until 2026-09-06 this returned live=true on `unit active and segments
+    exist`, which stayed true for five days after cam1 went silent on 01-09 --
+    the segments were simply the last ones ever written. A status that reports
+    healthy while the camera is dark is the failure mode this project keeps
+    hitting; `feedAgeSec` is the number that decides, and it is returned so the
+    caller can show it rather than trust a boolean.
+    """
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    active = _active(_unit(cam))
+    publishing = _active(_publish_unit(cam))
+    pl = "/opt/replay/ftplive/%s/hls/live.m3u8" % short
+    segs, age = 0, None
+    try:
+        d = "/opt/replay/ftplive/%s/hls" % short
+        segs = len([x for x in os.listdir(d) if x.endswith(".ts")])
+        age = round(time.time() - os.path.getmtime(pl), 1)
+    except OSError:
+        pass
+    fresh = age is not None and age < FEED_STALE_SEC
+    hold = {}
+    try:
+        hold = json.load(open("/opt/replay/livehold/%s.json" % short))
+    except Exception:
+        pass
+    session = _active("replay-livehold@%s.service" % short)
+    live_now = bool(active and segs > 0 and fresh)
+    if session:
+        phase = "live" if live_now else (hold.get("phase") if hold.get("phase") in ("starting", "stalled", "failed") else "starting")
+    else:
+        # no session: the public stream is off even if a VAR booking keeps the
+        # DVR fresh (that feed is private and livehttp 404s it)
+        phase = "off" if hold.get("phase") in (None, "off", "live", "starting", "stalled") else hold.get("phase")
+    return {"cam": cam, "live": live_now, "phase": phase, "session": session,
+            "startedAt": hold.get("startedAt") if session else None,
+            "firstFootageAt": hold.get("firstFootageAt") if session else None,
+            "ftp": hold.get("ftp"), "note": hold.get("note") if (session or phase in ("failed", "refused")) else None,
+            "unit_active": active, "feed_fresh": fresh,
+            "publishing": publishing,
+            "dvr_active": active or _active(_copy_unit(cam)),
+            "segments": segs, "feedAgeSec": age, "playlistAgeSec": age,
+            "playlist": "/%s/hls/live.m3u8" % short}
+
+@app.post("/record/{cam}")
+def record(cam, start: float, duration: float, title: str, x_api_key: str = Header(None)):
+    auth(x_api_key)
+    job = uuid.uuid4().hex[:12]
+    subprocess.Popen(["/opt/replay/record.sh", cam, str(start), str(duration), title, job])
+    return {"status": "queued", "cam": cam, "jobId": job}
+
+@app.get("/record/{cam}/{job}")
+def record_status(cam, job, x_api_key: str = Header(None)):
+    auth(x_api_key)
+    path = f"/opt/replay/jobs/{cam}/{job}.json"
+    if not os.path.exists(path):
+        raise HTTPException(404)
+    return json.load(open(path))
+
+@app.get("/recordings")
+def recordings(x_api_key: str = Header(None)):
+    auth(x_api_key)
+    out = []
+    for f in glob.glob("/opt/replay/jobs/*/*.json"):
+        out.append(json.load(open(f)))
+    return {"recordings": out}
+
+
+# ---------------------------------------------------------------------------
+# 4K on-demand pull straight off a camera's SD card, for an arbitrary window.
+# Uses the encrypted Reolink API (see claude/reolink-encrypted-api-2026-07-30.md).
+# Times are CAMERA LOCAL (Amman, UTC+3), format "YYYY-MM-DD HH:MM:SS".
+# ---------------------------------------------------------------------------
+
+CAM_PORTS = {"camera1": 8107, "cam1": 8107, "camera2": 8131, "cam2": 8131,
+             "camera3": None, "cam3": None}
+
+# Cameras pulled with Reolink's official CLI instead of the hand-rolled HTTP
+# engines. Verified 2026-08-22 against ALL THREE firmware generations:
+#   cam1 v3.0.0.4518, cam2 v3.0.0.4060, cam3 v3.2.0.4989
+# info / encode / vod search / storage all return ok:true on every one, so the
+# per-firmware HTTP engines are dead code: sdpull_playback_job.py,
+# flv12_to_av.py and reocam_api.py's download()/check_download().
+# CAM_PORTS above is likewise vestigial - it addressed SSH tunnels through the
+# OLD router (replay-tunnel@*, stopped and disabled since the 2026-08-21
+# reflash). The CLI reaches cameras directly over WireGuard at 192.168.66.0/24.
+# Only the `cam not in CAM_PORTS` membership checks still use it as a name
+# whitelist; do not restore the tunnels.
+CLI_CAMERAS = {"cam1", "cam2", "cam3"}
+
+
+def _kit_pull(cam):
+    """2026-11-18: portable cameras a user connected in the app (camera10 and up).
+
+    "cli": a router tunnel reaches the camera, so bookings pull its card like cam1 (kitnet.py
+    adds the reolink-cli alias). "ftp": the camera uploads its recordings, and bookings are
+    assembled from those clips (ftp_window_job.py). None: not a kit, or only reachable through
+    Reolink's cloud (live preview only, nothing to pull).
+    """
+    short = cam.replace("camera", "cam", 1)
+    if short in CLI_CAMERAS:
+        return None
+    try:
+        e = json.load(open("/etc/replay/kits.json")).get(short) or {}
+    except Exception:
+        return None
+    return e.get("pull") if e.get("pull") in ("cli", "ftp") else None
+
+
+def _short(cam):
+    return cam.replace("camera", "cam")
+
+
+@app.get("/sd/{cam}/available")
+def sd_available(cam, date: str, x_api_key: str = Header(None)):
+    """Which hours actually exist on the card for a given YYYY-MM-DD.
+
+    The admin console calls this to populate the hour picker, so the user can
+    only request footage that is really there (the card holds roughly 36h).
+
+    Rewritten 2026-08-24 onto reolink-cli. It previously built a ReolinkClient
+    against "http://127.0.0.1:<CAM_PORTS[cam]>" -- an SSH tunnel through the
+    router that was reflashed on 2026-08-21. The replay-tunnel@ units have been
+    stopped and disabled since, so nothing has listened on 8107/8131 for three
+    days and every call returned 503 "camera unreachable". record-hq was moved
+    to the CLI at the time; this endpoint was missed, which left the console's
+    hour picker permanently empty even though the cameras were reachable the
+    whole time over WireGuard.
+    """
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    if short not in CLI_CAMERAS:
+        raise HTTPException(400, "camera has no CLI backend")
+    try:
+        t0 = "%sT00:00:00" % date
+        t1 = "%sT23:59:59" % date
+        p = subprocess.run(
+            ["/root/.local/bin/reolink-cli", "--camera", short,
+             "--gateway-addr", os.environ.get("REOLINK_GATEWAY", "127.0.0.1:9100"),
+             "vod", "search", "--from", t0, "--to", t1,
+             "--stream", os.environ.get("REOLINK_STREAM", "main"),
+             "--limit", os.environ.get("REOLINK_SEARCH_LIMIT", "500")],
+            capture_output=True, timeout=180,
+            env={**os.environ, "HOME": "/root"})
+        out = p.stdout.decode("utf-8", "replace").strip()
+        if not out:
+            raise RuntimeError("no output (rc=%d) %s"
+                               % (p.returncode,
+                                  p.stderr.decode("utf-8", "replace")[:160]))
+        d = json.loads(out.splitlines()[-1])
+        if not d.get("ok"):
+            err = d.get("error") or {}
+            raise RuntimeError("%s: %s" % (err.get("code"), err.get("message")))
+        items = (d.get("data") or {}).get("items", [])
+    except Exception as e:
+        raise HTTPException(503, "camera unreachable: %s" % str(e)[:200])
+    hours = {}
+    for f in items:
+        # startTime is "YYYY-MM-DDTHH:MM:SS" in CAMERA LOCAL time, which is the
+        # same clock the picker shows, so no offset conversion belongs here.
+        st = f.get("startTime") or ""
+        try:
+            h = int(st[11:13])
+        except ValueError:
+            continue
+        e = hours.setdefault(h, {"hour": h, "segments": 0, "bytes": 0})
+        e["segments"] += 1
+        e["bytes"] += int(f.get("fileSize") or 0)
+    return {"cam": cam, "date": date,
+            "hours": [hours[k] for k in sorted(hours)],
+            "totalSegments": len(items)}
+
+
+@app.post("/record-hq/{cam}")
+def record_hq(cam, start: str, end: str, title: str, source: str = "playback",
+              live: int = 0, pan: int = 0, analyse: int = 0, x_api_key: str = Header(None)):
+    """Queue a 4K clip for [start, end). Returns a jobId to poll.
+
+    source=playback (default): cmd=Playback against the camera's SD card.
+    source=sd: cmd=Download against the same card -- same bitstream, slower.
+
+    The default used to be "ftp", which the validator below has rejected since
+    that engine was removed on 2026-08-10. So any caller that omitted `source`
+    -- which is every caller that trusts the signature -- got a 400 blaming
+    them for a value they never sent. Fixed 2026-08-24.
+    """
+    auth(x_api_key)
+    kit_mode = _kit_pull(cam)
+    if cam not in CAM_PORTS and not kit_mode:
+        raise HTTPException(404, "unknown camera")
+    # source=ftp was removed 2026-08-10 along with sdpull_job.py. That engine was
+    # built around cmd=CheckDownload, which is NOT a real Reolink command - the
+    # camera answers cmd:"Unknown" rspCode -104 - so its SD path never worked on
+    # cam1. Both surviving engines share one runner and one set of retry rules.
+    if source not in ("sd", "playback"):
+        raise HTTPException(400, "source must be sd or playback (ftp was removed)")
+    # Accept "YYYY-MM-DD HH:MM" as well as "...HH:MM:SS" (2026-09-21: the owner
+    # console sent minutes-only times and every request came back 400).
+    start, end = start.strip(), end.strip()
+    if len(start) == 16:
+        start += ":00"
+    if len(end) == 16:
+        end += ":00"
+    job = uuid.uuid4().hex[:12]
+    # 2026-11-18: analyse=1 means the app will analyse this recording once it is ready (the field's
+    # "Analyse bookings" setting, or a portable-camera field), past window or future. streamless.py
+    # (8K pulls) reads this marker to analyse on the card that makes the 4K copy, while it makes it.
+    if analyse:
+        try:
+            os.makedirs("/opt/replay/analysis/live/%s" % job, exist_ok=True)
+            open("/opt/replay/analysis/live/%s/analyse" % job, "w").write(title + "\n")
+        except OSError:
+            pass
+    # playback -> cmd=Playback: ~4.6 MB/s at 5 streams, FLV, needs a demux.
+    # sd       -> cmd=Download: ~0.65 MB/s at 4 streams, MP4 direct.
+    # Same bitstream either way - decoded frames verified bit-identical.
+    if kit_mode == "ftp":
+        # 2026-11-18: a portable camera that sends its recordings by FTP. One job covers the
+        # whole life of the booking (scheduled -> recording -> waiting -> assemble -> upload).
+        import datetime as _dt
+        try:
+            _p = lambda v: (_dt.datetime.strptime(v[:10], "%Y-%m-%d") + _dt.timedelta(days=1)) if v.endswith(" 24:00:00") else _dt.datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
+            if _p(end) <= _p(start):
+                raise ValueError
+        except ValueError:
+            raise HTTPException(400, "start/end must be YYYY-MM-DD HH:MM:SS (Amman), end after start")
+        short = _short(cam)
+        jdir = "/opt/replay/jobs/hq/%s" % short
+        os.makedirs(jdir, exist_ok=True)
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open("%s/%s.json.tmp" % (jdir, job), "w") as f:
+            json.dump({"jobId": job, "cam": short, "source": "ftp", "engine": "ftp", "title": title,
+                       "status": "scheduled", "phase": "scheduled", "percent": 0,
+                       "requested": {"start": start, "end": end}, "message": "scheduled",
+                       "startedAt": now, "updatedAt": now, "videoId": None, "playbackUrl": None,
+                       "error": None}, f)
+        os.replace("%s/%s.json.tmp" % (jdir, job), "%s/%s.json" % (jdir, job))
+        log = open("/var/log/replay-ftpwin-%s.log" % job, "a")
+        subprocess.Popen(["/opt/replay/venv/bin/python3", "/opt/replay/ftp_window_job.py", short, start, end, title, job],
+                         stdout=log, stderr=log, start_new_session=True)
+        return {"status": "scheduled", "cam": short, "jobId": job, "source": "ftp",
+                "poll": "/record-hq/%s/%s" % (cam, job)}
+    if _short(cam) in CLI_CAMERAS or kit_mode == "cli":
+        # reolink-cli backend: single stream, real MP4 with audio, no FLV demux.
+        #
+        # 2026-09-21 (owner console): jobs for one camera now run ONE AT A TIME.
+        # Field owners can request footage themselves, so two pulls against one
+        # camera will happen; in parallel they would split the per-camera
+        # download streams and the 32-slot session pool. A "queued" job JSON is
+        # written immediately so a caller polling the id never sees a 404, and
+        # the worker waits on a per-camera lock inside sdpull_cli_job.py and
+        # flips the JSON to "running" the moment it gets it.
+        short = _short(cam)
+        jdir = "/opt/replay/jobs/hq/%s" % short
+        # 2026-09-21: a window that has not finished yet (end later than 10 min
+        # ago, Amman time) is a PRE-BOOKED match. scheduled_pull.py waits for
+        # it, saves segments as the camera closes them, and hands over to
+        # sdpull_cli_job.py at the whistle - same jobId, same JSON contract,
+        # with extra statuses "scheduled" and "recording" before "queued".
+        import datetime as _dt
+        try:
+            # "YYYY-MM-DD 24:00:00" is a legal end-of-day (the admin hour grid
+            # sends it for a 23:00 hour) -- 2026-09-22 this parse rejected it
+            # with a bare 400. Parse it as midnight of the next day; the job
+            # scripts already understand the 24:00 form.
+            def _p(v):
+                if v.endswith(" 24:00:00"):
+                    return _dt.datetime.strptime(v[:10], "%Y-%m-%d") + _dt.timedelta(days=1)
+                return _dt.datetime.strptime(v, "%Y-%m-%d %H:%M:%S")
+            _end = _p(end)
+            _st = _p(start)
+        except ValueError:
+            raise HTTPException(400, "start/end must be YYYY-MM-DD HH:MM:SS (Amman)")
+        if _end <= _st:
+            raise HTTPException(400, "end must be after start")
+        _amman_now = _dt.datetime.utcnow() + _dt.timedelta(hours=3)
+        if _end > _amman_now - _dt.timedelta(minutes=10):
+            if _st > _amman_now + _dt.timedelta(days=15):
+                raise HTTPException(400, "can only book up to 14 days ahead")
+            os.makedirs(jdir, exist_ok=True)
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            with open("%s/%s.json.tmp" % (jdir, job), "w") as f:
+                json.dump({"jobId": job, "cam": short, "source": "cli",
+                           "engine": "scheduled", "title": title, "scheduled": True,
+                           "status": "scheduled", "phase": "scheduled", "percent": 0,
+                           "requested": {"start": start, "end": end},
+                           "message": "scheduled", "startedAt": now, "updatedAt": now,
+                           "videoId": None, "playbackUrl": None, "error": None}, f)
+            os.replace("%s/%s.json.tmp" % (jdir, job), "%s/%s.json" % (jdir, job))
+            # 2026-09-26: live=1 means the app's "Analyse bookings during the
+            # match" setting is on for this booking's field. The marker is what
+            # liveanalysis/live_launcher.py looks for; without it the booking is
+            # recorded as always and analysed (if at all) after the whistle.
+            if live:
+                os.makedirs("/opt/replay/analysis/live/%s" % job, exist_ok=True)
+                open("/opt/replay/analysis/live/%s/enabled" % job, "w").write(title + "\n")
+            # 2026-11-02: pan=1 (academy matches) - var_mode.py starts the live
+            # ball-follow with this booking's VAR window and publishes it to Bunny
+            # under the booking's secret path. Costs a rented GPU (~$0.25/h).
+            if pan:
+                os.makedirs("/opt/replay/livepan/var", exist_ok=True)
+                open("/opt/replay/livepan/var/%s" % job, "w").write(title + "\n")
+            log = open("/var/log/replay-scheduled-%s.log" % job, "a")
+            subprocess.Popen(["/opt/replay/scheduled_pull.py", short, start, end, title, job],
+                             stdout=log, stderr=log, start_new_session=True)
+            return {"status": "scheduled", "cam": short, "jobId": job, "source": "scheduled",
+                    "poll": "/record-hq/%s/%s" % (cam, job)}
+        os.makedirs(jdir, exist_ok=True)
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        with open("%s/%s.json.tmp" % (jdir, job), "w") as f:
+            json.dump({"jobId": job, "cam": short, "source": "cli",
+                       "engine": "reolink-cli", "title": title,
+                       "status": "queued", "phase": "queued", "percent": 0,
+                       "requested": {"start": start, "end": end},
+                       "message": "waiting for the camera to be free",
+                       "startedAt": now, "updatedAt": now,
+                       "videoId": None, "playbackUrl": None, "error": None}, f)
+        os.replace("%s/%s.json.tmp" % (jdir, job), "%s/%s.json" % (jdir, job))
+        # Serialisation is inside sdpull_cli_job.py (per-camera fcntl lock,
+        # released before assembly so Bunny's encode doesn't block the camera).
+        subprocess.Popen(["/opt/replay/venv/bin/python3",
+                          "/opt/replay/sdpull_cli_job.py",
+                          short, start, end, title, job],
+                         start_new_session=True)
+    else:
+        subprocess.Popen(["/opt/replay/venv/bin/python3",
+                          "/opt/replay/sdpull_playback_job.py",
+                          _short(cam), start, end, title, job,
+                          "playback" if source == "playback" else "download"])
+    return {"status": "queued", "cam": _short(cam), "jobId": job, "source": source,
+            "poll": "/record-hq/%s/%s" % (cam, job)}
+
+
+@app.get("/record-hq/{cam}/{job}")
+def record_hq_status(cam, job, x_api_key: str = Header(None)):
+    auth(x_api_key)
+    path = "/opt/replay/jobs/hq/%s/%s.json" % (_short(cam), job)
+    if not os.path.exists(path):
+        raise HTTPException(404)
+    return json.load(open(path))
+
+
+@app.delete("/record-hq/{cam}/{job}")
+def record_hq_cancel(cam, job, x_api_key: str = Header(None)):
+    """Cancel a footage job that has not delivered yet.
+
+    2026-09-21: scheduled bookings only. 2026-09-22: also recording / queued /
+    running -- an owner can cancel a request before it is uploaded. Kills the
+    job's whole process group (scheduled_pull.py and/or sdpull_cli_job.py and
+    their reolink-cli children), closes VAR if it held the camera, deletes any
+    half-made Bunny video and the work dir. done/partial -> 409 (the app handles
+    cancellation of delivered footage as an admin-reviewed request).
+    """
+    import signal as _sig, shutil as _sh, requests as _rq
+    auth(x_api_key)
+    short = _short(cam)
+    path = "/opt/replay/jobs/hq/%s/%s.json" % (short, job)
+    if not os.path.exists(path):
+        raise HTTPException(404)
+    d = json.load(open(path))
+    st = d.get("status")
+    if st in ("done", "partial"):
+        raise HTTPException(409, "already delivered")
+    if st in ("cancelled", "failed"):
+        return d
+    # every process whose argv carries this job id
+    pgids = set()
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            argv = open("/proc/%s/cmdline" % pid, "rb").read().split(b"\0")
+        except Exception:
+            continue
+        if job.encode() in argv and any(b"sdpull_cli_job.py" in a or b"scheduled_pull.py" in a or b"ftp_window_job.py" in a for a in argv):
+            try:
+                pgids.add(os.getpgid(int(pid)))
+            except Exception:
+                pass
+    for g in pgids:
+        try:
+            os.killpg(g, _sig.SIGTERM)
+        except Exception:
+            pass
+    time.sleep(2)
+    for g in pgids:
+        try:
+            os.killpg(g, _sig.SIGKILL)
+        except Exception:
+            pass
+    # VAR marker of this booking, if it was on
+    if glob.glob("/opt/reocam/var-only/%s.%s" % (short, job)):
+        subprocess.run(["/opt/replay/var_mode.py", "stop", short, job], capture_output=True, timeout=180)
+    try:
+        d = json.load(open(path))
+    except Exception:
+        pass
+    vid = d.get("videoId")
+    if vid:
+        try:
+            env = {}
+            for line in open("/opt/replay/env"):
+                if "=" in line:
+                    k, v = line.strip().split("=", 1)
+                    env.setdefault(k, v)
+            _rq.delete("https://video.bunnycdn.com/library/%s/videos/%s" % (env["BUNNY_STREAM_LIB"], vid),
+                       headers={"AccessKey": env["BUNNY_STREAM_KEY"]}, timeout=30)
+        except Exception:
+            pass
+    _sh.rmtree("/opt/reocam/rescue/job_%s" % job, ignore_errors=True)
+    for _r in glob.glob("/opt/replay/jobs/ftpwin/%s.%s" % (short, job)):
+        try:
+            os.remove(_r)
+        except OSError:
+            pass
+    d.update(status="cancelled", phase="cancelled",
+             message="cancelled before the match" if st == "scheduled" else "cancelled before delivery",
+             updatedAt=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+    json.dump(d, open(path + ".tmp", "w")); os.replace(path + ".tmp", path)
+    return d
+
+
+@app.get("/record-hq")
+def record_hq_list(x_api_key: str = Header(None)):
+    """Every SD-pull job, newest first -- backs the admin console's job list."""
+    auth(x_api_key)
+    out = []
+    for f in glob.glob("/opt/replay/jobs/hq/*/*.json"):
+        try:
+            out.append(json.load(open(f)))
+        except Exception:
+            pass
+    out.sort(key=lambda j: j.get("startedAt", ""), reverse=True)
+    return {"jobs": out}
+
+
+@app.get("/ftp/{cam}/available")
+def ftp_available(cam, x_api_key: str = Header(None)):
+    """What can be served INSTANTLY, i.e. clips still sitting on this box.
+
+    These are the camera's own FTP pushes. They are deleted once their hour is
+    archived to Bunny, so this window is short (typically the last hour or two)
+    -- but assembling from them takes seconds instead of hours, because the
+    bytes are already local. Anything older lives as a finished hour on Bunny.
+    """
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    import re, glob as _glob, subprocess as _sp
+    from datetime import datetime, timedelta
+    updir = "/opt/reocam/incoming/%s/upload" % _short(cam)
+    clips = []
+    for path in _glob.glob(os.path.join(updir, "*.mp4")):
+        m = re.search(r"(\d{14})", os.path.basename(path))
+        if not m:
+            continue
+        try:
+            st = datetime.strptime(m.group(1), "%Y%m%d%H%M%S")
+        except ValueError:
+            continue
+        r = _sp.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=nw=1:nk=1", path], capture_output=True, text=True)
+        try:
+            dur = float(r.stdout.strip())
+        except ValueError:
+            continue
+        if dur < 1:
+            continue
+        clips.append({"start": st.strftime("%Y-%m-%d %H:%M:%S"),
+                      "end": (st + timedelta(seconds=dur)).strftime("%Y-%m-%d %H:%M:%S"),
+                      "seconds": round(dur), "bytes": os.path.getsize(path)})
+    clips.sort(key=lambda c: c["start"])
+    return {"cam": _short(cam), "clips": clips,
+            "earliest": clips[0]["start"] if clips else None,
+            "latest": clips[-1]["end"] if clips else None,
+            "note": "instant source; older windows are finished hours on Bunny"}
+
+
+# --- live auto-pan (2026-09-24) -------------------------------------------------
+# A switch, not part of /live/start: the pan rents a GPU (~$0.25/h), so it runs
+# only while someone has turned it on. replay-livepan@<cam> (livepan_relay.py)
+# owns the GPU, the camera's FTP push while it runs, and the "pan" rendition at
+# /opt/replay/ftplive/<cam>/pan/live.m3u8 (served like hls/hevc via livehttp and
+# the livejordangalaxy pull zone). It stops itself after 10 min with no footage,
+# after a 4 h cap, or when a VAR-only booking takes the camera.
+LIVEPAN_UNIT = "replay-livepan@%s.service"
+
+
+def _livepan_status(cam):
+    short = _short(cam)
+    st = {}
+    try:
+        st = json.load(open("/opt/replay/livepan/state/%s/status.json" % short))
+    except Exception:
+        pass
+    pl = "/opt/replay/ftplive/%s/pan/live.m3u8" % short
+    age = None
+    try:
+        age = round(time.time() - os.path.getmtime(pl), 1)
+    except OSError:
+        pass
+    active = _active(LIVEPAN_UNIT % short)
+    return {"cam": cam, "on": active, "state": st.get("state") if active else ("off" if st.get("state") in (None, "running", "live", "starting", "renting", "setting-up", "stopping") else st.get("state")),
+            # while off, the last session's GPU/cost/latency are history, not state
+            "gpu": st.get("gpu") if active else None, "usdPerHr": st.get("usdPerHr") if active else None,
+            "usdSoFar": st.get("usdSoFar") if active else None,
+            "lastSessionUsd": None if active else st.get("usdSoFar"),
+            "since": st.get("since") if active else None,
+            "note": st.get("note") if (active or st.get("state") in ("failed", "refused")) else None,
+            "segmentsOut": st.get("received") if active else None,
+            "behindLiveSec": st.get("lastLatencySec") if active else None, "playlistAgeSec": age,
+            "playlist": "/%s/pan/live.m3u8" % short, "variant": "pan"}
+
+
+@app.post("/livepan/start/{cam}")
+def livepan_start(cam, x_api_key: str = Header(None)):
+    auth(x_api_key)
+    if cam not in CAM_PORTS or _short(cam) not in ("cam1", "cam2"):
+        raise HTTPException(404, "unknown camera")
+    # 2026-09-24: allowed during a private booking - livehttp 404s the camera, so the
+    # panned view is only reachable through the authenticated VAR proxy.
+    subprocess.run(["systemctl", "start", LIVEPAN_UNIT % _short(cam)], capture_output=True)
+    return _livepan_status(cam)
+
+
+@app.post("/livepan/stop/{cam}")
+def livepan_stop(cam, x_api_key: str = Header(None)):
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    # stopping takes up to a minute (the GPU is deleted and FTP switched off);
+    # do not block the request on it
+    subprocess.Popen(["systemctl", "stop", LIVEPAN_UNIT % _short(cam)])
+    return {"cam": cam, "on": False, "state": "stopping"}
+
+
+@app.get("/livepan/status/{cam}")
+def livepan_status(cam, x_api_key: str = Header(None)):
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    return _livepan_status(cam)
+
+
+# ---------------------------------------------------------------- live clips
+# 2026-09-24: the live ClipPlayer on the match page. A viewer marks a window in
+# the live DVR (UTC epoch seconds); live_clip.py copies the matching `hevc`
+# segments (camera 4096x1152, no re-encode) into a Bunny Stream video that
+# outlives the 30-minute window. The app then treats it like any recording clip.
+LIVECLIP_DIR = "/opt/replay/jobs/liveclip"
+
+
+@app.post("/live/clip/{cam}")
+def live_clip(cam, start: float, end: float, title: str = "", x_api_key: str = Header(None)):
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    if not (0 < end - start <= 600):
+        raise HTTPException(400, "a live clip must be between 1 second and 10 minutes long")
+    if end > time.time() + 5:
+        raise HTTPException(400, "that moment has not happened yet")
+    job = "%s_%s" % (short, uuid.uuid4().hex[:10])
+    os.makedirs(LIVECLIP_DIR, exist_ok=True)
+    json.dump({"job": job, "cam": short, "from": start, "to": end, "state": "queued",
+               "createdAt": time.time()}, open("%s/%s.json" % (LIVECLIP_DIR, job), "w"))
+    subprocess.Popen(["setsid", "python3", "/opt/replay/live_clip.py", short, str(start), str(end), job,
+                      title[:60]], stdout=open("/var/log/replay-liveclip.log", "a"),
+                     stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, cwd="/opt/replay")
+    return {"job": job, "state": "queued"}
+
+
+@app.get("/live/clip/job/{job}")
+def live_clip_status(job, x_api_key: str = Header(None)):
+    auth(x_api_key)
+    if not all(c.isalnum() or c == "_" for c in job):
+        raise HTTPException(400, "bad job id")
+    try:
+        return json.load(open("%s/%s.json" % (LIVECLIP_DIR, job)))
+    except (OSError, ValueError):
+        raise HTTPException(404, "no such live clip job")
+
+
+@app.get("/live/ballpath/{cam}")
+def live_ballpath(cam, start: float, end: float, x_api_key: str = Header(None)):
+    """The follow-the-ball crop that live auto-pan actually rendered for [start, end],
+    as crop frames on the 3840x1080 source (x = left edge, w 0.5, y 0, h 1), 5 per
+    second, t = seconds after `start`. available=false when auto-pan was not running
+    for (most of) the window."""
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    frames = []
+    try:
+        for line in open("/opt/replay/ftplive/%s/pan/crops.jsonl" % _short(cam)):
+            try:
+                c = json.loads(line)
+            except ValueError:
+                continue
+            dt = c.get("step", 4) / c.get("fps", 20.0)
+            for i, x in enumerate(c.get("xs") or []):
+                t = c["pdt"] + i * dt
+                if start - 0.5 <= t <= end + 0.5:
+                    frames.append((t, x, c.get("w", 0.5)))
+    except OSError:
+        pass
+    frames.sort()
+    covered = (len(frames) * 0.2) / max(0.2, end - start)
+    return {"cam": cam, "available": covered >= 0.8, "coverage": round(min(1.0, covered), 3),
+            "sourceWidth": 3840, "sourceHeight": 1080,
+            "frames": [{"t": round(t - start, 2), "x": x, "y": 0.0, "w": w, "h": 1.0} for t, x, w in frames]}
+
+
+# --- RTMP relay (2026-09-25) ---------------------------------------------------
+# Customers paste their RTMP endpoint + stream key (YouTube Live, Facebook,
+# TikTok, Twitch, etc).  The relay reads whichever live HLS variant is freshest
+# (pan if available and recent, else hevc) and pushes via ffmpeg -f flv.
+# One relay per camera; the stream key is never stored or logged.
+RTMP_DIR = "/opt/replay/rtmp"
+
+
+def _rtmp_state(cam):
+    short = _short(cam)
+    try:
+        return json.load(open("%s/%s.json" % (RTMP_DIR, short)))
+    except Exception:
+        return {"cam": short, "state": "off"}
+
+
+def _rtmp_pid_alive(cam):
+    short = _short(cam)
+    pid_path = "%s/%s.pid" % (RTMP_DIR, short)
+    try:
+        pid = int(open(pid_path).read().strip())
+        os.kill(pid, 0)   # raises ProcessLookupError if dead
+        return pid
+    except Exception:
+        return None
+
+
+@app.post("/live/rtmp/start/{cam}")
+
+def _pan_live_edge_time(cam):
+    """Return UTC epoch of the last EXT-X-PROGRAM-DATE-TIME tag in the pan playlist."""
+    short = _short(cam)
+    pan_pl = "/opt/replay/ftplive/%s/pan/live.m3u8" % short
+    try:
+        import re as _re
+        content = open(pan_pl).read()
+        pdts = _re.findall(r"#EXT-X-PROGRAM-DATE-TIME:(\S+)", content)
+        if pdts:
+            from datetime import datetime, timezone as _tz
+            return int(
+                datetime.fromisoformat(pdts[-1])
+                .replace(tzinfo=_tz.utc)
+                .timestamp()
+            )
+    except Exception:
+        pass
+    return None
+
+def rtmp_start(cam, rtmp_url: str, stream_key: str, x_api_key: str = Header(None)):
+    """Start an RTMP relay from the live feed to an external platform.
+
+    Picks the pan variant if its playlist is fresh (<30 s old), else the hevc
+    variant.  The stream key is passed in-flight and is never written to disk.
+    """
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    if _rtmp_pid_alive(cam):
+        raise HTTPException(409, "RTMP relay already running for this camera")
+    os.makedirs(RTMP_DIR, exist_ok=True)
+
+    # choose best source
+    pan_pl = "/opt/replay/ftplive/%s/pan/live.m3u8" % short
+    try:
+        pan_age = time.time() - os.path.getmtime(pan_pl)
+    except OSError:
+        pan_age = 9999
+    if pan_age < FEED_STALE_SEC:
+        src = "http://127.0.0.1:8088/%s/pan/live.m3u8" % short
+        variant = "pan"
+    else:
+        src = "http://127.0.0.1:8088/%s/hls/live.m3u8" % short
+        variant = "hevc"
+
+    log = open("/var/log/replay-rtmp-%s.log" % short, "a")
+    wall_start = _pan_live_edge_time(cam) if variant == "pan" else None
+    if wall_start is None:
+        wall_start = int(time.time()) - (47 if variant == "pan" else 15)
+    p = subprocess.Popen(
+        ["bash", "/opt/replay/ftplive/rtmp_relay.sh",
+         short, src, rtmp_url.rstrip("/"), stream_key, str(wall_start)],
+        stdout=log, stderr=log, start_new_session=True)
+    open("%s/%s.pid" % (RTMP_DIR, short), "w").write(str(p.pid))
+
+    state = {"cam": short, "state": "starting", "variant": variant,
+             "rtmp_url": rtmp_url, "startedAt": time.time()}
+    json.dump(state, open("%s/%s.json" % (RTMP_DIR, short), "w"))
+
+    time.sleep(2)
+    if _rtmp_pid_alive(cam):
+        state["state"] = "running"
+    else:
+        state["state"] = "failed"
+        try:
+            os.unlink("%s/%s.pid" % (RTMP_DIR, short))
+        except Exception:
+            pass
+    json.dump(state, open("%s/%s.json" % (RTMP_DIR, short), "w"))
+    return state
+
+
+@app.post("/live/rtmp/stop/{cam}")
+def rtmp_stop(cam, x_api_key: str = Header(None)):
+    """Stop the RTMP relay for this camera."""
+    import signal as _sig
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    pid = _rtmp_pid_alive(cam)
+    if pid:
+        try:
+            os.killpg(os.getpgid(pid), _sig.SIGTERM)
+        except Exception:
+            pass
+    for p in ("%s/%s.pid" % (RTMP_DIR, short),):
+        try:
+            os.unlink(p)
+        except Exception:
+            pass
+    state = _rtmp_state(cam)
+    state.update(state="off", stoppedAt=time.time())
+    os.makedirs(RTMP_DIR, exist_ok=True)
+    json.dump(state, open("%s/%s.json" % (RTMP_DIR, short), "w"))
+    return state
+
+
+@app.get("/live/rtmp/status/{cam}")
+def rtmp_status(cam, x_api_key: str = Header(None)):
+    """Return relay state; never returns the stream key."""
+    auth(x_api_key)
+    if cam not in CAM_PORTS:
+        raise HTTPException(404, "unknown camera")
+    short = _short(cam)
+    state = _rtmp_state(cam)
+    running = _rtmp_pid_alive(cam) is not None
+
+    # self-heal stale state
+    if not running and state.get("state") in ("running", "starting"):
+        state["state"] = "failed"
+        os.makedirs(RTMP_DIR, exist_ok=True)
+        json.dump(state, open("%s/%s.json" % (RTMP_DIR, short), "w"))
+    elif running and state.get("state") == "off":
+        state["state"] = "running"
+        json.dump(state, open("%s/%s.json" % (RTMP_DIR, short), "w"))
+
+    state["running"] = running
+    state.pop("stream_key", None)   # never leak the key
+    return state

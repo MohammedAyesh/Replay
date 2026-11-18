@@ -9,6 +9,9 @@ Mounted into control.py (x-api-key like every other route):
     GET  /kit/{cam}/snapshot  -> image/jpeg (cmd=Snap, channel 0, the stitched panorama)
     POST /kit/{cam}/wifi      {ssid, password} -> SetWifi, read-modify-write
     POST /kit/{cam}/register  {uid, user?, password} -> a camera added in the app, reached by Reolink UID
+    POST|DELETE /kit/{cam}/router  a WireGuard tunnel for the kit's router (kitnet.py); config returned once
+    POST|DELETE /kit/{cam}/ftp     an encrypted FTP login for the camera (kitftp.py); password returned once
+    GET  /kit/{cam}/link           router / FTP state for the app
     POST /kit/{cam}/preview   start the low-quality live preview (kit_preview.py); GET = its state
     GET  /kit/{cam}/preview/index.m3u8 | seg_NNNNNN.ts   the preview itself (HLS, H.264)
     DELETE /kit/{cam}/preview stop it now (it also stops by itself 60 s after the last request)
@@ -220,8 +223,9 @@ def kit_register(cam: str, body: dict = Body(...), x_api_key: str = Header(None)
             if _short(other) != short and str(entry.get("uid") or "").upper() == uid:
                 raise HTTPException(409, "uid in use")
         entry = dict(kits.get(short) or {})
-        for k in ("host", "passEnv"):
-            entry.pop(k, None)
+        entry.pop("passEnv", None)
+        if not entry.get("router"):
+            entry.pop("host", None)   # behind a router (kitnet.py) the address stays
         pass_file = os.path.join(KITPASS_DIR, short + ".json")
         if password is not None:
             fd = os.open(pass_file + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -230,7 +234,9 @@ def kit_register(cam: str, body: dict = Body(...), x_api_key: str = Header(None)
             os.replace(pass_file + ".tmp", pass_file)
         elif not os.path.exists(pass_file):
             raise HTTPException(400, "password")
-        entry.update({"uid": uid, "user": user, "via": "cloud", "passFile": pass_file})
+        entry.update({"uid": uid, "user": user, "passFile": pass_file})
+        if not entry.get("router"):
+            entry["via"] = "cloud"
         for k in [k for k in kits if _short(k) == short]:
             kits.pop(k)
         kits[short] = entry
@@ -239,7 +245,81 @@ def kit_register(cam: str, body: dict = Body(...), x_api_key: str = Header(None)
         os.replace(KITS_FILE + ".tmp", KITS_FILE)
     # A preview still running with the old details would keep showing the old camera.
     subprocess.run(["systemctl", "stop", "--no-block", f"replay-kitpreview@{short}"], timeout=15)
+    if entry.get("router") and entry.get("host") and password is not None:
+        try:   # bookings pull with the reolink-cli alias: give it the new password too
+            import kitnet
+            kitnet._set_alias(short, entry["host"], user, password)
+        except Exception:
+            pass
     return {"ok": True, "camera": short}
+
+
+# ── Full quality: a router tunnel or FTP, set up by the user in the app ─────────────────────
+# kitnet.py (WireGuard per kit) and kitftp.py (encrypted FTP login per camera). Both are for
+# cameras connected from the app only; Replay's own cameras are refused.
+
+
+def _kit_only(cam):
+    short = _short(cam)
+    if not re.fullmatch(r"cam\d{1,3}", short) or short in DEFAULT_HOSTS:
+        raise HTTPException(409, "not a connected camera")
+    if not kit_entry(short).get("uid"):
+        raise HTTPException(404, "camera not connected")
+    return short
+
+
+@router.post("/kit/{cam}/router")
+def kit_router_create(cam: str, x_api_key: str = Header(None)):
+    """A new tunnel for this camera's router. The config (with its private key) is returned
+    once and not kept here; calling again replaces it and cuts the old one off."""
+    _auth(x_api_key)
+    short = _kit_only(cam)
+    import kitnet
+    try:
+        r = kitnet.create(short)
+    except RuntimeError as e:
+        raise HTTPException(503, str(e)[:200])
+    return Response(content=json.dumps(r), media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.delete("/kit/{cam}/router")
+def kit_router_remove(cam: str, x_api_key: str = Header(None)):
+    _auth(x_api_key)
+    short = _kit_only(cam)
+    import kitnet
+    return kitnet.remove(short)
+
+
+@router.post("/kit/{cam}/ftp")
+def kit_ftp_create(cam: str, x_api_key: str = Header(None)):
+    """This camera's FTP login. The password is returned once; calling again sets a new one."""
+    _auth(x_api_key)
+    short = _kit_only(cam)
+    import kitftp
+    try:
+        r = kitftp.create(short)
+    except (RuntimeError, ValueError) as e:
+        raise HTTPException(503, str(e)[:200])
+    return Response(content=json.dumps(r), media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
+@router.delete("/kit/{cam}/ftp")
+def kit_ftp_remove(cam: str, x_api_key: str = Header(None)):
+    _auth(x_api_key)
+    short = _kit_only(cam)
+    import kitftp
+    return kitftp.remove(short)
+
+
+@router.get("/kit/{cam}/link")
+def kit_link(cam: str, x_api_key: str = Header(None)):
+    """How full-quality footage gets here for this camera: router, FTP, or not yet."""
+    _auth(x_api_key)
+    short = _kit_only(cam)
+    import kitftp
+    import kitnet
+    e = kit_entry(short)
+    return {"pull": e.get("pull"), "router": kitnet.status(short), "ftp": kitftp.status(short)}
 
 
 # ── Low-quality live preview (kit_preview.py, replay-kitpreview@<cam>) ──────────────────

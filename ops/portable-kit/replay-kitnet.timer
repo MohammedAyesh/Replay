@@ -1,0 +1,10 @@
+[Unit]
+Description=Replay portable kits sync every 2 minutes and at boot
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=120
+AccuracySec=10
+
+[Install]
+WantedBy=timers.target
