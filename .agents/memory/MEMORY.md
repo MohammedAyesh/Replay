@@ -79,3 +79,4 @@
 - [Source rendition frame comparisons](source-rendition-frame-comparisons.md) — align by production source-time windows; raw TS timestamps and crop bounds can mislead cross-rendition metrics.
 - [VPS1 re-clip replayability](vps1-reclip-replayability.md) — keep worker exports non-replayable until the worker reports the exact selected source and dimensions.
 - [Best-effort render snapshots](snapshot-persistence.md) — completed exports must not depend on snapshot persistence; save asynchronously and log failures.
+- [Streamless Storage source rules](streamless-storage-processing.md) — processing uses H.264 then missing-only 4K; room playback uses direct 4K and never 8K.

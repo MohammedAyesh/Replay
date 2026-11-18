@@ -288,6 +288,59 @@ export function storageRenditionPlaylistUrl(videoGuid: string, rendition: Storag
   return `${storagePullZoneBase()}/vod/${guid}/${rendition}.m3u8`;
 }
 
+export type H264Or4kStorageSource = {
+  videoGuid: string;
+  rendition: "h264" | "4k";
+  url: string;
+  playlist: string;
+};
+
+/** Prefer the direct H.264 Storage playlist; use 4K only when H.264 is absent. */
+export async function storageH264Or4kSource(
+  videoGuid: string | null | undefined,
+): Promise<H264Or4kStorageSource | null> {
+  const guid = normalizeUhdVideoGuid(videoGuid);
+  if (!guid) return null;
+  try {
+    const playlist = await getStoragePlaylist(guid, "h264");
+    if (playlist) {
+      return { videoGuid: guid, rendition: "h264", url: storageRenditionPlaylistUrl(guid, "h264"), playlist };
+    }
+  } catch {
+    return null;
+  }
+  try {
+    const playlist = await getStoragePlaylist(guid, "4k");
+    if (playlist) {
+      return { videoGuid: guid, rendition: "4k", url: storageRenditionPlaylistUrl(guid, "4k"), playlist };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+export async function storageH264Or4kPlaylistUrl(videoGuid: string | null | undefined): Promise<string | null> {
+  return (await storageH264Or4kSource(videoGuid))?.url ?? null;
+}
+
+export async function streamlessStorageSource(
+  videoUrl: string | null | undefined,
+): Promise<H264Or4kStorageSource | null> {
+  if (!isStreamlessStorageVideoUrl(videoUrl)) return null;
+  try {
+    const guid = new URL(videoUrl!).pathname.match(/\/vod\/([^/]+)\/(?:8k|4k|h264)\.m3u8$/i)?.[1];
+    return storageH264Or4kSource(guid);
+  } catch {
+    return null;
+  }
+}
+
+/** Resolve a streamless recording URL to its direct CDN playlist, never 8K. */
+export async function streamlessStoragePlaylistUrl(videoUrl: string | null | undefined): Promise<string | null> {
+  return (await streamlessStorageSource(videoUrl))?.url ?? null;
+}
+
 export function isStreamlessStorageVideoUrl(value: string | null | undefined): boolean {
   if (!value) return false;
   try {

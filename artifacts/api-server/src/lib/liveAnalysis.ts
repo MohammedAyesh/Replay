@@ -85,6 +85,11 @@ export async function liveAnalysisEnabled(fieldId: number): Promise<boolean> {
   }
 }
 
+/** A booking will be analysed when its field setting is on or it belongs to a portable kit. */
+export async function shouldAnalyseBooking(fieldId: number): Promise<boolean> {
+  return (await liveAnalysisEnabled(fieldId)) || (await isKitField(fieldId));
+}
+
 async function trainingModeForBooking(row: FootageRequest): Promise<boolean> {
   if (row.academyId === null) return false;
   const [session] = await db.select({ type: academySessionsTable.type })
@@ -191,7 +196,7 @@ export async function queueLiveAnalysisForBooking(
   }
 
   if (!videoId || !row.vpsJobId) return { queued: false, reason: "no video or no VPS job" };
-  if (!(await liveAnalysisEnabled(row.fieldId)) && !(await isKitField(row.fieldId))) return { queued: false, reason: "setting off for this field" };
+  if (!(await shouldAnalyseBooking(row.fieldId))) return { queued: false, reason: "setting off for this field" };
 
   recordingId ??= await ensureRecordingForVideo(
     row,

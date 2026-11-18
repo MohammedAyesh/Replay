@@ -10,6 +10,7 @@ import {
   type PortfolioView,
 } from "@workspace/api-client-react";
 import { useRoute, useLocation } from "wouter";
+import Hls from "hls.js";
 import {
   ArrowDown,
   ArrowLeft,
@@ -39,6 +40,7 @@ import {
   useClipPlayerFullscreen,
 } from "@/components/clip-player/SharedPlaybackControls";
 import { ReplayMark } from "@/components/ReplayMark";
+import { capPlaybackQuality } from "@/lib/hlsQuality";
 import {
   portfolioFromApi,
   portfolioToUpdateInput,
@@ -1741,6 +1743,7 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
   const [muted, setMuted] = useState(true);
   const [clipDurationSec, setClipDurationSec] = useState(0);
   const [progressSec, setProgressSec] = useState(0);
+  const streamWindowRef = useRef<{ start: number; end: number } | null>(null);
   const { isFullscreen, toggleFullscreen } = useClipPlayerFullscreen(videoRef);
   const aspectRatio = portfolioClipAspectRatio(clip);
 
@@ -1765,9 +1768,26 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     setIsPlaying(false);
     setHasEnded(false);
 
+    const hlsSource = Boolean(src && /\.m3u8(?:$|\?)/i.test(src));
+    let windowStartSec = 0;
+    let windowEndSec = 0;
+    let didSeekWindow = false;
+    streamWindowRef.current = null;
     const updateDuration = () => {
       const duration = video.duration;
-      if (duration > 0 && Number.isFinite(duration)) setClipDurationSec(duration);
+      if (!(duration > 0 && Number.isFinite(duration))) return;
+      if (hlsSource) {
+        windowStartSec = Math.max(0, Math.min(duration, clip.startTime * duration));
+        windowEndSec = Math.max(windowStartSec, Math.min(duration, clip.endTime * duration));
+        streamWindowRef.current = { start: windowStartSec, end: windowEndSec };
+        if (!didSeekWindow) {
+          didSeekWindow = true;
+          if (video.currentTime < windowStartSec || video.currentTime >= windowEndSec) video.currentTime = windowStartSec;
+        }
+        setClipDurationSec(Math.max(0.1, windowEndSec - windowStartSec));
+      } else {
+        setClipDurationSec(duration);
+      }
     };
     const onLoadedData = () => {
       if (cancelled) return;
@@ -1778,7 +1798,21 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     };
     const onTimeUpdate = () => {
       updateDuration();
-      setProgressSec(Math.max(0, Math.min(video.duration || 0, video.currentTime)));
+      const window = streamWindowRef.current;
+      if (window) {
+        const length = Math.max(0.1, window.end - window.start);
+        if (video.currentTime >= window.end - 0.05) {
+          video.pause();
+          video.currentTime = window.start;
+          setHasEnded(true);
+          setIsPlaying(false);
+          setProgressSec(length);
+        } else {
+          setProgressSec(Math.max(0, Math.min(length, video.currentTime - window.start)));
+        }
+      } else {
+        setProgressSec(Math.max(0, Math.min(video.duration || 0, video.currentTime)));
+      }
     };
     const onPlay = () => {
       setHasEnded(false);
@@ -1788,7 +1822,9 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     const onEnded = () => {
       setHasEnded(true);
       setIsPlaying(false);
-      setProgressSec(video.duration || 0);
+      setProgressSec(streamWindowRef.current
+        ? Math.max(0, streamWindowRef.current.end - streamWindowRef.current.start)
+        : video.duration || 0);
     };
     const onVideoError = () => {
       if (!cancelled) {
@@ -1798,6 +1834,7 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     };
 
     video.addEventListener("loadedmetadata", updateDuration);
+    video.addEventListener("durationchange", updateDuration);
     video.addEventListener("loadeddata", onLoadedData);
     video.addEventListener("timeupdate", onTimeUpdate);
     video.addEventListener("play", onPlay);
@@ -1806,6 +1843,29 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     video.addEventListener("error", onVideoError);
     if (src && clip.playbackStatus === "ready") {
       video.muted = muted;
+      if (hlsSource && Hls.isSupported()) {
+        const hls = new Hls({ enableWorker: true, maxBufferLength: 20 });
+        capPlaybackQuality(hls);
+        hls.on(Hls.Events.MANIFEST_PARSED, updateDuration);
+        hls.on(Hls.Events.ERROR, (_event, data) => { if (data.fatal && !cancelled) onVideoError(); });
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        return () => {
+          cancelled = true;
+          video.removeEventListener("loadedmetadata", updateDuration);
+          video.removeEventListener("durationchange", updateDuration);
+          video.removeEventListener("loadeddata", onLoadedData);
+          video.removeEventListener("timeupdate", onTimeUpdate);
+          video.removeEventListener("play", onPlay);
+          video.removeEventListener("pause", onPause);
+          video.removeEventListener("ended", onEnded);
+          video.removeEventListener("error", onVideoError);
+          hls.destroy();
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+        };
+      }
       video.src = src;
       video.load();
     } else {
@@ -1817,6 +1877,7 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     return () => {
       cancelled = true;
       video.removeEventListener("loadedmetadata", updateDuration);
+      video.removeEventListener("durationchange", updateDuration);
       video.removeEventListener("loadeddata", onLoadedData);
       video.removeEventListener("timeupdate", onTimeUpdate);
       video.removeEventListener("play", onPlay);
@@ -1837,7 +1898,10 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     const video = videoRef.current;
     if (!video || !ready) return;
     if (video.paused) {
-      if (video.ended || video.currentTime >= clipDurationSec) video.currentTime = 0;
+      const window = streamWindowRef.current;
+      if (window) {
+        if (hasEnded || video.currentTime >= window.end) video.currentTime = window.start;
+      } else if (video.ended || video.currentTime >= clipDurationSec) video.currentTime = 0;
       void video.play().catch(() => setIsPlaying(false));
     } else {
       video.pause();
@@ -1848,7 +1912,8 @@ export function PortfolioClipViewer({ clip, onClose }: { clip: PortfolioClip; on
     const video = videoRef.current;
     if (!video || !ready || clipDurationSec <= 0) return;
     const positionSec = Math.max(0, Math.min(clipDurationSec, Number(event.target.value)));
-    video.currentTime = positionSec;
+    const window = streamWindowRef.current;
+    video.currentTime = window ? window.start + positionSec : positionSec;
     setProgressSec(positionSec);
     setHasEnded(false);
   };

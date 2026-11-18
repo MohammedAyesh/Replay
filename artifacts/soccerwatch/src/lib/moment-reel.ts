@@ -27,7 +27,7 @@ export type MomentReelCard = {
   minute: number;
   clock: string;
   focus: FocusPoint[];
-  clip?: { url: string; offset: number } | null;
+  clip?: { url: string; offset: number; type?: "mp4" | "hls"; start?: number; end?: number } | null;
 };
 
 export type MomentReel = { recordings: Array<{ recordingId: number; srcW: number; srcH: number }>; cards: MomentReelCard[] };

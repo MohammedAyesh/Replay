@@ -5476,7 +5476,7 @@ components:
   schemas:
     WeeklyHighlightClip:
       type: object
-      required: [position, clipId, eventType, title, startTime, endTime, videoUrl, previewUrl]
+      required: [position, clipId, eventType, title, startTime, endTime, videoUrl, previewUrl, previewStart, previewEnd, downloadAvailable]
       properties:
         position: { type: integer }
         clipId: { type: integer }
@@ -5492,6 +5492,9 @@ components:
         availableUntil: { type: ["string", "null"], format: date-time }
         videoUrl: { type: string }
         previewUrl: { type: string }
+        previewStart: { type: number, description: Normalized source-window start, from 0 to 1 }
+        previewEnd: { type: number, description: Normalized source-window end, from 0 to 1 }
+        downloadAvailable: { type: boolean, description: Whether an MP4 export is available to download }
     WeeklyHighlight:
       type: object
       required: [id, userId, fieldId, weekStart, weekEnd, title, clipCount, durationSec, status, publishedAt, fieldName, kind, clips]

@@ -8,6 +8,11 @@ import { BUNNY_STORAGE_API_KEY, isBunnyStorageUrl } from "./bunny";
 import { buildOverlayFilterComplex } from "./brandingAssets";
 import { applyEndScreen, cutHead, endScreenRunOn, endScreenStart, type EndScreenJob } from "./clipBranding/endScreenVideo";
 import {
+  isStreamlessStorageVideoUrl,
+  streamlessStoragePlaylistUrl,
+  streamlessStorageSource,
+} from "./uhdPlayback";
+import {
   EXPORT_SOURCE_WIDTH,
   EXPORT_SOURCE_HEIGHT,
   EXPORT_SOURCE_LABEL,
@@ -1116,9 +1121,13 @@ async function withBookends(
 
 export async function renderClip(options: FfmpegExportOptions): Promise<string> {
   const {
-    videoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title, referer,
+    videoUrl: requestedVideoUrl, totalDuration, startTime, endTime, cropPath, aspectRatio, title, referer,
     sourceDimensions = { width: EXPORT_SOURCE_WIDTH, height: EXPORT_SOURCE_HEIGHT },
   } = options;
+  const videoUrl = isStreamlessStorageVideoUrl(requestedVideoUrl)
+    ? await streamlessStoragePlaylistUrl(requestedVideoUrl)
+    : requestedVideoUrl;
+  if (!videoUrl) throw new Error("No H.264 or 4K Storage playlist is available for this recording");
 
   logger.info({ title, startTime, endTime, totalDuration }, "Starting FFmpeg render");
 
@@ -1591,9 +1600,13 @@ export async function bufferRemoteClip(options: {
   sourceDimensions: { width: number; height: number };
 }> {
   const {
-    remoteUrl, referer, startSec, clipDuration, totalDuration,
+    remoteUrl: requestedRemoteUrl, referer, startSec, clipDuration, totalDuration,
     expectedDimensions = { width: SRC_W, height: SRC_H },
   } = options;
+  const remoteUrl = isStreamlessStorageVideoUrl(requestedRemoteUrl)
+    ? await streamlessStoragePlaylistUrl(requestedRemoteUrl)
+    : requestedRemoteUrl;
+  if (!remoteUrl) throw new Error("No H.264 or 4K Storage playlist is available for this recording");
   const bufferPath = path.join(os.tmpdir(), `soccerwatch-buffer-${randomUUID()}.mp4`);
   const headerVal = buildHeaderVal(referer, remoteUrl);
 
@@ -1706,7 +1719,14 @@ export async function bufferCameraHlsClip(options: {
   sourceTimeOffsetSec: number;
   downloadedBytes: number;
 }> {
-  const { remoteUrl, playlist, referer, startSec, clipDuration, totalDuration } = options;
+  let { remoteUrl, playlist } = options;
+  const { referer, startSec, clipDuration, totalDuration } = options;
+  if (isStreamlessStorageVideoUrl(remoteUrl)) {
+    const source = await streamlessStorageSource(remoteUrl);
+    if (!source) throw new Error("No H.264 or 4K Storage playlist is available for this recording");
+    remoteUrl = source.url;
+    playlist = source.playlist;
+  }
   const bufferPath = path.join(os.tmpdir(), `soccerwatch-camera-buffer-${randomUUID()}.mp4`);
   const assembledPath = path.join(os.tmpdir(), `soccerwatch-camera-ranges-${randomUUID()}.mp4`);
   const { requestedWindow } = getBufferedWindow({ startSec, clipDuration, totalDuration });

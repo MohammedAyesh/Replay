@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom";
 import { Link } from "wouter";
 import { ChevronLeft, ChevronRight, Expand, Loader2, Pause, Play, RotateCcw, RotateCw, Shrink, X } from "lucide-react";
+import Hls from "hls.js";
 import {
   ballAt,
   loadTile,
@@ -22,6 +23,7 @@ import {
 import { clock } from "@/lib/match-report";
 import { useMomentPlayerCopy } from "@/i18n/moment-player-strings";
 import { cn } from "@/lib/utils";
+import { capPlaybackQuality } from "@/lib/hlsQuality";
 
 /**
  * A moment from the Moments tab, playing in a popup over the match page
@@ -179,6 +181,8 @@ function Stage({ code, footage, moments, index, onPrev, onNext, onClose }: {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const videos = useRef(new Map<string, HTMLVideoElement>());
   const files = useRef(new Map<string, TileFile>());
+  const hlsPlayers = useRef(new Map<string, Hls>());
+  const videoRefCallbacks = useRef(new Map<string, (el: HTMLVideoElement | null) => void>());
   const activeRef = useRef<string | null>(null);
   const pendingRef = useRef<number | null>(null);
   const posRef = useRef(startV);
@@ -212,6 +216,48 @@ function Stage({ code, footage, moments, index, onPrev, onNext, onClose }: {
       if (file) files.current.set(id, file);
       return Boolean(file);
     });
+  const mountedKey = mounted.join("|");
+  const videoRefFor = (id: string) => {
+    let callback = videoRefCallbacks.current.get(id);
+    if (!callback) {
+      callback = (el) => {
+        if (el) {
+          videos.current.set(id, el);
+        } else {
+          videos.current.delete(id);
+          hlsPlayers.current.get(id)?.destroy();
+          hlsPlayers.current.delete(id);
+          videoRefCallbacks.current.delete(id);
+        }
+      };
+      videoRefCallbacks.current.set(id, callback);
+    }
+    return callback;
+  };
+  useEffect(() => {
+    for (const id of mounted) {
+      const file = files.current.get(id);
+      const el = videos.current.get(id);
+      if (!file || !el || file.type !== "hls" || hlsPlayers.current.has(id)) continue;
+      if (Hls.isSupported()) {
+        const tileStart = file.start ?? Number(id.split(":")[1]) * TILE_SECONDS;
+        const hls = new Hls({ enableWorker: true, maxBufferLength: 15, startPosition: tileStart });
+        hlsPlayers.current.set(id, hls);
+        capPlaybackQuality(hls);
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(file.url));
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal && activeRef.current === id) setFailed(true);
+        });
+        hls.attachMedia(el);
+      } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
+        el.src = file.url;
+      } else if (activeRef.current === id) {
+        setFailed(true);
+      }
+    }
+    // Source objects are immutable for each tile; only newly mounted tiles need setup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mountedKey]);
 
   // the ball through the tiles around the one playing (a few dozen points)
   {
@@ -330,15 +376,17 @@ function Stage({ code, footage, moments, index, onPrev, onNext, onClose }: {
   const onMeta = useCallback((id: string) => {
     const el = videos.current.get(id);
     if (!el) return;
+    const file = files.current.get(id);
+    const tileStart = file?.type === "hls" ? file.start ?? Number(id.split(":")[1]) * TILE_SECONDS : 0;
     if (pendingRef.current !== null && tileKey(rid, tileOf(pendingRef.current)) === id) {
       apply(pendingRef.current);
       return;
     }
     if (activeRef.current === id) return;
     // iPhone Safari draws nothing until a video has played: start it and stop it at once
-    el.currentTime = 0;
+    el.currentTime = tileStart;
     const p = el.play();
-    if (p) p.then(() => { if (activeRef.current !== id) { el.pause(); el.currentTime = 0; } }).catch(() => {});
+    if (p) p.then(() => { if (activeRef.current !== id) { el.pause(); el.currentTime = tileStart; } }).catch(() => {});
   }, [apply, rid]);
 
   // the picture's clock, the turn into the next tile, the bar and the camera: one loop, no React
@@ -359,6 +407,8 @@ function Stage({ code, footage, moments, index, onPrev, onNext, onClose }: {
             playingRef.current = false;
             setPlaying(false);
             el.pause();
+          } else if (file.type === "hls" && v >= (file.end ?? (tileOf(v) + 1) * TILE_SECONDS) - 0.06) {
+            goTo(v + 0.01);
           } else if (Number.isFinite(dur) && dur > 0 && (el.ended || el.currentTime >= dur - 0.04)) {
             goTo(file.offset + dur + 0.001);
           }
@@ -455,8 +505,8 @@ function Stage({ code, footage, moments, index, onPrev, onNext, onClose }: {
             return (
               <video
                 key={id}
-                ref={(el) => { if (el) videos.current.set(id, el); else videos.current.delete(id); }}
-                src={file.url}
+                ref={videoRefFor(id)}
+                src={file.type === "hls" ? undefined : file.url}
                 muted
                 playsInline
                 preload="auto"
@@ -464,6 +514,7 @@ function Stage({ code, footage, moments, index, onPrev, onNext, onClose }: {
                 disableRemotePlayback
                 onLoadedMetadata={() => onMeta(id)}
                 onEnded={() => { if (activeRef.current === id && playingRef.current) goTo(file.offset + TILE_SECONDS + 0.001); }}
+                onError={() => { if (activeRef.current === id) setFailed(true); }}
                 className="pointer-events-none absolute inset-0 h-full w-full"
                 style={{ opacity: 0 }}
                 data-tile={id}

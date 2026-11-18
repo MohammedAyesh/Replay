@@ -24,6 +24,7 @@ import {
   normalizeUhdVideoGuid,
   rewriteStoragePlaylist,
   rewriteUhdPlaylist,
+  storageH264Or4kSource,
   storageRenditionMediaUrl,
   STORAGE_RENDITIONS,
   type StorageRendition,
@@ -396,7 +397,7 @@ router.get("/hls-proxy/storage/:videoGuid/:rendition.m3u8", async (req, res): Pr
     res.status(404).type("text/plain").send("Media not found");
     return;
   }
-  const rendition = rawRendition as StorageRendition;
+  const requestedRendition = rawRendition as StorageRendition;
   if (!await canViewBunnyVideo(req, guid)) {
     res.status(404).type("text/plain").send("Media not found");
     return;
@@ -405,17 +406,35 @@ router.get("/hls-proxy/storage/:videoGuid/:rendition.m3u8", async (req, res): Pr
     const fromValue = req.query.fromMs;
     const toValue = req.query.toMs;
     const hasWindow = fromValue !== undefined || toValue !== undefined;
-    // Media straight from the public Storage pull zone, like the 4K: playback never streams through this server.
-    const mediaUrl = storageRenditionMediaUrl(guid, rendition);
+    let fromMs = Number.NaN;
+    let toMs = Number.NaN;
     if (hasWindow) {
       const fromRaw = typeof fromValue === "string" ? fromValue : null;
       const toRaw = typeof toValue === "string" ? toValue : null;
-      const fromMs = fromRaw && /^\d+$/.test(fromRaw) ? Number(fromRaw) : Number.NaN;
-      const toMs = toRaw && /^\d+$/.test(toRaw) ? Number(toRaw) : Number.NaN;
+      fromMs = fromRaw && /^\d+$/.test(fromRaw) ? Number(fromRaw) : Number.NaN;
+      toMs = toRaw && /^\d+$/.test(toRaw) ? Number(toRaw) : Number.NaN;
       if (!isValidUhdWindow(fromMs, toMs)) {
         res.status(400).type("text/plain").send("Invalid playback window");
         return;
       }
+    }
+
+    // An H.264 URL is the default source selector: it falls back to 4K only
+    // when the H.264 playlist is missing. Explicit 4K/8K requests stay intact.
+    let rendition = requestedRendition;
+    let playlist: string | null = null;
+    if (requestedRendition === "h264") {
+      const source = await storageH264Or4kSource(guid);
+      if (!source) {
+        res.status(404).type("text/plain").send("H.264 or 4K recording not found");
+        return;
+      }
+      rendition = source.rendition;
+      playlist = source.playlist;
+    }
+    // Media is served from the public Storage pull zone, not streamed through this server.
+    const mediaUrl = storageRenditionMediaUrl(guid, rendition);
+    if (hasWindow) {
       const window = await getStoragePlaylistWindow(guid, rendition, fromMs, toMs);
       if (!window) {
         res.status(404).type("text/plain").send("Playback window not found");
@@ -429,7 +448,7 @@ router.get("/hls-proxy/storage/:videoGuid/:rendition.m3u8", async (req, res): Pr
       res.send(rewriteStoragePlaylist(window.playlist, rendition, mediaUrl));
       return;
     }
-    const playlist = await getStoragePlaylist(guid, rendition);
+    playlist ??= await getStoragePlaylist(guid, rendition);
     if (!playlist) {
       res.status(404).type("text/plain").send(`${rendition.toUpperCase()} recording not found`);
       return;
@@ -439,8 +458,8 @@ router.get("/hls-proxy/storage/:videoGuid/:rendition.m3u8", async (req, res): Pr
     res.set("Access-Control-Allow-Origin", "*");
     res.send(rewriteStoragePlaylist(playlist, rendition, mediaUrl));
   } catch (error) {
-    req.log?.warn({ err: error, videoGuid: guid, rendition }, "Bunny Storage rendition playlist fetch failed");
-    res.status(502).type("text/plain").send(`${rendition.toUpperCase()} recording unavailable`);
+    req.log?.warn({ err: error, videoGuid: guid, rendition: requestedRendition }, "Bunny Storage rendition playlist fetch failed");
+    res.status(502).type("text/plain").send(`${requestedRendition.toUpperCase()} recording unavailable`);
   }
 });
 

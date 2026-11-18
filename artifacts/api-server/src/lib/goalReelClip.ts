@@ -27,6 +27,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parseMasterPlaylist } from "./exportSource";
+import { HLS_RANGE_CHUNK_BYTES } from "./uhdHlsRanges";
+import { isStreamlessStorageVideoUrl, streamlessStoragePlaylistUrl } from "./uhdPlayback";
 import {
   BUNNY_STORAGE_API_KEY,
   BUNNY_STORAGE_CDN_URL,
@@ -58,30 +60,59 @@ export type ClipRecipe = { gop?: number };
 const recipeOf = (r: ClipRecipe | undefined) => (r?.gop ? `${RECIPE}-g${r.gop}` : RECIPE);
 const FETCH_TIMEOUT_MS = 20_000;
 
-export type MediaSegment = { url: string; start: number; duration: number };
-export type MediaPlaylist = { init: string | null; segments: MediaSegment[] };
+export type MediaByteRange = { start: number; end: number; length: number };
+export type MediaSegment = { url: string; start: number; duration: number; byteRange?: MediaByteRange };
+export type MediaPlaylist = { init: string | null; initRange?: MediaByteRange; segments: MediaSegment[] };
+
+function parseByteRange(value: string, implicitStart: number | null, label: string): MediaByteRange {
+  const match = /^\s*(\d+)(?:@(\d+))?\s*$/.exec(value);
+  const length = Number(match?.[1]);
+  const start = match?.[2] === undefined ? implicitStart : Number(match[2]);
+  if (!Number.isSafeInteger(length) || length <= 0 || start === null || !Number.isSafeInteger(start) || start < 0) {
+    throw new Error(`Invalid ${label} byte range: ${value}`);
+  }
+  const end = start + length - 1;
+  if (!Number.isSafeInteger(end)) throw new Error(`Invalid ${label} byte range: ${value}`);
+  return { start, end, length };
+}
 
 /** EXTINF and EXT-X-MAP out of a media playlist, with absolute URLs and start times on the playlist clock. */
 export function parseMediaPlaylist(body: string, baseUrl: string): MediaPlaylist {
   const segments: MediaSegment[] = [];
   let init: string | null = null;
+  let initRange: MediaByteRange | undefined;
   let t = 0;
   let pending: number | null = null;
+  let pendingRange: string | null = null;
+  const previousSegmentEndByUrl = new Map<string, number>();
   for (const raw of body.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
     if (line.startsWith("#EXT-X-MAP:")) {
-      const uri = /URI="([^"]+)"/.exec(line)?.[1];
-      if (uri) init = new URL(uri, baseUrl).toString();
+      const attrs = line.slice("#EXT-X-MAP:".length);
+      const uri = /(?:^|,)URI=(?:"([^"]+)"|'([^']+)'|([^,]+))/i.exec(attrs);
+      const byteRange = /(?:^|,)BYTERANGE=(?:"([^"]+)"|'([^']+)'|([^,]+))/i.exec(attrs);
+      if (uri) {
+        init = new URL(uri[1] ?? uri[2] ?? uri[3]!, baseUrl).toString();
+        if (byteRange) initRange = parseByteRange(byteRange[1] ?? byteRange[2] ?? byteRange[3]!, 0, "init");
+      }
     } else if (line.startsWith("#EXTINF:")) {
       pending = Number.parseFloat(line.slice(8));
+    } else if (line.startsWith("#EXT-X-BYTERANGE:")) {
+      pendingRange = line.slice("#EXT-X-BYTERANGE:".length);
     } else if (!line.startsWith("#") && pending !== null && Number.isFinite(pending)) {
-      segments.push({ url: new URL(line, baseUrl).toString(), start: t, duration: pending });
+      const url = new URL(line, baseUrl).toString();
+      const byteRange = pendingRange === null
+        ? undefined
+        : parseByteRange(pendingRange, previousSegmentEndByUrl.get(url) ?? null, "segment");
+      if (byteRange) previousSegmentEndByUrl.set(url, byteRange.end + 1);
+      segments.push({ url, start: t, duration: pending, ...(byteRange ? { byteRange } : {}) });
       t += pending;
       pending = null;
+      pendingRange = null;
     }
   }
-  return { init, segments };
+  return { init, ...(initRange ? { initRange } : {}), segments };
 }
 
 /** The segments a stretch of the video needs, and where the first one starts. */
@@ -101,7 +132,30 @@ async function fetchText(url: string): Promise<string> {
   return body;
 }
 
-async function fetchBytes(url: string): Promise<Buffer> {
+async function fetchBytes(url: string, range?: MediaByteRange): Promise<Buffer> {
+  if (range) {
+    const chunks: Buffer[] = [];
+    for (let start = range.start; start <= range.end; start += HLS_RANGE_CHUNK_BYTES) {
+      const end = Math.min(range.end, start + HLS_RANGE_CHUNK_BYTES - 1);
+      const response = await fetch(url, {
+        headers: { Referer: refererFor(url), Range: `bytes=${start}-${end}` },
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (response.status !== 206) {
+        try { await response.body?.cancel(); } catch { /* upstream already closed */ }
+        throw new Error(`segment range ${response.status} ${url}`);
+      }
+      const contentRange = response.headers.get("content-range");
+      if (contentRange && !new RegExp(`^bytes\\s+${start}-${end}/(?:\\d+|\\*)$`, "i").test(contentRange.trim())) {
+        try { await response.body?.cancel(); } catch { /* upstream already closed */ }
+        throw new Error(`segment range mismatch ${url}: ${contentRange}`);
+      }
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.length !== end - start + 1) throw new Error(`short segment range ${url}`);
+      chunks.push(bytes);
+    }
+    return Buffer.concat(chunks);
+  }
   const response = await fetch(url, { headers: { Referer: refererFor(url) }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`segment ${response.status} ${url}`);
   return Buffer.from(await response.arrayBuffer());
@@ -114,12 +168,17 @@ export function mediaPlaylistFor(videoUrl: string): Promise<MediaPlaylist> {
   const hit = playlists.get(videoUrl);
   if (hit && Date.now() - hit.at < PLAYLIST_TTL_MS) return hit.value;
   const value = (async () => {
-    const master = await fetchText(videoUrl);
+    const streamlessStorage = isStreamlessStorageVideoUrl(videoUrl);
+    const sourceUrl = streamlessStorage
+      ? await streamlessStoragePlaylistUrl(videoUrl)
+      : videoUrl;
+    if (!sourceUrl) throw new Error("No H.264 or 4K Storage playlist is available for this recording");
+    const master = await fetchText(sourceUrl);
     const variants = parseMasterPlaylist(master);
-    if (!variants.length) return parseMediaPlaylist(master, videoUrl); // already a media playlist
+    if (!variants.length) return parseMediaPlaylist(master, sourceUrl); // already a media playlist
     const tall = variants.filter((v) => v.height >= MIN_HEIGHT).sort((a, b) => a.height - b.height);
     const pick = tall[0] ?? [...variants].sort((a, b) => b.height - a.height)[0]!;
-    const variantUrl = new URL(pick.uri, videoUrl).toString();
+    const variantUrl = new URL(pick.uri, sourceUrl).toString();
     return parseMediaPlaylist(await fetchText(variantUrl), variantUrl);
   })();
   playlists.set(videoUrl, { at: Date.now(), value });
@@ -201,8 +260,8 @@ export function reelClip(videoUrl: string, from: number, to: number, opts: { ahe
     return slot(id, async () => {
       const started = Date.now();
       const parts = await Promise.all([
-        ...(playlist.init ? [fetchBytes(playlist.init)] : []),
-        ...segments.map((s) => fetchBytes(s.url)),
+        ...(playlist.init ? [fetchBytes(playlist.init, playlist.initRange)] : []),
+        ...segments.map((s) => fetchBytes(s.url, s.byteRange)),
       ]);
       const joined = path.join(CACHE_DIR, `${id}.${playlist.init ? "m4s" : "ts"}`);
       const tmp = `${out}.part.mp4`;

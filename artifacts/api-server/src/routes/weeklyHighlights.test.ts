@@ -3,9 +3,9 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   db, fieldsTable, footageRequestsTable, matchPlayersTable, recordingsTable,
-  userClipsTable, usersTable,
+  userClipsTable, usersTable, weeklyHighlightsTable, highlightClipsTable,
 } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { ensureRoomForRequest } from "../lib/matchRooms";
 
@@ -31,6 +31,9 @@ let requestId: number;
 let recordingId: number;
 let clipId: number;
 let unlinkedClipId: number;
+let streamlessRecordingId: number;
+let streamlessClipId: number;
+let highlightId: number;
 
 describe("weekly highlight candidates", () => {
   beforeAll(async () => {
@@ -81,12 +84,29 @@ describe("weekly highlight candidates", () => {
       exportedUrl: `https://storage.test/${TAG}-unlinked.mp4`,
     }).returning({ id: userClipsTable.id });
     unlinkedClipId = unlinkedClip.id;
+    const storageVideoId = randomUUID();
+    const [streamlessRecording] = await db.insert(recordingsTable).values({
+      fieldId, court: "Storage", date: weekStart, timeSlot: "20:00", duration: "01:00:00",
+      videoUrl: `https://replayjo.b-cdn.net/vod/${storageVideoId}/4k.m3u8`,
+    }).returning({ id: recordingsTable.id });
+    streamlessRecordingId = streamlessRecording.id;
+    const [streamlessClip] = await db.insert(userClipsTable).values({
+      userId: playerId, videoId: storageVideoId, title: "Direct Storage moment",
+      startTime: "0.1", endTime: "0.2", exportStatus: "pending",
+      sourceRecordingId: streamlessRecordingId,
+    }).returning({ id: userClipsTable.id });
+    streamlessClipId = streamlessClip.id;
   });
 
   afterAll(async () => {
-    if (clipId || unlinkedClipId) await db.delete(userClipsTable).where(eq(userClipsTable.id, clipId || unlinkedClipId));
-    if (unlinkedClipId) await db.delete(userClipsTable).where(eq(userClipsTable.id, unlinkedClipId));
+    if (highlightId) {
+      await db.delete(highlightClipsTable).where(eq(highlightClipsTable.highlightId, highlightId));
+      await db.delete(weeklyHighlightsTable).where(eq(weeklyHighlightsTable.id, highlightId));
+    }
+    const clipIds = [clipId, unlinkedClipId, streamlessClipId].filter((id) => Number.isInteger(id) && id > 0);
+    if (clipIds.length) await db.delete(userClipsTable).where(inArray(userClipsTable.id, clipIds));
     if (recordingId) await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
+    if (streamlessRecordingId) await db.delete(recordingsTable).where(eq(recordingsTable.id, streamlessRecordingId));
     if (requestId) await db.delete(footageRequestsTable).where(eq(footageRequestsTable.id, requestId));
     if (fieldId) await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
     if (adminId) await db.delete(usersTable).where(eq(usersTable.id, adminId));
@@ -106,5 +126,40 @@ describe("weekly highlight candidates", () => {
     const field = response.body.fields.find((candidate: { id: number }) => candidate.id === fieldId);
     expect(field.clips.map((clip: { id: number }) => clip.id)).toContain(clipId);
     expect(field.clips.map((clip: { id: number }) => clip.id)).not.toContain(unlinkedClipId);
+    expect(player.clips.map((clip: { id: number }) => clip.id)).toContain(streamlessClipId);
+    expect(field.clips.map((clip: { id: number }) => clip.id)).toContain(streamlessClipId);
+  });
+
+  it("publishes a streamless highlight with direct H.264 preview and its source window", async () => {
+    const response = await request(app)
+      .post("/api/admin/weekly-highlights/publish")
+      .set("x-test-user", String(adminId))
+      .send({
+        weekStart,
+        fields: [{ fieldId, clips: [{ clipId: streamlessClipId, eventType: "goal" }] }],
+      });
+    expect(response.status).toBe(200);
+    highlightId = response.body.published[0];
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("#EXTM3U\n#EXT-X-ENDLIST", { status: 200 }),
+    );
+    try {
+      const highlight = await request(app)
+        .get(`/api/highlights/${highlightId}`)
+        .set("x-test-user", String(playerId));
+      expect(highlight.status).toBe(200);
+      expect(highlight.body.clips[0]).toMatchObject({
+        previewUrl: expect.stringMatching(/\/h264\.m3u8$/),
+        previewStart: 0.1,
+        previewEnd: 0.2,
+        videoUrl: `/api/user-clips/${streamlessClipId}/playback`,
+        downloadAvailable: false,
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(String(fetchSpy.mock.calls[0]?.[0])).toMatch(/\/h264\.m3u8$/);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });

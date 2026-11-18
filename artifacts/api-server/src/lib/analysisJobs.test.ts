@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_ATTEMPTS,
   STALE_HEARTBEAT_MS,
@@ -6,6 +6,7 @@ import {
   bunnyTitleFor,
   canTransition,
   describeSource,
+  describeSourceForWorker,
   durationToSeconds,
   isWorkerOnline,
   normaliseParams,
@@ -16,6 +17,10 @@ import {
   validateSources,
   workerKeyMatches,
 } from "./analysisJobs";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const NOW = new Date("2026-09-04T12:00:00Z");
 const ago = (ms: number) => new Date(NOW.getTime() - ms);
@@ -31,6 +36,26 @@ function source(id: number, overrides: Partial<Parameters<typeof describeSource>
     ...overrides,
   };
 }
+
+describe("analysis worker source selection", () => {
+  it("sends H.264 for Storage recordings and falls back to 4K only when H.264 is missing", async () => {
+    const guid = "123e4567-e89b-12d3-a456-426614174010";
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      calls.push(url);
+      if (url.endsWith("/h264.m3u8")) return new Response(null, { status: 404 });
+      return new Response("#EXTM3U\n#EXT-X-ENDLIST", { status: 200 });
+    }));
+
+    const resolved = await describeSourceForWorker(source(1, {
+      videoUrl: `https://storage.example/vod/${guid}/8k.m3u8`,
+    }));
+    expect(resolved.videoUrl).toMatch(new RegExp(`/vod/${guid}/4k\\.m3u8$`));
+    expect(calls.map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8", "4k.m3u8"]);
+    expect(calls.some((url) => url.endsWith("/8k.m3u8"))).toBe(false);
+  });
+});
 
 describe("status transitions", () => {
   it("lets a claimed job start, finish, fail or go back to the queue", () => {

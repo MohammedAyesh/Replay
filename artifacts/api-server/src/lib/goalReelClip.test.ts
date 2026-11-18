@@ -5,7 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
-import { parseMediaPlaylist, reelClip, segmentsFor } from "./goalReelClip";
+import { mediaPlaylistFor, parseMediaPlaylist, reelClip, segmentsFor } from "./goalReelClip";
 
 const PLAYLIST = `#EXTM3U
 #EXT-X-VERSION:3
@@ -41,6 +41,54 @@ describe("goal reel clip: playlists", () => {
     const p = parseMediaPlaylist(`#EXTM3U\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4,\nseg0.m4s\n`, "https://cdn.example/x/v.m3u8");
     expect(p.init).toBe("https://cdn.example/x/init.mp4");
   });
+
+  it("keeps byte ranges and implicit offsets on the zero-based playlist clock", () => {
+    const p = parseMediaPlaylist(`#EXTM3U
+#EXT-X-MAP:URI="recording.mp4",BYTERANGE="32@0"
+#EXTINF:4.000,
+#EXT-X-BYTERANGE:512@32
+recording.mp4
+#EXTINF:4.000,
+#EXT-X-BYTERANGE:512
+recording.mp4
+`, "https://cdn.example/vod/h264.m3u8");
+    expect(p.initRange).toEqual({ start: 0, end: 31, length: 32 });
+    expect(p.segments.map(({ start, duration, byteRange }) => ({ start, duration, byteRange }))).toEqual([
+      { start: 0, duration: 4, byteRange: { start: 32, end: 543, length: 512 } },
+      { start: 4, duration: 4, byteRange: { start: 544, end: 1055, length: 512 } },
+    ]);
+  });
+
+  it("resolves a streamless 8K recording URL to H.264 before fetching its playlist", async () => {
+    const guid = "123e4567-e89b-12d3-a456-426614174000";
+    const raw8k = `https://storage.example/zone/vod/${guid}/8k.m3u8`;
+    const requested: string[] = [];
+    const realFetch = globalThis.fetch;
+    vi.stubEnv("BUNNY_STORAGE_CDN_URL", "https://storage.example/zone");
+    vi.stubEnv("BUNNY_STORAGE_ZONE", "zone");
+    vi.stubEnv("BUNNY_STORAGE_HOSTNAME", "storage.example");
+    vi.stubEnv("BUNNY_REEL_CDN_URL", "https://storage.example/zone");
+    vi.resetModules();
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      requested.push(url);
+      if (url === `https://storage.example/zone/vod/${guid}/h264.m3u8`) return new Response(PLAYLIST);
+      if (url.startsWith("https://storage.example/")) return new Response("", { status: 404 });
+      return realFetch(input, init);
+    });
+    try {
+      const freshModule = await import("./goalReelClip");
+      const playlist = await freshModule.mediaPlaylistFor(raw8k);
+      expect(playlist.segments).toHaveLength(4);
+      expect(requested.some((url) => url.endsWith("/h264.m3u8"))).toBe(true);
+      expect(requested.some((url) => url.endsWith("/8k.m3u8"))).toBe(false);
+      expect(requested.some((url) => url.endsWith("/4k.m3u8"))).toBe(false);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
 });
 
 // An HLS ladder like Bunny's (TS segments, a keyframe at every segment), served locally.
@@ -49,6 +97,7 @@ describe("goal reel clip: cut from a real HLS", () => {
   let server: http.Server;
   let base = "";
   const referers: string[] = [];
+  const ranges: string[] = [];
   beforeAll(async () => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "reelclip-"));
     for (const [name, size] of [["360p", "640x180"], ["720p", "1280x720"]] as const) {
@@ -60,11 +109,39 @@ describe("goal reel clip: cut from a real HLS", () => {
     }
     fs.writeFileSync(path.join(dir, "playlist.m3u8"),
       "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000,RESOLUTION=640x180\n360p/video.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=4000000,RESOLUTION=1280x720\n720p/video.m3u8\n");
+    const mediaDir = path.join(dir, "720p");
+    const segments = fs.readdirSync(mediaDir).filter((name) => /^video\d+\.ts$/.test(name)).sort((a, b) =>
+      Number(a.match(/\d+/)?.[0]) - Number(b.match(/\d+/)?.[0]));
+    let byteOffset = 0;
+    const mediaRanges = segments.map((name) => {
+      const bytes = fs.readFileSync(path.join(mediaDir, name));
+      const start = byteOffset;
+      byteOffset += bytes.length;
+      return { bytes, start };
+    });
+    fs.writeFileSync(path.join(dir, "byterange.ts"), Buffer.concat(mediaRanges.map((range) => range.bytes)));
+    fs.writeFileSync(path.join(dir, "range.m3u8"), [
+      "#EXTM3U", "#EXT-X-TARGETDURATION:4",
+      ...mediaRanges.flatMap((range) => ["#EXTINF:4.000,", `#EXT-X-BYTERANGE:${range.bytes.length}@${range.start}`, "byterange.ts"]),
+      "#EXT-X-ENDLIST", "",
+    ].join("\n"));
     server = http.createServer((req, res) => {
       referers.push(String(req.headers.referer ?? ""));
       const file = path.join(dir, decodeURIComponent((req.url ?? "/").split("?")[0]!));
       if (!file.startsWith(dir) || !fs.existsSync(file)) { res.statusCode = 404; res.end(); return; }
-      res.end(fs.readFileSync(file));
+      const bytes = fs.readFileSync(file);
+      const range = /^bytes=(\d+)-(\d+)$/.exec(String(req.headers.range ?? ""));
+      if (range) {
+        const start = Number(range[1]);
+        const end = Math.min(Number(range[2]), bytes.length - 1);
+        ranges.push(`${start}-${end}`);
+        res.statusCode = 206;
+        res.setHeader("Content-Range", `bytes ${start}-${end}/${bytes.length}`);
+        res.setHeader("Content-Length", String(end - start + 1));
+        res.end(bytes.subarray(start, end + 1));
+        return;
+      }
+      res.end(bytes);
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -133,6 +210,16 @@ describe("goal reel clip: cut from a real HLS", () => {
     const again = await reelClip(`${base}/playlist.m3u8`, 5, 11);
     expect(again.path).toBe(clip.path);
     expect(referers.every((r) => r.startsWith("http"))).toBe(true);
+  }, 60_000);
+
+  it("fetches only the selected HLS byte ranges and keeps the card's source offset", async () => {
+    const before = ranges.length;
+    const clip = await reelClip(`${base}/range.m3u8`, 5, 11);
+    expect(clip.offset).toBe(5);
+    expect(ranges.length - before).toBeGreaterThan(0);
+    const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_format", "-of", "json", clip.path]).toString());
+    expect(Number(probe.format.duration)).toBeGreaterThan(5.8);
+    expect(Number(probe.format.duration)).toBeLessThan(6.2);
   }, 60_000);
 
   it("cuts a moment tile (lib/momentTiles.ts) with a keyframe every second, as a file of its own", async () => {

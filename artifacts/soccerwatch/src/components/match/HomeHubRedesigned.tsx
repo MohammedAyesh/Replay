@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { ArrowUpRight, Camera, Gift, Globe2, Volume2, VolumeX } from "lucide-react";
+import Hls from "hls.js";
 import { getGetHomeWeeklyHighlightQueryKey, getListUserClipsQueryKey, useGetHomeWeeklyHighlight, useListUserClips, type WeeklyHighlight } from "@workspace/api-client-react";
 import { FreeMatchRulesSheet } from "@/components/free-match/FreeMatch";
 import { StatTileCard } from "@/components/home/StatTile";
@@ -134,6 +135,7 @@ export function HomeHubRedesigned() {
       position: 0, clipId: mockClip.id, eventType: "goal", title: mockClip.title ?? "Weekly highlight",
       startTime: String(mockClip.startTime), endTime: String(mockClip.endTime), videoUrl: `/api/user-clips/${mockClip.id}/playback`,
       previewUrl: `/api/user-clips/${mockClip.id}/playback`,
+      previewStart: 0, previewEnd: 1, downloadAvailable: true,
     }],
   } : null;
   const highlight = weekly.data ?? mockHighlight;
@@ -209,6 +211,9 @@ function WeeklyCard({ highlight, poster, s, locale }: { highlight: WeeklyHighlig
   const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const [muted, setMuted] = useState(true);
   const [progress, setProgress] = useState(0);
+  const item = highlight.clips[0];
+  const previewStart = item?.previewStart ?? 0;
+  const previewEnd = item?.previewEnd ?? 1;
   const { toast } = useToast();
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -223,16 +228,55 @@ function WeeklyCard({ highlight, poster, s, locale }: { highlight: WeeklyHighlig
   }, []);
   useEffect(() => {
     const el = video.current;
+    if (!el || !item?.previewUrl) return;
+    let hls: Hls | null = null;
+    let started = false;
+    const seekStart = () => {
+      if (started || !(el.duration > 0 && Number.isFinite(el.duration))) return;
+      started = true;
+      el.currentTime = previewStart * el.duration;
+    };
+    el.addEventListener("loadedmetadata", seekStart);
+    el.addEventListener("durationchange", seekStart);
+    if (/\.m3u8(?:$|\?)/i.test(item.previewUrl)) {
+      if (Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, maxBufferLength: 15 });
+        hls.on(Hls.Events.MANIFEST_PARSED, seekStart);
+        hls.loadSource(item.previewUrl);
+        hls.attachMedia(el);
+      } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
+        el.src = item.previewUrl;
+      }
+    } else {
+      el.src = item.previewUrl;
+    }
+    return () => {
+      el.removeEventListener("loadedmetadata", seekStart);
+      el.removeEventListener("durationchange", seekStart);
+      hls?.destroy();
+      el.pause();
+      el.removeAttribute("src");
+      el.load();
+    };
+  }, [item?.previewUrl, previewStart]);
+  useEffect(() => {
+    const el = video.current;
     if (!el) return;
     el.muted = muted;
     if (!reduced && visible) void el.play().catch(() => undefined); else el.pause();
   }, [visible, reduced, muted]);
-  const item = highlight.clips[0];
   if (!item) return null;
   const title = highlight.kind === "personal" ? s.weekTitle(highlight.durationSec) : s.goalTitle(highlight.fieldName);
   const subtitle = highlight.kind === "personal" ? s.clips(highlight.clipCount, dateLabel(Date.parse(`${highlight.weekStart}T12:00:00Z`), locale)) : s.goalSub;
   return <section ref={card} className="relative h-[210px] overflow-hidden rounded-[22px] border border-line bg-surface" data-testid="card-home-weekly-highlight">
-    {reduced ? (poster ? <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-raised" />) : <video ref={video} data-testid="video-home-highlight" data-playback-state={visible ? "visible" : "offscreen"} src={item.previewUrl} poster={poster || undefined} autoPlay muted loop playsInline preload="metadata" onTimeUpdate={(e) => setProgress(e.currentTarget.duration ? e.currentTarget.currentTime / e.currentTarget.duration : 0)} onPlay={() => { if (import.meta.env.DEV) console.info("[home-highlight] play"); }} onPause={() => { if (import.meta.env.DEV) console.info("[home-highlight] pause"); }} className="absolute inset-0 h-full w-full object-cover" />}
+    {reduced ? (poster ? <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-raised" />) : <video ref={video} data-testid="video-home-highlight" data-playback-state={visible ? "visible" : "offscreen"} poster={poster || undefined} autoPlay muted loop playsInline preload="metadata" onTimeUpdate={(e) => {
+      const el = e.currentTarget;
+      if (!el.duration || !Number.isFinite(el.duration)) return;
+      const start = previewStart * el.duration;
+      const end = previewEnd * el.duration;
+      setProgress(Math.max(0, Math.min(1, (el.currentTime - start) / Math.max(0.1, end - start))));
+      if (el.currentTime >= end - 0.05) el.currentTime = start;
+    }} onPlay={() => { if (import.meta.env.DEV) console.info("[home-highlight] play"); }} onPause={() => { if (import.meta.env.DEV) console.info("[home-highlight] pause"); }} className="absolute inset-0 h-full w-full object-cover" />}
     <div className="pointer-events-none absolute inset-0 z-20 bg-gradient-to-b from-black/30 via-transparent to-black/80" />
     <span className="pointer-events-none absolute start-3 top-3 z-30 rounded-full bg-floodlight px-2.5 py-1 font-mono text-[10px] font-bold text-void">{highlight.kind === "personal" ? s.yourWeek : s.goal}</span>
     <div className="pointer-events-none absolute inset-x-3 bottom-4 z-30">

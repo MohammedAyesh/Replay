@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 
 export type OwnerShareMeta = {
   token: string;
+  streamless?: boolean;
   fieldName: string;
   startLocal: string;
   endLocal: string;
@@ -114,6 +115,8 @@ export default function OwnerShare() {
   const [meta, setMeta] = useState<OwnerShareMeta | null>(injectedMeta);
   const [metaLoading, setMetaLoading] = useState(!injectedMeta);
   const [unavailable, setUnavailable] = useState(false);
+  const [roomStoragePlayback, setRoomStoragePlayback] = useState<{ roomCode: string; fourKUrl: string; h264Url: string } | null>(null);
+  const [roomPlaybackFailed, setRoomPlaybackFailed] = useState(false);
   const [authPromptOpen, setAuthPromptOpen] = useState(false);
   const [isRestoringDraft, setIsRestoringDraft] = useState(false);
   const search = useSearch();
@@ -130,6 +133,29 @@ export default function OwnerShare() {
   // With a match code the page becomes the full-match player: every goal, and
   // the viewer's touches, passes, shots and dribbles, on the seek bar and listed.
   const moments = useMatchMoments(matchCode, flags, isArabic);
+  const activeRoomStoragePlayback = roomStoragePlayback?.roomCode === matchCode ? roomStoragePlayback : null;
+
+  useEffect(() => {
+    let cancelled = false;
+    setRoomStoragePlayback(null);
+    setRoomPlaybackFailed(false);
+    if (!matchCode || !token || !meta?.streamless) {
+      return () => { cancelled = true; };
+    }
+    fetch(`/w/${encodeURIComponent(token)}/room-playback?m=${encodeURIComponent(matchCode)}`, { credentials: "include" })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`Room playback request failed: ${response.status}`);
+        const payload = await response.json() as Partial<{ fourKUrl: string; h264Url: string }>;
+        if (typeof payload.fourKUrl !== "string" || typeof payload.h264Url !== "string") {
+          throw new Error("Room playback response is incomplete");
+        }
+        if (!cancelled) setRoomStoragePlayback({ roomCode: matchCode, fourKUrl: payload.fourKUrl, h264Url: payload.h264Url });
+      })
+      .catch(() => {
+        if (!cancelled) setRoomPlaybackFailed(true);
+      });
+    return () => { cancelled = true; };
+  }, [matchCode, meta?.streamless, token]);
   const copy = isArabic
     ? {
         availableUntil: "متاح حتى",
@@ -312,23 +338,31 @@ export default function OwnerShare() {
       )}
 
       <div className="p-3 sm:p-5">
-        <ClipPlayer
-          src={`/w/${token}/manifest.m3u8`}
-          title={meta.fieldName}
-          source={{ kind: "ownerShare", token }}
-          layout="inline"
-          canSave={Boolean(user) && !isGuest}
-          onRequireAuth={onRequireAuth}
-          onSave={async (draft) => {
-            await saveOwnerClip(draft);
-          }}
-          seekToSeconds={selectedMomentSeconds}
-          timelineMarkers={matchCode ? moments.markers : undefined}
-          timelineBands={matchCode ? moments.bands : undefined}
-          onPositionChange={matchCode ? moments.onPositionChange : undefined}
-          seekRequest={matchCode ? moments.seekRequest : undefined}
-          stageBadge={matchCode ? moments.badge : undefined}
-        />
+        {matchCode && meta.streamless && !activeRoomStoragePlayback ? (
+          <div className="flex min-h-48 items-center justify-center rounded-xl border border-line bg-surface px-4 text-center text-sm text-muted-foreground" role="status">
+            {roomPlaybackFailed ? copy.unavailable : copy.loading}
+          </div>
+        ) : (
+          <ClipPlayer
+            src={activeRoomStoragePlayback?.fourKUrl ?? `/w/${token}/manifest.m3u8`}
+            directStoragePlayback={activeRoomStoragePlayback ?? undefined}
+            defaultPlaybackQuality={activeRoomStoragePlayback ? "4k" : undefined}
+            title={meta.fieldName}
+            source={{ kind: "ownerShare", token }}
+            layout="inline"
+            canSave={Boolean(user) && !isGuest}
+            onRequireAuth={onRequireAuth}
+            onSave={async (draft) => {
+              await saveOwnerClip(draft);
+            }}
+            seekToSeconds={selectedMomentSeconds}
+            timelineMarkers={matchCode ? moments.markers : undefined}
+            timelineBands={matchCode ? moments.bands : undefined}
+            onPositionChange={matchCode ? moments.onPositionChange : undefined}
+            seekRequest={matchCode ? moments.seekRequest : undefined}
+            stageBadge={matchCode ? moments.badge : undefined}
+          />
+        )}
       </div>
 
       {matchCode && <MatchMomentsPanel state={moments} />}

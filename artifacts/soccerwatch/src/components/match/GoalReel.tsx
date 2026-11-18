@@ -383,6 +383,7 @@ function CardView({ card, depth, copy, names, colors, clip, srcAspect, active, v
         {clip && (
           <Suspense fallback={null}>
             <ReelVideo card={card} src={clip.status === "ready" ? clip.url : null} offset={clip.status === "ready" ? clip.offset : 0}
+              type={clip.status === "ready" ? clip.type : "mp4"}
               srcAspect={srcAspect} active={active} onState={onVideoState} ringColor={FLOOD} tag={copy.tag} fieldViewLabel={copy.fieldView} />
           </Suspense>
         )}

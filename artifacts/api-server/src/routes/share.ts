@@ -47,6 +47,7 @@ import {
   STORAGE_RENDITIONS,
   type StorageRendition,
   isStreamlessStorageVideoUrl,
+  storageH264Or4kSource,
   uhdMediaUrl,
 } from "../lib/uhdPlayback";
 import {
@@ -887,6 +888,27 @@ router.get(["/w/:token/meta", "/api/w/:token/meta"], async (req, res): Promise<v
   res.json(await ownerShareMeta(share));
 });
 
+router.get(["/w/:token/room-playback", "/api/w/:token/room-playback"], async (req, res): Promise<void> => {
+  const token = String(req.params.token ?? "");
+  const share = await resolveOwnerShare(token);
+  const roomCode = typeof req.query.m === "string" ? req.query.m : "";
+  const room = roomCode ? await loadRoomByCode(roomCode) : null;
+  const guid = share && isStreamlessShare(share) && room?.request.id === share.id
+    ? normalizeUhdVideoGuid(share.videoId)
+    : null;
+  if (!guid) {
+    res.setHeader("Cache-Control", "no-store");
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  const base = storagePullZoneBase();
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    fourKUrl: `${base}/vod/${guid}/4k.m3u8`,
+    h264Url: `${base}/vod/${guid}/h264.m3u8`,
+  });
+});
+
 const ownerPosterCache = new Map<string, string>();
 const ownerPosterInFlight = new Map<string, Promise<string | null>>();
 
@@ -929,22 +951,38 @@ async function ensureOwnerSharePoster(
 
   const generation = (async (): Promise<string | null> => {
     try {
-      const { duration, hasMP4Fallback, availableResolutions } = await getBunnyVideoInfo(share.videoId!);
-      const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
-      const source = await selectExportSource({
-        videoId: share.videoId!,
-        hasMP4Fallback,
-        availableResolutions,
-        referer,
-      });
-      const result = await generatePosterFrame({
-        sourceUrl: source.url,
-        referer,
-        startSec: 0,
-        endSec: duration,
-        crop: null,
-        sourceAspect: 32 / 9,
-      });
+      let result;
+      if (isStreamlessShare(share)) {
+        const source = await storageH264Or4kSource(share.videoId);
+        if (!source) throw new Error("No H.264 or 4K Storage playlist is available for this poster");
+        const referer = `${new URL(source.url).origin}/`;
+        const duration = await probeDuration(source.url, referer);
+        result = await generatePosterFrame({
+          sourceUrl: source.url,
+          referer,
+          startSec: 0,
+          endSec: duration,
+          crop: null,
+          sourceAspect: 32 / 9,
+        });
+      } else {
+        const { duration, hasMP4Fallback, availableResolutions } = await getBunnyVideoInfo(share.videoId!);
+        const referer = `https://${BUNNY_CDN_HOSTNAME}/`;
+        const source = await selectExportSource({
+          videoId: share.videoId!,
+          hasMP4Fallback,
+          availableResolutions,
+          referer,
+        });
+        result = await generatePosterFrame({
+          sourceUrl: source.url,
+          referer,
+          startSec: 0,
+          endSec: duration,
+          crop: null,
+          sourceAspect: 32 / 9,
+        });
+      }
       await uploadBufferToBunnyStorage(result.buffer, existingPath, "image/jpeg");
       ownerPosterCache.set(token, existingPath);
       logger.info({ token, path: existingPath, atSec: result.atSec }, "Generated owner share poster");
@@ -1282,7 +1320,7 @@ export async function ensureClipPoster(clip: ClipRow): Promise<string | null> {
         || /^s-[a-f0-9]{32}$/i.test(request[0]?.shareToken ?? "");
       if (streamlessStorage) {
         let sourceUrl: string | null = null;
-        for (const rendition of ["8k", "4k", "h264"] as const) {
+        for (const rendition of ["h264", "4k"] as const) {
           if (await getStoragePlaylist(clip.videoId, rendition)) {
             sourceUrl = storageRenditionMediaUrl(clip.videoId, rendition);
             break;

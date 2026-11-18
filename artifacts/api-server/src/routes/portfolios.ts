@@ -27,7 +27,8 @@ import { portfolioPlaybackPath } from "../lib/shareCard";
 import { planPortfolioPlayback } from "../lib/portfolioPlayback";
 import { isBackupExportRef } from "../lib/backupExport";
 import { logger } from "../lib/logger";
-import { isLiveVideoId, isUserClipExportInFlight } from "./userClips";
+import { isLiveVideoId, isStreamlessStorageClip, isUserClipExportInFlight } from "./userClips";
+import { storageH264Or4kPlaylistUrl, storageThumbnailProxyUrl } from "../lib/uhdPlayback";
 
 const router: IRouter = Router();
 const MAX_PROFILE_PHOTO_BYTES = 1.5 * 1024 * 1024;
@@ -137,9 +138,31 @@ async function buildPortfolio(targetId: number, canEdit: boolean) {
     .orderBy(desc(userClipsTable.createdAt));
 
   const storageReady = isBunnyStorageConfigured();
-  const portfolioClips = clips.map((clip) => {
+  const portfolioClips = await Promise.all(clips.map(async (clip) => {
     const live = isLiveVideoId(clip.videoId);
+    const streamlessStorage = await isStreamlessStorageClip(clip);
     const thumbnailTime = clip.thumbnailTime != null ? parseFloat(clip.thumbnailTime) : null;
+    if (streamlessStorage) {
+      const playbackUrl = await storageH264Or4kPlaylistUrl(clip.videoId);
+      return {
+        id: clip.id,
+        userId: clip.userId,
+        title: clip.title,
+        startTime: parseFloat(clip.startTime),
+        endTime: parseFloat(clip.endTime),
+        cropPath: clip.cropPath,
+        visibility: "public" as const,
+        likeCount: clip.likeCount,
+        aspectRatio: clip.aspectRatio,
+        thumbnailTime,
+        thumbnailUrl: storageThumbnailProxyUrl(clip.videoId),
+        playbackUrl,
+        playbackStatus: playbackUrl ? "ready" as const : "unavailable" as const,
+        createdAt: clip.createdAt.toISOString(),
+        academyId: clip.academyId ?? null,
+        introVideoUrl: null,
+      };
+    }
     let playbackStatus: "ready" | "processing" | "expired" | "unavailable" =
       live
         ? "unavailable"
@@ -175,7 +198,7 @@ async function buildPortfolio(targetId: number, canEdit: boolean) {
       academyId: clip.academyId ?? null,
       introVideoUrl: null,
     };
-  });
+  }));
 
   return {
     id: user.id,

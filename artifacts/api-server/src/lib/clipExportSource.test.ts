@@ -33,9 +33,10 @@ describe("waiting for a 4K-only clip export source", () => {
       kind: "camera-4k",
       url: playlistUrl,
       playlist,
-      path: "camera-original-4k HLS",
+      path: "camera-original-H.264-or-4K HLS",
       duration: 6,
       renditionLabel: null,
+      rendition: "4k",
     });
     expect(getPlaylist).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(30_000);
@@ -63,6 +64,20 @@ describe("waiting for a 4K-only clip export source", () => {
     await expect(waitForCamera4kSource("live:camera-1", { getPlaylist }))
       .rejects.toThrow("No camera 4K source");
     expect(getPlaylist).not.toHaveBeenCalled();
+  });
+
+  it("returns the selected H.264 playlist without changing the camera clock", async () => {
+    const h264Url = `https://storage.example/vod/${guid}/h264.m3u8`;
+    const getSource = vi.fn().mockResolvedValue({
+      videoGuid: guid,
+      rendition: "h264",
+      url: h264Url,
+      playlist,
+    });
+
+    await expect(waitForCamera4kSource(guid, { getSource, timeoutMs: 1 }))
+      .resolves.toMatchObject({ url: h264Url, playlist, rendition: "h264", duration: 6 });
+    expect(getSource).toHaveBeenCalledWith(guid);
   });
 
   it("fails immediately for a permanent 4K access error rather than selecting Stream", async () => {

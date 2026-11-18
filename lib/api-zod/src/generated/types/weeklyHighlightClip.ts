@@ -28,4 +28,10 @@ export interface WeeklyHighlightClip {
   availableUntil?: Date | null;
   videoUrl: string;
   previewUrl: string;
+  /** Normalized source-window start */
+  previewStart: number;
+  /** Normalized source-window end */
+  previewEnd: number;
+  /** Whether an MP4 export is available to download */
+  downloadAvailable: boolean;
 }

@@ -25,7 +25,7 @@ process.env.BUNNY_CDN_HOSTNAME = "private-cdn.local";
 process.env.CLIP_SHARE_URL_SECRET = "share-secret";
 process.env.PUBLIC_SHARE_BASE_URL = "https://replayjo.test";
 
-const { db, usersTable, userClipsTable, fieldsTable, recordingsTable, footageRequestsTable, varMarksTable } = await import("@workspace/db");
+const { db, usersTable, userClipsTable, fieldsTable, recordingsTable, footageRequestsTable, matchRoomsTable, varMarksTable } = await import("@workspace/db");
 const { inArray, eq } = await import("drizzle-orm");
 const { shareToken, portfolioPlaybackToken } = await import("../lib/shareCard");
 const { backupExportRef, CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } = await import("../lib/backupExport");
@@ -644,6 +644,53 @@ describe("public owner watch links", () => {
     expect(res.body.keyMoments).toEqual([
       { kind: "goal", note: "Top corner", offsetSeconds: 90 },
     ]);
+  });
+
+  it("returns direct 4K and H.264 sources only for the matching Storage match room", async () => {
+    const guid = "95a477cd-6639-42dd-ad06-554eb3ff0c0c";
+    const share = `s-${"c".repeat(32)}`;
+    const code = `R${Date.now().toString(36).slice(-5)}`.toUpperCase();
+    const [footage] = await db.insert(footageRequestsTable).values({
+      fieldId: ownerFieldId,
+      cameraId: "room-playback-camera",
+      requestedBy: userId,
+      startLocal: "2026-09-21 14:00",
+      endLocal: "2026-09-21 14:15",
+      requestedSeconds: 900,
+      status: "ready",
+      videoId: guid,
+      shareToken: share,
+      shareExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
+    }).returning({ id: footageRequestsTable.id });
+    ownerRequestIds.push(footage.id);
+    await db.insert(matchRoomsTable).values({
+      footageRequestId: footage.id,
+      fieldId: ownerFieldId,
+      code,
+      captainToken: `room-playback-${code}`,
+    });
+
+    const oldPullZone = process.env.BUNNY_REEL_CDN_URL;
+    process.env.BUNNY_REEL_CDN_URL = "https://fake-pullzone.local";
+    try {
+      const direct = await request(app).get(`/w/${share}/room-playback?m=${code}`);
+      expect(direct.status).toBe(200);
+      expect(direct.headers["cache-control"]).toBe("no-store");
+      expect(direct.body).toEqual({
+        fourKUrl: `https://fake-pullzone.local/vod/${guid}/4k.m3u8`,
+        h264Url: `https://fake-pullzone.local/vod/${guid}/h264.m3u8`,
+      });
+      expect(JSON.stringify(direct.body)).not.toContain("8k");
+
+      const wrongRoom = await request(app).get(`/w/${share}/room-playback?m=WRONG`);
+      expect(wrongRoom.status).toBe(404);
+      const nonStorageShare = await request(app)
+        .get(`/w/0123456789abcdef0123456789abcdef/room-playback?m=${code}`);
+      expect(nonStorageShare.status).toBe(404);
+    } finally {
+      if (oldPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
+      else process.env.BUNNY_REEL_CDN_URL = oldPullZone;
+    }
   });
 
   it("serves the original 4K playlist only through an active owner-share token", async () => {

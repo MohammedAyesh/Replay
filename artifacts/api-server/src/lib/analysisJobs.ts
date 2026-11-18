@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import type { AnalysisJobParams, AnalysisJobStatus } from "@workspace/db";
+import { isStreamlessStorageVideoUrl, storageH264Or4kPlaylistUrl } from "./uhdPlayback";
 
 /**
  * The analysis queue's rules, with no database in them.
@@ -207,6 +208,17 @@ export function describeSource(recording: SourceRecordingInput): SourceDescripto
     title: bunnyTitleFor(recording),
     durationSeconds: durationToSeconds(recording.duration),
   };
+}
+
+/** Resolve the actual Storage rendition before a processing worker receives a recording. */
+export async function describeSourceForWorker(recording: SourceRecordingInput): Promise<SourceDescriptor> {
+  const source = describeSource(recording);
+  if (!isStreamlessStorageVideoUrl(recording.videoUrl)) return source;
+  const playbackUrl = await storageH264Or4kPlaylistUrl(source.videoGuid);
+  if (!playbackUrl) {
+    throw new Error(`Storage recording ${recording.id} has no H.264 or 4K playlist for analysis`);
+  }
+  return { ...source, videoUrl: playbackUrl };
 }
 
 export type SourceValidation =

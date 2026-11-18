@@ -1,7 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db, footageRequestsTable } from "@workspace/db";
 import { buildOwnerFootageTitle } from "@workspace/api-zod";
-import { liveAnalysisEnabled } from "./liveAnalysis";
+import { liveAnalysisEnabled, shouldAnalyseBooking } from "./liveAnalysis";
 import { logger } from "./logger";
 import { controlFetch } from "../routes/contabo";
 import { chooseFootageSource, gapPullPath, remoteJobPath, withGapStore } from "./gapStore";
@@ -188,10 +188,12 @@ export async function startCameraJob(row: FootageRequest, cameraId: string, opti
     const source = future
       ? "sd"
       : await chooseFootageSource(cameraId, remoteStart, remoteEnd, (date) => getAvailability(cameraId, date));
+    // The FTP gap store does not support the recording-time analysis marker.
+    const analyse = source === "sd" && await shouldAnalyseBooking(row.fieldId);
     const result = await controlFetch(
       source === "ftp"
         ? gapPullPath(cameraId, remoteStart, remoteEnd, title)
-        : `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}${pan ? "&pan=1" : ""}`,
+        : `/record-hq/${encodeURIComponent(cameraId)}?start=${encodeURIComponent(remoteStart)}&end=${encodeURIComponent(remoteEnd)}&title=${encodeURIComponent(title)}${live ? "&live=1" : ""}${analyse ? "&analyse=1" : ""}${pan ? "&pan=1" : ""}`,
       { method: "POST" },
       90_000,
     );

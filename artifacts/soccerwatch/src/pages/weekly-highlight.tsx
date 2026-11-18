@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { ChevronRight, X, Volume2, VolumeX, Share2, Download, Users } from "lucide-react";
 import { useTranslation } from "@/i18n";
+import Hls from "hls.js";
 import { getWeeklyHighlight, type WeeklyHighlight } from "@workspace/api-client-react";
 
 type Highlight = WeeklyHighlight;
@@ -18,6 +19,7 @@ export default function WeeklyHighlightPage() {
   const [index, setIndex] = useState(0);
   const [muted, setMuted] = useState(true);
   const [progress, setProgress] = useState(0);
+  const advancing = useRef(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
     let active = true;
@@ -27,9 +29,46 @@ export default function WeeklyHighlightPage() {
       .catch(() => { if (active) setError(true); });
     return () => { active = false; };
   }, [id]);
-  useEffect(() => { videoRef.current?.load(); void videoRef.current?.play().catch(() => {}); }, [index, data]);
-  useEffect(() => { setProgress(0); }, [index]);
   const clip = data?.clips[index];
+  const previewUrl = clip?.previewUrl ?? clip?.videoUrl ?? "";
+  const previewStart = clip?.previewStart ?? 0;
+  const previewEnd = clip?.previewEnd ?? 1;
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !previewUrl) return;
+    setProgress(0);
+    advancing.current = false;
+    let hls: Hls | null = null;
+    let started = false;
+    const seekToWindow = () => {
+      if (started || !(video.duration > 0 && Number.isFinite(video.duration))) return;
+      started = true;
+      video.currentTime = previewStart * video.duration;
+      void video.play().catch(() => {});
+    };
+    video.addEventListener("loadedmetadata", seekToWindow);
+    video.addEventListener("durationchange", seekToWindow);
+    if (/\.m3u8(?:$|\?)/i.test(previewUrl)) {
+      if (Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, maxBufferLength: 20 });
+        hls.on(Hls.Events.MANIFEST_PARSED, seekToWindow);
+        hls.loadSource(previewUrl);
+        hls.attachMedia(video);
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = previewUrl;
+      }
+    } else {
+      video.src = `${base}${previewUrl}`;
+    }
+    return () => {
+      video.removeEventListener("loadedmetadata", seekToWindow);
+      video.removeEventListener("durationchange", seekToWindow);
+      hls?.destroy();
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+    };
+  }, [clip?.clipId, previewUrl, previewStart]);
   const next = () => setIndex((i) => Math.min(i + 1, (data?.clips.length ?? 1) - 1));
   const prev = () => setIndex((i) => Math.max(0, i - 1));
   const tap = (event: React.MouseEvent) => {
@@ -67,7 +106,22 @@ export default function WeeklyHighlightPage() {
   if (data && !data.clips.length) return <main className="fixed inset-0 z-[100] grid place-items-center bg-void p-6 text-center text-text" dir={locale === "ar" ? "rtl" : "ltr"}><div><p>{s.empty}</p><button onClick={close} className="mt-4 rounded-xl border border-line px-4 py-2">{s.close}</button></div></main>;
   if (!data || !clip) return <main className="fixed inset-0 z-[100] grid place-items-center bg-void text-muted-text">{s.loading}</main>;
   return <main className="fixed inset-0 z-[100] overflow-hidden bg-void text-white" dir={locale === "ar" ? "rtl" : "ltr"}>
-    <video ref={videoRef} key={clip.clipId} src={`${base}${clip.videoUrl}`} autoPlay playsInline muted={muted} onTimeUpdate={() => { const v = videoRef.current; setProgress(v?.duration ? (v.currentTime / v.duration) * 100 : 0); }} onEnded={next} onClick={tap} className="absolute inset-0 h-full w-full object-cover" />
+    <video ref={videoRef} key={clip.clipId} playsInline muted={muted} onTimeUpdate={() => {
+      const v = videoRef.current;
+      if (!v?.duration || !Number.isFinite(v.duration)) return;
+      const start = previewStart * v.duration;
+      const end = previewEnd * v.duration;
+      setProgress(Math.max(0, Math.min(100, ((v.currentTime - start) / Math.max(0.1, end - start)) * 100)));
+      if (!advancing.current && v.currentTime >= end - 0.05) {
+        advancing.current = true;
+        next();
+      }
+    }} onEnded={() => {
+      if (!advancing.current) {
+        advancing.current = true;
+        next();
+      }
+    }} onClick={tap} className="absolute inset-0 h-full w-full object-cover" />
     <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-void/70 via-transparent to-void/95" />
     <div className="absolute inset-x-3 top-0 z-10 flex gap-1.5 pt-safe" style={{ paddingTop: "max(env(safe-area-inset-top), 8px)" }}>{data.clips.map((item, i) => <span key={item.clipId} className="h-1 flex-1 overflow-hidden rounded-full bg-white/40"><span className="block h-full bg-white" style={{ width: i < index ? "100%" : i === index ? `${progress}%` : "0%" }} /></span>)}</div>
     <header dir="ltr" className="absolute inset-x-4 top-safe z-10 flex items-center justify-between pt-8">
@@ -86,8 +140,8 @@ export default function WeeklyHighlightPage() {
       <h1 className="font-display text-2xl font-black">{title}</h1>
       <div className="grid grid-cols-2 gap-2">
         <button onClick={() => void share()} className="col-span-2 flex min-h-12 items-center justify-center gap-2 rounded-xl bg-floodlight font-bold text-void"><Share2 className="size-4" />{s.shareStatus}</button>
-        <a href={`${base}/api/user-clips/${clip.clipId}/download`} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-line bg-surface/80 text-sm"><Download className="size-4" />{s.saveVideo}</a>
-        <button onClick={() => void shareTeam()} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-line bg-surface/80 text-sm"><Users className="size-4" />{s.sendTeam}</button>
+        {clip.downloadAvailable !== false && <a href={`${base}/api/user-clips/${clip.clipId}/download`} className="flex min-h-11 items-center justify-center gap-2 rounded-xl border border-line bg-surface/80 text-sm"><Download className="size-4" />{s.saveVideo}</a>}
+        <button onClick={() => void shareTeam()} className={`${clip.downloadAvailable === false ? "col-span-2 " : ""}flex min-h-11 items-center justify-center gap-2 rounded-xl border border-line bg-surface/80 text-sm`}><Users className="size-4" />{s.sendTeam}</button>
       </div>
       <a href={`${base}/home?record=1`} className="block text-sm font-semibold text-floodlight">{s.bookNext}</a>
       {clip.matchCode && clip.availableUntil && <a href={`${base}/m/${clip.matchCode}`} className="block text-xs text-muted-text">{s.fullMatchUntil(new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(clip.availableUntil)))}</a>}

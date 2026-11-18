@@ -7,6 +7,8 @@ import {
 } from "@workspace/db";
 import { getLocalUserId, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { chooseHomeHighlight, currentReplayWeekStart, type HomeHighlightCandidate } from "../lib/weeklyHighlights";
+import { storageH264Or4kPlaylistUrl } from "../lib/uhdPlayback";
+import { streamlessStorageClipIds } from "./userClips";
 
 const router = Router();
 const validEvent = (value: unknown): value is "goal" | "assist" | "save" | "tackle" =>
@@ -49,6 +51,8 @@ async function getPayload(id: number) {
     position: highlightClipsTable.position, clipId: userClipsTable.id, eventType: highlightClipsTable.eventType,
     minute: highlightClipsTable.minute, youX: highlightClipsTable.youX, youY: highlightClipsTable.youY,
     title: userClipsTable.title, startTime: userClipsTable.startTime, endTime: userClipsTable.endTime,
+    exportedUrl: userClipsTable.exportedUrl, videoId: userClipsTable.videoId,
+    sourceRecordingId: userClipsTable.sourceRecordingId, footageRequestId: userClipsTable.footageRequestId,
     matchCode: matchRoomsTable.code, clipMatchCode: userClipsTable.matchCode, matchDate: footageRequestsTable.startLocal,
     recordingDate: recordingsTable.date,
     availableUntil: footageRequestsTable.shareExpiresAt,
@@ -57,14 +61,34 @@ async function getPayload(id: number) {
     .leftJoin(matchRoomsTable, eq(matchRoomsTable.footageRequestId, footageRequestsTable.id))
     .leftJoin(recordingsTable, eq(recordingsTable.id, userClipsTable.sourceRecordingId))
     .where(eq(highlightClipsTable.highlightId, id)).orderBy(asc(highlightClipsTable.position));
-  return {
-    ...highlight, kind: highlight.userId == null ? "field" : "personal", weekEnd: addDays(highlight.weekStart, 6),
-    clips: clips.map((clip) => ({
-      ...clip, matchCode: clip.matchCode ?? clip.clipMatchCode, videoUrl: `/api/user-clips/${clip.clipId}/playback`,
-      previewUrl: `/api/user-clips/${clip.clipId}/playback`,
+  const streamlessIds = await streamlessStorageClipIds(clips.map((clip) => ({
+    id: clip.clipId,
+    sourceRecordingId: clip.sourceRecordingId,
+    footageRequestId: clip.footageRequestId,
+  })));
+  const playbackClips = await Promise.all(clips.map(async (clip) => {
+    const previewUrl = streamlessIds.has(clip.clipId)
+      ? await storageH264Or4kPlaylistUrl(clip.videoId)
+      : null;
+    const start = Number(clip.startTime);
+    const end = Number(clip.endTime);
+    const validWindow = Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && end <= 1;
+    const direct = previewUrl && validWindow;
+    return {
+      ...clip,
+      matchCode: clip.matchCode ?? clip.clipMatchCode,
+      videoUrl: `/api/user-clips/${clip.clipId}/playback`,
+      previewUrl: direct ? previewUrl : `/api/user-clips/${clip.clipId}/playback`,
+      previewStart: direct ? start : 0,
+      previewEnd: direct ? end : 1,
+      downloadAvailable: Boolean(clip.exportedUrl),
       matchDate: clip.matchDate?.slice(0, 10) ?? clip.recordingDate ?? null,
       availableUntil: clip.availableUntil?.toISOString() ?? null,
-    })),
+    };
+  }));
+  return {
+    ...highlight, kind: highlight.userId == null ? "field" : "personal", weekEnd: addDays(highlight.weekStart, 6),
+    clips: playbackClips,
   };
 }
 
@@ -120,22 +144,25 @@ router.get("/admin/weekly-highlights/candidates", async (req, res): Promise<void
   const clipRows = playerIds.length ? await db.select({
     id: userClipsTable.id, userId: userClipsTable.userId, title: userClipsTable.title,
     startTime: userClipsTable.startTime, endTime: userClipsTable.endTime, exportedUrl: userClipsTable.exportedUrl,
+    sourceRecordingId: userClipsTable.sourceRecordingId, footageRequestId: userClipsTable.footageRequestId,
     fieldId: footageRequestsTable.fieldId, fieldName: fieldsTable.name, requestId: footageRequestsTable.id,
   }).from(userClipsTable).innerJoin(footageRequestsTable, eq(footageRequestsTable.id, userClipsTable.footageRequestId))
     .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
-    .where(and(inArray(userClipsTable.userId, playerIds), gte(footageRequestsTable.startLocal, weekStart), lte(footageRequestsTable.startLocal, `${weekEnd}T23:59:59`), eq(userClipsTable.isHidden, false), eq(userClipsTable.exportStatus, "done"))) : [];
+    .where(and(inArray(userClipsTable.userId, playerIds), gte(footageRequestsTable.startLocal, weekStart), lte(footageRequestsTable.startLocal, `${weekEnd}T23:59:59`), eq(userClipsTable.isHidden, false))) : [];
   const fieldClipRows = await db.select({
     id: userClipsTable.id, title: userClipsTable.title, startTime: userClipsTable.startTime,
     endTime: userClipsTable.endTime, exportedUrl: userClipsTable.exportedUrl,
+    sourceRecordingId: userClipsTable.sourceRecordingId, footageRequestId: userClipsTable.footageRequestId,
     fieldId: footageRequestsTable.fieldId, fieldName: fieldsTable.name,
   }).from(userClipsTable).innerJoin(footageRequestsTable, eq(footageRequestsTable.id, userClipsTable.footageRequestId))
     .innerJoin(fieldsTable, eq(fieldsTable.id, footageRequestsTable.fieldId))
-    .where(and(gte(footageRequestsTable.startLocal, weekStart), lte(footageRequestsTable.startLocal, `${weekEnd}T23:59:59`), eq(userClipsTable.isHidden, false), eq(userClipsTable.exportStatus, "done")));
+    .where(and(gte(footageRequestsTable.startLocal, weekStart), lte(footageRequestsTable.startLocal, `${weekEnd}T23:59:59`), eq(userClipsTable.isHidden, false)));
   // Clips saved directly from a recording page are grouped through their
   // explicit source recording, not a substring match against its video URL.
   const recordingClipRows = await db.select({
     id: userClipsTable.id, userId: userClipsTable.userId, title: userClipsTable.title,
     startTime: userClipsTable.startTime, endTime: userClipsTable.endTime, exportedUrl: userClipsTable.exportedUrl,
+    sourceRecordingId: userClipsTable.sourceRecordingId, footageRequestId: userClipsTable.footageRequestId,
     fieldId: recordingsTable.fieldId, fieldName: fieldsTable.name, requestId: sql<number>`0`,
   }).from(userClipsTable)
     .innerJoin(recordingsTable, eq(recordingsTable.id, userClipsTable.sourceRecordingId))
@@ -145,7 +172,6 @@ router.get("/admin/weekly-highlights/candidates", async (req, res): Promise<void
       gte(recordingsTable.date, weekStart),
       lte(recordingsTable.date, weekEnd),
       eq(userClipsTable.isHidden, false),
-      eq(userClipsTable.exportStatus, "done"),
     ));
   const progressRows = await db.select({
     userId: claimMatchProgressTable.userId, earnedClips: claimMatchProgressTable.earnedClips,
@@ -155,17 +181,23 @@ router.get("/admin/weekly-highlights/candidates", async (req, res): Promise<void
     .where(and(gte(recordingsTable.date, weekStart), lte(recordingsTable.date, weekEnd)));
   const momentIds = [...new Set(progressRows.flatMap((r) => r.earnedClips.map((c) => c.userClipId).filter((id): id is number => typeof id === "number")))];
   const momentClips = momentIds.length ? await db.select().from(userClipsTable)
-    .where(and(inArray(userClipsTable.id, momentIds), eq(userClipsTable.isHidden, false), eq(userClipsTable.exportStatus, "done"))) : [];
+    .where(and(inArray(userClipsTable.id, momentIds), eq(userClipsTable.isHidden, false))) : [];
   const momentRows = momentClips.flatMap((clip) => {
     const progress = progressRows.find((row) => row.userId === clip.userId && row.earnedClips.some((earned) => earned.userClipId === clip.id));
-    return progress && clip.exportedUrl ? [{ id: clip.id, userId: clip.userId, title: clip.title, startTime: clip.startTime, endTime: clip.endTime, exportedUrl: clip.exportedUrl, fieldId: progress.fieldId, fieldName: progress.fieldName, requestId: 0 }] : [];
+    return progress ? [{
+      id: clip.id, userId: clip.userId, title: clip.title, startTime: clip.startTime, endTime: clip.endTime,
+      exportedUrl: clip.exportedUrl, sourceRecordingId: clip.sourceRecordingId, footageRequestId: clip.footageRequestId,
+      fieldId: progress.fieldId, fieldName: progress.fieldName, requestId: 0,
+    }] : [];
   });
   const playerClipRows = uniqueClips([...clipRows, ...recordingClipRows, ...momentRows]);
+  const streamlessIds = await streamlessStorageClipIds(playerClipRows);
+  const hasPlayback = (clip: typeof playerClipRows[number]) => Boolean(clip.exportedUrl) || streamlessIds.has(clip.id);
   const players = playerIds.map((userId) => {
     const p = participants.find((x) => x.userId === userId)!;
-    return { userId, name: p.userName, clips: playerClipRows.filter((c) => c.userId === userId && c.exportedUrl).map((c) => ({ ...c, durationSec: Math.max(0, Math.round(Number(c.endTime) - Number(c.startTime))) })) };
+    return { userId, name: p.userName, clips: playerClipRows.filter((c) => c.userId === userId && hasPlayback(c)).map((c) => ({ ...c, durationSec: Math.max(0, Math.round(Number(c.endTime) - Number(c.startTime))) })) };
   });
-  const fieldCandidateRows = uniqueClips([...fieldClipRows, ...recordingClipRows, ...momentRows]).filter((clip) => clip.exportedUrl);
+  const fieldCandidateRows = uniqueClips([...fieldClipRows, ...recordingClipRows, ...momentRows]).filter(hasPlayback);
   const savedRows = await db.select().from(weeklyHighlightsTable).where(eq(weeklyHighlightsTable.weekStart, weekStart));
   const saved = await Promise.all(savedRows.map(async (row) => ({
     userId: row.userId, fieldId: row.fieldId,
@@ -194,8 +226,11 @@ const saveOrPublishHighlights = async (req: Request, res: Response): Promise<voi
       const [field] = await tx.select({ name: fieldsTable.name }).from(fieldsTable).where(eq(fieldsTable.id, fieldId)).limit(1);
       if (!field) throw new Error("Field not found");
       const ids = group.clips.map((c: any) => c.clipId);
-      const clips = await tx.select().from(userClipsTable).where(and(inArray(userClipsTable.id, ids), eq(userClipsTable.isHidden, false), eq(userClipsTable.exportStatus, "done")));
-      if (clips.length !== ids.length || clips.some((c) => (group.kind === "personal" && c.userId !== userId) || !c.exportedUrl)) throw new Error("A selected clip is unavailable or not owned by the player.");
+      const clips = await tx.select().from(userClipsTable).where(and(inArray(userClipsTable.id, ids), eq(userClipsTable.isHidden, false)));
+      const streamlessIds = await streamlessStorageClipIds(clips);
+      if (clips.length !== ids.length || clips.some((c) =>
+        (group.kind === "personal" && c.userId !== userId) || (!c.exportedUrl && !streamlessIds.has(c.id))
+      )) throw new Error("A selected clip is unavailable or not owned by the player.");
       const duration = clips.reduce((sum, c) => sum + Math.max(0, Math.round(Number(c.endTime) - Number(c.startTime))), 0);
       const title = userId == null ? `Best goal at ${field.name}` : `Your week in ${duration} sec`;
       const existing = await tx.select({ id: weeklyHighlightsTable.id }).from(weeklyHighlightsTable)

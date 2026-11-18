@@ -140,6 +140,8 @@ export type ClipPlayerProps = {
   fallbackSrc?: string;
   /** Authorized original camera HLS playlist; Stream remains the fallback/export source. */
   uhdPlaybackUrl?: string | null;
+  /** Direct Storage sources for room playback; intentionally excludes 8K and app proxies. */
+  directStoragePlayback?: { fourKUrl: string; h264Url: string };
   onFallback?: () => void;
   title: string;
   source: ClipSource;
@@ -311,6 +313,7 @@ export function ClipPlayer({
   defaultPlaybackQuality,
   fallbackSrc,
   uhdPlaybackUrl: suppliedUhdPlaybackUrl,
+  directStoragePlayback,
   onFallback,
   title,
   source,
@@ -343,14 +346,16 @@ export function ClipPlayer({
   );
   const storageBackedSource = !isLive && (source.kind === "bunny" || source.kind === "ownerShare");
   const uhdSrc = isLive ? null : storageBackedSource
-    ? storagePlaybackUrlForSource(source, "4k", isLive)
+    ? directStoragePlayback?.fourKUrl ?? storagePlaybackUrlForSource(source, "4k", isLive)
     : suppliedUhdPlaybackUrl ?? uhdPlaybackUrlForSource(source, isLive);
   // The camera's 8K original plays straight from the Storage pull zone when it exists and the
   // phone decodes it smoothly; Bunny Stream stays the alternate for recordings that have one.
-  const eightKSrc = storageBackedSource
+  const eightKSrc = storageBackedSource && !directStoragePlayback
     ? storagePlaybackUrlForSource(source, "8k", isLive)
     : null;
-  const h264Src = storageBackedSource ? storagePlaybackUrlForSource(source, "h264", isLive) : null;
+  const h264Src = storageBackedSource
+    ? directStoragePlayback?.h264Url ?? storagePlaybackUrlForSource(source, "h264", isLive)
+    : null;
   const wantsStorageCheck = !isLive && Boolean(uhdSrc || eightKSrc || h264Src);
   const streamSourceStage = initialPlaybackSourceStage({ isLive, proxySrc, src });
   const [initialSourceStage] = useState<PlaybackSourceStage>(() =>

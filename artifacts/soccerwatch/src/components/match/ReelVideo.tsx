@@ -1,14 +1,15 @@
 import { memo, useEffect, useRef, useState } from "react";
+import Hls from "hls.js";
 import { focusAt } from "@/components/check-deck/DeckVideo";
 import type { FocusPoint } from "@/lib/check-deck";
+import { capPlaybackQuality } from "@/lib/hlsQuality";
 
 /** what a reel card needs to play: its id, its stretch (video seconds) and who or what to follow */
 export type PlayableCard = { id: string; start: number; end: number; focus: FocusPoint[] };
 
 /**
- * One reel card (a goal chance, or one of his own moments) playing from its own small MP4, already downloaded into
- * the phone's memory (lib/goal-reel.ts useReelClips). It loops the card's few
- * seconds and follows the ball across the panorama.
+ * One reel card playing from a downloaded MP4 or a direct HLS source window.
+ * It loops the card's few seconds and follows the ball across the panorama.
  *
  * iPhone Safari loads nothing for a video until it is asked to play, so the
  * card on top plays as soon as it has its file, and the card behind it is
@@ -22,13 +23,14 @@ const EASE = 0.18;
 export type ReelVideoState = "loading" | "ready" | "failed";
 
 export const ReelVideo = memo(function ReelVideo({
-  card, src, offset, srcAspect, active, ringColor, tag, fieldViewLabel, onState, showRing = true,
+  card, src, offset, type = "mp4", srcAspect, active, ringColor, tag, fieldViewLabel, onState, showRing = true,
 }: {
   card: PlayableCard;
-  /** the card's MP4 (a blob URL), or null while it downloads */
+  /** A downloaded MP4 or the direct HLS source playlist, or null while unavailable. */
   src: string | null;
   /** where the file starts on the video's clock, seconds */
   offset: number;
+  type?: "mp4" | "hls";
   srcAspect: number;
   active: boolean;
   ringColor: string;
@@ -61,14 +63,37 @@ export const ReelVideo = memo(function ReelVideo({
       if (gone) return;
       setShown(true);
       report.current?.(card.id, "ready");
+      const playback = video.play();
+      if (playback) playback.then(() => {
+        if (!gone && !activeRef.current) video.pause();
+      }).catch(() => undefined);
     };
     const onError = () => { if (!gone) report.current?.(card.id, "failed"); };
-    const onMeta = () => { if (Math.abs(video.currentTime - from) > 0.2) video.currentTime = from; };
+    const onMeta = () => {
+      if (Math.abs(video.currentTime - from) > 0.2) video.currentTime = from;
+    };
+    let hls: Hls | null = null;
     video.addEventListener("loadedmetadata", onMeta);
     video.addEventListener("loadeddata", onFrame);
     video.addEventListener("playing", onFrame);
     video.addEventListener("error", onError);
-    video.src = src;
+    if (type === "hls") {
+      if (Hls.isSupported()) {
+        hls = new Hls({ enableWorker: true, maxBufferLength: 20, startPosition: from });
+        capPlaybackQuality(hls);
+        hls.on(Hls.Events.ERROR, (_event, data) => {
+          if (data.fatal && !gone) report.current?.(card.id, "failed");
+        });
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls?.loadSource(src));
+        hls.attachMedia(video);
+      } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+        video.src = src;
+      } else {
+        report.current?.(card.id, "failed");
+      }
+    } else {
+      video.src = src;
+    }
     // Safari only loads a video it is asked to play: the top card plays, the
     // one behind plays for a moment and pauses on its first frame.
     const p = video.play();
@@ -82,13 +107,14 @@ export const ReelVideo = memo(function ReelVideo({
       video.removeEventListener("loadeddata", onFrame);
       video.removeEventListener("playing", onFrame);
       video.removeEventListener("error", onError);
+      hls?.destroy();
       video.pause();
       video.removeAttribute("src");
       video.load();
     };
     // a mounted card's file never changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src]);
+  }, [src, type]);
 
   // the card on top plays from its start; the others rest
   useEffect(() => {

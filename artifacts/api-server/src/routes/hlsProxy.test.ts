@@ -499,6 +499,28 @@ describe("GET /hls-proxy/storage/:videoGuid/:rendition.m3u8", () => {
     expect(res.text).toContain(`${rendition}.mp4`);
   });
 
+  it("falls back from a missing H.264 playlist to 4K, never 8K", async () => {
+    const guid = testVideoGuid();
+    fetchMock
+      .mockResolvedValueOnce(new Response("", { status: 404 }))
+      .mockResolvedValueOnce(new Response([
+        "#EXTM3U",
+        "#EXT-X-VERSION:7",
+        '#EXT-X-MAP:URI="4k.mp4"',
+        "#EXTINF:12.000,",
+        "4k.mp4",
+        "#EXT-X-ENDLIST",
+        "",
+      ].join("\n")));
+
+    const res = await request(app).get(`/api/hls-proxy/storage/${guid}/h264.m3u8`);
+    const requestedPaths = fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname);
+    expect(res.status).toBe(200);
+    expect(requestedPaths).toEqual([`/vod/${guid}/h264.m3u8`, `/vod/${guid}/4k.m3u8`]);
+    expect(res.text).toContain(`/vod/${guid}/4k.mp4`);
+    expect(res.text).not.toContain("8k");
+  });
+
   it("proxies an authorized Storage thumbnail without exposing the origin", async () => {
     const guid = testVideoGuid();
     fetchMock.mockResolvedValueOnce(new Response(Buffer.from("jpeg"), {

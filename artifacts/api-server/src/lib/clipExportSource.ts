@@ -2,8 +2,10 @@ import { logger } from "./logger";
 import {
   getUhdPlaylist,
   normalizeUhdVideoGuid,
+  storageH264Or4kSource,
   UhdPlaylistRequestError,
   uhdPlaylistUrl,
+  type H264Or4kStorageSource,
 } from "./uhdPlayback";
 import { hlsPlaylistDuration, parseHlsByteRangePlan } from "./uhdHlsRanges";
 
@@ -11,9 +13,10 @@ export type Camera4kExportSource = {
   kind: "camera-4k";
   url: string;
   playlist: string;
-  path: "camera-original-4k HLS";
+  path: "camera-original-H.264-or-4K HLS";
   duration: number;
   renditionLabel: null;
+  rendition: "h264" | "4k";
 };
 
 export class Camera4kNotReadyError extends Error {
@@ -27,12 +30,14 @@ const SOURCE_WAIT_MS = 45 * 60_000;
 const SOURCE_POLL_MS = 30_000;
 
 /**
- * Wait for the camera-original fMP4 playlist. Clip files must never fall back
- * to a Bunny Stream rendition, including after a transient 4K fetch failure.
+ * Wait for the camera-original fMP4 playlist. Prefer H.264 and use 4K only
+ * when H.264 is missing. Clip files must never fall back to Bunny Stream.
  */
 export async function waitForCamera4kSource(
   videoId: string,
   dependencies: {
+    getSource?: (videoId: string) => Promise<H264Or4kStorageSource | null>;
+    /** Legacy test seam for a 4K-only source. */
     getPlaylist?: typeof getUhdPlaylist;
     buildPlaylistUrl?: typeof uhdPlaylistUrl;
     timeoutMs?: number;
@@ -45,8 +50,15 @@ export async function waitForCamera4kSource(
   const guid = normalizeUhdVideoGuid(videoId);
   if (!guid) throw new Error(`No camera 4K source is available for video ${videoId}`);
 
-  const getPlaylist = dependencies.getPlaylist ?? getUhdPlaylist;
   const buildPlaylistUrl = dependencies.buildPlaylistUrl ?? uhdPlaylistUrl;
+  const getSource = dependencies.getSource ?? (dependencies.getPlaylist
+    ? async (sourceId) => {
+      const playlist = await dependencies.getPlaylist!(sourceId);
+      return playlist
+        ? { videoGuid: guid, rendition: "4k" as const, url: buildPlaylistUrl(guid), playlist }
+        : null;
+    }
+    : storageH264Or4kSource);
   const timeoutMs = Math.max(0, dependencies.timeoutMs ?? SOURCE_WAIT_MS);
   const pollIntervalMs = Math.max(1, dependencies.pollIntervalMs ?? SOURCE_POLL_MS);
   const now = dependencies.now ?? Date.now;
@@ -57,23 +69,23 @@ export async function waitForCamera4kSource(
     const elapsedMs = Math.max(0, now() - startedAt);
     if (elapsedMs >= timeoutMs) throw new Camera4kNotReadyError(guid, elapsedMs);
 
-    const url = buildPlaylistUrl(guid);
     try {
-      const playlist = await getPlaylist(guid);
-      if (playlist) {
-        const duration = hlsPlaylistDuration(playlist);
+      const source = await getSource(guid);
+      if (source) {
+        const duration = hlsPlaylistDuration(source.playlist);
         // Validate that this is the byte-ranged fMP4 form the exporter assembles.
-        parseHlsByteRangePlan(playlist, url, 0, Math.min(duration, 1), {
+        parseHlsByteRangePlan(source.playlist, source.url, 0, Math.min(duration, 1), {
           prerollSeconds: 0,
           postrollSeconds: 0,
         });
         return {
           kind: "camera-4k",
-          url,
-          playlist,
-          path: "camera-original-4k HLS",
+          url: source.url,
+          playlist: source.playlist,
+          path: "camera-original-H.264-or-4K HLS",
           duration,
           renditionLabel: null,
+          rendition: source.rendition,
         };
       }
     } catch (err) {

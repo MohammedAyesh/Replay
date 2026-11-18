@@ -306,11 +306,13 @@ describe("POST /api/user-clips", () => {
     expect(row.sourceRecordingId).toBe(recordingId);
   });
 
-  it("creates and shares a clip from a visible Storage recording without Bunny Stream lookups", async () => {
+  it("plays streamless clips from H.264 and does not queue a server export", async () => {
     const streamlessVideoId = "123e4567-e89b-12d3-a456-426614174000";
     const requests: string[] = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
-      requests.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      requests.push(url);
+      if (url.endsWith("/h264.m3u8")) return new Response("#EXTM3U\n#EXT-X-ENDLIST", { status: 200 });
       return new Response("not found", { status: 404 });
     });
     try {
@@ -323,6 +325,9 @@ describe("POST /api/user-clips", () => {
           recordingId: storageRecordingId,
         })
         .expect(201);
+      expect(created.body.playbackUrl).toMatch(/\/vod\/123e4567-e89b-12d3-a456-426614174000\/h264\.m3u8$/);
+      expect(created.body.exportStatus).toBeNull();
+      expect(created.body.exportedUrl).toBeNull();
 
       const [row] = await db.select({ sourceRecordingId: userClipsTable.sourceRecordingId })
         .from(userClipsTable).where(eq(userClipsTable.id, created.body.id));
@@ -339,9 +344,13 @@ describe("POST /api/user-clips", () => {
         .post(`/api/user-clips/${created.body.id}/share`)
         .expect(200);
       expect(shareCount.body).toMatchObject({ ok: true, shareCount: 1 });
+      mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+      const exportRequest = await request(app).post(`/api/user-clips/${created.body.id}/export`);
+      expect(exportRequest.status).toBe(409);
       await new Promise((resolve) => setTimeout(resolve, 25));
 
       expect(requests.some((url) => url.includes("video.bunnycdn.com"))).toBe(false);
+      expect(requests.filter((url) => url.endsWith(".m3u8")).map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8"]);
     } finally {
       fetchSpy.mockRestore();
     }

@@ -192,7 +192,10 @@ export const GetHomeWeeklyHighlightResponse = zod.union([zod.object({
   "matchDate": zod.string().nullish(),
   "availableUntil": zod.coerce.date().nullish(),
   "videoUrl": zod.string(),
-  "previewUrl": zod.string()
+  "previewUrl": zod.string(),
+  "previewStart": zod.number().describe('Normalized source-window start'),
+  "previewEnd": zod.number().describe('Normalized source-window end'),
+  "downloadAvailable": zod.boolean().describe('Whether an MP4 export is available to download')
 }))
 }),zod.null()])
 
@@ -228,7 +231,10 @@ export const GetWeeklyHighlightResponse = zod.object({
   "matchDate": zod.string().nullish(),
   "availableUntil": zod.coerce.date().nullish(),
   "videoUrl": zod.string(),
-  "previewUrl": zod.string()
+  "previewUrl": zod.string(),
+  "previewStart": zod.number().describe('Normalized source-window start'),
+  "previewEnd": zod.number().describe('Normalized source-window end'),
+  "downloadAvailable": zod.boolean().describe('Whether an MP4 export is available to download')
 }))
 })
 

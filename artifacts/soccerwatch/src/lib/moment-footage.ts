@@ -28,7 +28,7 @@ export type MomentPiece = {
 /** [video seconds, x, y] of the ball, x and y as fractions of the frame */
 export type BallPoint = [number, number, number];
 
-export type TileInfo = { url: string | null; focus: BallPoint[] };
+export type TileInfo = { url: string | null; focus: BallPoint[]; type?: "hls"; offset?: number; start?: number; end?: number };
 
 export type MomentFootage = {
   tileSeconds: number;
@@ -88,7 +88,7 @@ export function useMomentFootage(code: string, ats: readonly number[], enabled: 
 
 /* ----------------------------------------------------------- the tiles */
 
-export type TileFile = { url: string; offset: number };
+export type TileFile = { url: string; offset: number; type?: "hls"; start?: number; end?: number };
 
 /** what is known about each tile: its Bunny address (once cut) and the ball through it */
 const known = new Map<string, TileInfo & { offset?: number }>();
@@ -104,7 +104,14 @@ const PARALLEL = 3;
 
 function learn(id: string, tile: TileInfo & { offset?: number }) {
   const before = known.get(id);
-  known.set(id, { url: tile.url ?? before?.url ?? null, focus: tile.focus?.length ? tile.focus : before?.focus ?? [], offset: tile.offset ?? before?.offset });
+  known.set(id, {
+    url: tile.url ?? before?.url ?? null,
+    focus: tile.focus?.length ? tile.focus : before?.focus ?? [],
+    offset: tile.offset ?? before?.offset,
+    type: tile.type ?? before?.type,
+    start: tile.start ?? before?.start,
+    end: tile.end ?? before?.end,
+  });
 }
 
 export function tileFocus(id: string): BallPoint[] | null {
@@ -136,7 +143,7 @@ function release() {
   for (const [id, file] of files) {
     if (files.size <= KEEP) break;
     if (pinned.has(id)) continue;
-    URL.revokeObjectURL(file.url);
+    if (file.type !== "hls") URL.revokeObjectURL(file.url);
     files.delete(id);
   }
 }
@@ -170,21 +177,20 @@ function hurry(id: string) {
   enqueue(job);
 }
 
-async function locate(code: string, recordingId: number, k: number): Promise<{ url: string; offset: number }> {
+async function locate(code: string, recordingId: number, k: number): Promise<TileFile> {
   const id = tileKey(recordingId, k);
   const info = known.get(id);
-  if (info?.url) return { url: info.url, offset: info.offset ?? k * TILE_SECONDS };
+  if (info?.url) return { url: info.url, offset: info.offset ?? k * TILE_SECONDS, type: info.type, start: info.start, end: info.end };
   const response = await fetch(`${apiBase}/m/${encodeURIComponent(code)}/moments/tile?recordingId=${recordingId}&k=${k}`, { credentials: "include" });
   if (!response.ok) throw new Error(`tile ${response.status}`);
-  const tile = (await response.json()) as { url: string; offset: number; focus: BallPoint[] };
+  const tile = (await response.json()) as TileInfo;
   learn(id, tile);
-  return { url: tile.url, offset: tile.offset };
+  return { url: tile.url!, offset: tile.offset ?? k * TILE_SECONDS, type: tile.type, start: tile.start, end: tile.end };
 }
 
 /**
- * A tile's MP4 in memory, as a blob URL: from Bunny's edge when it is already
- * cut, else after asking the API to cut it (a viewer waiting puts it first).
- * One failed download is tried again before giving up.
+ * A tile's MP4 blob from Bunny, or a direct HLS source window for streamless
+ * Storage footage. One failed download is tried again before giving up.
  */
 export function loadTile(code: string, recordingId: number, k: number, urgent: boolean): Promise<TileFile> {
   const id = tileKey(recordingId, k);
@@ -204,6 +210,13 @@ export function loadTile(code: string, recordingId: number, k: number, urgent: b
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             const where = await locate(code, recordingId, k);
+            if (where.type === "hls") {
+              files.set(id, where);
+              release();
+              resolve(where);
+              for (const l of listeners) l();
+              return;
+            }
             // Bunny's edge is cross-origin and needs no cookies; in development the API serves it
             const sameOrigin = where.url.startsWith("/");
             const response = await fetch(where.url, { credentials: sameOrigin ? "include" : "omit" });

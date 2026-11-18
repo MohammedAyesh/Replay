@@ -37,6 +37,7 @@ import {
   bunnyGuidFromUrl,
   canTransition,
   describeSource,
+  describeSourceForWorker,
   isWorkerOnline,
   normaliseParams,
   queuePosition,
@@ -805,6 +806,11 @@ router.post("/worker/analysis/claim", async (req, res): Promise<void> => {
     if (!claimed) { res.json({ job: null }); return; }
     const found = await loadSources(claimed.sourceRecordingIds);
     const byId = new Map(found.map((row) => [row.id, row]));
+    const workerSources = (await Promise.all(claimed.sourceRecordingIds.map(async (id) => {
+      const recording = byId.get(id);
+      if (!recording) return null;
+      return describeSourceForWorker(recording);
+    }))).filter((source): source is SourceDescriptor => source !== null);
     const params = { ...claimed.params };
     const suppliedRosterHints = params.rosterHints;
     if (typeof suppliedRosterHints !== "object" || suppliedRosterHints === null || Array.isArray(suppliedRosterHints)) {
@@ -820,10 +826,7 @@ router.post("/worker/analysis/claim", async (req, res): Promise<void> => {
         matchStartSeconds: claimed.matchStartSeconds,
         params,
         attempts: claimed.attempts,
-        sources: claimed.sourceRecordingIds
-          .map((id) => byId.get(id))
-          .filter((row): row is NonNullable<typeof row> => !!row)
-          .map(describeSource),
+        sources: workerSources,
       },
     });
   } catch (error) {

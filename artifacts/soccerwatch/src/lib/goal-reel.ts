@@ -27,8 +27,8 @@ export type ReelCard = {
   ownGoal: boolean;
   scorer: string | null;
   focus: FocusPoint[];
-  /** the card's MP4 on Bunny's CDN when it is already there; else ask reelClipUrl */
-  clip?: { url: string; offset: number } | null;
+  /** An MP4 on Bunny, or a direct HLS source and its absolute source-time window. */
+  clip?: { url: string; offset: number; type?: "mp4" | "hls"; start?: number; end?: number } | null;
 };
 
 export type GoalReel = { recordings: ReelRecording[]; cards: ReelCard[]; open: number };
@@ -99,7 +99,7 @@ export function createVoteSaver(code: string, onFailed: (ids: string[]) => void)
 
 export type ReelClipState =
   | { status: "loading" }
-  | { status: "ready"; url: string; offset: number }
+  | { status: "ready"; url: string; offset: number; type?: "mp4" | "hls"; start?: number; end?: number }
   | { status: "failed" };
 
 export const reelClipUrl = (code: string, card: Pick<ReelCard, "recordingId" | "key">) =>
@@ -110,13 +110,14 @@ export const REEL_AHEAD = 6;
 /** downloads at once (a card is ~0.45 MB from Bunny); the card on screen always goes first */
 const PARALLEL = 3;
 
-/** Any reel's card, as the downloader needs it: its id and, when it is already on Bunny, where. */
-export type ClipCard = { id: string; clip?: { url: string; offset: number } | null };
+/** Any reel's source: an MP4 to download or a direct HLS playlist to stream. */
+export type ClipSource = { url: string; offset: number; type?: "mp4" | "hls"; start?: number; end?: number };
+export type ClipCard = { id: string; start?: number; end?: number; clip?: ClipSource | null };
 /** The API route that cuts a card (once, onto Bunny) and says where it is. */
 export type ClipRoute<C extends ClipCard> = (card: C) => string;
 
 /** Where a card's MP4 is: on the card already, or from the API (which cuts it once and stores it on Bunny). */
-async function clipLocation<C extends ClipCard>(route: ClipRoute<C>, card: C, signal: AbortSignal | undefined): Promise<{ url: string; offset: number }> {
+async function clipLocation<C extends ClipCard>(route: ClipRoute<C>, card: C, signal: AbortSignal | undefined): Promise<ClipSource> {
   if (card.clip?.url) return card.clip;
   const response = await fetch(route(card), { credentials: "include", signal });
   if (!response.ok) throw new Error(`clip ${response.status}`);
@@ -129,6 +130,7 @@ const early = new Map<string, Promise<{ blob: Blob; offset: number }>>();
 async function downloadClip<C extends ClipCard>(route: ClipRoute<C>, card: C, signal?: AbortSignal): Promise<{ blob: Blob; offset: number }> {
   const ctl = signal ?? new AbortController().signal;
   const where = await clipLocation(route, card, ctl);
+  if (where.type === "hls") throw new Error("HLS sources are streamed, not downloaded");
   // Bunny's edge (cross-origin, no cookies); in development the API itself
   const sameOrigin = where.url.startsWith("/");
   // The edge sometimes answers a first pull with 503 (seen on replayjo.com,
@@ -148,7 +150,7 @@ async function downloadClip<C extends ClipCard>(route: ClipRoute<C>, card: C, si
 
 /** Fetch the first card's file while the button is on screen, so the reel opens playing (~1-2 MB, from Bunny). */
 export function prefetchFirstClip<C extends ClipCard>(route: ClipRoute<C>, card: C | undefined): void {
-  if (!card || early.has(card.id)) return;
+  if (!card || card.clip?.type === "hls" || early.has(card.id)) return;
   const job = downloadClip(route, card);
   early.set(card.id, job);
   job.catch(() => early.delete(card.id));
@@ -178,9 +180,24 @@ export function useReelClips<C extends ClipCard>(route: ClipRoute<C>, cards: rea
       setClips((s) => { const { [id]: _, ...rest } = s; return rest; });
     }
     for (const [id, ctl] of inFlight.current) if (!keep.has(id)) { ctl.abort(); inFlight.current.delete(id); }
+    setClips((s) => {
+      const next = { ...s };
+      for (const id of Object.keys(next)) if (!keep.has(id)) delete next[id];
+      return next;
+    });
     // fetch in order of need: this card, the next ones, then the one before
     const order = [...cards.slice(index, index + REEL_AHEAD + 1), ...(index > 0 ? [cards[index - 1]!] : [])];
     for (const card of order) {
+      if (card.clip?.type === "hls") {
+        const source = card.clip;
+        setClips((s) => {
+          const existing = s[card.id];
+          return existing?.status === "ready" && existing.type === "hls" && existing.url === source.url
+            ? s
+            : { ...s, [card.id]: { status: "ready", url: source.url, offset: source.offset, type: "hls", start: source.start, end: source.end } };
+        });
+        continue;
+      }
       if (inFlight.current.size >= PARALLEL) break;
       if (urls.current.has(card.id) || inFlight.current.has(card.id)) continue;
       if ((tries.current.get(card.id) ?? 0) >= 2) continue;
@@ -196,7 +213,7 @@ export function useReelClips<C extends ClipCard>(route: ClipRoute<C>, cards: rea
           if (ctl.signal.aborted) return;
           const url = URL.createObjectURL(blob);
           urls.current.set(card.id, url);
-          setClips((s) => ({ ...s, [card.id]: { status: "ready", url, offset } }));
+          setClips((s) => ({ ...s, [card.id]: { status: "ready", url, offset, type: "mp4" } }));
         } catch {
           if (ctl.signal.aborted) return;
           if ((tries.current.get(card.id) ?? 0) >= 2) setClips((s) => ({ ...s, [card.id]: { status: "failed" } }));

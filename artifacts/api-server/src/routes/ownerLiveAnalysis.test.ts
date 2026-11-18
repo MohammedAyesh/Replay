@@ -5,6 +5,7 @@ import {
   academiesTable,
   academySessionsTable,
   analysisJobsTable,
+  cameraKitsTable,
   db,
   fieldsTable,
   footageRequestsTable,
@@ -20,8 +21,9 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
-import ownerRouter, { refreshOwnerRequest, startCameraJob } from "./owner";
-import { courtFromCamera } from "../lib/liveAnalysis";
+import ownerRouter, { refreshOwnerRequest, startCameraJob as startOwnerCameraJob } from "./owner";
+import { startCameraJob as startFootageBookingCameraJob } from "../lib/footageBooking";
+import { courtFromCamera, shouldAnalyseBooking } from "../lib/liveAnalysis";
 import { invalidateSettingsCache } from "../lib/settings";
 
 // A booking whose footage becomes ready must queue its analysis job (with the
@@ -40,6 +42,7 @@ let adminId: number;
 let fieldId: number;
 let academyId: number;
 let requestIds: number[] = [];
+let kitIds: number[] = [];
 let sessionIds: number[] = [];
 let extraRecordingIds: number[] = [];
 let extraJobIds: number[] = [];
@@ -48,6 +51,9 @@ let streamlessJobs = new Set<string>();
 let streamFetches: string[] = [];
 let realFetch: typeof fetch;
 let recordPosts: string[] = [];
+let gapPullPosts: string[] = [];
+let gapCoverageSeconds = 0;
+let gapAvailabilityHasHour = false;
 let app: Express;
 
 async function setLive(on: boolean) {
@@ -144,6 +150,23 @@ beforeAll(async () => {
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.includes("video.bunnycdn.com")) streamFetches.push(url);
+    if (url.includes("/gapstore/") && url.includes("/coverage?")) {
+      return new Response(JSON.stringify({ coveredSeconds: gapCoverageSeconds }),
+        { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.includes("/sd/") && url.includes("/available?")) {
+      return new Response(JSON.stringify({ hours: [] }),
+        { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.includes("/gapstore/") && url.includes("/available?")) {
+      return new Response(JSON.stringify({ hours: gapAvailabilityHasHour ? [{ hour: 22 }] : [] }),
+        { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (url.includes("/gapstore/") && url.includes("/pull?") && init?.method === "POST") {
+      gapPullPosts.push(url);
+      return new Response(JSON.stringify({ status: "scheduled", jobId: `gap-${gapPullPosts.length}` }),
+        { status: 200, headers: { "content-type": "application/json" } });
+    }
     if (url.includes("/record-hq/") && init?.method === "POST") {
       recordPosts.push(url);
       return new Response(JSON.stringify({ status: "scheduled", jobId: `posted-${recordPosts.length}` }),
@@ -165,6 +188,9 @@ beforeEach(() => {
   streamlessJobs = new Set();
   streamFetches = [];
   recordPosts = [];
+  gapPullPosts = [];
+  gapCoverageSeconds = 0;
+  gapAvailabilityHasHour = false;
   vi.mocked(getLocalUserRecord).mockResolvedValue({
     id: adminId,
     isGuest: false,
@@ -180,6 +206,7 @@ afterAll(async () => {
       await db.delete(recordingsTable).where(inArray(recordingsTable.id, recs.map((r) => r.id)));
     }
   }
+  if (kitIds.length) await db.delete(cameraKitsTable).where(inArray(cameraKitsTable.id, kitIds));
   if (extraJobIds.length) await db.delete(analysisJobsTable).where(inArray(analysisJobsTable.id, extraJobIds));
   if (extraRecordingIds.length) await db.delete(recordingsTable).where(inArray(recordingsTable.id, extraRecordingIds));
   if (sessionIds.length) await db.delete(academySessionsTable).where(inArray(academySessionsTable.id, sessionIds));
@@ -301,7 +328,44 @@ describe("analysing bookings during the match", () => {
     });
   });
 
-  it("asks the VPS to analyse a future booking live only when the setting is on", async () => {
+  it("asks the VPS to analyse past bookings when the setting is on", async () => {
+    await setLive(true);
+    expect(await shouldAnalyseBooking(fieldId)).toBe(true);
+    await startFootageBookingCameraJob(await booking(`past-analysis-${TAG}`), "cam1");
+
+    expect(recordPosts).toHaveLength(1);
+    expect(recordPosts[0]).toContain("&analyse=1");
+    expect(recordPosts[0]).not.toContain("live=1");
+  });
+
+  it("does not ask for analysis when the setting is off on a regular field", async () => {
+    await setLive(false);
+    expect(await shouldAnalyseBooking(fieldId)).toBe(false);
+    await startFootageBookingCameraJob(await booking(`past-no-analysis-${TAG}`), "cam1");
+
+    expect(recordPosts).toHaveLength(1);
+    expect(recordPosts[0]).not.toContain("analyse=");
+  });
+
+  it("asks the VPS to analyse recordings from portable-kit fields", async () => {
+    await setLive(false);
+    const [kit] = await db.insert(cameraKitsTable).values({
+      name: `Analysis kit ${TAG}`,
+      cameraId: "cam1",
+      fieldId,
+      token: `analysis-kit-${TAG}`,
+    }).returning({ id: cameraKitsTable.id });
+    kitIds.push(kit.id);
+    expect(await shouldAnalyseBooking(fieldId)).toBe(true);
+    await startFootageBookingCameraJob(await booking(`kit-analysis-${TAG}`), "cam1");
+
+    expect(recordPosts).toHaveLength(1);
+    expect(recordPosts[0]).toContain("&analyse=1");
+    await db.delete(cameraKitsTable).where(eq(cameraKitsTable.id, kit.id));
+    kitIds = kitIds.filter((id) => id !== kit.id);
+  });
+
+  it("keeps the owner route's future live flag conditional on the setting", async () => {
     const future = new Date(Date.now() + 3 * 24 * 3600 * 1000 + 3 * 3600 * 1000).toISOString().slice(0, 10);
     const make = async () => {
       const [row] = await db.insert(footageRequestsTable).values({
@@ -312,12 +376,39 @@ describe("analysing bookings during the match", () => {
       return row;
     };
     await setLive(true);
-    await startCameraJob(await make(), "cam1");
+    await startOwnerCameraJob(await make(), "cam1");
     await setLive(false);
-    await startCameraJob(await make(), "cam1");
+    await startOwnerCameraJob(await make(), "cam1");
     expect(recordPosts).toHaveLength(2);
     expect(recordPosts[0]).toContain("&live=1");
     expect(recordPosts[1]).not.toContain("live=");
+  });
+
+  it("sends both live and analyse flags for future footage bookings", async () => {
+    const future = new Date(Date.now() + 3 * 24 * 3600 * 1000 + 3 * 3600 * 1000).toISOString().slice(0, 10);
+    const [row] = await db.insert(footageRequestsTable).values({
+      fieldId, cameraId: "cam1", requestedBy: userId, startLocal: `${future} 22:00`, endLocal: `${future} 23:00`,
+      requestedSeconds: 3600, status: "queued", rateFils: 0,
+    }).returning();
+    requestIds.push(row.id);
+    await setLive(true);
+    expect(await shouldAnalyseBooking(fieldId)).toBe(true);
+    await startFootageBookingCameraJob(row, "cam1");
+
+    expect(recordPosts).toHaveLength(1);
+    expect(recordPosts[0]).toContain("&live=1");
+    expect(recordPosts[0]).toContain("&analyse=1");
+  });
+
+  it("does not add the analysis marker to FTP gap pulls", async () => {
+    await setLive(true);
+    gapCoverageSeconds = 3600;
+    gapAvailabilityHasHour = true;
+    await startFootageBookingCameraJob(await booking(`ftp-no-analysis-${TAG}`), "cam1");
+
+    expect(gapPullPosts).toHaveLength(1);
+    expect(gapPullPosts[0]).not.toContain("analyse=");
+    expect(recordPosts).toHaveLength(0);
   });
 
   it("creates a hidden Storage recording but queues no analysis while the setting is off", async () => {
