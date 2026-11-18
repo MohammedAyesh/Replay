@@ -210,3 +210,19 @@ export async function localRecordings(localUrl: string, date: string): Promise<L
 export function localFileUrl(localUrl: string, name: string): string {
   return `${localUrl.replace(/\/$/, "")}/api/file?name=${encodeURIComponent(name)}`;
 }
+
+// ─── Low-quality live preview (vps1 kit_preview.py) ──────────────────────────
+
+export type KitPreview = { state: "starting" | "ready" | "failed" | "stopped" | "unsupported"; via: "direct" | "cloud" | null; message: string | null };
+
+export function startKitPreview(kitId: number): Promise<KitPreview> {
+  return venueCall<KitPreview>(`/kits/${kitId}/preview`, { method: "POST" });
+}
+
+export function kitPreviewState(kitId: number): Promise<KitPreview> {
+  return venueCall<KitPreview>(`/kits/${kitId}/preview`);
+}
+
+export function kitPreviewUrl(kitId: number): string {
+  return `${apiBase}/kits/${kitId}/preview/index.m3u8`;
+}

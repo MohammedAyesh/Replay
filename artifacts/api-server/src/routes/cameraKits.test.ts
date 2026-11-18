@@ -157,6 +157,16 @@ describe("portable cameras", () => {
     await request(app).post("/api/kits/manage").set(auth(ownerId)).send({ academyId, name: "Kit 2", cameraId: "camera8" }).expect(403);
   });
 
+  it("starts the live preview through vps1 and only serves its own files", async () => {
+    await request(app).post(`/api/kits/${kitId}/preview`).set(auth(coachId)).expect(200)
+      .expect((r) => expect(r.body).toEqual({ state: "unsupported", via: null, message: null }));
+    expect(control.calls.some((c) => c.path === "/kit/camera9/preview" && c.method === "POST")).toBe(true);
+    await request(app).post(`/api/kits/${kitId}/preview`).set(auth(strangerId)).expect(404);
+    await request(app).get(`/api/kits/${kitId}/preview/..%2Fstate.json`).set(auth(coachId)).expect(404);
+    await request(app).get(`/api/kits/${kitId}/preview/index.m3u8`).set(auth(strangerId)).expect(404);
+    await request(app).get(`/api/kits/${kitId}/preview/index.m3u8`).set(auth(coachId)).expect(404);
+  });
+
   it("needs the mast height typed, records, and keeps what was played on Stop", async () => {
     await request(app).post(`/api/kits/${kitId}/setups`).set(auth(coachId)).send({ pitchId }).expect(400);
     await request(app).post(`/api/kits/${kitId}/setups`).set(auth(coachId)).send({ pitchId, mastHeightM: 0.5 }).expect(400);

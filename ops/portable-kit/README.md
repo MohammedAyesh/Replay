@@ -17,3 +17,18 @@ check says it can't check from here, and set-ups wait in "Measuring".
 
 A kit's recordings are always queued for analysis (lib/liveAnalysis.ts, `isKitField`), whatever
 "Analyse bookings during the match" says: autocal needs the player boxes, and the stats are the point.
+
+## Low-quality live preview (2026-11-18)
+
+`kit_preview.py` + `replay-kitpreview@.service` + preview routes in `kit_api.py`; install with `install_preview.sh`.
+The app's "Watch live (low quality)" buttons (view check, recording screen, console camera cards) call
+`POST /api/kits/:kitId/preview` → vps1 `POST /kit/<cam>/preview`, then play `/api/kits/:kitId/preview/index.m3u8`.
+
+- vps1 connects straight to the camera when TCP 9000 answers over WireGuard ("direct"), else through Reolink's
+  P2P relay by UID ("cloud", ~0.3–0.5 Mbps: the 1536×432 H.264 sub stream only). `"via": "cloud"` in kits.json forces cloud.
+- UID: `kits.json` `{"cam4": {"uid": "..."}}`, else read from the camera's `GetP2p` once and cached in
+  `/var/lib/replay-kitpreview/uids.json`. A kit that has never been on our network needs its UID typed into kits.json.
+- neolink runs from the Docker image `quantumentangledandy/neolink:latest` (bundles GStreamer) as uid 65534 on
+  RTSP 127.0.0.1:186NN; ffmpeg copies the sub stream to HLS in `/run/replay-kitpreview/<cam>/hls`.
+- Stops 60 s after the last request, at 30 min, or when the stream drops. Log: `/var/log/replay-kitpreview.log`.
+- Measured on cam1: direct ready in ~30 s; cloud ready in 33 s, 72 s of video per 60 s watched, 0.28 Mbps.

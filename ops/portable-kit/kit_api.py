@@ -8,6 +8,9 @@ Mounted into control.py (x-api-key like every other route):
     GET  /kit/{cam}/status    -> {online, ssid, signal, link}
     GET  /kit/{cam}/snapshot  -> image/jpeg (cmd=Snap, channel 0, the stitched panorama)
     POST /kit/{cam}/wifi      {ssid, password} -> SetWifi, read-modify-write
+    POST /kit/{cam}/preview   start the low-quality live preview (kit_preview.py); GET = its state
+    GET  /kit/{cam}/preview/index.m3u8 | seg_NNNNNN.ts   the preview itself (HLS, H.264)
+    DELETE /kit/{cam}/preview stop it now (it also stops by itself 60 s after the last request)
 
 A kit camera sits behind the kit's MiFi, not the Jordan Galaxy router, so its address
 comes from /etc/replay/kits.json:
@@ -20,7 +23,9 @@ slots, hour-long leases), and nothing here retries a login.
 """
 import json
 import os
+import re
 import secrets
+import subprocess
 import urllib.request
 
 from fastapi import APIRouter, Body, Header, HTTPException, Response
@@ -57,15 +62,20 @@ def _env_value(path, name):
     return None
 
 
+def kit_entry(cam):
+    """This camera's entry in kits.json, keyed "cam4" or "camera4"."""
+    short = _short(cam)
+    try:
+        kits = json.load(open(KITS_FILE))
+    except (OSError, ValueError):
+        return {}
+    return kits.get(cam) or kits.get(short) or kits.get(short.replace("cam", "camera", 1)) or {}
+
+
 def _camera(cam):
     """(host, user, password) for a camera name the app uses ("camera4" or "cam4")."""
     short = _short(cam)
-    entry = {}
-    try:
-        kits = json.load(open(KITS_FILE))
-        entry = kits.get(cam) or kits.get(short) or {}
-    except (OSError, ValueError):
-        pass
+    entry = kit_entry(cam)
     host = entry.get("host") or DEFAULT_HOSTS.get(short)
     if not host:
         raise HTTPException(404, "unknown camera")
@@ -157,6 +167,88 @@ def kit_snapshot(cam: str, x_api_key: str = Header(None)):
     if not kind.startswith("image/") or len(data) < 1000:
         raise HTTPException(502, "camera sent no picture")
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+# ── Low-quality live preview (kit_preview.py, replay-kitpreview@<cam>) ──────────────────
+
+PREVIEW_ROOT = "/run/replay-kitpreview"
+_PREVIEW_FILE = re.compile(r"^(index\.m3u8|seg_\d{6}\.ts)$")
+
+
+def _preview_cam(cam):
+    short = _short(cam)
+    if not re.fullmatch(r"cam\d{1,3}", short):
+        raise HTTPException(404, "unknown camera")
+    _camera(short)  # 404 for a camera vps1 knows nothing about
+    return short
+
+
+def _preview_touch(short):
+    d = os.path.join(PREVIEW_ROOT, short)
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, "access")
+    with open(p, "a"):
+        os.utime(p, None)
+
+
+def _preview_state(short):
+    active = subprocess.run(["systemctl", "is-active", f"replay-kitpreview@{short}"], capture_output=True, text=True).stdout.strip()
+    try:
+        s = json.load(open(os.path.join(PREVIEW_ROOT, short, "state.json")))
+    except (OSError, ValueError):
+        s = {"state": "starting" if active in ("active", "activating") else "stopped"}
+    if active not in ("active", "activating") and s.get("state") in ("starting", "ready"):
+        s["state"] = "stopped"
+    return {"state": s.get("state"), "via": s.get("via"), "message": s.get("message")}
+
+
+@router.post("/kit/{cam}/preview")
+def kit_preview_start(cam: str, x_api_key: str = Header(None)):
+    """Start the preview if it isn't running (anyone already watching shares it)."""
+    _auth(x_api_key)
+    short = _preview_cam(cam)
+    _preview_touch(short)
+    state = _preview_state(short)
+    if state["state"] not in ("starting", "ready"):
+        try:
+            os.remove(os.path.join(PREVIEW_ROOT, short, "state.json"))
+        except OSError:
+            pass
+        subprocess.run(["systemctl", "start", "--no-block", f"replay-kitpreview@{short}"], check=True, timeout=15)
+        state = {"state": "starting", "via": None, "message": None}
+    return state
+
+
+@router.get("/kit/{cam}/preview")
+def kit_preview_status(cam: str, x_api_key: str = Header(None)):
+    _auth(x_api_key)
+    short = _preview_cam(cam)
+    _preview_touch(short)
+    return _preview_state(short)
+
+
+@router.delete("/kit/{cam}/preview")
+def kit_preview_stop(cam: str, x_api_key: str = Header(None)):
+    _auth(x_api_key)
+    short = _preview_cam(cam)
+    subprocess.run(["systemctl", "stop", "--no-block", f"replay-kitpreview@{short}"], timeout=15)
+    return {"state": "stopped"}
+
+
+@router.get("/kit/{cam}/preview/{name}")
+def kit_preview_file(cam: str, name: str, x_api_key: str = Header(None)):
+    _auth(x_api_key)
+    short = _short(cam)
+    if not re.fullmatch(r"cam\d{1,3}", short) or not _PREVIEW_FILE.match(name):
+        raise HTTPException(404)
+    path = os.path.join(PREVIEW_ROOT, short, "hls", name)
+    try:
+        data = open(path, "rb").read()
+    except OSError:
+        raise HTTPException(404, "not ready")
+    _preview_touch(short)
+    kind = "application/vnd.apple.mpegurl" if name.endswith(".m3u8") else "video/mp2t"
+    return Response(content=data, media_type=kind, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/kit/{cam}/wifi")

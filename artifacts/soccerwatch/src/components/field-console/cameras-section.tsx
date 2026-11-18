@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useKitCopy } from "@/i18n/kit-strings";
+import { KitLivePreview } from "@/components/KitLivePreview";
 import { cn } from "@/lib/utils";
 import { useAddKit, useKitWifi, useManageKits, useReviewSetup, type Kit, type KitSetup } from "@/lib/kits-api";
 import { Card, ErrorText, SectionHeader, Skeleton } from "./shared";
@@ -99,6 +100,7 @@ export function CamerasSection({ academyId }: { academyId: number }) {
 function KitCard({ kit, onWifi }: { kit: Kit; onWifi: () => void }) {
   const c = useKitCopy();
   const [copied, setCopied] = useState(false);
+  const [watching, setWatching] = useState(false);
   const live = kit.latest?.status === "recording";
   const look = kit.latest?.status === "needs_look";
   const sticker = kit.token ? `${window.location.origin}/kit?k=${kit.token}` : null;
@@ -123,7 +125,9 @@ function KitCard({ kit, onWifi }: { kit: Kit; onWifi: () => void }) {
           </button>
         )}
         <button type="button" onClick={onWifi} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-line bg-raised px-3 text-xs font-semibold text-text"><Wifi className="h-3.5 w-3.5" />WiFi</button>
+        <button type="button" onClick={() => setWatching((v) => !v)} className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold", watching ? "border-turf bg-turf/15 text-turf" : "border-line bg-raised text-text")}><Video className="h-3.5 w-3.5" />{c.preview.live}</button>
       </div>
+      {watching && <KitLivePreview kitId={kit.id} className="mt-4" />}
     </div>
   );
 }
