@@ -1,6 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import Hls from "hls.js";
-import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 import { capPlaybackQuality } from "@/lib/hlsQuality";
 import type { Chunk, Game, Point } from "@/lib/game-claim/model";
 import { chunkAt, G2L, mmss } from "@/lib/game-claim/model";
@@ -260,25 +259,18 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
     const streamUrl = url;
     let hls: Hls | null = null;
     let cancelled = false;
-    let currentIsUhd = false;
-    let streamFallbackUsed = false;
     setVideoError(false);
-    const proxied = url.replace(/&direct=1(?=&|$)/, "");
-    const canFallBack = proxied !== url;
     v.crossOrigin = "anonymous";
-    const attach = (source: string, startPosition: number, isUhd: boolean): Promise<void> => {
+    const attach = (source: string, startPosition: number): Promise<void> => {
       if (hls) { hls.destroy(); hls = null; }
-      currentIsUhd = isUhd;
       v.pause();
       v.removeAttribute("src");
       v.load();
-      const sourceProxy = source.replace(/&direct=1(?=&|$)/, "");
-      const sourceCanFallBack = sourceProxy !== source;
       if ((source.includes(".m3u8") || source.includes("/hls-proxy/")) && Hls.isSupported()) {
         return new Promise<void>((resolve, reject) => {
           const instance = new Hls({ enableWorker: true, maxBufferLength: 20, backBufferLength: 30, startPosition });
           hls = instance;
-          if (!isUhd) capPlaybackQuality(instance);
+          capPlaybackQuality(instance);
           let settled = false;
           const finish = (error?: Error) => {
             if (settled) return;
@@ -297,21 +289,16 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
           instance.on(Hls.Events.ERROR, (_e, data) => {
             if (cancelled || hls !== instance) return;
             const detail = String(data.details ?? "");
-            const codecError = detail === "bufferAddCodecError" || detail === "bufferIncompatibleCodecsError";
-            if (isUhd && (data.fatal || codecError)) {
-              if (settled) void fallbackToStream(v.currentTime || startPosition);
-              else finish(new Error("Camera 4K playback failed"));
-              return;
-            }
             if (!data.fatal) return;
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR && sourceCanFallBack) {
-              instance.loadSource(sourceProxy);
-              instance.startLoad(startPosition);
-              return;
-            }
+            console.error("[GameMedia] Direct CDN playback failed", {
+              playlistUrl: source,
+              requestUrl: data.frag?.url ?? data.url,
+              status: data.response?.code ?? null,
+              details: detail,
+            });
             if (data.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
             else if (settled) setVideoError(true);
-            else finish(new Error("Stream playback failed"));
+            else finish(new Error("Direct CDN playback failed"));
           });
           instance.attachMedia(v);
           instance.on(Hls.Events.FRAG_BUFFERED, () => {
@@ -332,51 +319,24 @@ export const GameMedia = memo(forwardRef<MediaHandle, Props>(function GameMedia(
           finish();
         };
         const onError = () => {
-          if (isUhd) void fallbackToStream(v.currentTime || startPosition);
-          else if (canFallBack) {
-            v.src = sourceProxy;
-            if (startPosition > 0) v.currentTime = startPosition;
-          } else finish(new Error("Native video source failed"));
+          console.error("[GameMedia] Direct CDN native playback failed", { url: source, status: v.error?.code ?? null });
+          finish(new Error("Native direct playback failed"));
         };
         v.addEventListener("loadedmetadata", onMetadata, { once: true });
         v.addEventListener("error", onError);
         v.src = source;
       });
     };
-    function fallbackToStream(startPosition: number): Promise<void> {
-      if (!v || !currentIsUhd || streamFallbackUsed) return Promise.resolve();
-      const activeVideo = v;
-      streamFallbackUsed = true;
-      currentIsUhd = false;
-      const wasPlaying = !activeVideo.paused;
-      return attach(streamUrl, startPosition, false)
-        .then(() => wasPlaying && !cancelled ? activeVideo.play() : undefined)
-        .then(() => undefined)
-        .catch(() => setVideoError(true));
-    }
-    const uhdUrl = uhdPlaybackUrlForStreamUrl(url);
-    void (async () => {
-      try {
-        const useUhd = await canUseUhdPlayback(v, uhdUrl);
-        if (cancelled) return;
-        try {
-          await attach(useUhd && uhdUrl ? uhdUrl : url, 0, useUhd && !!uhdUrl);
-        } catch (error) {
-          if (!useUhd || !uhdUrl || streamFallbackUsed) throw error;
-          streamFallbackUsed = true;
-          await attach(url, v.currentTime || 0, false);
-        }
-        if (!cancelled) {
-          const onError = () => {
-            if (currentIsUhd) void fallbackToStream(v.currentTime || 0);
-            else setVideoError(true);
-          };
-          v.onerror = onError;
-        }
-      } catch {
-        if (!cancelled) setVideoError(true);
+    void attach(streamUrl, 0).then(() => {
+      if (!cancelled) {
+        v.onerror = () => {
+          console.error("[GameMedia] Direct CDN native playback failed", { url: streamUrl, status: v.error?.code ?? null });
+          setVideoError(true);
+        };
       }
-    })();
+    }).catch(() => {
+      if (!cancelled) setVideoError(true);
+    });
     return () => {
       cancelled = true;
       v.onerror = null;

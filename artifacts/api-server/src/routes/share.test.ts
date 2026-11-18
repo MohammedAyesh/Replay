@@ -20,7 +20,7 @@ import { execFileSync } from "child_process";
 process.env.BUNNY_STORAGE_HOSTNAME = "fake-storage.local";
 process.env.BUNNY_STORAGE_ZONE = "galaxyfield";
 process.env.BUNNY_STORAGE_API_KEY = "storage-key";
-process.env.BUNNY_STORAGE_CDN_URL = "https://fake-cdn.local";
+process.env.BUNNY_STORAGE_CDN_URL = "https://fake-cdn.b-cdn.net";
 process.env.BUNNY_CDN_HOSTNAME = "private-cdn.local";
 process.env.CLIP_SHARE_URL_SECRET = "share-secret";
 process.env.PUBLIC_SHARE_BASE_URL = "https://replayjo.test";
@@ -29,6 +29,7 @@ const { db, usersTable, userClipsTable, fieldsTable, recordingsTable, footageReq
 const { inArray, eq } = await import("drizzle-orm");
 const { shareToken, portfolioPlaybackToken } = await import("../lib/shareCard");
 const { backupExportRef, CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } = await import("../lib/backupExport");
+const { getClipExportCdnUrl } = await import("../lib/bunny");
 
 const TAG = `sh_${Date.now()}`;
 let app: Express;
@@ -211,11 +212,14 @@ beforeAll(async () => {
   largeExportClipId = await mk({
     title: "Large export",
     exportStatus: "done",
-    exportedUrl: `https://fake-cdn.local/clips/0.mp4`,
+    exportedUrl: "https://fake-storage.local/galaxyfield/clips/0.mp4",
     visibility: "public",
     showInPortfolio: true,
     isHidden: false,
   });
+  await db.update(userClipsTable)
+    .set({ exportedUrl: `https://fake-storage.local/galaxyfield/clips/${largeExportClipId}.mp4` })
+    .where(eq(userClipsTable.id, largeExportClipId));
   backupExportClipId = await mk({
     title: "Large vps1 export",
     exportStatus: "done",
@@ -224,9 +228,6 @@ beforeAll(async () => {
     showInPortfolio: true,
     isHidden: false,
   });
-  await db.update(userClipsTable)
-    .set({ exportedUrl: `https://fake-cdn.local/clips/${largeExportClipId}.mp4` })
-    .where(eq(userClipsTable.id, largeExportClipId));
 
   const [ownerField] = await db.insert(fieldsTable).values({
     name: `Owner Share Field ${TAG}`,
@@ -463,8 +464,10 @@ describe("path prefixes", () => {
     expect(poster.status).toBe(200);
     expect(poster.headers["content-type"]).toBe("image/jpeg");
 
-    const mp4 = await request(app).get(`/api/s/${readyClipId}/${tok}/clip.mp4`).set("Range", "bytes=0-9");
-    expect(mp4.status).toBe(206);
+    const directToken = shareToken(largeExportClipId);
+    const mp4 = await request(app).get(`/api/s/${largeExportClipId}/${directToken}/clip.mp4`).redirects(0);
+    expect(mp4.status).toBe(302);
+    expect(mp4.headers.location).toMatch(new RegExp(`^https://[^/]+\\.b-cdn\\.net/clips/${largeExportClipId}\\.mp4$`));
   }, 180_000);
 
   it("answers owner watch pages and manifests on the /api fallback prefix", async () => {
@@ -473,9 +476,9 @@ describe("path prefixes", () => {
     expect(page.status).toBe(200);
     expect(page.headers["content-type"]).toMatch(/text\/html/);
 
-    const manifest = await request(app).get(`/api/w/${ownerToken}/manifest.m3u8`);
-    expect(manifest.status).toBe(200);
-    expect(manifest.text).toMatch(/^#EXTM3U/);
+    const manifest = await request(app).get(`/api/w/${ownerToken}/manifest.m3u8`).redirects(0);
+    expect(manifest.status).toBe(302);
+    expect(manifest.headers.location).toBe("https://private-cdn.local/private-video-guid/playlist.m3u8");
   });
 
   it("escapes the /api no-store block even when served under /api", async () => {
@@ -532,66 +535,36 @@ describe("the assets", () => {
     expect(dims).toBe("1200x630");
   }, 180_000);
 
-  it("answers a ranged request with 206 — iOS will not start playback otherwise", async () => {
-    const res = await request(app).get(`${cardUrl(readyClipId)}/clip.mp4`).set("Range", "bytes=0-99");
-    expect(res.status).toBe(206);
-    expect(res.headers["content-range"]).toBe(`bytes 0-99/${mp4.length}`);
-    expect(res.headers["accept-ranges"]).toBe("bytes");
+  it("redirects share playback straight to the Bunny CDN", async () => {
+    const [largeExport] = await db.select({ exportedUrl: userClipsTable.exportedUrl })
+      .from(userClipsTable).where(eq(userClipsTable.id, largeExportClipId));
+    expect(getClipExportCdnUrl(largeExportClipId, largeExport?.exportedUrl)).not.toBeNull();
+    const res = await request(app).get(`${cardUrl(largeExportClipId)}/clip.mp4`).redirects(0);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toMatch(new RegExp(`^https://[^/]+\\.b-cdn\\.net/clips/${largeExportClipId}\\.mp4$`));
   }, 60_000);
 
-  it("chunk-streams large full exports from both share and portfolio playback routes", async () => {
-    const urls: [string, string][] = [
-      [`${cardUrl(largeExportClipId)}/clip.mp4`, "large export"],
-      [
-        `/portfolio-clips/${largeExportClipId}/${portfolioPlaybackToken(largeExportClipId)}/clip.mp4`,
-        "large export",
-      ],
-      [`${cardUrl(backupExportClipId)}/clip.mp4`, "vps1 large export"],
-      [
-        `/portfolio-clips/${backupExportClipId}/${portfolioPlaybackToken(backupExportClipId)}/clip.mp4`,
-        "vps1 large export",
-      ],
-    ];
-    const originalControlUrl = process.env.CONTABO_CONTROL_URL;
-    const originalControlKey = process.env.CONTABO_CONTROL_KEY;
-    process.env.CONTABO_CONTROL_URL = "http://vps1-test.local";
-    process.env.CONTABO_CONTROL_KEY = "test-control-key";
-    try {
-      for (const [url, expectedBody] of urls) {
-        const res = await request(app).get(url).buffer(true).parse((incoming, callback) => {
-          const chunks: Buffer[] = [];
-          incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
-          incoming.on("end", () => callback(null, Buffer.concat(chunks)));
-        });
+  it("redirects portfolio playback and refuses exports without a direct CDN object", async () => {
+    const portfolio = await request(app)
+      .get(`/portfolio-clips/${largeExportClipId}/${portfolioPlaybackToken(largeExportClipId)}/clip.mp4`)
+      .redirects(0);
+    expect(portfolio.status).toBe(302);
+    expect(portfolio.headers.location).toMatch(new RegExp(`^https://[^/]+\\.b-cdn\\.net/clips/${largeExportClipId}\\.mp4$`));
 
-        expect(res.status).toBe(200);
-        expect(res.headers["content-type"]).toBe("video/mp4");
-        expect(res.headers["accept-ranges"]).toBe("bytes");
-        expect(res.headers["content-length"]).toBeUndefined();
-        expect(res.headers["transfer-encoding"]).toBe("chunked");
-        expect((res.body as Buffer).toString()).toBe(expectedBody);
-      }
-
-      const ranged = await request(app)
-        .get(`${cardUrl(backupExportClipId)}/clip.mp4`)
-        .set("Range", "bytes=0-9");
-      expect(ranged.status).toBe(206);
-      expect(ranged.headers["accept-ranges"]).toBe("bytes");
-      expect(ranged.headers["content-range"]).toBe("bytes 0-9/100");
-      expect(ranged.headers["content-length"]).toBe("10");
-      expect(ranged.headers["transfer-encoding"]).toBeUndefined();
-    } finally {
-      if (originalControlUrl === undefined) delete process.env.CONTABO_CONTROL_URL;
-      else process.env.CONTABO_CONTROL_URL = originalControlUrl;
-      if (originalControlKey === undefined) delete process.env.CONTABO_CONTROL_KEY;
-      else process.env.CONTABO_CONTROL_KEY = originalControlKey;
-    }
+    const backup = await request(app).get(`${cardUrl(backupExportClipId)}/clip.mp4`);
+    expect(backup.status).toBe(503);
+    expect(backup.body.code).toBe("direct_cdn_unavailable");
+    const backupPortfolio = await request(app)
+      .get(`/portfolio-clips/${backupExportClipId}/${portfolioPlaybackToken(backupExportClipId)}/clip.mp4`);
+    expect(backupPortfolio.status).toBe(503);
+    expect(backupPortfolio.body.code).toBe("direct_cdn_unavailable");
   }, 60_000);
 
   it("never exposes the storage key to the client", async () => {
-    const res = await request(app).get(`${cardUrl(readyClipId)}/clip.mp4`).set("Range", "bytes=0-9");
+    const res = await request(app).get(`${cardUrl(largeExportClipId)}/clip.mp4`).redirects(0);
+    expect(res.status).toBe(302);
     expect(JSON.stringify(res.headers)).not.toContain("storage-key");
-  }, 60_000);
+  });
 
   it("404s assets on a wrong token too", async () => {
     expect((await request(app).get(`${cardUrl(readyClipId, "0".repeat(20))}/poster.jpg`)).status).toBe(404);
@@ -693,7 +666,7 @@ describe("public owner watch links", () => {
     }
   });
 
-  it("serves the original 4K playlist only through an active owner-share token", async () => {
+  it("redirects to the original 4K playlist only through an active owner-share token", async () => {
     const guid = "33333333-3333-4333-8333-333333333333";
     const oldPullZone = process.env.BUNNY_REEL_CDN_URL;
     process.env.BUNNY_REEL_CDN_URL = "https://fake-pullzone.local";
@@ -701,17 +674,13 @@ describe("public owner watch links", () => {
       .set({ videoId: guid })
       .where(eq(footageRequestsTable.id, ownerRequestIds[0]));
     try {
-      const playlist = await request(app).get(`/w/${token}/4k.m3u8`);
-      expect(playlist.status).toBe(200);
-      expect(playlist.headers["content-type"]).toContain("mpegurl");
-      expect(playlist.headers["cache-control"]).toBe("no-store");
-      expect(playlist.text).toContain(`URI=\"/w/${token}/4k.mp4\"`);
-      expect(playlist.text).toContain(`/w/${token}/4k.mp4`);
+      const playlist = await request(app).get(`/w/${token}/4k.m3u8`).redirects(0);
+      expect(playlist.status).toBe(302);
+      expect(playlist.headers.location).toBe(`https://fake-pullzone.local/vod/${guid}/4k.m3u8`);
 
-      const media = await request(app).get(`/w/${token}/4k.mp4`).set("Range", "bytes=0-15");
-      expect(media.status).toBe(206);
-      expect(media.headers["content-range"]).toBe("bytes 0-15/100");
-      expect(media.body.toString()).toBe("4k-segment-bytes");
+      const media = await request(app).get(`/w/${token}/4k.mp4`).redirects(0);
+      expect(media.status).toBe(302);
+      expect(media.headers.location).toBe(`https://fake-pullzone.local/vod/${guid}/4k.mp4`);
 
       const before = vi.mocked(globalThis.fetch).mock.calls.length;
       const invalid = await request(app).get(`/w/ffffffffffffffffffffffffffffffff/4k.m3u8`);
@@ -726,7 +695,7 @@ describe("public owner watch links", () => {
     }
   });
 
-  it("serves streamless 8K, H.264, ranged media, and Storage thumbnails through its token", async () => {
+  it("uses direct H.264 first for streamless shares and never exposes 8K", async () => {
     const guid = "44444444-4444-4444-8444-444444444444";
     const token = `s-${"a".repeat(32)}`;
     const original = await db.select({
@@ -743,15 +712,14 @@ describe("public owner watch links", () => {
       expect(meta.status).toBe(200);
       expect(meta.body.streamless).toBe(true);
 
-      const playlist = await request(app).get(`/w/${token}/8k.m3u8`);
-      expect(playlist.status).toBe(200);
-      expect(playlist.text).toContain(`URI=\"/w/${token}/8k.mp4\"`);
-      expect(playlist.text).toContain(`/w/${token}/8k.mp4`);
-
-      const media = await request(app).get(`/w/${token}/8k.mp4`).set("Range", "bytes=0-15");
-      expect(media.status).toBe(206);
-      expect(media.headers["content-range"]).toBe("bytes 0-15/100");
-      expect(media.body.toString()).toBe("8k-segment-bytes");
+      expect((await request(app).get(`/w/${token}/8k.m3u8`)).status).toBe(404);
+      expect((await request(app).get(`/w/${token}/8k.mp4`)).status).toBe(404);
+      const h264 = await request(app).get(`/w/${token}/h264.m3u8`).redirects(0);
+      expect(h264.status).toBe(302);
+      expect(h264.headers.location).toBe(`https://fake-pullzone.local/vod/${guid}/h264.m3u8`);
+      const manifest = await request(app).get(`/w/${token}/manifest.m3u8`).redirects(0);
+      expect(manifest.status).toBe(302);
+      expect(manifest.headers.location).toBe(`https://fake-pullzone.local/vod/${guid}/h264.m3u8`);
 
       const poster = await request(app).get(`/w/${token}/poster.jpg`);
       expect(poster.status).toBe(200);
@@ -774,57 +742,24 @@ describe("public owner watch links", () => {
     expect(res.text).toContain("هذا الرابط لم يعد متاحاً.");
   });
 
-  it("leaves segments on Bunny for a replayjo.com page that asks for direct=1", async () => {
+  it("redirects owner playback to Bunny regardless of the page referer", async () => {
     const direct = await request(app)
       .get(`/w/${token}/manifest.m3u8?direct=1`)
       .set("Referer", `https://replayjo.com/w/${token}`);
-    expect(direct.status).toBe(200);
-    const line = direct.text.trim().split("\n").at(-1)!;
-    expect(new URL(line).hostname).toBe(process.env.BUNNY_CDN_HOSTNAME);
-
-    // Any other page, or no flag, keeps the opaque token-bound resources.
-    for (const req of [
-      request(app).get(`/w/${token}/manifest.m3u8?direct=1`).set("Referer", "https://x.replit.dev/"),
-      request(app).get(`/w/${token}/manifest.m3u8`).set("Referer", `https://replayjo.com/w/${token}`),
-    ]) {
-      const res = await req;
-      expect(res.text.trim().split("\n").at(-1)).toMatch(new RegExp(`^/w/${token}/resource/`));
-    }
+    expect(direct.status).toBe(302);
+    expect(direct.headers.location).toBe("https://private-cdn.local/private-video-guid/playlist.m3u8");
   });
 
-  it("rewrites manifests and segments through opaque token-bound resources", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
+  it("does not redirect a revoked owner-share token to Bunny", async () => {
+    await db.update(footageRequestsTable)
+      .set({ shareRevoked: true })
+      .where(eq(footageRequestsTable.shareToken, token));
     try {
-      const manifest = await request(app).get(`/w/${token}/manifest.m3u8`);
-      expect(manifest.status).toBe(200);
-      expect(manifest.headers["content-type"]).toContain("mpegurl");
-      expect(manifest.text).not.toContain("private-video-guid");
-      expect(manifest.text).not.toContain("private-cdn.local");
-      const resourcePath = manifest.text.trim().split("\n").at(-1);
-      expect(resourcePath).toMatch(
-        new RegExp(`/w/${token}/resource/[A-Za-z0-9_-]+\\.[0-9a-f]{32}$`),
-      );
-
-      const tampered = `${resourcePath!.slice(0, -1)}${resourcePath!.endsWith("0") ? "1" : "0"}`;
-      expect((await request(app).get(tampered)).status).toBe(404);
-
-      vi.advanceTimersByTime(20 * 60 * 1000);
-      const segment = await request(app).get(resourcePath!);
-      expect(segment.status).toBe(200);
-      expect(Buffer.isBuffer(segment.body)).toBe(true);
-      expect(segment.body.toString()).toBe("segment-bytes");
-
-      await db
-        .update(footageRequestsTable)
-        .set({ shareRevoked: true })
-        .where(eq(footageRequestsTable.shareToken, token));
-      expect((await request(app).get(resourcePath!)).status).toBe(404);
+      expect((await request(app).get(`/w/${token}/manifest.m3u8`)).status).toBe(404);
     } finally {
-      await db
-        .update(footageRequestsTable)
+      await db.update(footageRequestsTable)
         .set({ shareRevoked: false })
         .where(eq(footageRequestsTable.shareToken, token));
-      vi.useRealTimers();
     }
   });
 

@@ -13,20 +13,17 @@ import {
   Download, Upload,
 } from "lucide-react";
 import Hls from "hls.js";
-import { withDirectSegments } from "@/lib/directSegments";
 import { useToast } from "@/hooks/use-toast";
 import {
   canDecodeUhd,
-  canUse8kPlayback,
   canUseH264Playback,
   chooseRecordedPlaybackStage,
   createUhdStallGuard,
+  directStoragePlaylistForSourceUrl,
   hasSavedPlaybackPreference,
   isStreamlessStorageUrl,
   isUhdPlaylistAvailable,
   readUhdPlaybackPreference,
-  storagePlaybackUrlForGuid,
-  uhdPlaybackUrlForGuid,
   writeUhdPlaybackPreference,
   type UhdPlaybackPreference,
 } from "@/lib/uhdPlayback";
@@ -3859,7 +3856,6 @@ function HlsPlayer({
   className,
   uhdUrl,
   hasUhdPlayback = false,
-  storageVideoId,
   storageOnly,
   defaultQuality,
 }: {
@@ -3867,7 +3863,6 @@ function HlsPlayer({
   className?: string;
   uhdUrl?: string | null;
   hasUhdPlayback?: boolean;
-  storageVideoId?: string | null;
   storageOnly?: boolean;
   defaultQuality?: UhdPlaybackPreference;
 }) {
@@ -3876,15 +3871,15 @@ function HlsPlayer({
   const [levels,      setLevels]      = useState<Array<{ height: number; index: number }>>([]);
   const [activeLevel, setActiveLevel] = useState<number>(-1); // -1 = Auto (ABR)
   const storageOnlySource = Boolean(storageOnly || isStreamlessStorageUrl(url));
-  const eightKUrl = storageVideoId ? storagePlaybackUrlForGuid(storageVideoId, "8k") : null;
-  const h264Url = storageVideoId ? storagePlaybackUrlForGuid(storageVideoId, "h264") : null;
+  const h264Url = directStoragePlaylistForSourceUrl(url, "h264");
+  const directFourKUrl = directStoragePlaylistForSourceUrl(url, "4k");
+  const directUhdUrl = uhdUrl && !uhdUrl.startsWith("/api/hls-proxy/") ? uhdUrl : directFourKUrl;
   const [uhdAvailable, setUhdAvailable] = useState(false);
-  const [eightKAvailable, setEightKAvailable] = useState(false);
   const [h264Available, setH264Available] = useState(false);
   const storageAvailabilityRef = useRef({ uhdAvailable: false, h264Available: false });
   storageAvailabilityRef.current = { uhdAvailable, h264Available };
-  const [sourceStage, setSourceStage] = useState<"checking" | "8k" | "uhd" | "h264" | "cdn" | "proxy" | "unavailable">(
-    () => storageVideoId || (uhdUrl && readUhdPlaybackPreference() === "4k") ? "checking" : "cdn",
+  const [sourceStage, setSourceStage] = useState<"checking" | "uhd" | "h264" | "cdn" | "unavailable">(
+    () => storageOnlySource || (directUhdUrl && readUhdPlaybackPreference() === "4k") ? "checking" : "cdn",
   );
   const positionRef = useRef<number | null>(null);
   const restorePausedRef = useRef<boolean | null>(null);
@@ -3898,39 +3893,36 @@ function HlsPlayer({
     const element = videoRef.current;
     if (!element) return () => { active = false; };
     setSourceStage("checking");
-    if (!eightKUrl && (!uhdUrl || !hasUhdPlayback) && !h264Url) {
+    if ((!directUhdUrl || !hasUhdPlayback) && !h264Url) {
       setUhdAvailable(false);
-      setEightKAvailable(false);
       setH264Available(false);
       setSourceStage(storageOnlySource ? "unavailable" : "cdn");
       return () => { active = false; };
     }
     void (async () => {
-      const [available4k, available8k, availableH264] = await Promise.all([
-        uhdUrl && hasUhdPlayback
-          ? Promise.all([canDecodeUhd(element), isUhdPlaylistAvailable(uhdUrl)]).then(([smooth, available]) => smooth && available)
+      const [available4k, availableH264] = await Promise.all([
+        directUhdUrl && hasUhdPlayback
+          ? Promise.all([canDecodeUhd(element), isUhdPlaylistAvailable(directUhdUrl)]).then(([smooth, available]) => smooth && available)
           : Promise.resolve(false),
-        canUse8kPlayback(element, eightKUrl),
         canUseH264Playback(element, h264Url),
       ]);
       if (!active) return;
       setUhdAvailable(available4k);
-      setEightKAvailable(available8k);
       setH264Available(availableH264);
       const selected = chooseRecordedPlaybackStage({
         preference: readUhdPlaybackPreference(),
         hasSavedPreference: hasSavedPlaybackPreference(),
         defaultQuality,
-        available8k,
+        available8k: false,
         available4k,
         availableH264,
         streamless: storageOnlySource,
       });
-      const next = selected === "stream" ? "cdn" : selected ?? "unavailable";
+      const next = selected === "stream" || selected === "8k" ? "cdn" : selected ?? "unavailable";
       setSourceStage(next);
     })();
     return () => { active = false; };
-  }, [defaultQuality, eightKUrl, h264Url, hasUhdPlayback, storageOnlySource, uhdUrl]);
+  }, [defaultQuality, directUhdUrl, h264Url, hasUhdPlayback, storageOnlySource]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -3939,11 +3931,14 @@ function HlsPlayer({
     setLevels([]);
     setActiveLevel(-1);
     if (sourceStage === "checking" || sourceStage === "unavailable") return undefined;
-    const directUrl = withDirectSegments(url);
-    const sourceUrl = sourceStage === "8k" ? eightKUrl
-      : sourceStage === "uhd" ? uhdUrl
+    if (url.startsWith("/api/hls-proxy/")) {
+      console.error("[AdminHlsPlayer] Refusing API-relayed playback source", { url });
+      setSourceStage(storageOnlySource ? "unavailable" : "cdn");
+      return undefined;
+    }
+    const directUrl = url;
+    const sourceUrl = sourceStage === "uhd" ? directUhdUrl
       : sourceStage === "h264" ? h264Url
-      : sourceStage === "proxy" ? url
       : directUrl;
     if (!sourceUrl) {
       setSourceStage(storageOnlySource ? "unavailable" : "cdn");
@@ -3953,13 +3948,10 @@ function HlsPlayer({
     const initialPauseState = restorePausedRef.current;
     let disposed = false;
     let hasPlayed = false;
-    let onDirect = directUrl !== url;
     const fallbackFromStorage = (stalled = false) => {
-      if (disposed || !["8k", "uhd", "h264"].includes(sourceStage)) return;
+      if (disposed || !["uhd", "h264"].includes(sourceStage)) return;
       const available = storageAvailabilityRef.current;
-      const nextStage = sourceStage === "8k"
-        ? available.uhdAvailable ? "uhd" : available.h264Available ? "h264" : storageOnlySource ? "unavailable" : "cdn"
-        : sourceStage === "uhd"
+      const nextStage = sourceStage === "uhd"
           ? available.h264Available ? "h264" : storageOnlySource ? "unavailable" : "cdn"
           : storageOnlySource ? "unavailable" : "cdn";
       positionRef.current = Number.isFinite(el.currentTime) ? el.currentTime : 0;
@@ -3973,7 +3965,7 @@ function HlsPlayer({
         });
       }
     };
-    const storageStage = sourceStage === "8k" || sourceStage === "uhd" || sourceStage === "h264";
+    const storageStage = sourceStage === "uhd" || sourceStage === "h264";
     const stallGuard = storageStage
       ? createUhdStallGuard({ onRepeatedStall: () => fallbackFromStorage(true) })
       : null;
@@ -4005,17 +3997,17 @@ function HlsPlayer({
       });
       hlsRef.current = hls;
       hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) console.error("[AdminHlsPlayer] Direct CDN playback failed", {
+          playlistUrl: sourceUrl,
+          requestUrl: data.frag?.url ?? data.url,
+          status: data.response?.code ?? null,
+          details: data.details,
+        });
         if (storageStage && (data.fatal
           || String(data.details ?? "") === "bufferAddCodecError"
           || String(data.details ?? "") === "bufferIncompatibleCodecsError")) {
           fallbackFromStorage();
           return;
-        }
-        if (!data.fatal || data.type !== Hls.ErrorTypes.NETWORK_ERROR) return;
-        if (sourceStage === "cdn" && onDirect) {
-          positionRef.current = Number.isFinite(el.currentTime) ? el.currentTime : 0;
-          restorePausedRef.current = el.paused;
-          setSourceStage("proxy");
         }
       });
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -4057,11 +4049,7 @@ function HlsPlayer({
       };
       const onNativeError = () => {
         if (storageStage) fallbackFromStorage();
-        else if (sourceStage === "cdn" && onDirect) {
-          positionRef.current = Number.isFinite(el.currentTime) ? el.currentTime : 0;
-          restorePausedRef.current = el.paused;
-          setSourceStage("proxy");
-        }
+        else console.error("[AdminHlsPlayer] Direct CDN native playback failed", { url: sourceUrl, status: el.error?.code ?? null });
       };
       el.addEventListener("loadedmetadata", onLoadedMetadata, { once: true });
       el.addEventListener("error", onNativeError);
@@ -4089,10 +4077,9 @@ function HlsPlayer({
       el.removeEventListener("playing", onPlaying);
       el.removeEventListener("pause", onRecovered);
     };
-  }, [eightKUrl, h264Url, locale, sourceStage, storageOnlySource, toast, uhdUrl, url]);
+  }, [directUhdUrl, h264Url, locale, sourceStage, storageOnlySource, toast, url]);
 
-  const selectPlaybackSource = (preference: "8k" | "4k" | "hd" | "stream") => {
-    if (preference === "8k" && !eightKAvailable) return;
+  const selectPlaybackSource = (preference: "4k" | "hd" | "stream") => {
     if (preference === "4k" && !uhdAvailable) return;
     if (preference === "hd" && !h264Available) return;
     if (preference !== "stream") writeUhdPlaybackPreference(preference);
@@ -4101,8 +4088,7 @@ function HlsPlayer({
       positionRef.current = Number.isFinite(element.currentTime) ? element.currentTime : 0;
       restorePausedRef.current = hasPlayedRef.current && element.paused;
     }
-    setSourceStage(preference === "8k" ? "8k"
-      : preference === "4k" ? "uhd"
+    setSourceStage(preference === "4k" ? "uhd"
       : preference === "hd" ? "h264"
       : "cdn");
   };
@@ -4159,7 +4145,6 @@ function HlsPlayer({
         <p className="text-[10px] text-amber-300">No compatible Storage rendition is ready for this recording.</p>
       )}
       {sourceStage !== "checking" && [
-        ...(eightKAvailable ? ["8k" as const] : []),
         ...(uhdAvailable ? ["4k" as const] : []),
         ...(h264Available ? ["hd" as const] : []),
         ...(!storageOnlySource ? ["stream" as const] : []),
@@ -4170,26 +4155,23 @@ function HlsPlayer({
           aria-label="Change recording quality"
           onClick={() => {
             const options = [
-              ...(eightKAvailable ? ["8k" as const] : []),
               ...(uhdAvailable ? ["4k" as const] : []),
               ...(h264Available ? ["hd" as const] : []),
               ...(!storageOnlySource ? ["stream" as const] : []),
             ];
-            const current = sourceStage === "8k" ? "8k"
-              : sourceStage === "uhd" ? "4k"
+            const current = sourceStage === "uhd" ? "4k"
               : sourceStage === "h264" ? "hd" : "stream";
             const next = options[(options.indexOf(current) + 1) % options.length];
             if (next) selectPlaybackSource(next);
           }}
           className={cn(
             "text-[10px] px-2 py-0.5 rounded-full border transition-colors",
-            sourceStage === "8k" || sourceStage === "uhd" || sourceStage === "h264"
+            sourceStage === "uhd" || sourceStage === "h264"
               ? "border-primary text-primary bg-primary/10"
               : "border-zinc-700 text-zinc-400 hover:border-zinc-500",
           )}
         >
-          {sourceStage === "8k" ? "8K"
-            : sourceStage === "uhd" ? "4K"
+          {sourceStage === "uhd" ? "4K"
             : sourceStage === "h264" ? "H.264" : "Stream"}
         </button>
       )}
@@ -5124,9 +5106,6 @@ function LiveJobCard({
               {showPlayer && (
                 <HlsPlayer
                   url={playbackUrl}
-                  uhdUrl={uhdPlaybackUrlForGuid(job.videoId)}
-                  hasUhdPlayback={Boolean(job.videoId)}
-                  storageVideoId={job.videoId}
                   storageOnly={isStreamlessStorageUrl(playbackUrl)}
                   className="max-h-64 mt-1"
                 />
@@ -6535,9 +6514,10 @@ function StreamlessRecordingPreview({
   onToggle: () => void;
 }) {
   const videoId = bunnyGuidFromRecordingUrl(recording.videoUrl);
-  const eightKUrl = storagePlaybackUrlForGuid(videoId, "8k");
-  const fourKUrl = uhdPlaybackUrlForGuid(videoId);
-  if (!videoId || !eightKUrl || !fourKUrl) return null;
+  const h264Url = directStoragePlaylistForSourceUrl(recording.videoUrl, "h264");
+  const fourKUrl = directStoragePlaylistForSourceUrl(recording.videoUrl, "4k");
+  const playbackUrl = h264Url ?? fourKUrl;
+  if (!videoId || !playbackUrl) return null;
 
   return (
     <div className="mb-1 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/70">
@@ -6554,7 +6534,6 @@ function StreamlessRecordingPreview({
           <p className="text-[11px] text-zinc-400">Private Storage recording</p>
           <p className="mt-1 text-[10px] text-zinc-500">
             {recording.hasUhdPlayback ? "4K available" : "4K unavailable"}
-            {recording.has8kPlayback ? " · 8K available" : ""}
           </p>
         </div>
         <button
@@ -6570,10 +6549,9 @@ function StreamlessRecordingPreview({
       {isOpen && (
         <div className="border-t border-zinc-800 p-2">
           <HlsPlayer
-            url={eightKUrl}
+            url={playbackUrl}
             uhdUrl={fourKUrl}
             hasUhdPlayback={recording.hasUhdPlayback ?? false}
-            storageVideoId={videoId}
             storageOnly
             defaultQuality="4k"
             className="max-h-72"
@@ -6884,9 +6862,8 @@ function AdminOwnerFootageSection({ recordings }: { recordings: AdminOwnerRecord
                 <div className="border-t border-zinc-800 p-3" data-testid={`preview-admin-owner-footage-${recording.id}`}>
                   <HlsPlayer
                     url={recording.playbackUrl}
-                    uhdUrl={recording.playbackUrl}
+                    uhdUrl={directStoragePlaylistForSourceUrl(recording.playbackUrl, "4k")}
                     hasUhdPlayback
-                    storageVideoId={recording.videoId}
                     storageOnly
                     defaultQuality="4k"
                     className="max-h-72"

@@ -16,11 +16,10 @@ import {
   uploadBufferToBunnyStorage,
   isBunnyStorageConfigured,
   getBunnyPlaybackUrl,
-  getPortfolioClipStoragePath,
+  getClipExportCdnUrl,
   storagePullZoneBase,
 } from "../lib/bunny";
 import {
-  fetchExportObject,
   forwardExportContentLength,
   isBackupExportRef,
 } from "../lib/backupExport";
@@ -57,7 +56,6 @@ import {
   verifyShareToken,
 } from "../lib/shareCard";
 import { logger } from "../lib/logger";
-import { wantsDirectSegments } from "./hlsProxy";
 import { loadRoomByCode, matchWindow, rosterFor } from "../lib/matchRooms";
 
 const router: IRouter = Router();
@@ -131,24 +129,6 @@ function isStreamlessShare(share: Pick<OwnerShareRow, "shareToken">): boolean {
   return typeof share.shareToken === "string" && /^s-[a-f0-9]{32}$/i.test(share.shareToken);
 }
 
-function streamResourceId(token: string, url: string): string {
-  const upstream = new URL(url);
-  const upstreamPath = `${upstream.pathname}${upstream.search}`;
-  const encodedPath = Buffer.from(upstreamPath, "utf8").toString("base64url");
-  const signature = crypto
-    .createHmac(
-      "sha256",
-      process.env.CLIP_SHARE_URL_SECRET ||
-        process.env.CLIP_EXPORT_URL_SECRET ||
-        BUNNY_STORAGE_API_KEY ||
-        "replay-dev-share-secret",
-    )
-    .update(`${token}\n${upstreamPath}`)
-    .digest("hex")
-    .slice(0, 32);
-  return `${encodedPath}.${signature}`;
-}
-
 function verifyStreamResourceId(token: string, resourceId: string): string | null {
   const separator = resourceId.lastIndexOf(".");
   if (separator <= 0 || separator === resourceId.length - 1) return null;
@@ -182,42 +162,6 @@ function verifyStreamResourceId(token: string, resourceId: string): string | nul
     return null;
   }
   return upstreamPath;
-}
-
-function publicResourcePath(token: string, id: string): string {
-  return `/w/${encodeURIComponent(token)}/resource/${encodeURIComponent(id)}`;
-}
-
-/**
- * `direct` (granted by wantsDirectSegments: replayjo.com pages only) leaves
- * media segment lines as Bunny URLs so the viewer fetches them from the CDN;
- * nested playlists still come through the signed resource route, carrying the
- * flag on. The share token still gates every playlist.
- */
-function rewriteOwnerManifest(token: string, rawManifest: string, sourceUrl: string, direct = false): string {
-  const base = new URL(sourceUrl);
-  return rawManifest.split("\n").map((line) => {
-    const trimmed = line.trim();
-    if (!trimmed) return line;
-
-    const rewriteUri = (raw: string): string => {
-      let absolute: string;
-      try {
-        absolute = new URL(raw).href;
-      } catch {
-        absolute = new URL(raw, base).href;
-      }
-      const isPlaylist = /\.m3u8(?:$|\?)/i.test(new URL(absolute).pathname + new URL(absolute).search);
-      if (direct && !isPlaylist && new URL(absolute).hostname === BUNNY_CDN_HOSTNAME) return absolute;
-      const path = publicResourcePath(token, streamResourceId(token, absolute));
-      return direct && isPlaylist ? `${path}?direct=1` : path;
-    };
-
-    if (trimmed.startsWith("#")) {
-      return line.replace(/URI="([^"]+)"/g, (_match, uri: string) => `URI="${rewriteUri(uri)}"`);
-    }
-    return rewriteUri(trimmed);
-  }).join("\n");
 }
 
 const ENGLISH_MONTHS = [
@@ -579,7 +523,6 @@ function ownerShareHtml(
   const qualityButton = document.getElementById("quality-toggle");
   const qualityToast = document.getElementById("quality-toast");
   const uhdManifest = ${JSON.stringify(`${pageUrl}/4k.m3u8`)};
-  const eightKManifest = ${JSON.stringify(`${pageUrl}/8k.m3u8`)};
   const h264Manifest = ${JSON.stringify(`${pageUrl}/h264.m3u8`)};
   const streamless = ${JSON.stringify(streamless)};
   const preferenceKey = "replay.playback-quality";
@@ -587,10 +530,8 @@ function ownerShareHtml(
   let sourceStage = "cdn";
   let hls = null;
   let availableUhd = false;
-  let available8k = false;
   let availableH264 = false;
   let smooth4k = false;
-  let smooth8k = false;
   let smoothH264 = false;
   let toastTimer = null;
   let waitTimer = null;
@@ -647,22 +588,6 @@ function ownerShareHtml(
       return result.supported && result.smooth;
     } catch { return false; }
   };
-  const canDecode8k = async () => {
-    try {
-      if (!navigator.mediaCapabilities || !navigator.mediaCapabilities.decodingInfo) return false;
-      const result = await navigator.mediaCapabilities.decodingInfo({
-        type: "media-source",
-        video: {
-          contentType: 'video/mp4; codecs="hvc1.1.6.L153.B0"',
-          width: 7680,
-          height: 2160,
-          bitrate: 40000000,
-          framerate: 20,
-        },
-      });
-      return result.supported && result.smooth;
-    } catch { return false; }
-  };
   const canDecodeH264 = async () => {
     try {
       const codec = 'application/vnd.apple.mpegurl; codecs="avc1.640033"';
@@ -695,8 +620,7 @@ function ownerShareHtml(
   };
   const fallbackStage = (stage) => {
     if (streamless && stage === "hd" && availableUhd && smooth4k) return "uhd";
-    if (!streamless && stage === "8k" && availableUhd && smooth4k) return "uhd";
-    if (!streamless && (stage === "8k" || stage === "uhd") && availableH264 && smoothH264) return "hd";
+    if (!streamless && stage === "uhd" && availableH264 && smoothH264) return "hd";
     if (stage === "hd" && !streamless) return "cdn";
     return streamless ? null : "cdn";
   };
@@ -706,7 +630,6 @@ function ownerShareHtml(
       return;
     }
     const options = [
-      ...(available8k && smooth8k ? ["8k"] : []),
       ...(availableUhd && smooth4k ? ["uhd"] : []),
       ...(availableH264 && smoothH264 ? ["hd"] : []),
       ...(!streamless ? ["cdn"] : []),
@@ -716,8 +639,7 @@ function ownerShareHtml(
       return;
     }
     qualityButton.style.display = "block";
-    qualityButton.textContent = sourceStage === "8k" ? "8K"
-      : sourceStage === "uhd" ? "4K"
+    qualityButton.textContent = sourceStage === "uhd" ? "4K"
       : sourceStage === "hd" ? "HD" : "Stream";
     qualityButton.setAttribute("aria-label", "Change video quality");
   };
@@ -728,17 +650,16 @@ function ownerShareHtml(
     video.pause();
     video.removeAttribute("src");
     video.load();
-    if (stage === "uhd" || stage === "8k") {
+    if (stage === "uhd") {
       longStalls = [];
       uhdStartupTimer = window.setTimeout(() => {
-        if ((sourceStage === "uhd" || sourceStage === "8k") && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        if (sourceStage === "uhd" && video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
           const next = fallbackStage(stage);
           if (next) startSource(next, Math.max(0, video.currentTime || position || 0), hasPlayed && video.paused, video.playbackRate);
         }
       }, 8000);
     }
-    const source = stage === "8k" ? eightKManifest
-      : stage === "uhd" ? uhdManifest
+    const source = stage === "uhd" ? uhdManifest
       : stage === "hd" ? h264Manifest
       : manifest;
     const restorePlayback = () => {
@@ -760,7 +681,7 @@ function ownerShareHtml(
             details,
           });
         }
-        if (instance !== hls || (sourceStage !== "uhd" && sourceStage !== "8k" && sourceStage !== "hd")
+        if (instance !== hls || (sourceStage !== "uhd" && sourceStage !== "hd")
           || (!data.fatal && details !== "bufferAddCodecError" && details !== "bufferIncompatibleCodecsError")) return;
         const next = fallbackStage(sourceStage);
         if (next) startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
@@ -776,7 +697,7 @@ function ownerShareHtml(
       video.src = source;
       video.addEventListener("loadedmetadata", restorePlayback, { once: true });
       video.onerror = () => {
-        if (sourceStage === "uhd" || sourceStage === "8k" || sourceStage === "hd") {
+        if (sourceStage === "uhd" || sourceStage === "hd") {
           const next = fallbackStage(sourceStage);
           if (next) startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
         }
@@ -791,14 +712,13 @@ function ownerShareHtml(
   qualityButton.addEventListener("click", () => {
     if (streamless) return;
     const options = [
-      ...(available8k && smooth8k ? ["8k"] : []),
       ...(availableUhd && smooth4k ? ["uhd"] : []),
       ...(availableH264 && smoothH264 ? ["hd"] : []),
       ...(!streamless ? ["cdn"] : []),
     ];
     if (options.length < 2) return;
     const next = options[(options.indexOf(sourceStage) + 1) % options.length];
-    if (next !== "cdn") savePreference(next === "uhd" ? "4k" : next === "8k" ? "8k" : "hd");
+    if (next !== "cdn") savePreference(next === "uhd" ? "4k" : "hd");
     startSource(next, Math.max(0, video.currentTime || 0), hasPlayed && video.paused, video.playbackRate);
   });
   const recoverUhdStall = () => {
@@ -813,12 +733,12 @@ function ownerShareHtml(
     recoverUhdStall();
   };
   const onWait = () => {
-    if ((sourceStage !== "uhd" && sourceStage !== "8k" && sourceStage !== "hd") || !hasPlayed || waiting) return;
+    if ((sourceStage !== "uhd" && sourceStage !== "hd") || !hasPlayed || waiting) return;
     waiting = true;
     countedWait = false;
     waitTimer = window.setTimeout(() => {
       waitTimer = null;
-      if (!waiting || countedWait || (sourceStage !== "uhd" && sourceStage !== "8k" && sourceStage !== "hd")) return;
+      if (!waiting || countedWait || (sourceStage !== "uhd" && sourceStage !== "hd")) return;
       countedWait = true;
       const now = Date.now();
       longStalls = longStalls.filter((stamp) => now - stamp <= 60000);
@@ -854,20 +774,17 @@ function ownerShareHtml(
       }
       return;
     }
-    [availableUhd, available8k, availableH264] = await Promise.all([
+    [availableUhd, availableH264] = await Promise.all([
       playlistAvailable(uhdManifest),
-      playlistAvailable(eightKManifest),
       playlistAvailable(h264Manifest),
     ]);
-    [smooth8k, smoothH264] = await Promise.all([canDecode8k(), canDecodeH264()]);
+    smoothH264 = await canDecodeH264();
     smooth4k = availableUhd && await canDecodeUhd();
     setQualityButton();
     const saved = savedPreference();
     const stage = saved === "stream" ? "cdn"
-      : saved === "8k" && available8k && smooth8k ? "8k"
       : saved === "4k" && smooth4k ? "uhd"
       : saved === "hd" && availableH264 && smoothH264 ? "hd"
-      : available8k && smooth8k ? "8k"
       : smooth4k ? "uhd"
       : availableH264 && smoothH264 ? "hd"
       : "cdn";
@@ -1051,10 +968,6 @@ router.get(["/w/:token/poster.jpg", "/api/w/:token/poster.jpg"], async (req, res
   await proxyStorageObject(req, res, posterPath, "image/jpeg", 31536000);
 });
 
-function ownerShareDirect(req: Request): boolean {
-  return wantsDirectSegments(req.query, req.header("referer") ?? undefined, req.header("origin") ?? undefined);
-}
-
 async function proxyOwnerShareStorageMedia(
   req: Request,
   res: import("express").Response,
@@ -1197,38 +1110,7 @@ router.get(["/w/:token/resource/:resourceId", "/api/w/:token/resource/:resourceI
     return;
   }
   const upstreamUrl = `https://${BUNNY_CDN_HOSTNAME}${upstreamPath}`;
-
-  const abort = new AbortController();
-  res.on("close", () => abort.abort());
-  const response = await fetch(upstreamUrl, {
-    headers: { Referer: `https://${BUNNY_CDN_HOSTNAME}/` },
-    signal: AbortSignal.any([abort.signal, AbortSignal.timeout(30_000)]),
-  }).catch(() => null);
-  if (!response?.ok || !response.body) {
-    res.status(404).type("text/plain").send("Not found");
-    return;
-  }
-
-  const contentType = response.headers.get("content-type") ?? "";
-  if (upstreamPath.includes(".m3u8") || contentType.includes("mpegurl")) {
-    const manifest = await response.text();
-    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
-    res.setHeader("Cache-Control", "no-store");
-    res.send(rewriteOwnerManifest(token, manifest, upstreamUrl, ownerShareDirect(req)));
-    return;
-  }
-
-  res.status(response.status);
-  res.setHeader("Content-Type", contentType || "video/mp2t");
-  res.setHeader("Cache-Control", "public, max-age=300");
-  const contentLength = response.headers.get("content-length");
-  if (contentLength) res.setHeader("Content-Length", contentLength);
-  const nodeStream = Readable.fromWeb(response.body as import("stream/web").ReadableStream<Uint8Array>);
-  try {
-    await pipeline(nodeStream, res);
-  } catch {
-    if (!res.headersSent) res.status(503).end();
-  }
+  res.redirect(302, upstreamUrl);
 });
 
 type ClipRow = typeof userClipsTable.$inferSelect;
@@ -1406,53 +1288,8 @@ export async function proxyStorageObject(
 }
 
 /**
- * Stream a clip exported by the backup renderer (vps1), with Range passed
- * through so players can seek. The control key never leaves this server.
- */
-async function proxyBackupExport(
-  req: Request,
-  res: import("express").Response,
-  exportedUrl: string,
-  cacheControl: string,
-): Promise<void> {
-  const abort = new AbortController();
-  res.on("close", () => abort.abort());
-  const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
-  let upstream: Response;
-  try {
-    upstream = await fetchExportObject(exportedUrl, {
-      range,
-      signal: abort.signal,
-    });
-  } catch {
-    if (!res.headersSent) res.status(502).end();
-    return;
-  }
-  if (!upstream.ok || !upstream.body) {
-    res.status(upstream.status === 404 ? 404 : 502).end();
-    return;
-  }
-  res.status(upstream.status);
-  res.setHeader("Content-Type", "video/mp4");
-  res.setHeader("Accept-Ranges", "bytes");
-  res.setHeader("Cache-Control", cacheControl);
-  res.removeHeader("Vary");
-  forwardExportContentLength(res, upstream, range !== undefined);
-  for (const h of ["content-range", "etag", "last-modified"]) {
-    const v = upstream.headers.get(h);
-    if (v) res.setHeader(h, v);
-  }
-  try {
-    await pipeline(Readable.fromWeb(upstream.body as import("stream/web").ReadableStream<Uint8Array>), res);
-  } catch (err) {
-    if (!abort.signal.aborted) logger.error({ err }, "Error proxying backup export");
-  }
-}
-
-/**
  * Portfolio playback serves only the clip's rendered export. Every request
- * re-reads the share flags, so an unshare, privacy change, or admin hide takes
- * effect before any new byte-range is proxied.
+ * re-reads the share flags, then redirects the browser to the Bunny CDN.
  */
 router.get(
   ["/portfolio-clips/:id/:token/clip.mp4", "/api/portfolio-clips/:id/:token/clip.mp4"],
@@ -1486,23 +1323,13 @@ router.get(
       return;
     }
 
-    if (isBackupExportRef(clip.exportedUrl)) {
-      await proxyBackupExport(req, res, clip.exportedUrl, "private, no-store");
+    const cdnUrl = getClipExportCdnUrl(clip.id, clip.exportedUrl);
+    if (!cdnUrl) {
+      res.status(503).json({ error: "This export is not available on the playback CDN.", code: "direct_cdn_unavailable" });
       return;
     }
-
-    const storagePath = getPortfolioClipStoragePath(clip.id, clip.exportedUrl);
-    if (!storagePath) {
-      res.status(404).end();
-      return;
-    }
-
-    if (!isBunnyStorageConfigured()) {
-      res.status(503).type("text/plain").send("Clip storage is unavailable");
-      return;
-    }
-
-    res.redirect(302, `${storagePullZoneBase()}/${storagePath}`);
+    res.set("Cache-Control", "private, max-age=300");
+    res.redirect(302, cdnUrl);
   },
 );
 
@@ -1547,19 +1374,13 @@ router.get(["/s/:id/:token/poster.jpg", "/api/s/:id/:token/poster.jpg"], async (
 router.get(["/s/:id/:token/clip.mp4", "/api/s/:id/:token/clip.mp4"], async (req, res): Promise<void> => {
   const clip = await resolveSharedClip(req);
   if (!clip || !clip.exportedUrl) { res.status(404).end(); return; }
-  if (isBackupExportRef(clip.exportedUrl)) {
-    await proxyBackupExport(req, res, clip.exportedUrl, "public, max-age=86400");
+  const cdnUrl = getClipExportCdnUrl(clip.id, clip.exportedUrl);
+  if (!cdnUrl) {
+    res.status(503).json({ error: "This export is not available on the playback CDN.", code: "direct_cdn_unavailable" });
     return;
   }
-  // exportedUrl is either the storage API URL (https://storage.bunnycdn.com/
-  // <zone>/clips/…) or a pull-zone URL. Stripping only the host left the zone
-  // name in the path, which proxyStorageObject adds again, so every shared MP4
-  // answered 404. The portfolio helper strips the zone and checks the path.
-  const hostless = clip.exportedUrl.replace(/^https?:\/\/[^/]+\//, "");
-  const zonePrefix = `${BUNNY_STORAGE_ZONE}/`;
-  const storagePath = getPortfolioClipStoragePath(clip.id, clip.exportedUrl)
-    ?? (BUNNY_STORAGE_ZONE && hostless.startsWith(zonePrefix) ? hostless.slice(zonePrefix.length) : hostless);
-  await proxyStorageObject(req, res, storagePath, "video/mp4", 86400);
+  res.set("Cache-Control", "public, max-age=300");
+  res.redirect(302, cdnUrl);
 });
 
 /**

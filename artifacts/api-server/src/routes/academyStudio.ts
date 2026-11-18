@@ -23,9 +23,10 @@ import {
   type RenderSnapshotDocument,
 } from "@workspace/db";
 import { displayPhone, instagramHandle, requireAcademyOwner, type AcademyOwnerAccess } from "../lib/academyOwner";
-import { fetchExportObject, forwardExportContentLength, probeExportObject } from "../lib/backupExport";
+import { fetchExportObject, forwardExportContentLength } from "../lib/backupExport";
 import {
   bunnyStorageUrlFor,
+  getClipExportCdnUrl,
   getBunnyProxiedThumbnailUrl,
   isBunnyConfigured,
   isBunnyStorageConfigured,
@@ -35,7 +36,6 @@ import { loadLocalImage, replayMarkPath } from "../lib/clipBranding/assets";
 import { lookFor } from "../lib/clipBranding/plan";
 import { decodeDataUrl } from "../lib/clipBranding/profileStore";
 import type { BrandLook } from "../lib/clipBranding/types";
-import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { logger } from "../lib/logger";
 import { renderStudioPng, type StudioContent, type StudioLocale } from "../lib/studio/posts";
 import { academyClipStatus } from "../lib/userClipExportState";
@@ -699,39 +699,19 @@ router.get(`${base}/clips/:clipId/download`, async (req, res): Promise<void> => 
   }
 });
 
-/** GET …/studio/clips/:clipId/video — play the branded MP4 (bounded 206 ranges, like /user-clips/:id/playback). */
+/** GET …/studio/clips/:clipId/video — redirect the branded MP4 to Bunny CDN. */
 router.get(`${base}/clips/:clipId/video`, async (req, res): Promise<void> => {
   const access = await owner(req, res);
   if (!access) return;
   const clip = await academyClip(access.academyId, req.params.clipId);
   if (!clip || !clip.exportedUrl) { res.status(404).json({ error: "Export not available" }); return; }
-  const probe = await probeExportObject(clip.exportedUrl);
-  if (probe.state !== "exists") { res.status(probe.state === "missing" ? 404 : 503).json({ error: "Export not available" }); return; }
-  const plan = planExportRange(req.header("range") ?? undefined, CLIP_PLAYBACK_RANGE_MAX_BYTES);
-  const abort = new AbortController();
-  const stop = () => { if (!res.writableEnded && !abort.signal.aborted) abort.abort(); };
-  res.once("close", stop);
-  try {
-    const upstream = await fetchExportObject(probe.url, { range: plan.upstreamRange, signal: abort.signal }).catch(() => null);
-    if (!upstream || (upstream.status !== 416 && (!upstream.ok || !upstream.body))) {
-      await upstream?.body?.cancel().catch(() => {});
-      if (!res.headersSent) res.status(502).json({ error: "Playback unavailable" });
-      return;
-    }
-    const outcome = await sendBoundedExport(res, upstream, plan, {
-      "Content-Type": upstream.headers.get("content-type") ?? "video/mp4",
-      "Cache-Control": "private, no-store",
-    });
-    if (outcome === "unusable" && !res.headersSent) {
-      await upstream.body?.cancel().catch(() => {});
-      res.status(502).json({ error: "Playback unavailable" });
-    }
-  } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: "Playback failed" });
-    else logger.debug({ err }, "Studio playback ended early");
-  } finally {
-    res.off("close", stop);
+  const cdnUrl = getClipExportCdnUrl(clip.id, clip.exportedUrl);
+  if (!cdnUrl) {
+    res.status(503).json({ error: "This export is not available on the playback CDN.", code: "direct_cdn_unavailable" });
+    return;
   }
+  res.set("Cache-Control", "private, max-age=300");
+  res.redirect(302, cdnUrl);
 });
 
 export default router;

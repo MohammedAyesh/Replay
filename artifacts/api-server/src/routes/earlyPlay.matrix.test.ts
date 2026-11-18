@@ -1,13 +1,10 @@
 /**
  * Early Play: the full API matrix (2026-10-30).
  *
- * vps1, Bunny and the database are mocked; earlyPlay.ts and the shared
- * proxyProgressiveMp4 in hlsProxy.ts run for real. Every test uses its own
+ * vps1, Bunny and the database are mocked. Every test uses its own
  * footage-request id, because earlyPlay.ts caches per request id for 30 s.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
 import request from "supertest";
 import express, { type Express } from "express";
 
@@ -21,10 +18,6 @@ const state = vi.hoisted(() => ({
   setting: true as boolean | (() => Promise<boolean>),
   job: null as null | (() => Promise<{ ok: boolean; status: number; body: unknown }>),
   play: null as null | (() => Promise<Response>),
-  original: Buffer.alloc(0),
-  originalStatus: 0,
-  upstreamSignals: [] as AbortSignal[],
-  hangAfterFirstChunk: false,
 }));
 
 vi.mock("@workspace/db", () => {
@@ -65,7 +58,6 @@ vi.mock("../lib/publicFootage", () => ({ canViewBunnyVideo: vi.fn(async () => tr
 vi.mock("../lib/backupExport", () => ({ CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES: 30 * 1024 * 1024 }));
 
 import router from "./earlyPlay";
-import { PROGRESSIVE_MP4_RESPONSE_MAX_BYTES } from "./hlsProxy";
 import { controlFetch } from "./contabo";
 
 const GUID = "5f83ad1e-5856-4f61-8fd0-3f8a1cbdaa28";
@@ -88,34 +80,6 @@ const playJson = (body: unknown, status = 200) => async () =>
 const earlyPlay = (videoOver: Record<string, unknown> = {}, top: Record<string, unknown> = {}) =>
   playJson({ allowEarlyPlay: true, originalUrl: ORIGINAL, video: { status: 3, length: 1801, ...videoOver }, ...top });
 
-function serveOriginal(url: string, init?: RequestInit): Response {
-  if (init?.signal) state.upstreamSignals.push(init.signal);
-  if (state.originalStatus) return new Response("denied", { status: state.originalStatus });
-  const total = state.original.length;
-  const range = new Headers(init?.headers).get("range") ?? "";
-  const m = range.match(/^bytes=(\d+)-(\d*)$/);
-  const start = m ? Number(m[1]) : 0;
-  if (start >= total) {
-    return new Response("", { status: 416, headers: { "content-range": `bytes */${total}` } });
-  }
-  const end = Math.min(m && m[2] ? Number(m[2]) : total - 1, total - 1);
-  const slice = state.original.subarray(start, end + 1);
-  if (state.hangAfterFirstChunk) {
-    const signal = init?.signal;
-    const body = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(new Uint8Array(slice.subarray(0, 65536)));
-        signal?.addEventListener("abort", () => controller.error(new Error("aborted")));
-      },
-    });
-    return new Response(body, { status: 206, headers: { "content-range": `bytes ${start}-${end}/${total}`, "content-type": "application/octet-stream" } });
-  }
-  return new Response(slice, {
-    status: 206,
-    headers: { "content-range": `bytes ${start}-${end}/${total}`, "content-type": "application/octet-stream" },
-  });
-}
-
 let app: Express;
 let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -130,10 +94,6 @@ beforeEach(() => {
   state.setting = true;
   state.job = uploadedJob();
   state.play = earlyPlay();
-  state.original = Buffer.alloc(0);
-  state.originalStatus = 0;
-  state.upstreamSignals = [];
-  state.hangAfterFirstChunk = false;
   vi.mocked(controlFetch).mockClear();
   fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
@@ -141,7 +101,7 @@ beforeEach(() => {
       if (!state.play) throw new Error("no play configured");
       return state.play();
     }
-    if (url.includes(".b-cdn.net/")) return serveOriginal(url, init);
+    if (url.includes(".b-cdn.net/")) throw new Error(`early-play must not fetch playback bytes: ${url}`);
     throw new Error(`unexpected fetch ${url}`);
   });
   vi.stubGlobal("fetch", fetchMock);
@@ -150,11 +110,7 @@ afterEach(() => vi.unstubAllGlobals());
 
 const status = (code = state.ctx!.room.code) => request(app).get(`/api/matches/${code}/early-play`);
 const video = (range?: string, code = state.ctx!.room.code) => {
-  const r = request(app).get(`/api/matches/${code}/early-play/video`).buffer(true).parse((res, cb) => {
-    const chunks: Buffer[] = [];
-    res.on("data", (c: Buffer) => chunks.push(c));
-    res.on("end", () => cb(null, Buffer.concat(chunks)));
-  });
+  const r = request(app).get(`/api/matches/${code}/early-play/video`).redirects(0);
   return range ? r.set("Range", range) : r;
 };
 const bunnyCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).includes("video.bunnycdn.com")).length;
@@ -418,109 +374,40 @@ describe("early-play cache", () => {
   });
 });
 
-describe("early-play video proxy", () => {
-  beforeEach(() => {
-    state.original = Buffer.alloc(40 * 1024 * 1024);
-    for (let i = 0; i < state.original.length; i += 4096) state.original.writeUInt32BE(i, i);
+describe("early-play direct video redirect", () => {
+  it("redirects to Bunny without fetching or relaying video bytes", async () => {
+    const r = await video();
+    expect(r.status).toBe(302);
+    expect(r.headers.location).toBe(ORIGINAL);
+    expect(r.headers["cache-control"]).toBe("private, no-store");
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(".b-cdn.net/"))).toBe(false);
   });
 
-  it("bytes=0-1 → 206 with exactly 2 bytes, video/mp4", async () => {
-    const r = await video("bytes=0-1");
-    expect(r.status).toBe(206);
-    expect(r.headers["content-type"]).toBe("video/mp4");
-    expect(r.headers["content-range"]).toBe(`bytes 0-1/${state.original.length}`);
-    expect((r.body as Buffer).length).toBe(2);
+  it("keeps range requests direct and ignores a client-supplied URL", async () => {
+    const r = await request(app)
+      .get(`/api/matches/${state.ctx!.room.code}/early-play/video?url=https://evil.example.com/video.mp4`)
+      .set("Range", "bytes=100-200")
+      .redirects(0);
+    expect(r.status).toBe(302);
+    expect(r.headers.location).toBe(ORIGINAL);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(".b-cdn.net/"))).toBe(false);
   });
-  it("bytes=0- is capped at PROGRESSIVE_MP4_RESPONSE_MAX_BYTES with an honest Content-Range", async () => {
-    const r = await video("bytes=0-");
-    expect(r.status).toBe(206);
-    const len = (r.body as Buffer).length;
-    expect(len).toBe(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
-    expect(r.headers["content-length"]).toBe(String(len));
-    expect(r.headers["content-range"]).toBe(`bytes 0-${len - 1}/${state.original.length}`);
-    expect((r.body as Buffer).equals(state.original.subarray(0, len))).toBe(true);
-  });
-  it("a bounded range larger than the cap is capped too", async () => {
-    const r = await video(`bytes=1000-${30 * 1024 * 1024}`);
-    expect(r.status).toBe(206);
-    expect((r.body as Buffer).length).toBe(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
-    expect(r.headers["content-range"]).toBe(`bytes 1000-${1000 + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${state.original.length}`);
-  });
-  it("a mid-file range returns the right bytes", async () => {
-    const start = 20 * 1024 * 1024 + 4096;
-    const r = await video(`bytes=${start}-${start + 8191}`);
-    expect(r.status).toBe(206);
-    expect((r.body as Buffer).equals(state.original.subarray(start, start + 8192))).toBe(true);
-  });
-  it("the last bytes of the file", async () => {
-    const total = state.original.length;
-    const r = await video(`bytes=${total - 10}-`);
-    expect(r.status).toBe(206);
-    expect((r.body as Buffer).length).toBe(10);
-    expect(r.headers["content-range"]).toBe(`bytes ${total - 10}-${total - 1}/${total}`);
-  });
-  it("start beyond the end → 416", async () => {
-    const r = await video(`bytes=${state.original.length + 5}-`);
-    expect(r.status).toBe(416);
-  });
-  it.each(["bytes=abc", "bytes=5-2", "items=0-1", "bytes=0-1,5-6"])("malformed Range %s → 416", async (range) => {
-    const r = await video(range);
-    expect(r.status).toBe(416);
-  });
-  it("upstream 403 → 403 with a plain message, no stack trace", async () => {
-    state.originalStatus = 403;
-    const r = await video("bytes=0-1");
-    expect(r.status).toBe(403);
-    expect(String(r.body)).not.toMatch(/at .*\.ts|Error:/);
-  });
-  it("upstream 404 → 404 'Original video not found'", async () => {
-    state.originalStatus = 404;
-    const r = await video("bytes=0-1");
-    expect(r.status).toBe(404);
-    expect(String(r.body)).toContain("Original video not found");
-  });
+
   it("Bunny reaching status 4 meanwhile → 409 {state: ready}", async () => {
     state.play = earlyPlay({ status: 4 });
-    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`).set("Range", "bytes=0-1");
+    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`);
     expect(r.status).toBe(409);
     expect(r.body).toEqual({ state: "ready" });
   });
   it("not early yet → 503 with the reason, never the bytes", async () => {
     state.job = job({ status: "running", phase: "upload", uploaded: false, videoId: GUID });
-    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`).set("Range", "bytes=0-1");
+    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`);
     expect(r.status).toBe(503);
     expect(r.body.state).toBe("waiting");
   });
   it("a cancelled job → 404", async () => {
     state.job = job({ status: "cancelled" });
-    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`).set("Range", "bytes=0-1");
+    const r = await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video`);
     expect(r.status).toBe(404);
-  });
-  it("sends the Referer Bunny's pull zone needs, and never the client's own headers", async () => {
-    await video("bytes=0-1").set("Cookie", "session=secret");
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/original"))!;
-    const headers = new Headers((call[1] as RequestInit).headers);
-    expect(headers.get("referer")).toMatch(/^https:\/\/.+\.b-cdn\.net\/$/);
-    expect(headers.get("cookie")).toBeNull();
-  });
-  it("only ever fetches the guid Bunny reported, whatever the client sends", async () => {
-    await request(app).get(`/api/matches/${state.ctx!.room.code}/early-play/video?url=https://evil.example.com/x`).set("Range", "bytes=0-1");
-    const urls = fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes(".b-cdn.net"));
-    expect(urls.every((u) => u === ORIGINAL)).toBe(true);
-  });
-  it("a client that disconnects aborts the upstream fetch", async () => {
-    state.hangAfterFirstChunk = true;
-    const server = app.listen(0);
-    const { port } = server.address() as AddressInfo;
-    await new Promise<void>((resolve) => {
-      const req = http.get({ port, path: `/api/matches/${state.ctx!.room.code}/early-play/video`, headers: { Range: "bytes=0-" } }, (res) => {
-        res.once("data", () => { req.destroy(); resolve(); });
-      });
-      req.on("error", () => resolve());
-    });
-    await new Promise((r) => setTimeout(r, 100));
-    server.close();
-    expect(state.upstreamSignals.length).toBeGreaterThan(0);
-    expect(state.upstreamSignals.some((s) => s.aborted)).toBe(true);
   });
 });

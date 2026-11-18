@@ -3,8 +3,6 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { academiesTable, academyPlayerClipsTable, academyPlayersTable, academySessionsTable, academyTrialClipsTable, db, userClipsTable } from "@workspace/db";
 import { getClipExportCdnUrl } from "../lib/bunny";
-import { fetchExportObject, probeExportObject } from "../lib/backupExport";
-import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { logger } from "../lib/logger";
 import { listPrivateClips, preparePrivateClips, sendPrivateClips } from "../lib/featured/privateClips";
 import { loadSquadGrid, saveTargets, setConsent, loadTargets } from "../lib/featured/store";
@@ -209,20 +207,7 @@ router.get("/kc/:token/video", async (req, res): Promise<void> => {
     res.redirect(302, url);
     return;
   }
-  // Not a plain Storage object (a vps1 copy): relay it in bounded ranges, as the clip player does.
-  const probe = await probeExportObject(row.exportedUrl);
-  if (probe.state !== "exists") { res.status(404).json({ error: "Not found" }); return; }
-  const plan = planExportRange(req.header("range") ?? undefined, CLIP_PLAYBACK_RANGE_MAX_BYTES);
-  const abort = new AbortController();
-  res.once("close", () => { if (!res.writableEnded) abort.abort(); });
-  try {
-    const upstream = await fetchExportObject(probe.url, { range: plan.upstreamRange, signal: abort.signal });
-    const outcome = await sendBoundedExport(res, upstream, plan, { "Content-Type": upstream.headers.get("content-type") ?? "video/mp4", "Cache-Control": "private, no-store" });
-    if (outcome === "unusable" && !res.headersSent) res.status(502).json({ error: "Playback unavailable" });
-  } catch (error) {
-    if (!res.headersSent) res.status(502).json({ error: "Playback unavailable" });
-    else logger.debug({ error: (error as Error)?.message }, "Kid clip stream ended early");
-  }
+  res.status(503).json({ error: "This export is not available on the playback CDN.", code: "direct_cdn_unavailable" });
 });
 
 export default router;

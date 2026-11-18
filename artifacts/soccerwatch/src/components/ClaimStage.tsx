@@ -21,14 +21,11 @@
  *     DOM - applyFrameToVideo on the video and the layer - so following never
  *     re-renders React. A drag takes over; "Re-centre" hands control back.
  *
- * Playback is Bunny Stream HLS through the app's /api/hls-proxy (which only
- * adds the Referer Bunny's pull zone requires). hls.js everywhere except
- * Safari, which plays HLS natively.
+ * Playback loads the direct CDN HLS source. hls.js handles browsers without
+ * native HLS; Safari plays the CDN playlist natively.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { withDirectSegments } from "@/lib/directSegments";
-import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 import { capPlaybackQuality } from "../lib/hlsQuality";
 import {
   Expand,
@@ -148,7 +145,6 @@ function seekableEnd(video: HTMLVideoElement): number | null {
 function useBunnyHls(
   videoRef: React.RefObject<HTMLVideoElement | null>,
   url: string | undefined,
-  uhdUrl: string | null | undefined,
   startVideoTime: number,
   onCacheUpdate: (update: VideoCacheUpdate) => void,
   seekRequest: { id: number; videoTime: number } | null,
@@ -170,8 +166,6 @@ function useBunnyHls(
     let firstFrameTimer: number | null = null;
     let mediaRecoveryAttempted = false;
     let nativeMetadataHandler: (() => void) | null = null;
-    let usingUhd = false;
-    let streamFallbackUsed = false;
     const unsubscribeCache = subscribeToVideoCache(onCacheUpdate);
     const clearDecodeTimer = () => {
       if (decodeTimer) window.clearTimeout(decodeTimer);
@@ -188,7 +182,6 @@ function useBunnyHls(
       clearDecodeTimer();
       decodeTimer = window.setTimeout(() => {
         if (confirmDecodedFrame() || !hls) return;
-        if (usingUhd && fallbackToStream()) return;
         if (!mediaRecoveryAttempted) {
           mediaRecoveryAttempted = true;
           setVideoError("Recovering the video picture…");
@@ -207,7 +200,6 @@ function useBunnyHls(
       if (firstFrameTimer) window.clearTimeout(firstFrameTimer);
       firstFrameTimer = window.setTimeout(() => {
         if (!video || video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return;
-        if (usingUhd && fallbackToStream()) return;
         setVideoError("The recording did not start playing. Reload the page to try again.");
       }, 15_000);
     };
@@ -216,16 +208,11 @@ function useBunnyHls(
       firstFrameTimer = null;
     };
 
-    // Segments straight from Bunny first; the relayed playlist if they fail.
     const startPlayback = (
       sourceUrl = url,
-      isUhd = false,
       sourceStart = startVideoTimeRef.current,
       resumePlayback = false,
     ) => {
-      usingUhd = isUhd;
-      const directUrl = withDirectSegments(sourceUrl);
-      let onDirect = !isUhd && directUrl !== sourceUrl;
       if (sourceUrl.includes(".m3u8") && Hls.isSupported()) {
         const instance = new Hls({
           enableWorker: false,
@@ -235,8 +222,8 @@ function useBunnyHls(
         });
         hls = instance;
         hlsRef.current = instance;
-        if (!isUhd) capPlaybackQuality(instance);
-        instance.on(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(directUrl));
+        capPlaybackQuality(instance);
+        instance.on(Hls.Events.MEDIA_ATTACHED, () => instance.loadSource(sourceUrl));
         instance.attachMedia(video);
         instance.on(Hls.Events.MANIFEST_PARSED, () => {
           if (hls !== instance) return;
@@ -280,19 +267,18 @@ function useBunnyHls(
             // ErrorDetails members a given hls.js version exports.
             const details = String(data.details ?? "");
             if (details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError") {
-              if (usingUhd && fallbackToStream()) return;
+              console.error("[ClaimStage] Direct CDN codec failure", { playlistUrl: sourceUrl, details, status: data.response?.code ?? null });
               clearFirstFrameTimer();
               setVideoError("This browser could not decode the recording's video track.");
             }
             return;
           }
-          if (usingUhd && fallbackToStream()) return;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && onDirect) {
-            onDirect = false;
-            instance.loadSource(sourceUrl);
-            instance.startLoad(Math.max(0, video.currentTime || sourceStart));
-            return;
-          }
+          console.error("[ClaimStage] Direct CDN playback failed", {
+            playlistUrl: sourceUrl,
+            requestUrl: data.frag?.url ?? data.url,
+            status: data.response?.code ?? null,
+            details: data.details,
+          });
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             networkRetries += 1;
             if (networkRetries > 5) { clearFirstFrameTimer(); setVideoError("The recording could not be loaded. Check your connection and try again."); return; }
@@ -316,56 +302,25 @@ function useBunnyHls(
           }
         });
       } else {
-        video.src = directUrl;
+        video.src = sourceUrl;
         nativeMetadataHandler = () => {
           video.currentTime = Math.max(0, sourceStart);
           if (resumePlayback) void video.play().catch(() => undefined);
         };
         video.addEventListener("loadedmetadata", nativeMetadataHandler, { once: true });
         video.onerror = () => {
-          if (usingUhd && fallbackToStream()) return;
-          if (onDirect) {
-            onDirect = false;
-            video.src = sourceUrl;
-            video.addEventListener("loadedmetadata", () => {
-              video.currentTime = Math.max(0, sourceStart);
-            }, { once: true });
-            return;
-          }
+          console.error("[ClaimStage] Direct CDN native playback failed", { url: sourceUrl, status: video.error?.code ?? null });
           setVideoError("The recording could not be played.");
         };
       }
     };
-
-    function fallbackToStream(): boolean {
-      if (!video || !usingUhd || streamFallbackUsed) return false;
-      streamFallbackUsed = true;
-      usingUhd = false;
-      const at = Math.max(0, video.currentTime || startVideoTimeRef.current);
-      const wasPlaying = !video.paused;
-      clearFirstFrameTimer();
-      clearDecodeTimer();
-      if (hls) { hls.destroy(); hls = null; }
-      if (nativeMetadataHandler) {
-        video.removeEventListener("loadedmetadata", nativeMetadataHandler);
-        nativeMetadataHandler = null;
-      }
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-      startPlayback(url, false, at, wasPlaying);
+    if (/\/api\/hls-proxy\//.test(url)) {
+      console.error("[ClaimStage] Refusing API-relayed playback source", { url });
+      setVideoError("Direct CDN playback is unavailable for this recording.");
+    } else {
+      startPlayback(url, startVideoTimeRef.current);
       watchForFirstFrame();
-      return true;
     }
-
-    void canUseUhdPlayback(video, uhdUrl ?? uhdPlaybackUrlForStreamUrl(url)).then((available) => {
-      if (cancelled) return;
-      startPlayback(available && (uhdUrl ?? uhdPlaybackUrlForStreamUrl(url))
-        ? (uhdUrl ?? uhdPlaybackUrlForStreamUrl(url))!
-        : url,
-      available);
-      watchForFirstFrame();
-    });
     return () => {
       cancelled = true;
       unsubscribeCache();
@@ -379,7 +334,7 @@ function useBunnyHls(
       video.removeAttribute("src");
       video.load();
     };
-  }, [onCacheUpdate, uhdUrl, url, videoRef]);
+  }, [onCacheUpdate, url, videoRef]);
 
   useEffect(() => {
     if (!seekRequest) return;
@@ -440,7 +395,6 @@ function browserSafeVideoUrl(url: string | undefined) {
 
 export function ClaimStage({
   videoUrl,
-  uhdPlaybackUrl,
   bundle,
   candidates,
   highlightedId,
@@ -472,7 +426,6 @@ export function ClaimStage({
   panel,
 }: {
   videoUrl?: string;
-  uhdPlaybackUrl?: string | null;
   bundle: ClaimBundle;
   candidates: StageCandidate[];
   /** Candidate to light up while the number picker points at it. Optional, so
@@ -534,7 +487,7 @@ export function ClaimStage({
       if (update.detail) setCacheError(update.detail);
     }
   }, []);
-  const videoError = useBunnyHls(videoRef, playbackUrl, uhdPlaybackUrl, startVideoTime, handleCacheUpdate, seekRequest);
+  const videoError = useBunnyHls(videoRef, playbackUrl, startVideoTime, handleCacheUpdate, seekRequest);
   useEffect(() => {
     cacheStartedForRef.current = null;
     setCachedResourceCount(0);

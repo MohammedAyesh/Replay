@@ -62,8 +62,7 @@ import {
 import { extractBunnyVideoId } from "../lib/publicFootage";
 import { ensureRecordingForVideo } from "../lib/liveAnalysis";
 import { isOwnerRequestedRecordingTitle } from "../lib/recordingVisibility";
-import { fetchExportObject, probeExportObject } from "../lib/backupExport";
-import { ADMIN_PREVIEW_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
+import { probeExportObject } from "../lib/backupExport";
 import { getStorageConfig as getBannerStorageConfig, isValidBannerId, type BannerJson } from "./banners";
 import { logger } from "../lib/logger";
 import { attachRosterTraining, isTrainingBlock } from "../lib/rosterTraining";
@@ -922,66 +921,15 @@ router.get("/admin/clips/:id/playback", async (req, res): Promise<void> => {
     return;
   }
 
-  // Same as /user-clips/:id/playback: a finished Storage export is played
-  // straight from Bunny's pull zone. `?relay=1` keeps the relay below, which
-  // the preview falls back to if the CDN copy will not play.
-  const cdnUrl = req.query.relay !== "1" ? getClipExportCdnUrl(clipId, clip.exportedUrl) : null;
+  // Admin previews also load finished exports directly from Bunny CDN.
+  const cdnUrl = getClipExportCdnUrl(clipId, clip.exportedUrl);
   if (cdnUrl) {
     res.set("Cache-Control", "private, max-age=300");
     res.redirect(302, cdnUrl);
     return;
   }
 
-  // Always a bounded upstream range, so no response carries a Content-Length
-  // over the host's 32 MiB limit — including `Range: bytes=0-`, which the
-  // origin answers with the whole file's length. See lib/exportPlayback.ts.
-  const range = typeof req.headers.range === "string" ? req.headers.range : undefined;
-  const plan = planExportRange(range, ADMIN_PREVIEW_RANGE_MAX_BYTES);
-  const abort = new AbortController();
-  res.once("close", () => {
-    if (!res.writableEnded) abort.abort();
-  });
-
-  let upstream: Response;
-  try {
-    // The exported URL comes only from this clip's database row. Storage and
-    // backup-renderer credentials stay in fetchExportObject on the server.
-    upstream = await fetchExportObject(clip.exportedUrl, { range: plan.upstreamRange, signal: abort.signal });
-  } catch {
-    if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
-    return;
-  }
-
-  if (upstream.status !== 416 && (!upstream.ok || !upstream.body)) {
-    await upstream.body?.cancel().catch(() => {});
-    if (upstream.status === 404) {
-      const body = {
-        error: "Export not ready",
-        exportStatus: publicExportStatus(clip.exportStatus) ?? "pending",
-      } satisfies AdminClipPlaybackNotReady;
-      res.status(404).json(body);
-      return;
-    }
-    if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
-    return;
-  }
-
-  try {
-    const outcome = await sendBoundedExport(res, upstream, plan, {
-      "Content-Type": "video/mp4",
-      "Content-Disposition": `inline; filename="clip-${clipId}.mp4"`,
-      "Cache-Control": "private, no-store",
-      "X-Content-Type-Options": "nosniff",
-    });
-    if (outcome === "unusable") {
-      await upstream.body?.cancel().catch(() => {});
-      if (!res.destroyed) res.status(502).json({ error: "Could not fetch rendered clip" });
-    }
-  } catch (err) {
-    // The browser closing or seeking a video can abort an in-flight range
-    // request; there is nothing useful to report in that case.
-    if (!abort.signal.aborted) req.log.warn({ err, clipId }, "Admin export preview stream ended early");
-  }
+  res.status(503).json({ error: "This export is not available on the playback CDN.", code: "direct_cdn_unavailable" });
 });
 
 router.patch("/admin/clips/:id", async (req, res): Promise<void> => {

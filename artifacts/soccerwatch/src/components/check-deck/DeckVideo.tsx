@@ -1,7 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { withDirectSegments } from "@/lib/directSegments";
-import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 import type { DeckCard, FocusPoint } from "@/lib/check-deck";
 
 /**
@@ -90,6 +88,11 @@ export const DeckVideo = memo(function DeckVideo({
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !started) return;
+    if (/\/api\/hls-proxy\//.test(url)) {
+      console.error("[DeckVideo] Refusing API-relayed playback source", { url });
+      set("failed");
+      return;
+    }
     let hls: Hls | null = null;
     let done = false;
     let cancelled = false;
@@ -110,36 +113,15 @@ export const DeckVideo = memo(function DeckVideo({
     video.addEventListener("canplay", ready);
     video.addEventListener("progress", ready);
     const length = Math.max(4, card.end - card.start);
-    // Segments straight from Bunny first; the relayed playlist if they fail.
-    const directUrl = withDirectSegments(url);
     video.crossOrigin = "anonymous";
-    let onDirect = directUrl !== url;
-    let usingUhd = false;
     let attaching = false;
-    let fallbackFromUhd: (() => boolean) | null = null;
-    const attach = (source: string, startPosition: number, isUhd: boolean) => {
+    const attach = (source: string, startPosition: number) => {
       if (cancelled || attaching) return;
       attaching = true;
-      usingUhd = isUhd;
       if (hls) { hls.destroy(); hls = null; }
       video.pause();
       video.removeAttribute("src");
       video.load();
-      onDirect = !isUhd && directUrl !== url;
-      const fallbackToStream = () => {
-        if (!usingUhd) return false;
-        usingUhd = false;
-        attaching = false;
-        const resumePlayback = activeRef.current;
-        attach(directUrl, video.currentTime || startPosition || start, false);
-        if (resumePlayback) {
-          const resume = () => { if (!cancelled) void video.play().catch(() => undefined); };
-          video.addEventListener("loadeddata", resume, { once: true });
-          video.addEventListener("canplay", resume, { once: true });
-        }
-        return true;
-      };
-      fallbackFromUhd = fallbackToStream;
       if ((source.includes(".m3u8") || source.includes("/hls-proxy/")) && Hls.isSupported()) {
         const instance = new Hls({
           enableWorker: true,
@@ -156,18 +138,13 @@ export const DeckVideo = memo(function DeckVideo({
         instance.on(Hls.Events.ERROR, (_e, data) => {
           if (cancelled || hls !== instance) return;
           const details = String(data.details ?? "");
-          const codecError = details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError";
-          if (usingUhd && (data.fatal || codecError)) {
-            fallbackToStream();
-            return;
-          }
           if (!data.fatal) return;
-          if (data.type === Hls.ErrorTypes.NETWORK_ERROR && onDirect) {
-            onDirect = false;
-            instance.loadSource(url);
-            instance.startLoad(startPosition);
-            return;
-          }
+          console.error("[DeckVideo] Direct CDN playback failed", {
+            playlistUrl: source,
+            requestUrl: data.frag?.url ?? data.url,
+            status: data.response?.code ?? null,
+            details,
+          });
           if (data.type === Hls.ErrorTypes.MEDIA_ERROR) instance.recoverMediaError();
           else if (!done) set("failed");
         });
@@ -175,7 +152,7 @@ export const DeckVideo = memo(function DeckVideo({
         instance.on(Hls.Events.MANIFEST_PARSED, () => {
           if (hls !== instance) return;
           const levels = instance.levels ?? [];
-          if (!isUhd && levels.length > 1) {
+          if (levels.length > 1) {
             let pick = 0;
             levels.forEach((level, index) => {
               const h = level.height || 0, best = levels[pick].height || 0;
@@ -193,12 +170,8 @@ export const DeckVideo = memo(function DeckVideo({
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.preload = "auto";
         video.onerror = () => {
-          if (fallbackToStream()) return;
-          if (onDirect) {
-            onDirect = false;
-            video.src = url;
-            video.addEventListener("loadedmetadata", () => { video.currentTime = startPosition; }, { once: true });
-          } else if (!done) set("failed");
+          console.error("[DeckVideo] Direct CDN native playback failed", { url: source, status: video.error?.code ?? null });
+          if (!done) set("failed");
         };
         video.addEventListener("loadedmetadata", () => {
           video.currentTime = startPosition;
@@ -211,14 +184,10 @@ export const DeckVideo = memo(function DeckVideo({
       }
     };
 
-    const uhdUrl = uhdPlaybackUrlForStreamUrl(url);
     failTimer = window.setTimeout(() => {
-      if (!done && !(fallbackFromUhd?.() ?? false)) set("failed");
+      if (!done) set("failed");
     }, 20_000);
-    void canUseUhdPlayback(video, uhdUrl).then((available) => {
-      if (cancelled) return;
-      attach(available && uhdUrl ? uhdUrl : directUrl, start, available && !!uhdUrl);
-    });
+    attach(url, start);
     return () => {
       cancelled = true;
       if (failTimer !== null) window.clearTimeout(failTimer);

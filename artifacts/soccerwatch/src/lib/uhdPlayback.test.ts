@@ -237,7 +237,7 @@ describe("recorded UHD playback eligibility and fallback", () => {
   });
 
   it("does not recover a failed source by switching to a relay", async () => {
-    expect(RECORDED_PLAYBACK_STAGE_ORDER).toEqual(["uhd", "cdn", "proxy", "fallback"]);
+    expect(RECORDED_PLAYBACK_STAGE_ORDER).toEqual(["h264", "uhd", "direct"]);
     expect(stageAfterUhd(true, true)).toBe("h264");
     expect(stageAfterUhd(false, true)).toBe("direct");
     expect(await decidePlaybackRecovery({

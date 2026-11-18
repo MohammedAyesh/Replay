@@ -9,10 +9,9 @@ import { academiesTable, db, fieldsTable, recordingsTable, userClipsTable, users
 import type { CreativeBrand, Scene } from "@workspace/api-zod";
 
 /**
- * Picking a clip in the Creative hub must give that clip's footage — the
- * seconds the player cut — in the preview and the export, from camera 4K.
- * user_clips stores start/end as shares of the video; reading them as seconds
- * (the old bug) played the first second of the match instead.
+ * Previewing a clip in the Creative hub loads its source directly; server
+ * exports still cut the selected camera-4K window. user_clips stores start/end
+ * as shares of the video; reading them as seconds played the first second.
  */
 
 const fetched: Array<{ how: string; url: string; from: number; to: number }> = [];
@@ -175,7 +174,7 @@ beforeAll(async () => {
     thumbnailTime: "1", sourceRecordingId: rec.id,
   }).returning({ id: userClipsTable.id });
   streamClipId = streamClip.id;
-});
+}, 30_000);
 
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -188,16 +187,11 @@ afterAll(async () => {
 describe("picking a clip in the Creative hub", () => {
   const access = () => ({ academyId: venueId }) as AcademyOwnerAccess;
 
-  it("previews the selected camera-4K window, from 36:00", async () => {
+  it("previews the clip from Bunny directly without buffering a server-side cut", async () => {
     fetched.length = 0;
     const res = await browserMedia(access(), { type: "clip", clipId }, "video", []);
-    expect(res).toMatchObject({ type: "video/mp4" });
-    expect(fetched).toEqual([{
-      how: "4k-window",
-      url: `https://replayjo.b-cdn.net/vod/${videoId}/4k.m3u8`,
-      from: 2160,
-      to: 2214,
-    }]);
+    expect(res).toEqual({ redirect: `${fixtures.streamBase}/${videoId}/playlist.m3u8` });
+    expect(fetched).toEqual([]);
   });
 
   it("renders a 4K-backed clip to completion using its source window", async () => {

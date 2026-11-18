@@ -16,6 +16,7 @@ vi.mock("../lib/bunny.js", () => ({
   isBunnyConfigured: () => true,
   isBunnyVideoPlayable: () => true,
   isExcludedBunnyVideoTitle: () => false,
+  storagePullZoneBase: () => "https://replayjo.b-cdn.net",
 }));
 
 const TEST_TAG = `storage-archive-${Date.now()}`;
@@ -26,10 +27,18 @@ let fieldId: number;
 let streamFetch: ReturnType<typeof vi.fn>;
 
 beforeAll(async () => {
-  streamFetch = vi.fn(async (_input: unknown) => new Response(JSON.stringify({ items: [] }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  }));
+  streamFetch = vi.fn(async (input: string | URL | Request) => {
+    if (String(input).includes("/vod/")) {
+      return new Response("#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST\n", {
+        status: 200,
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    }
+    return new Response(JSON.stringify({ items: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
   vi.stubGlobal("fetch", streamFetch);
   const [{ default: bunnyCollectionsRouter }] = await Promise.all([
     import("./bunnyCollections"),
@@ -84,13 +93,15 @@ describe("field archive includes visible Storage recordings", () => {
         guid: STORAGE_VIDEO_ID,
         title: "2026-11-16_21:30",
         thumbnailUrl: `/api/hls-proxy/storage/${STORAGE_VIDEO_ID}/thumb.jpg`,
-        playbackUrl: `/api/hls-proxy/uhd/${STORAGE_VIDEO_ID}.m3u8`,
-        embedUrl: `/api/hls-proxy/uhd/${STORAGE_VIDEO_ID}.m3u8`,
+        playbackUrl: `https://replayjo.b-cdn.net/vod/${STORAGE_VIDEO_ID}/h264.m3u8`,
+        embedUrl: `https://replayjo.b-cdn.net/vod/${STORAGE_VIDEO_ID}/h264.m3u8`,
         views: 0,
         duration: 3600,
       },
     ]);
     const requestedUrls = streamFetch.mock.calls.map(([input]) => String(input));
-    expect(requestedUrls.every((url) => !url.includes(STORAGE_VIDEO_ID))).toBe(true);
+    expect(requestedUrls.filter((url) => url.includes(STORAGE_VIDEO_ID))).toEqual([
+      `https://replayjo.b-cdn.net/vod/${STORAGE_VIDEO_ID}/h264.m3u8`,
+    ]);
   });
 });

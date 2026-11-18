@@ -3175,11 +3175,7 @@ router.get("/user-clips/:id/share-link", async (req, res): Promise<void> => {
   });
 });
 
-/**
- * GET /user-clips/:id/download
- * Proxy-downloads the rendered MP4 from Bunny Storage through our server.
- * Avoids CORS issues and works uniformly on iOS and desktop.
- */
+/** GET /user-clips/:id/playback redirects the authorized viewer to Bunny CDN. */
 router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
   const userId = await getLocalUserId(req);
   if (!userId) { unauthenticatedResponse(res, req); return; }
@@ -3203,13 +3199,7 @@ router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Export not available" });
     return;
   }
-  // A finished export plays straight from Bunny's pull zone: the browser is
-  // sent there once and fetches every range itself, instead of this host
-  // relaying the file 2 MB at a time. `?relay=1` keeps the old path, which a
-  // player uses as its fallback if the CDN copy will not play. Anything not
-  // plainly finished (expired, mid re-clip, a vps1 job ref) still takes the
-  // probing relay below, which also settles the row.
-  const cdnUrl = clip.exportStatus === "done" && req.query.relay !== "1"
+  const cdnUrl = clip.exportStatus === "done"
     ? getClipExportCdnUrl(clip.id, clip.exportedUrl)
     : null;
   if (cdnUrl) {
@@ -3231,41 +3221,13 @@ router.get("/user-clips/:id/playback", async (req, res): Promise<void> => {
   if (clip.exportStatus !== "done" || probe.url !== clip.exportedUrl) {
     await promoteExistingExport(clip, probe.url);
   }
-  // Every playback response is a bounded 206, whatever Range was sent (or
-  // none): the host refuses a Content-Length over 32 MiB, and a full-file
-  // answer here would be an unmetered download. See lib/exportPlayback.ts.
-  const plan = planExportRange(req.header("range") ?? undefined, CLIP_PLAYBACK_RANGE_MAX_BYTES);
-  const abort = new AbortController();
-  const abortUpstream = () => { if (!res.writableEnded && !abort.signal.aborted) abort.abort(); };
-  res.once("close", abortUpstream);
-  try {
-    let upstream: Response;
-    try {
-      upstream = await fetchExportObject(probe.url, { range: plan.upstreamRange, signal: abort.signal });
-    } catch (err) {
-      if (!abort.signal.aborted) logger.warn({ err, clipId }, "Could not reach the export for playback");
-      if (!res.headersSent && !res.destroyed) res.status(502).json({ error: "Playback unavailable" });
-      return;
-    }
-    if (upstream.status !== 416 && (!upstream.ok || !upstream.body)) {
-      await upstream.body?.cancel().catch(() => {});
-      res.status(upstream.status === 404 && clip.exportStatus === "expired" ? 410 : 502).json({ error: "Playback unavailable" });
-      return;
-    }
-    const outcome = await sendBoundedExport(res, upstream, plan, {
-      "Content-Type": upstream.headers.get("content-type") ?? "video/mp4",
-      "Cache-Control": "private, no-store",
-    });
-    if (outcome === "unusable") {
-      await upstream.body?.cancel().catch(() => {});
-      res.status(502).json({ error: "Playback unavailable" });
-    }
-  } catch (err) {
-    if (!res.headersSent) res.status(500).json({ error: "Playback failed" });
-    else logger.debug({ err, clipId }, "Playback stream ended early");
-  } finally {
-    res.off("close", abortUpstream);
+  const refreshedCdnUrl = getClipExportCdnUrl(clip.id, probe.url);
+  if (refreshedCdnUrl) {
+    res.set("Cache-Control", "private, max-age=300");
+    res.redirect(302, refreshedCdnUrl);
+    return;
   }
+  res.status(503).json({ error: "This export is not available on the playback CDN.", code: "direct_cdn_unavailable" });
 });
 
 router.get("/user-clips/:id/download", async (req, res): Promise<void> => {

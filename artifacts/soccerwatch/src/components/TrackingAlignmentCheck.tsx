@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import Hls from "hls.js";
-import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 
 /**
  * admin.tsx keeps its apiFetch private, and this component is only ever mounted
@@ -136,21 +135,17 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
     const run = async () => {
       try {
         const claim = await get<{
-          recording: { videoUrl: string; uhdPlaybackUrl?: string | null };
+          recording: { videoUrl: string };
           manifest: Manifest;
         }>(`/recordings/${recordingId}/claim-match`);
         if (cancelled) return;
         const { manifest } = claim;
         const videoStart = manifest.videoStartSeconds ?? 0;
         const url = claim.recording.videoUrl;
-        const uhdUrl = claim.recording.uhdPlaybackUrl ?? uhdPlaybackUrlForStreamUrl(url);
-        let usingUhd = false;
-        let streamFallbackUsed = false;
 
         setStatus(`Loading video · tracking starts ${videoStart}s in`);
-        const attachSource = (source: string, isUhd: boolean, resumeAt = 0) => new Promise<void>((resolve, reject) => {
+        const attachSource = (source: string, resumeAt = 0) => new Promise<void>((resolve, reject) => {
           if (hls) { hls.destroy(); hls = null; }
-          usingUhd = isUhd;
           video.pause();
           video.removeAttribute("src");
           video.load();
@@ -169,10 +164,8 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
             finish();
           };
           const failed = () => {
-            if (isUhd && !streamFallbackUsed) {
-              if (settled) void fallbackToStream(video.currentTime || resumeAt);
-              else finish(new Error("Camera 4K playback failed"));
-            } else finish(new Error("Video source failed to load"));
+            console.error("[TrackingAlignmentCheck] Direct CDN playback failed", { url: source, status: video.error?.code ?? null });
+            finish(new Error("Direct CDN playback failed"));
           };
           video.addEventListener("loadeddata", loaded, { once: true });
           video.addEventListener("error", failed);
@@ -183,31 +176,21 @@ export function TrackingAlignmentCheck({ recordingId }: { recordingId: number })
             instance.attachMedia(video);
             instance.on(Hls.Events.ERROR, (_e, data) => {
               if (hls !== instance) return;
-              const detail = String(data.details ?? "");
-              const codecError = detail === "bufferAddCodecError" || detail === "bufferIncompatibleCodecsError";
-              if (isUhd && (data.fatal || codecError)) {
-                if (settled) void fallbackToStream(video.currentTime || resumeAt);
-                else finish(new Error("Camera 4K playback failed"));
-              } else if (data.fatal && !settled) finish(new Error("Stream playback failed"));
+              if (!data.fatal) return;
+              console.error("[TrackingAlignmentCheck] Direct CDN playback failed", {
+                playlistUrl: source,
+                requestUrl: data.frag?.url ?? data.url,
+                status: data.response?.code ?? null,
+                details: data.details,
+              });
+              if (!settled) finish(new Error("Direct CDN playback failed"));
             });
           } else {
             video.src = source;
           }
         });
-        function fallbackToStream(at: number): Promise<void> {
-          if (!usingUhd || streamFallbackUsed) return Promise.resolve();
-          usingUhd = false;
-          streamFallbackUsed = true;
-          return attachSource(url, false, at);
-        }
-        const useUhd = await canUseUhdPlayback(video, uhdUrl);
-        try {
-          await attachSource(useUhd && uhdUrl ? uhdUrl : url, useUhd && !!uhdUrl);
-        } catch (error) {
-          if (!useUhd || !uhdUrl || streamFallbackUsed) throw error;
-          streamFallbackUsed = true;
-          await attachSource(url, false);
-        }
+        if (/\/api\/hls-proxy\//.test(url)) throw new Error("API-relayed playback is disabled for this preview");
+        await attachSource(url);
         if (cancelled) return;
 
         const results: Array<{ name: string; seconds: number; drawn: number }> = [];

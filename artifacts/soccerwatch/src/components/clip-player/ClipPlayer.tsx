@@ -97,6 +97,18 @@ export type ClipSource =
   | { kind: "bunny"; videoId: string }
   | { kind: "ownerShare"; token: string };
 
+function ownerShareRenditionUrl(src: string, token: string, rendition: "h264" | "4k"): string {
+  const origin = typeof window === "undefined" ? "https://replayjo.com" : window.location.origin;
+  let shareOrigin = origin;
+  try {
+    const parsed = new URL(src, origin);
+    if (/^\/w\//.test(parsed.pathname)) shareOrigin = parsed.origin;
+  } catch {
+    // Use the app origin for relative share URLs.
+  }
+  return new URL(`/w/${encodeURIComponent(token)}/${rendition}.m3u8`, shareOrigin).href;
+}
+
 export type ClipDraft = {
   startTime: number;
   endTime: number;
@@ -343,14 +355,21 @@ export function ClipPlayer({
     isStreamlessStorageUrl(src)
     || (source.kind === "ownerShare" && source.token.startsWith("s-"))
   );
+  const ownerShareH264Url = source.kind === "ownerShare" && source.token.startsWith("s-")
+    ? ownerShareRenditionUrl(src, source.token, "h264")
+    : null;
+  const ownerShareFourKUrl = source.kind === "ownerShare" && source.token.startsWith("s-")
+    ? ownerShareRenditionUrl(src, source.token, "4k")
+    : null;
   const uhdSrc = isLive ? null
     : directStoragePlayback?.fourKUrl
+      ?? ownerShareFourKUrl
       ?? directStoragePlaylistForSourceUrl(src, "4k")
       ?? (source.kind === "ownerShare" && !streamlessStorage ? suppliedUhdPlaybackUrl : null);
   // Customer-facing Storage playback is H.264 first; the original 8K source is never selected.
   const eightKSrc = null;
   const h264Src = !isLive
-    ? directStoragePlayback?.h264Url ?? directStoragePlaylistForSourceUrl(src, "h264")
+    ? directStoragePlayback?.h264Url ?? ownerShareH264Url ?? directStoragePlaylistForSourceUrl(src, "h264")
     : null;
   const wantsStorageCheck = !isLive && Boolean(uhdSrc || eightKSrc || h264Src);
   const streamSourceStage = initialPlaybackSourceStage({ isLive, src });
@@ -605,6 +624,12 @@ export function ClipPlayer({
   useEffect(() => {
     playbackStartReportedRef.current = false;
   }, [sourceKey]);
+  useEffect(() => {
+    if (!/\/api\/hls-proxy\//.test(src)) return;
+    console.error("[ClipPlayer] Refusing API-relayed playback source", { url: src });
+    setPlaybackDiagnostic("API-relayed playback is disabled; provide the direct CDN URL.");
+    setPlaybackUiState("error");
+  }, [src]);
   const isLiveDvr = Boolean(liveDvr);
   const maxLiveClipSeconds = Math.max(1, Math.min(600, liveDvr?.maxDurationSeconds ?? 600));
   const cdnSrc = cdnPlaybackSource({ isLive, src });
@@ -989,9 +1014,13 @@ export function ClipPlayer({
           preservePosition();
           const currentStage = sourceStageRef.current;
           if (streamlessStorage) {
+            if (currentStage === "h264") {
+              showPlaybackError();
+              return;
+            }
             const nextStage = currentStage === "8k"
               ? uhdAvailable ? "uhd" : h264Available ? "h264" : null
-              : h264Available ? "h264" : null;
+              : currentStage === "uhd" && h264Available ? "h264" : null;
             if (!nextStage) {
               showPlaybackError();
               return;
@@ -1063,11 +1092,6 @@ export function ClipPlayer({
             element.load();
           }
           startStartupTimer();
-          return;
-        }
-        if (currentStage === "h264" && uhdAvailable) {
-          preservePosition();
-          setPlaybackSourceStage("uhd");
           return;
         }
         showPlaybackError();
@@ -1357,6 +1381,14 @@ export function ClipPlayer({
       });
       hls.on(Hls.Events.ERROR, (_, data) => {
         if (!data.fatal) return;
+        console.error("[ClipPlayer] Fatal direct playback error", {
+          type: data.type,
+          details: data.details,
+          reason: data.reason,
+          status: data.response?.code ?? null,
+          playlistUrl: activeSrc,
+          requestUrl: data.frag?.url ?? data.url,
+        });
         if (sourceStageRef.current === "uhd" || sourceStageRef.current === "8k" || sourceStageRef.current === "h264") {
           if (sourceStageRef.current === "uhd") setUhdAvailable(false);
           if (sourceStageRef.current === "8k") setEightKAvailable(false);
@@ -1368,20 +1400,6 @@ export function ClipPlayer({
         setPlaybackDiagnostic(diagnostic);
         setPlaybackUiState("loading");
         setIsRetryingPlayback(true);
-        console.error("[ClipPlayer] Fatal HLS playback error", {
-          type: data.type,
-          details: data.details,
-          reason: data.reason,
-          responseCode: data.response?.code,
-          playlistUrl: activeSrc,
-          requestUrl: data.frag?.url ?? data.url,
-          responseText: typeof data.response?.text === "string"
-            ? data.response.text.slice(0, 300)
-            : undefined,
-          fragment: data.frag
-            ? { type: data.frag.type, sn: data.frag.sn, level: data.frag.level }
-            : undefined,
-        });
         if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
           const fragmentLevel = data.frag?.level;
           const failedLevel = typeof fragmentLevel === "number" && Number.isFinite(fragmentLevel)
@@ -2139,7 +2157,7 @@ export function ClipPlayer({
                 >
                   {playbackRate}×
                 </button>
-                {!isLive && sourceStage !== "checking"
+                {!isLive && !streamlessStorage && sourceStage !== "checking"
                   && [uhdAvailable, eightKAvailable, h264Available, !streamlessStorage].filter(Boolean).length > 1 && (
                   <button
                     type="button"

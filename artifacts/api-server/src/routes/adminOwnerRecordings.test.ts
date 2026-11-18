@@ -145,10 +145,18 @@ beforeAll(async () => {
   app.use("/api", hlsProxyRouter);
   app.use("/api", ownerRouter);
 
-  fetchMock = vi.fn().mockResolvedValue(new Response("thumbnail-bytes", {
-    status: 200,
-    headers: { "content-type": "image/jpeg" },
-  }));
+  fetchMock = vi.fn(async (input: string | URL | Request) => {
+    if (String(input).endsWith("/h264.m3u8") || String(input).endsWith("/4k.m3u8")) {
+      return new Response("#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nsegment.ts\n#EXT-X-ENDLIST\n", {
+        status: 200,
+        headers: { "content-type": "application/vnd.apple.mpegurl" },
+      });
+    }
+    return new Response("thumbnail-bytes", {
+      status: 200,
+      headers: { "content-type": "image/jpeg" },
+    });
+  });
   vi.stubGlobal("fetch", fetchMock);
 });
 
@@ -179,8 +187,10 @@ describe("private ready owner Storage recordings", () => {
       fieldName: `${TAG} field`,
       videoId: videoIdFor(1),
       thumbnailUrl: `/api/hls-proxy/storage/${videoIdFor(1)}/thumb.jpg`,
-      playbackUrl: `/api/hls-proxy/uhd/${videoIdFor(1)}.m3u8`,
     });
+    expect(response.body[0].playbackUrl).toMatch(
+      new RegExp(`^https://[^/]+\\.b-cdn\\.net/vod/${videoIdFor(1)}/h264\\.m3u8$`),
+    );
     expect(response.body[0]).not.toHaveProperty("shareToken");
     expect(response.body[0]).not.toHaveProperty("shareUrl");
   });
@@ -203,18 +213,22 @@ describe("private ready owner Storage recordings", () => {
   });
 
   it("authorizes Storage thumbnails only for the assigned field owner or admins", async () => {
+    fetchMock.mockClear();
     mocks.getLocalUserRecord.mockResolvedValue(ownerViewer);
     const ownerResponse = await request(app)
       .get(`/api/hls-proxy/storage/${videoIdFor(1)}/thumb.jpg`)
-      .expect(200);
-    expect(ownerResponse.headers["content-type"]).toContain("image/jpeg");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+      .redirects(0)
+      .expect(302);
+    expect(ownerResponse.headers.location).toMatch(
+      new RegExp(`^https://[^/]+\\.b-cdn\\.net/vod/${videoIdFor(1)}/thumb\\.jpg$`),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
 
     mocks.getLocalUserRecord.mockResolvedValue(otherViewer);
     await request(app)
       .get(`/api/hls-proxy/storage/${videoIdFor(1)}/thumb.jpg`)
       .expect(404);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("does not expose private owner footage to a non-admin list caller", async () => {

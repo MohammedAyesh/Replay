@@ -238,11 +238,12 @@ describe("POST /user-reels", () => {
       "-of", "csv=p=0", file]).toString().trim().split(",").map(Number);
     expect([w, h]).toEqual([608, 1080]);
 
-    // Listed, playable in bounded pieces, downloadable.
+    // Listed, redirected to Bunny CDN for playback, downloadable.
     const list = await request(app).get("/api/user-reels");
     expect(list.body.map((r: { id: number }) => r.id)).toContain(reel.id);
-    const play = await request(app).get(`/api/user-reels/${reel.id}/playback`).set("Range", "bytes=0-99");
-    expect(play.status).toBe(206);
+    const play = await request(app).get(`/api/user-reels/${reel.id}/playback`).redirects(0);
+    expect(play.status).toBe(302);
+    expect(play.headers.location).toMatch(new RegExp(`^https://[^/]+/reels/r${reel.id}-[a-f0-9]{20}\\.mp4$`));
     const download = await request(app).get(`/api/user-reels/${reel.id}/download`);
     expect(download.status).toBe(200);
     expect(download.headers["content-disposition"]).toContain("Saturday.mp4");

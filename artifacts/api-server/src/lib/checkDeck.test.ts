@@ -25,15 +25,15 @@ const BLACK: Lab = [20, 128, 128];
 const moment = (id: string, kind: string, t: number, title = "x"): PersonalMoment => ({ id, kind, title, momentSeconds: t, status: "ready" });
 
 describe("match playback URLs", () => {
-  it("keeps streamless Storage footage on the protected H.264-first proxy", () => {
+  it("uses direct H.264-first CDN URLs for streamless Storage footage", () => {
     expect(browserVideoUrl("https://storage.example.com/vod/123e4567-e89b-12d3-a456-426614174000/8k.m3u8"))
-      .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
+      .toBe("https://replayjo.b-cdn.net/vod/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
     expect(browserVideoUrl("https://vz-123.b-cdn.net/123e4567-e89b-12d3-a456-426614174000/playlist.m3u8"))
-      .toContain("/api/hls-proxy/manifest?url=");
+      .toBe("https://vz-123.b-cdn.net/123e4567-e89b-12d3-a456-426614174000/playlist.m3u8");
     expect(browserVideoUrl("https://storage.example.com/vod/123e4567e89b12d3a456426614174000/h264.m3u8"))
-      .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
+      .toBe("https://replayjo.b-cdn.net/vod/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
     expect(browserVideoUrl("https://storage.example.com/vod/123e4567-e89b-12d3-a456-426614174000/4k.m3u8"))
-      .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
+      .toBe("https://replayjo.b-cdn.net/vod/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
   });
 });
 

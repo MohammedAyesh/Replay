@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Hls from "hls.js";
-import { canUseUhdPlayback, uhdPlaybackUrlForStreamUrl } from "@/lib/uhdPlayback";
 import { mmss } from "@/lib/game-claim/model";
 import { ovPos, type Ctx } from "@/lib/game-claim/claim";
 import { speedsOf, trackOfYou, type TrackPoint } from "@/lib/game-claim/stats";
@@ -238,7 +237,6 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
     if (document.hidden) { setStatus(c.front); return; }
     const vurl = browserSafeVideoUrl(videoUrl);
     if (!vurl) return;
-    const streamUrl = vurl;
     setBusy(true);
     cancel.current = false;
     const vs = game.videoStartSeconds || 0;
@@ -256,11 +254,8 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
     const balls = new Map<number, Awaited<ReturnType<typeof loadBall>>>();
     for (const k of new Set(clips.map((x) => x.seg[0].k))) balls.set(k, await loadBall(recordingId, game, k));
     try {
-      let usingUhd = false;
-      let streamFallbackUsed = false;
-      const attach = (source: string, at: number, isUhd: boolean) => new Promise<void>((resolve, reject) => {
+      const attach = (source: string, at: number) => new Promise<void>((resolve, reject) => {
         if (hls) { hls.destroy(); hls = null; }
-        usingUhd = isUhd;
         vid.pause();
         vid.removeAttribute("src");
         vid.load();
@@ -287,12 +282,15 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
           instance.on(Hls.Events.ERROR, (_event, data) => {
             if (hls !== instance) return;
             const details = String(data.details ?? "");
-            const codecError = details === "bufferAddCodecError" || details === "bufferIncompatibleCodecsError";
-            if (isUhd && (data.fatal || codecError)) {
-              if (settled) void fallbackToStream(vid.currentTime || at);
-              else finish(new Error("Camera 4K playback failed"));
-            } else if (data.fatal && !settled) {
-              finish(new Error("Stream playback failed"));
+            if (data.fatal) {
+              console.error("[ReelSection] Direct CDN playback failed", {
+                playlistUrl: source,
+                requestUrl: data.frag?.url ?? data.url,
+                status: data.response?.code ?? null,
+                details,
+              });
+              if (!settled) finish(new Error("Direct CDN playback failed"));
+              else setStatus("The recording could not be played.");
             }
           });
           instance.loadSource(source);
@@ -310,34 +308,15 @@ export function ReelSection({ ctx, copy, play, videoUrl, recordingId }: {
             finish();
           };
           const onError = () => {
-            if (isUhd) {
-              if (streamFallbackUsed) finish(new Error("Camera 4K playback failed"));
-              else void fallbackToStream(vid.currentTime || at);
-            } else finish(new Error("Native video source failed"));
+            console.error("[ReelSection] Direct CDN native playback failed", { url: source, status: vid.error?.code ?? null });
+            finish(new Error("Direct CDN playback failed"));
           };
           vid.addEventListener("loadedmetadata", onMetadata, { once: true });
           vid.addEventListener("error", onError, { once: true });
           vid.src = source;
         } else reject(new Error("This browser does not support HLS playback"));
       });
-      function fallbackToStream(at: number): Promise<void> {
-        if (!usingUhd || streamFallbackUsed) return Promise.resolve();
-        streamFallbackUsed = true;
-        usingUhd = false;
-        const wasPlaying = !vid.paused;
-        return attach(streamUrl, at, false).then(async () => {
-          if (wasPlaying && !cancel.current) await vid.play();
-        });
-      }
-      const uhdUrl = uhdPlaybackUrlForStreamUrl(vurl);
-      const useUhd = await canUseUhdPlayback(vid, uhdUrl);
-      try {
-        await attach(useUhd && uhdUrl ? uhdUrl : vurl, 0, useUhd && !!uhdUrl);
-      } catch (error) {
-        if (!useUhd || !uhdUrl || streamFallbackUsed) throw error;
-        streamFallbackUsed = true;
-        await attach(vurl, 0, false);
-      }
+      await attach(vurl, 0);
       const ready = () => new Promise<void>((r) => { if (vid.readyState >= 3) return r(); const f = () => { vid.removeEventListener("canplay", f); r(); }; vid.addEventListener("canplay", f); setTimeout(f, 6000); });
       const seek = (t: number) => new Promise<void>((r) => { let done = false; const f = () => { if (done) return; done = true; vid.removeEventListener("seeked", f); r(); }; vid.addEventListener("seeked", f); vid.currentTime = t + vs; setTimeout(f, 6000); });
       const stream = cv.captureStream(30);

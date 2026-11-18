@@ -43,10 +43,10 @@ export const MomentVideo = memo(function MomentVideo({ clip, active, load, onSta
     set("loading");
     const onReady = () => set("ready");
     const onError = () => {
-      // A saved file plays from Bunny's CDN (the route redirects there). If
-      // that copy will not play, try the server relay once, then the match video.
-      if (source.kind === "file" && !source.url.includes("relay=1")) setSource({ kind: "file", url: `${source.url}?relay=1` });
-      else if (source.kind === "file" && clip.playbackUrl) setSource({ kind: "stream", url: clip.playbackUrl });
+      console.error("[MomentVideo] Direct video source failed", { url: source.url, status: video.error?.code ?? null });
+      if (source.kind === "file" && clip.playbackUrl && !clip.playbackUrl.startsWith("/api/hls-proxy/")) {
+        setSource({ kind: "stream", url: clip.playbackUrl });
+      }
       else set("failed");
     };
     video.addEventListener("loadeddata", onReady);
@@ -57,6 +57,11 @@ export const MomentVideo = memo(function MomentVideo({ clip, active, load, onSta
     if (source.kind === "file") {
       video.src = source.url;
     } else {
+      if (source.url.startsWith("/api/hls-proxy/")) {
+        console.error("[MomentVideo] Refusing API-relayed playback source", { url: source.url });
+        set("failed");
+        return;
+      }
       let seeked = false;
       seek = () => {
         const dur = video.duration || 0;
@@ -69,10 +74,17 @@ export const MomentVideo = memo(function MomentVideo({ clip, active, load, onSta
       if (Hls.isSupported()) {
         hls = new Hls({ enableWorker: false, maxBufferLength: 20 });
         capPlaybackQuality(hls);
-        hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) set("failed"); });
-        // Segments straight from Bunny where the proxy allows it (replayjo.com);
-        // the playlist still comes through the proxy's access check.
-        hls.loadSource(source.url.startsWith("/api/hls-proxy/manifest?") ? `${source.url}&direct=1` : source.url);
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (!data.fatal) return;
+          console.error("[MomentVideo] Direct CDN playback failed", {
+            playlistUrl: source.url,
+            requestUrl: data.frag?.url ?? data.url,
+            status: data.response?.code ?? null,
+            details: data.details,
+          });
+          set("failed");
+        });
+        hls.loadSource(source.url);
         hls.attachMedia(video);
       } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = source.url;

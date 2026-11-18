@@ -25,6 +25,7 @@ import {
   getBunnyVideoInfo,
   isBunnyConfigured,
   isBunnyStorageConfigured,
+  storagePullZoneBase,
   uploadFileToBunnyStoragePath,
   deleteBunnyStoragePath,
 } from "../lib/bunny";
@@ -33,7 +34,6 @@ import { waitForCamera4kSource } from "../lib/clipExportSource";
 import { renderQueue } from "../lib/renderQueue";
 import { fetchBrandingAsset } from "../lib/brandingFetch";
 import { fetchExportObject, forwardExportContentLength } from "../lib/backupExport";
-import { CLIP_PLAYBACK_RANGE_MAX_BYTES, planExportRange, sendBoundedExport } from "../lib/exportPlayback";
 import { cleanChoice, endScreenFor, endScreenOptions, planClipBranding, publicBase } from "../lib/clipBranding/plan";
 import { PREVIEW_DIMS, renderPreviewPng } from "../lib/clipBranding/preview";
 import { MAX_CARD_STATS } from "../lib/clipBranding/types";
@@ -474,32 +474,12 @@ router.get("/user-reels/:id/playback", async (req, res): Promise<void> => {
   if (!userId) { unauthenticatedResponse(res, req); return; }
   const reel = await ownReel(userId, req.params.id);
   if (!reel || reel.exportStatus !== "done" || !reel.exportPath) { res.status(404).json({ error: "Reel not ready" }); return; }
-  // Bounded 206s only: the host refuses a Content-Length over 32 MiB.
-  const plan = planExportRange(req.header("range") ?? undefined, CLIP_PLAYBACK_RANGE_MAX_BYTES);
-  const abort = new AbortController();
-  const abortUpstream = () => { if (!res.writableEnded && !abort.signal.aborted) abort.abort(); };
-  res.once("close", abortUpstream);
-  try {
-    const upstream = await fetchExportObject(bunnyStorageUrlFor(reel.exportPath), { range: plan.upstreamRange, signal: abort.signal });
-    if (upstream.status !== 416 && (!upstream.ok || !upstream.body)) {
-      await upstream.body?.cancel().catch(() => {});
-      res.status(502).json({ error: "Playback unavailable" });
-      return;
-    }
-    const outcome = await sendBoundedExport(res, upstream, plan, {
-      "Content-Type": "video/mp4",
-      "Cache-Control": "private, no-store",
-    });
-    if (outcome === "unusable") {
-      await upstream.body?.cancel().catch(() => {});
-      res.status(502).json({ error: "Playback unavailable" });
-    }
-  } catch (err) {
-    if (!abort.signal.aborted) logger.warn({ err, reelId: reel.id }, "Reel playback failed");
-    if (!res.headersSent) res.status(502).json({ error: "Playback unavailable" });
-  } finally {
-    res.off("close", abortUpstream);
+  if (!/^reels\/r\d+-[a-f0-9]{20}\.mp4$/i.test(reel.exportPath)) {
+    res.status(503).json({ error: "This reel is not available on the playback CDN.", code: "direct_cdn_unavailable" });
+    return;
   }
+  res.set("Cache-Control", "private, max-age=300");
+  res.redirect(302, `${storagePullZoneBase()}/${reel.exportPath}`);
 });
 
 /**

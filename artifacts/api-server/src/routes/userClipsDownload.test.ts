@@ -41,7 +41,6 @@ vi.mock("../lib/clerkUserBridge", () => ({
 }));
 
 import { getLocalUserId } from "../lib/clerkUserBridge";
-import { CLIP_PLAYBACK_RANGE_MAX_BYTES } from "../lib/exportPlayback";
 
 const mockedGetLocalUserId = vi.mocked(getLocalUserId);
 
@@ -186,29 +185,13 @@ describe("GET /user-clips/:id/download", () => {
     expect(Buffer.compare(res.body as Buffer, CLIP_BYTES)).toBe(0);
   });
 
-  it("serves an expired clip's retained export with full and ranged playback", async () => {
+  it("does not serve an expired export through the API playback route", async () => {
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const clipId = await insertClip(ownerId, `${originUrl}/clip.mp4`);
     await db.update(userClipsTable).set({ exportStatus: "expired" }).where(eq(userClipsTable.id, clipId));
-    const parseBuffer = (r: any, cb: (error: Error | null, body: any) => void) => {
-      const chunks: Buffer[] = [];
-      r.on("data", (chunk: Buffer) => chunks.push(chunk));
-      r.on("end", () => cb(null, Buffer.concat(chunks)));
-    };
-
-    // Playback always answers with a bounded 206; this clip fits in one window.
-    const full = await request(app).get(`/api/user-clips/${clipId}/playback`).buffer().parse(parseBuffer);
-    expect(full.status).toBe(206);
-    expect(full.headers["content-range"]).toBe(`bytes 0-${CLIP_BYTES.length - 1}/${CLIP_BYTES.length}`);
-    expect(full.body.length).toBe(CLIP_BYTES.length);
-    expect(Buffer.compare(full.body as Buffer, CLIP_BYTES)).toBe(0);
-
-    const range = await request(app).get(`/api/user-clips/${clipId}/playback`)
-      .set("Range", "bytes=100-199").buffer().parse(parseBuffer);
-    expect(range.status).toBe(206);
-    expect(range.headers["content-range"]).toBe(`bytes 100-199/${CLIP_BYTES.length}`);
-    expect(range.body.length).toBe(100);
-    expect(Buffer.compare(range.body as Buffer, CLIP_BYTES.subarray(100, 200))).toBe(0);
+    const response = await request(app).get(`/api/user-clips/${clipId}/playback`);
+    expect(response.status).toBe(503);
+    expect(response.body.code).toBe("direct_cdn_unavailable");
   });
 
   it("reports an expired clip with no source and no export as unavailable", async () => {
@@ -398,13 +381,7 @@ describe("GET /user-clips/:id/download", () => {
 });
 
 describe("GET /user-clips/:id/playback", () => {
-  const parseBuffer = (r: any, cb: (error: Error | null, body: any) => void) => {
-    const chunks: Buffer[] = [];
-    r.on("data", (chunk: Buffer) => chunks.push(chunk));
-    r.on("end", () => cb(null, Buffer.concat(chunks)));
-  };
-
-  it("sends a finished Storage export straight to the pull zone, and `?relay=1` keeps the relay", async () => {
+  it("sends a finished Storage export straight to the pull zone, even with a relay query", async () => {
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const clipId = await insertClip(ownerId, null);
     const zone = (process.env.BUNNY_STORAGE_ZONE ?? "").replace(/^\/+|\/+$/g, "");
@@ -420,86 +397,20 @@ describe("GET /user-clips/:id/playback", () => {
     const other = await request(app).get(`/api/user-clips/${clipId}/playback`).redirects(0);
     expect(other.status).toBe(404);
 
-    // The fallback skips the redirect and goes through the probing relay.
+    // A relay query never changes playback back into an API-served video.
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const relayed = await request(app).get(`/api/user-clips/${clipId}/playback?relay=1`).redirects(0);
-    expect(relayed.status).not.toBe(302);
+    expect(relayed.status).toBe(302);
+    expect(relayed.headers.location).toBe(res.headers.location);
   });
 
-  it("answers a no-Range or `bytes=0-` request with only a bounded first window, not the whole file", async () => {
-    mockedGetLocalUserId.mockResolvedValue(ownerId);
-    const clipId = await insertClip(ownerId, `${originUrl}/big.mp4`);
-    const before = await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.clipId, clipId));
-
-    for (const range of [undefined, "bytes=0-"]) {
-      originHits = [];
-      const call = request(app).get(`/api/user-clips/${clipId}/playback`);
-      if (range) call.set("Range", range);
-      const res = await call.buffer().parse(parseBuffer);
-
-      expect(res.status).toBe(206);
-      expect(res.headers["content-type"]).toBe("video/mp4");
-      expect(res.headers["content-disposition"]).toBeUndefined();
-      expect(res.headers["content-range"]).toBe(`bytes 0-${CLIP_PLAYBACK_RANGE_MAX_BYTES - 1}/${BIG_BYTES.length}`);
-      expect(Number(res.headers["content-length"])).toBe(CLIP_PLAYBACK_RANGE_MAX_BYTES);
-      expect((res.body as Buffer).length).toBeLessThan(BIG_BYTES.length);
-      expect(Buffer.compare(res.body as Buffer, BIG_BYTES.subarray(0, CLIP_PLAYBACK_RANGE_MAX_BYTES))).toBe(0);
-      // The origin was asked for a bounded window, never the whole file.
-      expect(originHits.at(-1)?.range).toBe(`bytes=0-${CLIP_PLAYBACK_RANGE_MAX_BYTES - 1}`);
-    }
-
-    // Playback is not a download: nothing is written to the quota ledger.
-    const after = await db.select().from(clipDownloadsTable).where(eq(clipDownloadsTable.clipId, clipId));
-    expect(after).toHaveLength(before.length);
-  });
-
-  it("lets a player walk the file window by window", async () => {
-    mockedGetLocalUserId.mockResolvedValue(ownerId);
-    const clipId = await insertClip(ownerId, `${originUrl}/big.mp4`);
-    const start = 3_000_000;
-
-    const res = await request(app).get(`/api/user-clips/${clipId}/playback`)
-      .set("Range", `bytes=${start}-`).buffer().parse(parseBuffer);
-
-    const end = Math.min(BIG_BYTES.length - 1, start + CLIP_PLAYBACK_RANGE_MAX_BYTES - 1);
-    expect(res.status).toBe(206);
-    expect(res.headers["content-range"]).toBe(`bytes ${start}-${end}/${BIG_BYTES.length}`);
-    expect(Buffer.compare(res.body as Buffer, BIG_BYTES.subarray(start, end + 1))).toBe(0);
-  });
-
-  it("keeps every playback response under the host's 32 MiB Content-Length limit", async () => {
-    mockedGetLocalUserId.mockResolvedValue(ownerId);
-    const clipId = await insertClip(ownerId, `${originUrl}/large.mp4`);
-    const total = 64 * 1024 * 1024;
-    // An origin that ignores the bounded Range and returns its full length.
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = String(input);
-      if (!url.endsWith("/large.mp4")) return new Response(null, { status: 404 });
-      return new Response(new Uint8Array(total), {
-        status: 206,
-        headers: { "content-length": String(total), "content-range": `bytes 0-${total - 1}/${total}` },
-      });
-    });
-    try {
-      const res = await request(app).get(`/api/user-clips/${clipId}/playback`)
-        .set("Range", "bytes=0-").buffer().parse(parseBuffer);
-      expect(res.status).toBe(206);
-      expect(Number(res.headers["content-length"])).toBeLessThanOrEqual(30 * 1024 * 1024);
-      expect(res.headers["content-range"]).toBe(`bytes 0-${CLIP_PLAYBACK_RANGE_MAX_BYTES - 1}/${total}`);
-      expect((res.body as Buffer).length).toBe(CLIP_PLAYBACK_RANGE_MAX_BYTES);
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  it("maps an upstream 416 to 416 instead of 502", async () => {
+  it("does not relay exports outside Bunny Storage", async () => {
     mockedGetLocalUserId.mockResolvedValue(ownerId);
     const clipId = await insertClip(ownerId, `${originUrl}/clip.mp4`);
 
     const res = await request(app).get(`/api/user-clips/${clipId}/playback`)
-      .set("Range", `bytes=${CLIP_BYTES.length + 100}-`);
-
-    expect(res.status).toBe(416);
-    expect(res.headers["content-range"]).toBe(`bytes */${CLIP_BYTES.length}`);
+      .set("Range", "bytes=0-");
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("direct_cdn_unavailable");
   });
 });

@@ -5,7 +5,6 @@ import express, { type Express } from "express";
 import { and, eq, inArray } from "drizzle-orm";
 import {
   camera4kReclipBatchesTable,
-  clipDownloadsTable,
   db,
   renderSnapshotsTable,
   userClipsTable,
@@ -122,7 +121,6 @@ import {
   uploadToBunnyStorage,
 } from "../lib/bunny";
 import { fetchExportObject, probeExportObject } from "../lib/backupExport";
-import { ADMIN_PREVIEW_RANGE_MAX_BYTES } from "../lib/exportPlayback";
 import { CAMERA_4K_RECLIP_BATCH_KEY } from "../lib/camera4kReclipBatch";
 import { renderClip } from "../lib/ffmpegExport";
 import adminRouter from "./admin";
@@ -349,7 +347,7 @@ describe("admin clip re-clipping", () => {
       const exported = await request(app).post(`/api/user-clips/${clip.id}/export`);
       expect(exported.body).toMatchObject({ status: "done", url: clip.exportedUrl });
       const playback = await request(app).get(`/api/user-clips/${clip.id}/playback`);
-      expect(playback.status).toBe(206);
+      expect(playback.status).toBe(503);
       const download = await request(app).get(`/api/user-clips/${clip.id}/download`);
       expect(download.status).toBe(200);
 
@@ -379,7 +377,7 @@ describe("admin clip re-clipping", () => {
       const clip = await createClip();
       await db.update(userClipsTable).set({ exportStatus: renderState }).where(eq(userClipsTable.id, clip.id));
       await request(app).get(`/api/user-clips/${clip.id}/export-status`).expect(200);
-      await request(app).get(`/api/user-clips/${clip.id}/playback`).expect(206);
+      await request(app).get(`/api/user-clips/${clip.id}/playback`).expect(503);
       const [row] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, clip.id));
       expect(row.exportStatus).toBe(renderState);
     }
@@ -403,14 +401,10 @@ describe("admin clip re-clipping", () => {
     expect(direct.headers.location).not.toContain("storage.bunnycdn.com");
     expect(exportFetcher).not.toHaveBeenCalled();
 
-    // ?relay=1 is the preview's fallback: the old bounded relay.
-    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("exported"), {
-      status: 200,
-      headers: { "content-length": "8", "accept-ranges": "bytes" },
-    }));
-    const relayed = await request(app).get(`/api/admin/clips/${clip.id}/playback?relay=1`);
-    expect(relayed.status).toBeLessThan(300);
-    expect(exportFetcher).toHaveBeenCalledTimes(1);
+    const withRelayFlag = await request(app).get(`/api/admin/clips/${clip.id}/playback?relay=1`);
+    expect(withRelayFlag.status).toBe(302);
+    expect(withRelayFlag.headers.location).toBe(direct.headers.location);
+    expect(exportFetcher).not.toHaveBeenCalled();
   });
 
   it("requires an admin to access exported clip playback", async () => {
@@ -423,113 +417,14 @@ describe("admin clip re-clipping", () => {
     expect(exportFetcher).not.toHaveBeenCalled();
   });
 
-  it("streams the export without writing a download-quota record", async () => {
+  it("does not relay a non-CDN export for admin playback", async () => {
     const clip = await createClip();
-    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("exported"), {
-      status: 200,
-      headers: { "content-length": "8", "accept-ranges": "bytes" },
-    }));
-
-    const before = await db.select().from(clipDownloadsTable)
-      .where(eq(clipDownloadsTable.clipId, clip.id));
-    const response = await request(app)
-      .get(`/api/admin/clips/${clip.id}/playback?url=${encodeURIComponent("https://attacker.invalid/video.mp4")}`);
-    const after = await db.select().from(clipDownloadsTable)
-      .where(eq(clipDownloadsTable.clipId, clip.id));
-
-    // The preview always asks upstream for a bounded window and answers 206,
-    // even without a Range: an origin that ignores the Range (200 here) has
-    // the window cut out of its body.
-    expect(response.status).toBe(206);
-    expect(response.headers["content-type"]).toBe("video/mp4");
-    expect(response.headers["content-disposition"]).toBe(`inline; filename="clip-${clip.id}.mp4"`);
-    expect(response.headers["content-range"]).toBe("bytes 0-7/8");
-    expect(response.headers["content-length"]).toBe("8");
-    expect(exportFetcher).toHaveBeenCalledWith(
-      clip.exportedUrl,
-      expect.objectContaining({ range: `bytes=0-${ADMIN_PREVIEW_RANGE_MAX_BYTES - 1}` }),
-    );
-    expect(after).toHaveLength(before.length);
-    expect(after).toHaveLength(0);
-  });
-
-  it("never forwards a Content-Length over the host limit for an open-ended range on a large export", async () => {
-    const clip = await createClip();
-    const total = 40 * 1024 * 1024;
-    // An origin that answers `bytes=0-` (or ignores our bound) with the whole
-    // file's length used to have that length forwarded, over the 32 MiB cap.
-    exportFetcher.mockResolvedValueOnce(new Response(Buffer.alloc(total, 7), {
-      status: 206,
-      headers: {
-        "content-length": String(total),
-        "content-range": `bytes 0-${total - 1}/${total}`,
-        "accept-ranges": "bytes",
-      },
-    }));
-
     const response = await request(app)
       .get(`/api/admin/clips/${clip.id}/playback`)
-      .set("Range", "bytes=0-")
-      .buffer(true)
-      .parse((incoming, callback) => {
-        const chunks: Buffer[] = [];
-        incoming.on("data", (chunk: Buffer) => chunks.push(chunk));
-        incoming.on("end", () => callback(null, Buffer.concat(chunks)));
-      });
-
-    expect(response.status).toBe(206);
-    expect(response.headers["content-type"]).toBe("video/mp4");
-    expect(response.headers["content-disposition"]).toBe(`inline; filename="clip-${clip.id}.mp4"`);
-    expect(response.headers["accept-ranges"]).toBe("bytes");
-    expect(Number(response.headers["content-length"])).toBe(ADMIN_PREVIEW_RANGE_MAX_BYTES);
-    expect(Number(response.headers["content-length"])).toBeLessThanOrEqual(30 * 1024 * 1024);
-    expect(response.headers["content-range"]).toBe(`bytes 0-${ADMIN_PREVIEW_RANGE_MAX_BYTES - 1}/${total}`);
-    expect((response.body as Buffer).length).toBe(ADMIN_PREVIEW_RANGE_MAX_BYTES);
-    expect(exportFetcher).toHaveBeenCalledWith(
-      clip.exportedUrl,
-      expect.objectContaining({ range: `bytes=0-${ADMIN_PREVIEW_RANGE_MAX_BYTES - 1}` }),
-    );
-  });
-
-  it("forwards an upstream 416 as 416", async () => {
-    const clip = await createClip();
-    exportFetcher.mockResolvedValueOnce(new Response(null, {
-      status: 416,
-      headers: { "content-range": "bytes */10" },
-    }));
-
-    const response = await request(app)
-      .get(`/api/admin/clips/${clip.id}/playback`)
-      .set("Range", "bytes=50-");
-
-    expect(response.status).toBe(416);
-    expect(response.headers["content-range"]).toBe("bytes */10");
-  });
-
-  it("forwards Range and streams the matching 206 partial response", async () => {
-    const clip = await createClip();
-    exportFetcher.mockResolvedValueOnce(new Response(Buffer.from("2345"), {
-      status: 206,
-      headers: {
-        "content-length": "4",
-        "content-range": "bytes 2-5/10",
-        "accept-ranges": "bytes",
-      },
-    }));
-
-    const response = await request(app)
-      .get(`/api/admin/clips/${clip.id}/playback`)
-      .set("Range", "bytes=2-5");
-
-    expect(response.status).toBe(206);
-    expect(response.headers["content-type"]).toBe("video/mp4");
-    expect(response.headers["accept-ranges"]).toBe("bytes");
-    expect(response.headers["content-range"]).toBe("bytes 2-5/10");
-    expect(response.headers["content-length"]).toBe("4");
-    expect(exportFetcher).toHaveBeenCalledWith(
-      clip.exportedUrl,
-      expect.objectContaining({ range: "bytes=2-5" }),
-    );
+      .set("Range", "bytes=0-");
+    expect(response.status).toBe(503);
+    expect(response.body.code).toBe("direct_cdn_unavailable");
+    expect(exportFetcher).not.toHaveBeenCalled();
   });
 
   it("returns a status-bearing 404 instead of serving an old or missing export", async () => {

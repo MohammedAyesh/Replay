@@ -1,66 +1,29 @@
-/**
- * The manifest cache added 2026-09-06, and the one way it could do real harm.
- *
- * A VOD playlist is immutable and expensive to rewrite — every segment line
- * becomes `/api/hls-proxy/segment?url=<fully encoded absolute URL>`, which took
- * a 54 KB upstream playlist to 264 KB. Caching it stops every hls.js retry and
- * every viewer paying for that again.
- *
- * A LIVE playlist is the opposite: it changes every few seconds, and serving a
- * cached copy would freeze the stream at whatever segment it held. These tests
- * exist for that second case.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
-import { UHD_PLAYBACK_MAX_WINDOW_MS } from "../lib/uhdPlayback";
 
 vi.mock("../lib/clerkUserBridge", () => ({
   getLocalUserRecord: vi.fn().mockResolvedValue({ id: 1, isAdmin: true, isGuest: false }),
 }));
 
-import router, { PROGRESSIVE_MP4_RESPONSE_MAX_BYTES } from "./hlsProxy";
+import router from "./hlsProxy";
+
+const UPSTREAM = "https://vz-test.b-cdn.net/abc/1080p/video.m3u8";
+const PULL_ZONE = "https://fake-pullzone.local";
+let app: Express;
+let fetchMock: ReturnType<typeof vi.fn>;
+let previousPullZone: string | undefined;
 let guidSequence = 0;
 
-function testVideoGuid() {
+function guid() {
   guidSequence += 1;
   return `00000000-0000-4000-8000-${String(guidSequence).padStart(12, "0")}`;
 }
 
-const UPSTREAM = "https://vz-test.b-cdn.net/abc/1080p/video.m3u8";
-const LIVE_UPSTREAM = "https://replayjo.b-cdn.net/camera1/index.m3u8";
-
-function vodPlaylist(tag: string) {
-  return [
-    "#EXTM3U",
-    "#EXT-X-VERSION:3",
-    "#EXT-X-TARGETDURATION:4",
-    "#EXT-X-PLAYLIST-TYPE:VOD",
-    "#EXTINF:4.000,",
-    `${tag}.ts`,
-    "#EXT-X-ENDLIST",
-    "",
-  ].join("\n");
-}
-
-function livePlaylist(tag: string) {
-  // No ENDLIST, no PLAYLIST-TYPE — a sliding window.
-  return [
-    "#EXTM3U",
-    "#EXT-X-VERSION:3",
-    "#EXT-X-TARGETDURATION:4",
-    "#EXT-X-MEDIA-SEQUENCE:100",
-    "#EXTINF:4.000,",
-    `${tag}.ts`,
-    "",
-  ].join("\n");
-}
-
-let app: Express;
-let fetchMock: ReturnType<typeof vi.fn>;
-
 beforeEach(() => {
+  previousPullZone = process.env.BUNNY_REEL_CDN_URL;
+  process.env.BUNNY_REEL_CDN_URL = PULL_ZONE;
   app = express();
   app.use("/api", router);
   fetchMock = vi.fn();
@@ -68,471 +31,119 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (previousPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
+  else process.env.BUNNY_REEL_CDN_URL = previousPullZone;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-function upstreamOnce(body: string) {
-  fetchMock.mockResolvedValueOnce({
-    ok: true,
-    status: 200,
-    text: async () => body,
+describe("legacy playback URL redirects", () => {
+  it("authorizes and redirects HLS manifests to the original CDN URL", async () => {
+    const res = await request(app)
+      .get("/api/hls-proxy/manifest")
+      .query({ url: UPSTREAM });
+
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(UPSTREAM);
+    expect(res.headers["cache-control"]).toBe("private, no-store");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
-}
 
-const MP4_RANGE_BYTES = 4 * 1024 * 1024;
-const MIN_MP4_RANGE_BYTES = 64 * 1024;
+  it("redirects video segments directly, preserving the player's range header", async () => {
+    const segment = "https://vz-test.b-cdn.net/abc/1080p/segment-001.ts";
+    const res = await request(app)
+      .get("/api/hls-proxy/segment")
+      .query({ url: segment })
+      .set("Range", "bytes=0-3");
 
-function mp4Range(start: number, end: number, total: number, fill: number) {
-  return new Response(Buffer.alloc(end - start + 1, fill), {
-    status: 206,
-    headers: {
-      "Content-Type": "video/mp4",
-      "Content-Range": `bytes ${start}-${end}/${total}`,
-      "Accept-Ranges": "bytes",
-    },
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(segment);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
-}
 
-describe("hls-proxy manifest cache", () => {
-  it("serves a VOD playlist from cache on the second request", async () => {
-    const url = `${UPSTREAM}?vod-${Date.now()}`;
-    upstreamOnce(vodPlaylist("first"));
+  it("redirects progressive MP4 directly regardless of legacy relay flags", async () => {
+    const mp4 = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
+    const res = await request(app)
+      .get("/api/hls-proxy/mp4")
+      .query({ url: mp4, relay: "1" });
 
-    const a = await request(app).get("/api/hls-proxy/manifest").query({ url });
-    expect(a.status).toBe(200);
-    expect(a.text).toContain("first.ts");
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(mp4);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
-    // If the cache misses, this second call has no queued upstream response and
-    // would fail — so reaching 200 with the same body IS the assertion.
-    const b = await request(app).get("/api/hls-proxy/manifest").query({ url });
-    expect(b.status).toBe(200);
-    expect(b.text).toBe(a.text);
+  it("rejects non-Bunny URLs and unauthorized viewers without contacting the CDN", async () => {
+    const disallowed = await request(app)
+      .get("/api/hls-proxy/manifest")
+      .query({ url: "https://example.com/video.m3u8" });
+    expect(disallowed.status).toBe(400);
+
+    vi.mocked(getLocalUserRecord).mockResolvedValueOnce(null);
+    const unauthorized = await request(app)
+      .get("/api/hls-proxy/manifest")
+      .query({ url: UPSTREAM });
+    expect(unauthorized.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("direct Storage renditions", () => {
+  it("redirects 4K only after confirming its direct playlist exists", async () => {
+    const videoGuid = guid();
+    fetchMock.mockResolvedValueOnce(new Response("#EXTM3U\n#EXTINF:2,\n4k.mp4\n"));
+
+    const res = await request(app).get(`/api/hls-proxy/uhd/${videoGuid}.m3u8`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(`${PULL_ZONE}/vod/${videoGuid}/4k.m3u8`);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("NEVER caches a live playlist — a frozen live stream is worse than a slow one", async () => {
-    const url = `${LIVE_UPSTREAM}?live-${Date.now()}`;
-    upstreamOnce(livePlaylist("seg100"));
-    upstreamOnce(livePlaylist("seg101"));
+  it("returns 404 when the 4K playlist is missing", async () => {
+    fetchMock.mockResolvedValueOnce(new Response("missing", { status: 404 }));
+    const res = await request(app).get(`/api/hls-proxy/uhd/${guid()}.m3u8`);
+    expect(res.status).toBe(404);
+  });
 
-    const a = await request(app).get("/api/hls-proxy/manifest").query({ url });
-    const b = await request(app).get("/api/hls-proxy/manifest").query({ url });
+  it("prefers H.264 and redirects to the direct Storage playlist", async () => {
+    const videoGuid = guid();
+    fetchMock.mockResolvedValueOnce(new Response("#EXTM3U\n#EXTINF:2,\nh264.mp4\n"));
 
-    expect(a.text).toContain("seg100.ts");
-    expect(b.text).toContain("seg101.ts");
+    const res = await request(app).get(`/api/hls-proxy/storage/${videoGuid}/h264.m3u8`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(`${PULL_ZONE}/vod/${videoGuid}/h264.m3u8`);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses direct 4K when H.264 is missing, never 8K", async () => {
+    const videoGuid = guid();
+    fetchMock
+      .mockResolvedValueOnce(new Response("missing", { status: 404 }))
+      .mockResolvedValueOnce(new Response("#EXTM3U\n#EXTINF:2,\n4k.mp4\n"));
+
+    const fallback = await request(app).get(`/api/hls-proxy/storage/${videoGuid}/h264.m3u8`);
+    expect(fallback.status).toBe(302);
+    expect(fallback.headers.location).toBe(`${PULL_ZONE}/vod/${videoGuid}/4k.m3u8`);
+
+    const eightK = await request(app).get(`/api/hls-proxy/storage/${guid()}/8k.m3u8`);
+    expect(eightK.status).toBe(404);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("rewrites segment URIs through the proxy", async () => {
-    const url = `${UPSTREAM}?rewrite-${Date.now()}`;
-    upstreamOnce(vodPlaylist("chunk"));
-    const res = await request(app).get("/api/hls-proxy/manifest").query({ url });
-    expect(res.text).toContain("/api/hls-proxy/segment?url=");
-    expect(res.text).toContain(encodeURIComponent("chunk.ts"));
-  });
-
-  it("forwards byte ranges and partial-content headers for MP4 fallback playback", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    fetchMock.mockResolvedValueOnce(new Response("data", {
-      status: 206,
-      headers: {
-        "Content-Type": "video/mp4",
-        "Content-Length": "4",
-        "Content-Range": "bytes 0-3/100",
-        "Accept-Ranges": "bytes",
-      },
-    }));
+  it("does not create a Replit-trimmed playlist for legacy playback windows", async () => {
+    const videoGuid = guid();
+    fetchMock.mockResolvedValueOnce(new Response("#EXTM3U\n#EXTINF:2,\n4k.mp4\n"));
 
     const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", "bytes=0-3");
-
-    expect(res.status).toBe(206);
-    expect(res.headers["content-range"]).toBe("bytes 0-3/100");
-    expect(res.headers["accept-ranges"]).toBe("bytes");
-    expect(res.headers["content-type"]).toContain("video/mp4");
-    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({
-      Referer: "https://vz-test.b-cdn.net/",
-      Range: "bytes=0-3",
-    });
-  });
-
-  it("streams an open-ended MP4 range using bounded upstream requests", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    const total = MP4_RANGE_BYTES + 7;
-    fetchMock
-      .mockResolvedValueOnce(mp4Range(0, MP4_RANGE_BYTES - 1, total, 17))
-      .mockResolvedValueOnce(mp4Range(MP4_RANGE_BYTES, total - 1, total, 29));
-
-    const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", "bytes=0-");
-
-    expect(res.status).toBe(206);
-    expect(res.headers["accept-ranges"]).toBe("bytes");
-    expect(res.headers["content-range"]).toBe(`bytes 0-${total - 1}/${total}`);
-    expect(res.headers["content-length"]).toBe(String(total));
-    expect(res.body).toHaveLength(total);
-    expect(res.body[0]).toBe(17);
-    expect(res.body[total - 1]).toBe(29);
-    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
-      `bytes=0-${MP4_RANGE_BYTES - 1}`,
-      `bytes=${MP4_RANGE_BYTES}-${MP4_RANGE_BYTES + MIN_MP4_RANGE_BYTES - 1}`,
-    ]);
-  });
-
-  it("streams a no-Range MP4 request as a normal full response with range support", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    const total = MP4_RANGE_BYTES + 3;
-    fetchMock
-      .mockResolvedValueOnce(mp4Range(0, MP4_RANGE_BYTES - 1, total, 41))
-      .mockResolvedValueOnce(mp4Range(MP4_RANGE_BYTES, total - 1, total, 53));
-
-    const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url });
-
-    expect(res.status).toBe(200);
-    expect(res.headers["accept-ranges"]).toBe("bytes");
-    expect(res.headers["content-range"]).toBeUndefined();
-    expect(res.headers["content-length"]).toBe(String(total));
-    expect(res.body).toHaveLength(total);
-    expect(res.body[0]).toBe(41);
-    expect(res.body[total - 1]).toBe(53);
-    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
-      `bytes=0-${MP4_RANGE_BYTES - 1}`,
-      `bytes=${MP4_RANGE_BYTES}-${MP4_RANGE_BYTES + MIN_MP4_RANGE_BYTES - 1}`,
-    ]);
-  });
-
-  /** Answers any bounded Range for a file of `total` bytes, like Bunny does. */
-  function serveMp4Ranges(total: number) {
-    fetchMock.mockImplementation(async (_url: string, init?: RequestInit) => {
-      const match = new Headers(init?.headers).get("Range")?.match(/^bytes=(\d+)-(\d+)$/);
-      if (!match) return new Response("unbounded range refused", { status: 400 });
-      const start = Number(match[1]);
-      if (start >= total) {
-        return new Response("", { status: 416, headers: { "Content-Range": `bytes */${total}` } });
-      }
-      const end = Math.min(Number(match[2]), total - 1);
-      return mp4Range(start, end, total, (start / MP4_RANGE_BYTES) & 0xff);
-    });
-  }
-
-  it("caps an open-ended range on a whole-match MP4 to a bounded 206 under the host's 32 MiB limit", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    const total = 1_200_000_000; // a whole match: well over 1 GB
-    serveMp4Ranges(total);
-
-    const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", "bytes=0-");
-
-    expect(res.status).toBe(206);
-    expect(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES).toBeLessThanOrEqual(30 * 1024 * 1024);
-    expect(res.headers["content-length"]).toBe(String(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES));
-    expect(res.headers["content-range"]).toBe(`bytes 0-${PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${total}`);
-    expect(res.body).toHaveLength(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
-    // Only the windows needed for this response were fetched, not the match.
-    expect(fetchMock).toHaveBeenCalledTimes(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES / MP4_RANGE_BYTES);
-  });
-
-  it("serves the next bounded window when the player continues from the middle of the file", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    const total = 1_200_000_000;
-    const start = 600_000_000;
-    serveMp4Ranges(total);
-
-    const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", `bytes=${start}-`);
-
-    expect(res.status).toBe(206);
-    expect(res.headers["content-range"])
-      .toBe(`bytes ${start}-${start + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${total}`);
-    expect(Number(res.headers["content-length"])).toBe(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
-    expect(res.body).toHaveLength(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
-  });
-
-  it("caps an oversized bounded range and honours a final short range exactly", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    const total = 1_200_000_000;
-    serveMp4Ranges(total);
-
-    const big = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", "bytes=100-999999999");
-    expect(big.status).toBe(206);
-    expect(big.headers["content-range"])
-      .toBe(`bytes 100-${100 + PROGRESSIVE_MP4_RESPONSE_MAX_BYTES - 1}/${total}`);
-    expect(big.body).toHaveLength(PROGRESSIVE_MP4_RESPONSE_MAX_BYTES);
-
-    fetchMock.mockClear();
-    const tail = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", `bytes=${total - 10}-`);
-    expect(tail.status).toBe(206);
-    expect(tail.headers["content-range"]).toBe(`bytes ${total - 10}-${total - 1}/${total}`);
-    expect(tail.headers["content-length"]).toBe("10");
-    expect(tail.body).toHaveLength(10);
-  });
-
-  it("streams a no-Range request for a file over the limit without a Content-Length", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    const total = 40 * 1024 * 1024 + 5;
-    serveMp4Ranges(total);
-
-    const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url });
-
-    expect(res.status).toBe(200);
-    expect(res.headers["content-length"]).toBeUndefined();
-    expect(res.headers["transfer-encoding"]).toBe("chunked");
-    expect(res.body).toHaveLength(total);
-  });
-
-  it("answers 416 for an open-ended range past the end of the MP4", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    serveMp4Ranges(1000);
-
-    const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", "bytes=5000-");
-
-    expect(res.status).toBe(416);
-    expect(res.headers["content-range"]).toBe("bytes */1000");
-  });
-
-  it("backs off to smaller bounded ranges when Bunny rejects the preferred chunk size", async () => {
-    const url = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-    const total = 2 * 1024 * 1024 + 1;
-    fetchMock
-      .mockResolvedValueOnce(new Response("range too large", { status: 500 }))
-      .mockResolvedValueOnce(mp4Range(0, 2 * 1024 * 1024 - 1, total, 67))
-      .mockResolvedValueOnce(mp4Range(2 * 1024 * 1024, total - 1, total, 79));
-
-    const res = await request(app)
-      .get("/api/hls-proxy/segment")
-      .query({ url })
-      .set("Range", "bytes=0-");
-
-    expect(res.status).toBe(206);
-    expect(res.body).toHaveLength(total);
-    expect(res.body[total - 1]).toBe(79);
-    expect(fetchMock.mock.calls.map(([, init]) => new Headers(init?.headers).get("Range"))).toEqual([
-      `bytes=0-${MP4_RANGE_BYTES - 1}`,
-      `bytes=0-${2 * 1024 * 1024 - 1}`,
-      `bytes=${2 * 1024 * 1024}-${2 * 1024 * 1024 + MIN_MP4_RANGE_BYTES - 1}`,
-    ]);
-  });
-
-  it("reports WHY an upstream fetch failed instead of a bare 503", async () => {
-    const url = `${UPSTREAM}?boom-${Date.now()}`;
-    const err = new Error("The operation was aborted due to timeout");
-    err.name = "TimeoutError";
-    fetchMock.mockRejectedValueOnce(err);
-    vi.spyOn(console, "error").mockImplementation(() => {});
-
-    const res = await request(app).get("/api/hls-proxy/manifest").query({ url });
-    // 504 not 503: this is an upstream timeout, and the old bare 503 made a
-    // timeout indistinguishable from a DNS failure in the logs.
-    expect(res.status).toBe(504);
-    expect(res.text).toContain("TimeoutError");
-  });
-
-  it("still refuses a non-Bunny host", async () => {
-    const res = await request(app)
-      .get("/api/hls-proxy/manifest")
-      .query({ url: "https://evil.example.com/x.m3u8" });
-    expect(res.status).toBe(400);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("GET /hls-proxy/mp4 (the MP4 a player falls back to)", () => {
-  const MP4 = "https://vz-test.b-cdn.net/abc/play_720p.mp4";
-
-  it("sends a replayjo.com page to the CDN file itself", async () => {
-    const res = await request(app)
-      .get(`/api/hls-proxy/mp4?url=${encodeURIComponent(MP4)}`)
-      .set("Referer", "https://replayjo.com/fields/10");
+      .get(`/api/hls-proxy/storage/${videoGuid}/4k.m3u8?fromMs=10000&toMs=12000`);
     expect(res.status).toBe(302);
-    expect(res.headers.location).toBe(MP4);
+    expect(res.headers.location).toBe(`${PULL_ZONE}/vod/${videoGuid}/4k.m3u8`);
+  });
+
+  it("redirects legacy Storage thumbnails instead of streaming image bytes", async () => {
+    const videoGuid = guid();
+    const res = await request(app).get(`/api/hls-proxy/storage/${videoGuid}/thumb.jpg`);
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toBe(`${PULL_ZONE}/vod/${videoGuid}/thumb.jpg`);
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("sends other pages, and relay=1, to the range-relaying route", async () => {
-    for (const req of [
-      request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent(MP4)}`).set("Referer", "https://x.replit.dev/fields/10"),
-      request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent(MP4)}&relay=1`).set("Referer", "https://replayjo.com/fields/10"),
-    ]) {
-      const res = await req;
-      expect(res.status).toBe(302);
-      expect(res.headers.location).toBe(`/api/hls-proxy/segment?url=${encodeURIComponent(MP4)}`);
-    }
-  });
-
-  it("refuses anything that is not a Bunny progressive MP4", async () => {
-    const playlist = await request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent(UPSTREAM)}`);
-    expect(playlist.status).toBe(400);
-    const elsewhere = await request(app).get(`/api/hls-proxy/mp4?url=${encodeURIComponent("https://example.com/a/play_720p.mp4")}`);
-    expect(elsewhere.status).toBe(400);
-  });
-});
-
-describe("GET /hls-proxy/uhd/:videoGuid.m3u8", () => {
-  it("refuses viewers without media access before contacting Storage", async () => {
-    vi.mocked(getLocalUserRecord).mockResolvedValueOnce(null);
-    const res = await request(app).get(`/api/hls-proxy/uhd/${testVideoGuid()}.m3u8`);
-    expect(res.status).toBe(404);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("returns 404 when the original 4K playlist is not in Storage", async () => {
-    const guid = testVideoGuid();
-    fetchMock.mockResolvedValueOnce(new Response("missing", { status: 404 }));
-    const path = `/api/hls-proxy/uhd/${guid}.m3u8`;
-    const res = await request(app).get(path);
-    const cachedMiss = await request(app).get(path);
-    expect(res.status).toBe(404);
-    expect(cachedMiss.status).toBe(404);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("rewrites the fMP4 map and media URI to the public Storage pull zone", async () => {
-    const guid = testVideoGuid();
-    fetchMock.mockResolvedValueOnce(new Response([
-      "#EXTM3U",
-      "#EXT-X-VERSION:7",
-      "#EXT-X-MAP:URI=\"4k.mp4\"",
-      "#EXTINF:12.000,",
-      "#EXT-X-BYTERANGE:1500000@0",
-      "4k.mp4",
-      "#EXT-X-ENDLIST",
-      "",
-    ].join("\n")));
-
-    const res = await request(app).get(`/api/hls-proxy/uhd/${guid}.m3u8`);
-    const mediaUrl = String(fetchMock.mock.calls[0][0]).replace(/4k\.m3u8$/, "4k.mp4");
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toContain("mpegurl");
-    expect(res.headers["cache-control"]).toBe("no-store");
-    expect(mediaUrl).toContain(`/vod/${guid}/4k.mp4`);
-    expect(res.text).toContain(`URI=\"${mediaUrl}\"`);
-    expect(res.text).toContain(`\n${mediaUrl}\n`);
-    const cachedHit = await request(app).get(`/api/hls-proxy/uhd/${guid}.m3u8`);
-    expect(cachedHit.text).toBe(res.text);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("returns only a padded byte-range window with its absolute timeline offset", async () => {
-    const guid = testVideoGuid();
-    const playlist = [
-      "#EXTM3U",
-      "#EXT-X-VERSION:7",
-      "#EXT-X-TARGETDURATION:2",
-      "#EXT-X-MEDIA-SEQUENCE:10",
-      '#EXT-X-MAP:URI="4k.mp4",BYTERANGE="1399@0"',
-    ];
-    for (let index = 0; index < 10; index += 1) {
-      playlist.push("#EXTINF:2.000,");
-      playlist.push(index === 0 ? "#EXT-X-BYTERANGE:100@0" : "#EXT-X-BYTERANGE:100");
-      playlist.push("4k.mp4");
-    }
-    playlist.push("#EXT-X-ENDLIST", "");
-    fetchMock.mockResolvedValueOnce(new Response(playlist.join("\n")));
-
-    const path = `/api/hls-proxy/uhd/${guid}.m3u8?fromMs=10000&toMs=12000`;
-    const res = await request(app).get(path);
-    const cachedHit = await request(app).get(path);
-
-    expect(res.status).toBe(200);
-    expect(res.headers["x-replay-window-start-ms"]).toBe("4000");
-    expect(res.text).toContain("#EXT-X-MEDIA-SEQUENCE:12");
-    expect(res.text).toContain("#EXT-X-BYTERANGE:100@200");
-    expect(res.text).not.toContain("#EXT-X-BYTERANGE:100@0");
-    expect(res.text.match(/#EXTINF:/g)).toHaveLength(8);
-    expect(cachedHit.text).toBe(res.text);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("rejects invalid or oversized playback windows before fetching Storage", async () => {
-    const guid = testVideoGuid();
-    const res = await request(app).get(
-      `/api/hls-proxy/uhd/${guid}.m3u8?fromMs=0&toMs=${UHD_PLAYBACK_MAX_WINDOW_MS + 1}`,
-    );
-    expect(res.status).toBe(400);
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
-
-describe("GET /hls-proxy/storage/:videoGuid/:rendition.m3u8", () => {
-  it.each(["8k", "4k", "h264"] as const)("rewrites %s fMP4 playlists to the public Storage pull zone, never this server", async (rendition) => {
-    const guid = testVideoGuid();
-    fetchMock.mockResolvedValueOnce(new Response([
-      "#EXTM3U",
-      "#EXT-X-VERSION:7",
-      `#EXT-X-MAP:URI=\"${rendition}.mp4\"`,
-      "#EXTINF:12.000,",
-      `${rendition}.mp4`,
-      "#EXT-X-ENDLIST",
-      "",
-    ].join("\n")));
-
-    const res = await request(app).get(`/api/hls-proxy/storage/${guid}/${rendition}.m3u8`);
-    const upstreamMedia = new URL(String(fetchMock.mock.calls[0]?.[0]));
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toContain("mpegurl");
-    expect(res.headers["cache-control"]).toBe("no-store");
-    expect(upstreamMedia.pathname).toBe(`/vod/${guid}/${rendition}.m3u8`);
-    expect(res.text).toContain(`URI="${upstreamMedia.toString().replace(`${rendition}.m3u8`, `${rendition}.mp4`)}"`);
-    expect(res.text).not.toContain("/api/hls-proxy/segment");
-    expect(res.text).toContain(`${rendition}.mp4`);
-  });
-
-  it("falls back from a missing H.264 playlist to 4K, never 8K", async () => {
-    const guid = testVideoGuid();
-    fetchMock
-      .mockResolvedValueOnce(new Response("", { status: 404 }))
-      .mockResolvedValueOnce(new Response([
-        "#EXTM3U",
-        "#EXT-X-VERSION:7",
-        '#EXT-X-MAP:URI="4k.mp4"',
-        "#EXTINF:12.000,",
-        "4k.mp4",
-        "#EXT-X-ENDLIST",
-        "",
-      ].join("\n")));
-
-    const res = await request(app).get(`/api/hls-proxy/storage/${guid}/h264.m3u8`);
-    const requestedPaths = fetchMock.mock.calls.map(([url]) => new URL(String(url)).pathname);
-    expect(res.status).toBe(200);
-    expect(requestedPaths).toEqual([`/vod/${guid}/h264.m3u8`, `/vod/${guid}/4k.m3u8`]);
-    expect(res.text).toContain(`/vod/${guid}/4k.mp4`);
-    expect(res.text).not.toContain("8k");
-  });
-
-  it("proxies an authorized Storage thumbnail without exposing the origin", async () => {
-    const guid = testVideoGuid();
-    fetchMock.mockResolvedValueOnce(new Response(Buffer.from("jpeg"), {
-      status: 200,
-      headers: { "Content-Type": "image/jpeg" },
-    }));
-
-    const res = await request(app).get(`/api/hls-proxy/storage/${guid}/thumb.jpg`);
-    expect(res.status).toBe(200);
-    expect(res.headers["content-type"]).toContain("image/jpeg");
-    expect(res.headers["cache-control"]).toBe("private, no-store");
-    expect(Buffer.from(res.body).toString()).toBe("jpeg");
-    expect(String(fetchMock.mock.calls[0][0])).toContain(`/vod/${guid}/thumb.jpg`);
   });
 });

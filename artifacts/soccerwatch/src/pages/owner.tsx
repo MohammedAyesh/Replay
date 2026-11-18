@@ -49,7 +49,6 @@ import {
 import { Link, useLocation } from "wouter";
 import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
 import { HlsPlayer } from "@/components/HlsPlayer";
-import { storagePlaybackUrlForGuid } from "@/lib/uhdPlayback";
 import { EarlyPlay } from "@/components/match/EarlyPlay";
 import { StreamingPanel } from "@/components/StreamingPanel";
 import { VarPlayer } from "@/components/var-player/VarPlayer";
@@ -1208,8 +1207,9 @@ function RequestCard({
   const pendingSeekRef = useRef<number | null>(null);
   const [selectedMomentSeconds, setSelectedMomentSeconds] = useState<number | null>(null);
   const streamlessStorageVideoId = request.streamless ? request.storageVideoId : null;
-  const storagePreviewUrl = streamlessStorageVideoId
-    ? storagePlaybackUrlForGuid(streamlessStorageVideoId, "8k")
+  const ownerShareToken = request.shareUrl ? new URL(request.shareUrl).pathname.split("/").filter(Boolean).at(-1) ?? null : null;
+  const storagePreviewUrl = streamlessStorageVideoId && ownerShareToken
+    ? request.playbackManifestUrl
     : null;
   useEffect(() => {
     if (!showPreview || pendingSeekRef.current == null) return;
@@ -1304,7 +1304,7 @@ function RequestCard({
             <ClipPlayer
               src={storagePreviewUrl}
               title={copy.playerLabel}
-              source={{ kind: "bunny", videoId: streamlessStorageVideoId }}
+              source={{ kind: "ownerShare", token: ownerShareToken! }}
               layout="inline"
               toolbarLayout="single-row"
               canSave={false}

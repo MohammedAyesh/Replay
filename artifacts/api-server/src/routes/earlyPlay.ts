@@ -7,7 +7,6 @@ import { getSettingValue } from "../lib/settings";
 import { isPlaying, loadRoomByCode, rosterFor } from "../lib/matchRooms";
 import { remoteJobPath } from "../lib/gapStore";
 import { controlFetch } from "./contabo";
-import { proxyProgressiveMp4 } from "./hlsProxy";
 
 const router: IRouter = Router();
 const CACHE_MS = 30_000;
@@ -287,8 +286,7 @@ router.get("/matches/:code/early-play/video", async (req, res): Promise<void> =>
       res.status(status).json({ state: item.result.state, reason: item.result.reason, reasonCode: item.result.reasonCode });
       return;
     }
-    const upstream = new URL(item.metadata.originalUrl);
-    await proxyProgressiveMp4(req, res, item.metadata.originalUrl, upstream.hostname);
+    res.set("Cache-Control", "private, no-store").redirect(302, item.metadata.originalUrl);
   } catch {
     if (!res.headersSent) res.status(503).json({ state: "unavailable", reason: "The early video could not be streamed.", reasonCode: "bunny_error" });
   }
