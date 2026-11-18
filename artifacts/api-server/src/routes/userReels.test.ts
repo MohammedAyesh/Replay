@@ -9,8 +9,8 @@ import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { eq, inArray } from "drizzle-orm";
-import { db, usersTable, userClipsTable, userReelsTable, settingsDefaultsTable, brandingProfilesTable, fieldsTable, recordingsTable, clipSettingsTable } from "@workspace/db";
+import { and, eq, inArray } from "drizzle-orm";
+import { db, usersTable, userClipsTable, userReelsTable, settingsDefaultsTable, brandingProfilesTable, fieldsTable, recordingsTable } from "@workspace/db";
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "reels-test-"));
 const SOURCE = path.join(work, "recording.mp4");
@@ -18,6 +18,9 @@ const stored = new Map<string, string>();
 
 const mocks = vi.hoisted(() => ({
   deleted: [] as string[],
+  cameraSource: "",
+  cameraDuration: 10,
+  cameraSourceAvailable: true,
 }));
 
 vi.mock("../lib/clerkUserBridge", () => ({
@@ -61,6 +64,34 @@ vi.mock("../lib/ffmpegExport", async (importOriginal) => {
       execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error", "-ss", String(o.startSec), "-i", SOURCE, "-t", String(window),
         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", out]);
       return { bufferPath: out, bufferedDuration: window, adjustedOffsetSec: 0 };
+    }),
+    bufferCameraHlsClip: vi.fn(async (o: { startSec: number; clipDuration: number; totalDuration: number }) => {
+      const out = path.join(work, `camera-buf-${Math.random().toString(36).slice(2)}.mp4`);
+      const window = Math.min(o.clipDuration + 7, o.totalDuration - o.startSec);
+      execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error", "-ss", String(o.startSec), "-i", mocks.cameraSource || SOURCE, "-t", String(window),
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", out]);
+      return {
+        bufferPath: out, bufferedDuration: window, adjustedOffsetSec: 0,
+        sourceDimensions: { width: 3840, height: 1080 }, bufferDimensions: { width: 3840, height: 1080 },
+        sourceTimeOffsetSec: 0, downloadedBytes: 1024,
+      };
+    }),
+  };
+});
+vi.mock("../lib/clipExportSource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/clipExportSource")>();
+  return {
+    ...actual,
+    waitForCamera4kSource: vi.fn(async (videoId: string) => {
+      if (!mocks.cameraSourceAvailable) throw new Error("Camera 4K source unavailable");
+      return {
+        kind: "camera-4k" as const,
+        url: `https://storage.test/cameras/${videoId}/4k.m3u8`,
+        playlist: "#EXTM3U",
+        path: "camera-original-4k HLS" as const,
+        duration: mocks.cameraDuration,
+        renditionLabel: null,
+      };
     }),
   };
 });
@@ -118,6 +149,12 @@ async function waitForReel(id: number, timeoutMs = 150_000): Promise<typeof user
 }
 
 beforeAll(async () => {
+  await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, KEYS));
+  await db.delete(brandingProfilesTable).where(and(
+    eq(brandingProfilesTable.scopeType, "global"),
+    eq(brandingProfilesTable.scopeId, 0),
+  ));
+  (await import("../lib/settings")).invalidateSettingsCache();
   const { EXPORT_SOURCE_WIDTH: W, EXPORT_SOURCE_HEIGHT: H } = await import("../lib/exportSource");
   execFileSync("ffmpeg", [
     "-nostdin", "-y", "-v", "error",
@@ -125,6 +162,7 @@ beforeAll(async () => {
     "-f", "lavfi", "-i", "sine=f=440:r=44100:d=10",
     "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-t", "10", SOURCE,
   ]);
+  mocks.cameraSource = SOURCE;
   const { default: router } = await import("./userReels");
   app = express();
   app.use(express.json());
@@ -160,6 +198,12 @@ afterAll(async () => {
   await db.delete(userClipsTable).where(inArray(userClipsTable.userId, [ownerId, otherId]));
   await db.delete(usersTable).where(inArray(usersTable.id, [ownerId, otherId]));
   fs.rmSync(work, { recursive: true, force: true });
+  vi.doUnmock("../lib/clipExportSource");
+  vi.doUnmock("../lib/ffmpegExport");
+  vi.doUnmock("../lib/exportSource");
+  vi.doUnmock("../lib/bunny");
+  vi.doUnmock("../lib/backupExport");
+  vi.doUnmock("../lib/clerkUserBridge");
 });
 
 beforeEach(() => {
@@ -248,46 +292,34 @@ describe("changing and deleting a reel", () => {
 });
 
 describe("a reel after the match video is gone", () => {
-  it("is made from the clips in their saved copies, without each copy's intro and end card", async () => {
-    const bunny = await import("../lib/bunny");
-    const info = vi.mocked(bunny.getBunnyVideoInfo);
+  it("uses the camera-original HLS after Bunny Stream is gone, without per-clip cards", async () => {
     const VIDEO = "00000000-0000-0000-0000-0000000000bb";
-    // The venue's intro (a test pattern), and the match's listed length: 20 s.
-    const intro = path.join(work, "intro.mp4");
-    execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=s=1080x1920:d=1.5:r=30",
-      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", intro]);
+    // The match's Stream copy is gone, but its 20-second camera-original HLS
+    // remains. Red-over-blue makes the selected source window visible in output.
+    const cameraOriginal = path.join(work, "camera-original-red-blue.mp4");
+    execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error",
+      "-f", "lavfi", "-i", "color=c=red:s=1920x540:d=20:r=30",
+      "-f", "lavfi", "-i", "color=c=blue:s=1920x540:d=20:r=30",
+      "-f", "lavfi", "-i", "sine=f=440:r=44100:d=20",
+      "-filter_complex", "[0:v][1:v]vstack=inputs=2[v]",
+      "-map", "[v]", "-map", "2:a", "-t", "20",
+      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", cameraOriginal]);
+    mocks.cameraSource = cameraOriginal;
+    mocks.cameraDuration = 20;
+    mocks.cameraSourceAvailable = true;
     const [field] = await db.insert(fieldsTable).values({ name: `${TAG} pitch` }).returning({ id: fieldsTable.id });
     const [recording] = await db.insert(recordingsTable).values({
       fieldId: field.id, court: "1", date: "2026-10-12", timeSlot: "20:00", duration: "20",
       videoUrl: `https://vz-test.b-cdn.net/${VIDEO}/playlist.m3u8`,
     }).returning({ id: recordingsTable.id });
-    const [settings] = await db.insert(clipSettingsTable).values({ introVideoUrl: intro }).returning({ id: clipSettingsTable.id });
-    // Saved copies (9:16, 1080x1920, a size the renderer does not expect) as
-    // the export makes them: the intro, the clip (red over blue, so a wrong
-    // crop shows), then a 2 s green end card.
-    const saved = async (start: number, end: number, color: string) => {
-      const seconds = Math.round((end - start) * 20);
+    const clip = async (start: number, end: number, title: string) => {
       const [row] = await db.insert(userClipsTable).values({
-        userId: ownerId, videoId: VIDEO, title: `saved ${color}`,
-        startTime: String(start), endTime: String(end), aspectRatio: "9:16", exportStatus: "done",
+        userId: ownerId, videoId: VIDEO, title, startTime: String(start), endTime: String(end), aspectRatio: "9:16",
       }).returning({ id: userClipsTable.id });
-      const remote = `clips/${row.id}.mp4`;
-      const file = path.join(work, `saved-${row.id}.mp4`);
-      execFileSync("ffmpeg", ["-nostdin", "-y", "-v", "error",
-        "-i", intro, "-f", "lavfi", "-i", `color=c=red:s=1080x960:d=${seconds}:r=30`, "-f", "lavfi", "-i", `color=c=blue:s=1080x960:d=${seconds}:r=30`,
-        "-f", "lavfi", "-i", "color=c=green:s=1080x1920:d=2:r=30", "-f", "lavfi", "-i", `sine=f=440:r=44100:d=${1.5 + seconds + 2}`,
-        "-filter_complex", "[1:v][2:v]vstack=inputs=2[clip];[0:v]fps=30,setsar=1[i];[clip]setsar=1[c];[3:v]setsar=1[g];[i][c][g]concat=n=3:v=1:a=0[v]",
-        "-map", "[v]", "-map", "4:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", file]);
-      stored.set(remote, file);
-      await db.update(userClipsTable).set({ exportedUrl: `https://storage.bunnycdn.com/galaxyfield/${remote}` }).where(eq(userClipsTable.id, row.id));
       return row.id;
     };
-    const a = await saved(0.1, 0.2, "red");
-    const b = await saved(0.3, 0.45, "green");
-    info.mockImplementation(async (videoId: string) => {
-      if (videoId.endsWith("bb")) throw new bunny.BunnyVideoNotFoundError(videoId);
-      return { duration: 10, hasMP4Fallback: false, availableResolutions: "1080p" } as Awaited<ReturnType<typeof bunny.getBunnyVideoInfo>>;
-    });
+    const a = await clip(0.1, 0.2, "first");
+    const b = await clip(0.3, 0.45, "second");
     try {
       const res = await request(app).post("/api/user-reels").send({ title: "Kept", clipIds: [a, b], endScreen: { card: "signOff" } });
       expect(res.status).toBe(201);
@@ -309,16 +341,17 @@ describe("a reel after the match video is gone", () => {
         expect(bottom[2], `blue at ${t}s`).toBeGreaterThan(180); expect(bottom[0]).toBeLessThan(80); expect(bottom[1]).toBeLessThan(80);
       }
 
-      // A clip whose match is gone and that was never saved cannot be in a reel.
-      await db.update(userClipsTable).set({ exportStatus: null, exportedUrl: null }).where(eq(userClipsTable.id, b));
+      // With neither the Stream rendition nor camera-original HLS available,
+      // the reel fails clearly instead of producing an incomplete export.
+      mocks.cameraSourceAvailable = false;
       const again = await request(app).post("/api/user-reels").send({ clipIds: [a, b] });
       const failed = await waitForReel(again.body.id);
-      expect(failed.exportStatus).toBe("expired");
-      const shown = await request(app).get(`/api/user-reels/${failed.id}`);
-      expect(shown.body.errorCode).toBe("source_gone");
+      expect(failed.exportStatus).toBe("error");
+      expect(failed.exportError).toContain("Camera 4K source unavailable");
     } finally {
-      info.mockImplementation(async () => ({ duration: 10, hasMP4Fallback: false, availableResolutions: "1080p" }) as Awaited<ReturnType<typeof bunny.getBunnyVideoInfo>>);
-      await db.delete(clipSettingsTable).where(eq(clipSettingsTable.id, settings.id));
+      mocks.cameraSource = SOURCE;
+      mocks.cameraDuration = 10;
+      mocks.cameraSourceAvailable = true;
       await db.delete(userClipsTable).where(inArray(userClipsTable.id, [a, b]));
       await db.delete(recordingsTable).where(eq(recordingsTable.id, recording.id));
       await db.delete(fieldsTable).where(eq(fieldsTable.id, field.id));

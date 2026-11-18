@@ -70,6 +70,10 @@ vi.mock("../lib/meta/media", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/meta/media")>();
   return { ...actual, storeVideo: vi.fn(async (academyId: number) => `https://storage.test/ad-media/${academyId}/${seq++}.mp4`) };
 });
+vi.mock("../lib/bunny", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/bunny")>();
+  return { ...actual, isBunnyStorageConfigured: () => false };
+});
 
 import { encryptToken } from "../lib/meta/crypto";
 import { ensureReplayMusic } from "../lib/creative/music";
@@ -151,6 +155,10 @@ afterAll(async () => {
   for (const id of created.fields) await db.delete(fieldsTable).where(eq(fieldsTable.id, id));
   for (const id of created.users) await db.delete(usersTable).where(eq(usersTable.id, id));
   fs.rmSync(work, { recursive: true, force: true });
+  vi.doUnmock("../lib/meta/graph");
+  vi.doUnmock("../lib/meta/media");
+  vi.doUnmock("../lib/bunny");
+  vi.doUnmock("../lib/clerkUserBridge");
 });
 
 describe("Creative hub: a photo with music goes out as a video", () => {

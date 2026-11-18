@@ -66,6 +66,7 @@ vi.mock("../ffmpegExport", async (importOriginal) => {
         bufferedDuration: options.clipDuration,
         adjustedOffsetSec: 0,
         sourceDimensions: { width: 4096, height: 1152 },
+        bufferDimensions: { width: 4096, height: 1152 },
         sourceTimeOffsetSec: 0,
         downloadedBytes: 1024,
       };
@@ -179,6 +180,9 @@ beforeAll(async () => {
 afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   fs.rmSync(fixtureDir, { recursive: true, force: true });
+  vi.doUnmock("../bunny");
+  vi.doUnmock("../clipExportSource");
+  vi.doUnmock("../ffmpegExport");
 });
 
 describe("picking a clip in the Creative hub", () => {

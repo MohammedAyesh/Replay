@@ -196,12 +196,14 @@ describe("broadcasts", () => {
 
     await request(app).post("/api/whatsapp/tick").expect(401);
     const tick = await request(app).post("/api/whatsapp/tick").set("x-api-key", "test-control-key").expect(200);
-    expect(tick.body.dispatched.sent).toBe(2);
-    const sentTo = vi.mocked(waha.sendText).mock.calls.map((c) => c[1]).sort();
+    expect(tick.body.dispatched.sent).toBeGreaterThanOrEqual(2);
+    const sentCalls = vi.mocked(waha.sendText).mock.calls
+      .filter((call) => call[2].includes(`WA Academy ${tag}`));
+    const sentTo = sentCalls.map((call) => call[1]).sort();
     expect(sentTo).toEqual(["962790000002@c.us", "962790000003@c.us"]);
     // Replay's shared number puts the academy's name on top.
-    expect(vi.mocked(waha.sendText).mock.calls[0][0]).toBe("replay");
-    expect(vi.mocked(waha.sendText).mock.calls[0][2]).toMatch(new RegExp(`^\\*WA Academy ${tag}\\*\\n`));
+    expect(sentCalls[0][0]).toBe("replay");
+    expect(sentCalls[0][2]).toMatch(new RegExp(`^\\*WA Academy ${tag}\\*\\n`));
     expect((await messages()).every((m) => m.status === "sent" && m.waMessageId)).toBe(true);
   });
 

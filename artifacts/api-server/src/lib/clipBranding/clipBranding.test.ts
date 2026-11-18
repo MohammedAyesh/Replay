@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
@@ -14,7 +14,28 @@ import { OVERLAY_STYLES, type BrandLook } from "./types";
 import type { PlayerMetricValues } from "../matchStatsRules";
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "clip-branding-test-"));
-afterAll(() => fs.rmSync(work, { recursive: true, force: true }));
+const DEFAULT_KEYS = ["branding.overlayStyle", "branding.endScreenEnabled", "branding.endScreen.seconds"];
+beforeAll(async () => {
+  const { db, settingsDefaultsTable, brandingProfilesTable } = await import("@workspace/db");
+  const { and, eq, inArray } = await import("drizzle-orm");
+  await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, DEFAULT_KEYS));
+  await db.delete(brandingProfilesTable).where(and(
+    eq(brandingProfilesTable.scopeType, "global"),
+    eq(brandingProfilesTable.scopeId, 0),
+  ));
+  (await import("../settings")).invalidateSettingsCache();
+});
+afterAll(async () => {
+  const { db, settingsDefaultsTable, brandingProfilesTable } = await import("@workspace/db");
+  const { and, eq, inArray } = await import("drizzle-orm");
+  await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, DEFAULT_KEYS));
+  await db.delete(brandingProfilesTable).where(and(
+    eq(brandingProfilesTable.scopeType, "global"),
+    eq(brandingProfilesTable.scopeId, 0),
+  ));
+  (await import("../settings")).invalidateSettingsCache();
+  fs.rmSync(work, { recursive: true, force: true });
+});
 
 const LOOK: BrandLook = {
   nameEn: "JORDAN GALAXY",
@@ -412,7 +433,7 @@ describe("planClipBranding", () => {
     const { db, settingsDefaultsTable, brandingProfilesTable } = await import("@workspace/db");
     const { inArray } = await import("drizzle-orm");
     const { invalidateSettingsCache } = await import("../settings");
-    const keys = ["branding.overlayStyle", "branding.endScreenEnabled", "branding.endScreen.seconds"];
+    const keys = DEFAULT_KEYS;
     await db.insert(settingsDefaultsTable).values([
       { key: keys[0], value: "broadcastBar" },
       { key: keys[1], value: true },

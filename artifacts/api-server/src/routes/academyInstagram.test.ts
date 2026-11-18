@@ -1,9 +1,11 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import express, { type Express } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import {
-  academiesTable, academyCreativeProjectsTable, academyIgItemsTable, academyMembersTable, academyPlayersTable, academySocialAccountsTable,
+  academiesTable, academyCreativeProjectsTable, academyIgAutopilotTable, academyIgItemsTable, academyMembersTable, academyPlayersTable, academySocialAccountsTable,
   academySocialPostsTable, db, fieldsTable, usersTable,
 } from "@workspace/db";
 import { buildTemplateScene } from "@workspace/api-zod";
@@ -30,7 +32,7 @@ vi.mock("../lib/creative/renderJobs", async () => {
   const { academyCreativeProjectsTable: t, db: d } = await import("@workspace/db");
   const { eq: e } = await import("drizzle-orm");
   const done = async (_a: unknown, row: { id: number; kind: string }) => {
-    const [r] = await d.update(t).set({ renderStatus: "done", outputPath: `/tmp/a-${row.id}.png`, outputMime: "image/png", renderedAt: new Date() }).where(e(t.id, row.id)).returning();
+    const [r] = await d.update(t).set({ renderStatus: "done", outputPath: `/tmp/camera4k-v1/a-${row.id}.png`, outputMime: "image/png", renderedAt: new Date() }).where(e(t.id, row.id)).returning();
     return r;
   };
   return { queueVideoRender: vi.fn(done), renderStillNow: vi.fn(done), isRendering: () => false, sweepInterruptedRenders: async () => undefined };
@@ -47,10 +49,12 @@ import { ammanLocal } from "../lib/venues/core";
 import { planAcademySlots, resetAcademyIgTick, runAcademyIgTick } from "../lib/creative/academyIgAutopilot";
 
 const tag = Date.now();
+const RENDER_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 let app: Express;
 let ownerId: number;
 let coachId: number;
 let academyId: number;
+let fieldId: number;
 let noConsentPlayer: number;
 const auth = (id: number) => ({ "x-test-user": String(id) });
 const url = (p = "") => `/api/academy/console/academies/${academyId}/instagram${p}`;
@@ -78,6 +82,7 @@ beforeAll(async () => {
   ]).returning({ id: usersTable.id });
   [ownerId, coachId] = users.map((u) => u.id);
   const [field] = await db.insert(fieldsTable).values({ name: `AIG field ${tag}`, cameraId: "camera1" }).returning({ id: fieldsTable.id });
+  fieldId = field.id;
   const [academy] = await db.insert(academiesTable).values({ name: `Iris Academy ${tag}`, fieldId: field.id }).returning({ id: academiesTable.id });
   academyId = academy.id;
   await db.insert(academyMembersTable).values([{ academyId, userId: ownerId, role: "owner" }, { academyId, userId: coachId, role: "coach" }]);
@@ -87,6 +92,20 @@ beforeAll(async () => {
   });
   const [kid] = await db.insert(academyPlayersTable).values({ academyId, name: "Kareem", jerseyNumber: 9, guardianPhone: "0790000999" }).returning({ id: academyPlayersTable.id });
   noConsentPlayer = kid.id;
+});
+
+afterAll(async () => {
+  if (academyId) {
+    await db.delete(academyIgAutopilotTable).where(eq(academyIgAutopilotTable.academyId, academyId));
+    await db.delete(academiesTable).where(eq(academiesTable.id, academyId));
+  }
+  if (fieldId) await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
+  if (ownerId) await db.delete(usersTable).where(eq(usersTable.id, ownerId));
+  if (coachId) await db.delete(usersTable).where(eq(usersTable.id, coachId));
+  fs.rmSync("/tmp/academy-instagram-test", { recursive: true, force: true });
+  vi.doUnmock("../lib/creative/publishMedia");
+  vi.doUnmock("../lib/creative/renderJobs");
+  vi.doUnmock("../lib/clerkUserBridge");
 });
 
 describe("Academy Instagram autopilot", () => {
@@ -128,12 +147,18 @@ describe("Academy Instagram autopilot", () => {
     expect(today.body).toMatchObject({ enabled: true, connected: true, publishMode: "approve" });
   });
 
-  it("posts an approved design at its time, renders it first, and follows the post", async () => {
+  it("publishes an approved render at its slot and follows the post", async () => {
     const p = await draft({ hoursAgo: 1, key: "fulltime" });
     await tick();
     const item = (await items()).find((i) => i.projectId === p.id)!;
     await request(app).post(url(`/items/${item.id}/action`)).set(auth(ownerId)).send({ action: "approve" }).expect(200);
     // Its time comes round.
+    const outputPath = `/tmp/academy-instagram-test/camera4k-v1/a-${p.id}.png`;
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, RENDER_PNG);
+    await db.update(academyCreativeProjectsTable).set({
+      renderStatus: "done", outputPath, outputMime: "image/png", renderedAt: new Date(),
+    }).where(eq(academyCreativeProjectsTable.id, p.id));
     await db.update(academyIgItemsTable).set({ slotAt: new Date(Date.now() - 60_000), pinned: true }).where(eq(academyIgItemsTable.id, item.id));
     await tick();
     await tick();

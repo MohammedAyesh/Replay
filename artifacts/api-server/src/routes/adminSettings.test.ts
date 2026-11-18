@@ -390,7 +390,7 @@ describe("the shipped defaults, made editable", () => {
     expect((await putDefault("downloads.limit", { value: 12 })).status).toBe(200);
     await request(app).delete("/api/admin/settings/defaults/downloads.limit").expect(200);
 
-    const rows = await db.select().from(settingsDefaultsTable);
+    const rows = await db.select().from(settingsDefaultsTable).where(eq(settingsDefaultsTable.key, "downloads.limit"));
     expect(rows).toHaveLength(0);
     const res = await request(app).get("/api/admin/settings/defaults").expect(200);
     const limit = res.body.defaults.find((d: { key: string }) => d.key === "downloads.limit");

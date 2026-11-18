@@ -25,6 +25,11 @@ vi.mock("../lib/clerkUserBridge", () => ({
   }),
 }));
 
+vi.mock("../lib/bunny", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/bunny")>();
+  return { ...actual, isBunnyStorageConfigured: () => false };
+});
+
 import musicRouter from "./academyCreativeMusic";
 import creativeRouter from "./academyCreative";
 
@@ -73,6 +78,7 @@ beforeAll(async () => {
 afterAll(() => {
   delete process.env.CREATIVE_MUSIC_DIR;
   fs.rmSync(work, { recursive: true, force: true });
+  vi.doUnmock("../lib/bunny");
 });
 
 const uploadAs = (user: number, academy: number, fields: Record<string, string>, file: string | Buffer | null = song, name = "our-song.mp3") => {

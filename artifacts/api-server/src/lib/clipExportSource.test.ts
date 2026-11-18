@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { Camera4kNotReadyError, waitForCamera4kSource } from "./clipExportSource";
+import { UhdPlaylistRequestError } from "./uhdPlayback";
 
 const guid = "4c4b0afb-5e0f-4e15-8745-aef9e9a1497e";
 const playlist = `#EXTM3U
@@ -65,7 +66,7 @@ describe("waiting for a 4K-only clip export source", () => {
   });
 
   it("fails immediately for a permanent 4K access error rather than selecting Stream", async () => {
-    const getPlaylist = vi.fn().mockRejectedValue(new Error("HTTP 403"));
+    const getPlaylist = vi.fn().mockRejectedValue(new UhdPlaylistRequestError(403));
     await expect(waitForCamera4kSource(guid, {
       getPlaylist,
       timeoutMs: 45_000,

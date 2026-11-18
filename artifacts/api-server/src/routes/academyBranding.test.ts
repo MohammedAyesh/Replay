@@ -85,6 +85,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.delete(settingsRulesTable).where(and(eq(settingsRulesTable.scopeType, "academy"), inArray(settingsRulesTable.scopeId, [academyId, otherAcademyId])));
   await db.delete(brandingProfilesTable).where(and(eq(brandingProfilesTable.scopeType, "academy"), inArray(brandingProfilesTable.scopeId, [academyId, otherAcademyId])));
+  vi.doUnmock("../lib/bunny");
 });
 
 describe("academy console branding: access", () => {

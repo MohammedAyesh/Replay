@@ -19,8 +19,10 @@ import express, { type Express } from "express";
 import cookieParser from "cookie-parser";
 import http from "http";
 import crypto from "crypto";
+import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import { db, usersTable, userClipsTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { runExportFailoverSweepOnce } from "../lib/exportFailover";
 
 const exportMocks = vi.hoisted(() => ({
@@ -31,6 +33,15 @@ const exportMocks = vi.hoisted(() => ({
     bufferPath: "/tmp/test-primary-buffer.mp4",
     bufferedDuration: 60,
     adjustedOffsetSec: 0,
+  })),
+  bufferCameraHlsClip: vi.fn(async (options: { clipDuration: number }) => ({
+    bufferPath: "/tmp/test-camera-buffer.mp4",
+    bufferedDuration: options.clipDuration + 7,
+    adjustedOffsetSec: 0,
+    sourceDimensions: { width: 4096, height: 1152 },
+    bufferDimensions: { width: 3840, height: 1080 },
+    sourceTimeOffsetSec: 0,
+    downloadedBytes: 1024,
   })),
   getBunnyVideoInfo: vi.fn(async () => ({
     duration: 60,
@@ -75,12 +86,27 @@ vi.mock("../lib/ffmpegExport", async (importOriginal) => {
     ...actual,
     renderClip: exportMocks.renderClip,
     bufferRemoteClip: exportMocks.bufferRemoteClip,
+    bufferCameraHlsClip: exportMocks.bufferCameraHlsClip,
     cleanupTempFile: vi.fn(),
   };
 });
 vi.mock("../lib/exportSource", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/exportSource")>();
   return { ...actual, selectExportSource: exportMocks.resolveExportSource };
+});
+vi.mock("../lib/clipExportSource", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/clipExportSource")>();
+  return {
+    ...actual,
+    waitForCamera4kSource: vi.fn(async (videoId: string) => ({
+      kind: "camera-4k" as const,
+      url: `https://storage.test/cameras/${videoId}/4k.m3u8`,
+      playlist: "#EXTM3U",
+      path: "camera-original-4k HLS" as const,
+      duration: 60,
+      renditionLabel: null,
+    })),
+  };
 });
 vi.mock("../lib/backupExport", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../lib/backupExport")>();
@@ -118,6 +144,12 @@ function jobFor(clipId: number) {
 }
 
 beforeAll(async () => {
+  execFileSync("ffmpeg", [
+    "-nostdin", "-hide_banner", "-loglevel", "error",
+    "-f", "lavfi", "-i", "color=c=blue:s=320x180:r=30:d=1",
+    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+    "-movflags", "+faststart", "-y", "/tmp/test-primary-export.mp4",
+  ]);
   vps1 = http.createServer((req, res) => {
     seen.push({ method: req.method ?? "", url: req.url ?? "", key: req.headers["x-api-key"] as string | undefined, range: req.headers.range as string | undefined });
     if (req.headers["x-api-key"] !== "test-control-key") { res.writeHead(401); res.end(); return; }
@@ -168,8 +200,8 @@ beforeAll(async () => {
     send(404, {});
   });
   await new Promise<void>((r) => vps1.listen(0, "127.0.0.1", r));
-  process.env.CONTABO_CONTROL_URL = `http://127.0.0.1:${(vps1.address() as { port: number }).port}`;
-  process.env.CONTABO_CONTROL_KEY = "test-control-key";
+  vi.stubEnv("CONTABO_CONTROL_URL", `http://127.0.0.1:${(vps1.address() as { port: number }).port}`);
+  vi.stubEnv("CONTABO_CONTROL_KEY", "test-control-key");
 
   const { default: router } = await import("./userClips");
   app = express();
@@ -185,9 +217,24 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  const { settingsDefaultsTable, brandingProfilesTable } = await import("@workspace/db");
+  await db.delete(settingsDefaultsTable).where(inArray(settingsDefaultsTable.key, ["branding.endScreenEnabled", "branding.overlayStyle"]));
+  await db.delete(brandingProfilesTable).where(and(
+    eq(brandingProfilesTable.scopeType, "global"),
+    eq(brandingProfilesTable.scopeId, 0),
+  ));
+  (await import("../lib/settings")).invalidateSettingsCache();
   await db.delete(userClipsTable).where(inArray(userClipsTable.userId, [ownerId]));
   await db.delete(usersTable).where(eq(usersTable.id, ownerId));
   await new Promise<void>((r) => vps1.close(() => r()));
+  fs.rmSync("/tmp/test-primary-export.mp4", { force: true });
+  vi.unstubAllEnvs();
+  vi.doUnmock("../lib/clipExportSource");
+  vi.doUnmock("../lib/ffmpegExport");
+  vi.doUnmock("../lib/bunny");
+  vi.doUnmock("../lib/exportSource");
+  vi.doUnmock("../lib/backupExport");
+  vi.doUnmock("../lib/clerkUserBridge");
 });
 
 beforeEach(() => {

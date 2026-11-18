@@ -82,7 +82,8 @@ import publishRouter from "./academyCreativePublish";
 // A 1×1 PNG: the "rendered" output, read from disk like a local render.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "creative-publish-test-"));
-const outputFile = path.join(tmp, "out.png");
+const outputFile = path.join(tmp, "camera4k-v1", "out.png");
+fs.mkdirSync(path.dirname(outputFile), { recursive: true });
 fs.writeFileSync(outputFile, PNG);
 
 let app: Express;

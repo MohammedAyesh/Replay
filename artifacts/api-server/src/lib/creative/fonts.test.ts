@@ -6,6 +6,7 @@ import {
   CREATIVE_PACKS, FONT_LIBRARY, faceAlias, libraryFiles, matchLibraryFace, matchWeight,
   type CreativeBrand, type Scene, type SceneLayer,
 } from "@workspace/api-zod";
+import { ensureBrandingFonts } from "../clipBranding/assets";
 import { creativeFontsDir, ensureLibraryFonts, libraryFaceAvailable, libraryFontPath } from "./fonts";
 import { fontString, renderScenePng } from "./render";
 import { fontFace } from "./renderLayout";
@@ -21,6 +22,7 @@ const text = (over: Partial<TextLayer> = {}): TextLayer => ({
 });
 
 function width(layer: TextLayer, s: string): number {
+  ensureBrandingFonts();
   ensureLibraryFonts();
   const ctx = createCanvas(10, 10).getContext("2d");
   ctx.font = fontString(fontFace(layer, s, libraryFaceAvailable), layer.size);

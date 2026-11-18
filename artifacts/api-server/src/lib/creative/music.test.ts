@@ -2,10 +2,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { academiesTable, creativeMusicTracksTable, creativeTemplateMusicTable, db, fieldsTable } from "@workspace/db";
 import { CREATIVE_TEMPLATES, CLUB_TEMPLATE_KEYS, FIELD_TEMPLATE_KEYS, MUSIC_LICENSES, MUSIC_MOODS, TEMPLATE_RECOMMENDED_MUSIC, buildTemplateScene, type Scene } from "@workspace/api-zod";
+
+vi.mock("../bunny", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../bunny")>();
+  return { ...actual, isBunnyStorageConfigured: () => false };
+});
+
 import {
   addTrack,
   analyzeMusic,
@@ -40,6 +46,7 @@ afterAll(() => {
   delete process.env.CREATIVE_MUSIC_DIR;
   delete process.env.CREATIVE_MUSIC_ASSET_DIR;
   fs.rmSync(work, { recursive: true, force: true });
+  vi.doUnmock("../bunny");
 });
 
 describe("music analysis", () => {
