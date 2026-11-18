@@ -29,6 +29,7 @@ let app: Express;
 let fieldId: number;
 let viewerId: number;
 let recordingIds: number[] = [];
+let storageRecordingId: number | null = null;
 let bundleIds: number[] = [];
 let scheduleIds: number[] = [];
 let footageRequestId: number | null = null;
@@ -102,6 +103,16 @@ beforeAll(async () => {
     ])
     .returning({ id: recordingsTable.id, date: recordingsTable.date });
   recordingIds = recordings.map((recording) => recording.id);
+  const [storageRecording] = await db.insert(recordingsTable).values({
+    fieldId,
+    court: "cam1",
+    date: "2026-09-02",
+    timeSlot: "11:00",
+    duration: "00:30:00",
+    videoUrl: "https://storage.example.test/vod/123e4567-e89b-12d3-a456-426614174000/4k.m3u8",
+    isVisible: true,
+  }).returning({ id: recordingsTable.id });
+  storageRecordingId = storageRecording.id;
 
   const [booking] = await db.insert(footageRequestsTable).values({
     fieldId,
@@ -222,6 +233,9 @@ afterAll(async () => {
   if (recordingIds.length) {
     await db.delete(recordingsTable).where(inArray(recordingsTable.id, recordingIds));
   }
+  if (storageRecordingId != null) {
+    await db.delete(recordingsTable).where(eq(recordingsTable.id, storageRecordingId));
+  }
   if (footageRequestId) {
     await db.delete(footageRequestsTable).where(eq(footageRequestsTable.id, footageRequestId));
   }
@@ -236,7 +250,7 @@ describe("GET /api/fields/:id/recordings", () => {
   it("returns tracking availability and the viewer's own claim state", async () => {
     const response = await request(app).get(`/api/fields/${fieldId}/recordings`).expect(200);
 
-    expect(response.body).toHaveLength(4);
+    expect(response.body).toHaveLength(5);
     expect(response.body.find((recording: { id: number }) => recording.id === recordingIds[0]))
       .toMatchObject({
         hasTracking: false,
@@ -258,6 +272,13 @@ describe("GET /api/fields/:id/recordings", () => {
         hasTracking: true,
         viewerHasClaim: false,
         viewerClaimState: "in_progress",
+      });
+    expect(response.body.find((recording: { id: number }) => recording.id === storageRecordingId))
+      .toMatchObject({
+        videoUrl: "https://storage.example.test/vod/123e4567-e89b-12d3-a456-426614174000/4k.m3u8",
+        hasTracking: false,
+        matchCode,
+        viewerInMatch: true,
       });
   });
 

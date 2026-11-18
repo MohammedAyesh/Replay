@@ -25,7 +25,7 @@ process.env.BUNNY_CDN_HOSTNAME = "private-cdn.local";
 process.env.CLIP_SHARE_URL_SECRET = "share-secret";
 process.env.PUBLIC_SHARE_BASE_URL = "https://replayjo.test";
 
-const { db, usersTable, userClipsTable, fieldsTable, footageRequestsTable, varMarksTable } = await import("@workspace/db");
+const { db, usersTable, userClipsTable, fieldsTable, recordingsTable, footageRequestsTable, varMarksTable } = await import("@workspace/db");
 const { inArray, eq } = await import("drizzle-orm");
 const { shareToken, portfolioPlaybackToken } = await import("../lib/shareCard");
 const { backupExportRef, CHUNKED_EXPORT_LENGTH_THRESHOLD_BYTES } = await import("../lib/backupExport");
@@ -42,6 +42,7 @@ let largeExportClipId: number;
 let backupExportClipId: number;
 let ownerFieldId: number;
 let ownerRequestIds: number[] = [];
+let sourceRecordingIds: number[] = [];
 let dir: string;
 let mp4: Buffer;
 let ensureClipPoster: typeof import("./share").ensureClipPoster;
@@ -288,6 +289,9 @@ afterAll(async () => {
   if (ownerRequestIds.length) {
     await db.delete(footageRequestsTable).where(inArray(footageRequestsTable.id, ownerRequestIds));
   }
+  if (sourceRecordingIds.length) {
+    await db.delete(recordingsTable).where(inArray(recordingsTable.id, sourceRecordingIds));
+  }
   await db.delete(fieldsTable).where(eq(fieldsTable.id, ownerFieldId));
   await db.delete(usersTable).where(inArray(usersTable.id, [userId]));
   await new Promise<void>((r) => origin.close(() => r()));
@@ -365,6 +369,52 @@ describe("the card", () => {
       expect(posterPath).toBe(`posters/${clip.id}-${shareToken(clip.id)}.jpg`);
       expect(bunnyStreamRequests).toHaveLength(streamRequestCount);
       expect(stored.has(posterPath!)).toBe(true);
+    } finally {
+      if (previousPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
+      else process.env.BUNNY_REEL_CDN_URL = previousPullZone;
+    }
+  }, 180_000);
+
+  it("serves a share card for a visible Storage recording without Bunny Stream calls", async () => {
+    const guid = "123e4567-e89b-12d3-a456-426614174000";
+    const [recording] = await db.insert(recordingsTable).values({
+      fieldId: ownerFieldId,
+      court: "cam1",
+      date: "2026-09-21",
+      timeSlot: "13:00",
+      duration: "00:30:00",
+      videoUrl: `https://fake-pullzone.local/vod/${guid}/4k.m3u8`,
+      isVisible: true,
+    }).returning({ id: recordingsTable.id });
+    sourceRecordingIds.push(recording.id);
+    const [clip] = await db.insert(userClipsTable).values({
+      userId,
+      videoId: guid,
+      sourceRecordingId: recording.id,
+      title: "Visible Storage recording clip",
+      startTime: "0",
+      endTime: "1",
+      cropPath: [],
+      aspectRatio: "16:9",
+      visibility: "private",
+    } as never).returning();
+
+    const previousPullZone = process.env.BUNNY_REEL_CDN_URL;
+    const streamRequestCount = bunnyStreamRequests.length;
+    process.env.BUNNY_REEL_CDN_URL = originUrl;
+    try {
+      const card = await request(app).get(cardUrl(clip.id));
+      expect(card.status).toBe(200);
+      expect(card.text).toContain(`/s/${clip.id}/${shareToken(clip.id)}/poster.jpg`);
+
+      const storedClip = await db.select({ posterPath: userClipsTable.posterPath })
+        .from(userClipsTable).where(eq(userClipsTable.id, clip.id));
+      expect(storedClip[0]?.posterPath).toBe(`posters/${clip.id}-${shareToken(clip.id)}.jpg`);
+
+      const poster = await request(app).get(`${cardUrl(clip.id)}/poster.jpg`);
+      expect(poster.status).toBe(200);
+      expect(poster.headers["content-type"]).toBe("image/jpeg");
+      expect(bunnyStreamRequests).toHaveLength(streamRequestCount);
     } finally {
       if (previousPullZone === undefined) delete process.env.BUNNY_REEL_CDN_URL;
       else process.env.BUNNY_REEL_CDN_URL = previousPullZone;

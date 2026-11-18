@@ -23,12 +23,14 @@ const COLLECTION_ID = "storage-archive-collection";
 const STORAGE_VIDEO_ID = "123e4567-e89b-12d3-a456-426614174000";
 let app: Express;
 let fieldId: number;
+let streamFetch: ReturnType<typeof vi.fn>;
 
 beforeAll(async () => {
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ items: [] }), {
+  streamFetch = vi.fn(async (_input: unknown) => new Response(JSON.stringify({ items: [] }), {
     status: 200,
     headers: { "content-type": "application/json" },
-  })));
+  }));
+  vi.stubGlobal("fetch", streamFetch);
   const [{ default: bunnyCollectionsRouter }] = await Promise.all([
     import("./bunnyCollections"),
   ]);
@@ -88,5 +90,7 @@ describe("field archive includes visible Storage recordings", () => {
         duration: 3600,
       },
     ]);
+    const requestedUrls = streamFetch.mock.calls.map(([input]) => String(input));
+    expect(requestedUrls.every((url) => !url.includes(STORAGE_VIDEO_ID))).toBe(true);
   });
 });

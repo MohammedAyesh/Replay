@@ -50,6 +50,7 @@ let userAId: number;
 let userBId: number;
 let fieldId: number;
 let recordingId: number;
+let storageRecordingId: number | null = null;
 let mismatchRecordingId: number | null = null;
 let duplicateRecordingId: number | null = null;
 let ownerRequestIds: number[] = [];
@@ -102,6 +103,16 @@ beforeAll(async () => {
     })
     .returning({ id: recordingsTable.id });
   recordingId = recording.id;
+  const [storageRecording] = await db.insert(recordingsTable).values({
+    fieldId,
+    court: "cam1",
+    date: "2026-09-22",
+    timeSlot: "12:00",
+    duration: "00:30:00",
+    videoUrl: "https://storage.example.test/vod/123e4567-e89b-12d3-a456-426614174000/4k.m3u8",
+    isVisible: true,
+  }).returning({ id: recordingsTable.id });
+  storageRecordingId = storageRecording.id;
   await db.insert(recordingSchedulesTable).values({
     fieldId,
     allowedDate: "2026-09-21",
@@ -168,6 +179,9 @@ afterAll(async () => {
   }
   if (duplicateRecordingId != null) {
     await db.delete(recordingsTable).where(eq(recordingsTable.id, duplicateRecordingId));
+  }
+  if (storageRecordingId != null) {
+    await db.delete(recordingsTable).where(eq(recordingsTable.id, storageRecordingId));
   }
   await db.delete(recordingsTable).where(eq(recordingsTable.id, recordingId));
   await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
@@ -290,6 +304,47 @@ describe("POST /api/user-clips", () => {
     const [row] = await db.select({ sourceRecordingId: userClipsTable.sourceRecordingId })
       .from(userClipsTable).where(eq(userClipsTable.id, res.body.id));
     expect(row.sourceRecordingId).toBe(recordingId);
+  });
+
+  it("creates and shares a clip from a visible Storage recording without Bunny Stream lookups", async () => {
+    const streamlessVideoId = "123e4567-e89b-12d3-a456-426614174000";
+    const requests: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
+      requests.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return new Response("not found", { status: 404 });
+    });
+    try {
+      mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+      const created = await request(app)
+        .post("/api/user-clips")
+        .send({
+          ...SAMPLE_CLIP_BODY,
+          videoId: streamlessVideoId,
+          recordingId: storageRecordingId,
+        })
+        .expect(201);
+
+      const [row] = await db.select({ sourceRecordingId: userClipsTable.sourceRecordingId })
+        .from(userClipsTable).where(eq(userClipsTable.id, created.body.id));
+      expect(row.sourceRecordingId).toBe(storageRecordingId);
+
+      mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+      const shareLink = await request(app)
+        .get(`/api/user-clips/${created.body.id}/share-link`)
+        .expect(200);
+      expect(shareLink.body.shareUrl).toContain(`/s/${created.body.id}/`);
+      expect(shareLink.body.ready).toBe(false);
+
+      const shareCount = await request(app)
+        .post(`/api/user-clips/${created.body.id}/share`)
+        .expect(200);
+      expect(shareCount.body).toMatchObject({ ok: true, shareCount: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      expect(requests.some((url) => url.includes("video.bunnycdn.com"))).toBe(false);
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 
   it("leaves the source unset when an inferred video matches multiple recordings", async () => {

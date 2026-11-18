@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useTranslation } from "@/i18n";
 import { useAuth } from "@/lib/auth";
 import { getBunnyMp4FallbackSource } from "@/lib/bunnyPlayback";
+import { isStreamlessStorageUrl } from "@/lib/uhdPlayback";
 import { cn } from "@/lib/utils";
 import { CLAIM_YOUR_MATCH_ENABLED } from "@/lib/feature-flags";
 import { useClaimCopy } from "@/i18n/claim-strings";
@@ -740,6 +741,7 @@ export default function FieldDetail() {
             src={activeVideo.playbackUrl}
             proxySrc={`/api/hls-proxy/manifest?url=${encodeURIComponent(activeVideo.playbackUrl)}`}
             fallbackSrc={getBunnyMp4FallbackSource(activeVideo.playbackUrl)}
+            defaultPlaybackQuality={isStreamlessStorageUrl(activeVideo.playbackUrl) ? "4k" : undefined}
             title={activeVideo.title}
             source={{ kind: "bunny", videoId: activeVideo.guid }}
             fieldId={collection?.id ?? undefined}
@@ -771,6 +773,7 @@ export default function FieldDetail() {
                   visibility: "private",
                   aspectRatio: draft.aspectRatio,
                   academyId,
+                  recordingId: activeRecording?.id,
                 },
               });
               queryClient.invalidateQueries({ queryKey: getListUserClipsQueryKey() });

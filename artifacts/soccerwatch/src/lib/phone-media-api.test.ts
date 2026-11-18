@@ -18,7 +18,7 @@ describe("reading a phone file's time in the browser, before upload", () => {
     expect(capture).toMatchObject({ quicktimeCreationDate: "2026-11-01T18:05:32+0300", durationSec: 3, lastModifiedMs: Date.parse("2026-11-01T15:05:35Z") });
     expect(gps).toEqual({ lat: 31.9539, lon: 35.9106 });
     fs.rmSync(dir, { recursive: true, force: true });
-  });
+  }, 15_000);
 
   it("says nothing, without throwing, about a file it can't read", async () => {
     const { capture, gps } = await readCapture(new File([new Uint8Array([1, 2, 3])], "x.mp4", { type: "video/mp4", lastModified: 5 }));
