@@ -4,8 +4,16 @@ import { db, fieldsTable, recordingsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import {
   createPublicFootageContext,
+  extractBunnyVideoId,
   isPublicBunnyCollectionVideo,
+  isPublicRecordingInContext,
 } from "../lib/publicFootage";
+import {
+  isStreamlessStorageVideoUrl,
+  normalizeUhdVideoGuid,
+  storagePlaybackProxyUrl,
+  storageThumbnailProxyUrl,
+} from "../lib/uhdPlayback";
 import { getLocalUserRecord } from "../lib/clerkUserBridge";
 
 const router: IRouter = Router();
@@ -169,20 +177,6 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     return;
   }
 
-  if (!isBunnyConfigured()) {
-    res.json([]);
-    return;
-  }
-
-  const raw = await bunnyGet(
-    `videos?collection=${encodeURIComponent(guid)}&page=1&itemsPerPage=100&orderBy=date`,
-    req
-  );
-  if (!raw) {
-    res.json([]);
-    return;
-  }
-
   // Only return recordings that fall within an admin-configured time window.
   // Look up the DB field for this collection.
   const [dbField] = await db
@@ -204,7 +198,44 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
     .from(recordingsTable)
     .where(eq(recordingsTable.fieldId, dbField.id));
 
-  const videos = (raw as BunnyApiVideo[])
+  // Owner-request footage is stored in Bunny Storage rather than Bunny Stream,
+  // so it never appears in the collection API response. Include it in the same
+  // archive only when its recording row is explicitly visible.
+  const storageVideos = dbRecordings
+    .filter((recording) =>
+      isStreamlessStorageVideoUrl(recording.videoUrl)
+      && isPublicRecordingInContext(recording, dbField, context),
+    )
+    .flatMap((recording) => {
+      const videoId = normalizeUhdVideoGuid(extractBunnyVideoId(recording.videoUrl));
+      const playbackUrl = storagePlaybackProxyUrl(videoId, "4k");
+      const thumbnailUrl = storageThumbnailProxyUrl(videoId);
+      if (!videoId || !playbackUrl || !thumbnailUrl) return [];
+
+      const durationParts = recording.duration.split(":").map(Number);
+      const duration = durationParts.every(Number.isFinite)
+        ? durationParts.reduce((seconds, part) => seconds * 60 + part, 0)
+        : 0;
+      const title = `${recording.date}_${recording.timeSlot}`;
+      return [{
+        guid: videoId,
+        title,
+        thumbnailUrl,
+        playbackUrl,
+        embedUrl: playbackUrl,
+        views: 0,
+        duration,
+      }];
+    });
+
+  const raw = isBunnyConfigured()
+    ? await bunnyGet(
+      `videos?collection=${encodeURIComponent(guid)}&page=1&itemsPerPage=100&orderBy=date`,
+      req,
+    )
+    : null;
+
+  const streamVideos = ((raw ?? []) as BunnyApiVideo[])
     .filter((v) => typeof v.guid === "string" && typeof v.title === "string")
     .filter((v) => !isExcludedBunnyVideoTitle(v.title))
     .filter(isBunnyVideoPlayable)
@@ -225,7 +256,11 @@ router.get("/bunny/collections/:guid/videos", async (req, res): Promise<void> =>
       duration: v.length ?? 0,
     }));
 
-  res.json(videos);
+  const storageIds = new Set(storageVideos.map((video) => video.guid.toLowerCase()));
+  res.json([
+    ...storageVideos,
+    ...streamVideos.filter((video) => !storageIds.has(video.guid.toLowerCase())),
+  ]);
 });
 
 export default router;

@@ -228,6 +228,7 @@ describe("recorded UHD playback eligibility and fallback", () => {
     expect(storagePlaybackUrlForSource({ kind: "bunny", videoId: "123e4567-e89b-12d3-a456-426614174000" }, "h264"))
       .toBe("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8");
     expect(isStreamlessStorageUrl("https://storage.example.com/vod/123e4567-e89b-12d3-a456-426614174000/8k.m3u8")).toBe(true);
+    expect(isStreamlessStorageUrl("/api/hls-proxy/uhd/123e4567-e89b-12d3-a456-426614174000.m3u8")).toBe(true);
     expect(isStreamlessStorageUrl("/api/hls-proxy/storage/123e4567-e89b-12d3-a456-426614174000/h264.m3u8")).toBe(true);
     expect(isStreamlessStorageUrl(
       "/api/hls-proxy/manifest?url=https%3A%2F%2Fstorage.example.com%2Fvod%2F123e4567-e89b-12d3-a456-426614174000%2F8k.m3u8",
