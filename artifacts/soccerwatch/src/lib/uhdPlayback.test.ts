@@ -68,6 +68,28 @@ describe("recorded UHD playback eligibility and fallback", () => {
     })).toBeNull();
   });
 
+  it("uses a caller-selected default quality without overriding a saved preference", () => {
+    const available = {
+      preference: "4k" as const,
+      hasSavedPreference: false,
+      available8k: true,
+      available4k: true,
+      availableH264: true,
+      streamless: true,
+      defaultQuality: "4k" as const,
+    };
+    expect(chooseRecordedPlaybackStage(available)).toBe("uhd");
+    expect(chooseRecordedPlaybackStage({
+      ...available,
+      hasSavedPreference: true,
+      preference: "8k",
+    })).toBe("8k");
+    expect(chooseRecordedPlaybackStage({
+      ...available,
+      available4k: false,
+    })).toBe("8k");
+  });
+
   it("offers 8K only when MediaCapabilities reports smooth native 8K decoding", async () => {
     const smoothCapabilities = {
       decodingInfo: vi.fn().mockResolvedValue({ supported: true, smooth: true }),

@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   db,
   clipsTable,
@@ -12,6 +12,7 @@ import {
   usersTable,
 } from "@workspace/db";
 import {
+  ListAdminOwnerRecordingsResponse,
   GetRecordingParams,
   GetRecordingResponse,
   GetRecordingViewersParams,
@@ -36,6 +37,7 @@ import {
 import {
   hasUhdPlaylist,
   isStreamlessStorageVideoUrl,
+  normalizeUhdVideoGuid,
   storagePlaybackProxyUrl,
   storageThumbnailProxyUrl,
   uhdPlaybackUrl,
@@ -141,6 +143,46 @@ router.get("/admin/recordings", async (req, res): Promise<void> => {
     response.push(...batch);
   }
   res.json(response);
+});
+
+router.get("/admin/owner-recordings", async (req, res): Promise<void> => {
+  const adminId = await requireAdmin(req);
+  if (!adminId) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const rows = await db
+    .select({
+      request: footageRequestsTable,
+      fieldName: fieldsTable.name,
+    })
+    .from(footageRequestsTable)
+    .innerJoin(fieldsTable, eq(footageRequestsTable.fieldId, fieldsTable.id))
+    .where(and(
+      isNull(footageRequestsTable.academyId),
+      eq(footageRequestsTable.status, "ready"),
+      isNotNull(footageRequestsTable.videoId),
+    ))
+    .orderBy(desc(footageRequestsTable.readyAt), desc(footageRequestsTable.createdAt));
+
+  const response = rows.flatMap(({ request, fieldName }) => {
+    if (!/^s-[a-f0-9]{32}$/i.test(request.shareToken ?? "")) return [];
+    const videoId = normalizeUhdVideoGuid(request.videoId);
+    if (!videoId) return [];
+    return [{
+      id: request.id,
+      fieldId: request.fieldId,
+      fieldName,
+      startLocal: request.startLocal,
+      endLocal: request.endLocal,
+      requestedSeconds: request.requestedSeconds,
+      deliveredSeconds: request.deliveredSeconds,
+      readyAt: request.readyAt?.toISOString() ?? null,
+      videoId,
+      thumbnailUrl: storageThumbnailProxyUrl(videoId),
+      playbackUrl: storagePlaybackProxyUrl(videoId, "4k"),
+    }];
+  });
+
+  res.json(ListAdminOwnerRecordingsResponse.parse(response));
 });
 
 router.get("/admin/recordings/:id/viewers", async (req, res): Promise<void> => {

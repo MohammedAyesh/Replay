@@ -47,7 +47,9 @@ import {
   Trophy,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { ClipPlayer } from "@/components/clip-player/ClipPlayer";
 import { HlsPlayer } from "@/components/HlsPlayer";
+import { storagePlaybackUrlForGuid } from "@/lib/uhdPlayback";
 import { EarlyPlay } from "@/components/match/EarlyPlay";
 import { StreamingPanel } from "@/components/StreamingPanel";
 import { VarPlayer } from "@/components/var-player/VarPlayer";
@@ -1204,11 +1206,21 @@ function RequestCard({
   const showPreview = previewId === request.id;
   const previewVideoRef = useRef<HTMLVideoElement>(null);
   const pendingSeekRef = useRef<number | null>(null);
+  const [selectedMomentSeconds, setSelectedMomentSeconds] = useState<number | null>(null);
+  const streamlessStorageVideoId = request.streamless ? request.storageVideoId : null;
+  const storagePreviewUrl = streamlessStorageVideoId
+    ? storagePlaybackUrlForGuid(streamlessStorageVideoId, "8k")
+    : null;
   useEffect(() => {
-    if (!showPreview || pendingSeekRef.current == null || !previewVideoRef.current) return;
+    if (!showPreview || pendingSeekRef.current == null) return;
+    if (streamlessStorageVideoId) {
+      pendingSeekRef.current = null;
+      return;
+    }
+    if (!previewVideoRef.current) return;
     previewVideoRef.current.currentTime = pendingSeekRef.current;
     pendingSeekRef.current = null;
-  }, [showPreview]);
+  }, [showPreview, streamlessStorageVideoId]);
   const progress = Math.max(0, Math.min(100, Math.round(request.progress)));
   const isProgressing = key === "recording" || key === "running" || key === "preparing";
   const statusMessage = message;
@@ -1255,6 +1267,15 @@ function RequestCard({
         {isProgressing && request.match?.code && request.academyName === null && (
           <EarlyPlay code={request.match.code} locale={locale} compact />
         )}
+        {isReady && request.streamless && request.thumbnailUrl && !showPreview && (
+          <img
+            src={`${basePath}${request.thumbnailUrl}`}
+            alt=""
+            loading="lazy"
+            className="mb-3 max-h-48 w-full rounded-xl border border-white/[0.08] bg-black object-contain"
+            data-testid={`thumbnail-owner-request-${request.id}`}
+          />
+        )}
         {isReady && request.academyName === null && (
           <p className="mt-2 text-[11px] font-medium text-foreground" data-testid={`summary-owner-request-${request.id}`}>
             {copy.playerLabel} · {requestedDuration} · {copy.charged} {formatJod(request.amountFils)} {copy.currency}
@@ -1277,9 +1298,24 @@ function RequestCard({
         </div>
       )}
 
-      {isReady && request.playbackManifestUrl && showPreview && (
+      {isReady && showPreview && (storagePreviewUrl || request.playbackManifestUrl) && (
         <div className="border-t border-white/[0.07] p-3" data-testid={`preview-owner-request-${request.id}`}>
-          <HlsPlayer ref={previewVideoRef} url={request.playbackManifestUrl} label={copy.playerLabel} />
+          {streamlessStorageVideoId && storagePreviewUrl ? (
+            <ClipPlayer
+              src={storagePreviewUrl}
+              title={copy.playerLabel}
+              source={{ kind: "bunny", videoId: streamlessStorageVideoId }}
+              layout="inline"
+              toolbarLayout="single-row"
+              canSave={false}
+              onRequireAuth={() => undefined}
+              onSave={async () => undefined}
+              seekToSeconds={selectedMomentSeconds}
+              defaultPlaybackQuality="4k"
+            />
+          ) : request.playbackManifestUrl ? (
+            <HlsPlayer ref={previewVideoRef} url={request.playbackManifestUrl} label={copy.playerLabel} />
+          ) : null}
         </div>
       )}
 
@@ -1302,7 +1338,9 @@ function RequestCard({
                   key={mark.id}
                   type="button"
                   onClick={() => {
-                    pendingSeekRef.current = Math.max(0, mark.offsetSeconds);
+                    const seconds = Math.max(0, mark.offsetSeconds);
+                    pendingSeekRef.current = seconds;
+                    setSelectedMomentSeconds(seconds);
                     setPreviewId(request.id);
                   }}
                   className="rounded-lg border border-primary/25 bg-primary/10 px-2.5 py-2 text-start text-[11px] text-primary"
@@ -1314,7 +1352,7 @@ function RequestCard({
             </div>
           </div>
         )}
-        {isReady && request.playbackManifestUrl && (
+        {isReady && (request.playbackManifestUrl || storagePreviewUrl) && (
           <Button type="button" variant="secondary" onClick={() => setPreviewId(showPreview ? null : request.id)} data-testid={`button-preview-owner-request-${request.id}`} className="min-h-11 rounded-xl px-3 text-xs">
             <Play className="h-3.5 w-3.5" aria-hidden="true" />{showPreview ? copy.hidePreview : copy.preview}
           </Button>

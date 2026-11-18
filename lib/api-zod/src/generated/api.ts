@@ -511,6 +511,9 @@ export const ListOwnerFieldRequestsResponseItem = zod.object({
   "shareUrl": zod.string().url().nullable(),
   "shareExpiresAt": zod.coerce.date().nullable(),
   "playbackManifestUrl": zod.string().url().nullable(),
+  "streamless": zod.boolean(),
+  "storageVideoId": zod.string().nullable(),
+  "thumbnailUrl": zod.string().nullable(),
   "varOpensAt": zod.coerce.date().nullable(),
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
@@ -564,6 +567,9 @@ export const CreateOwnerFieldRequestResponse = zod.object({
   "shareUrl": zod.string().url().nullable(),
   "shareExpiresAt": zod.coerce.date().nullable(),
   "playbackManifestUrl": zod.string().url().nullable(),
+  "streamless": zod.boolean(),
+  "storageVideoId": zod.string().nullable(),
+  "thumbnailUrl": zod.string().nullable(),
   "varOpensAt": zod.coerce.date().nullable(),
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
@@ -635,6 +641,9 @@ export const CancelOwnerRequestResponse = zod.object({
   "shareUrl": zod.string().url().nullable(),
   "shareExpiresAt": zod.coerce.date().nullable(),
   "playbackManifestUrl": zod.string().url().nullable(),
+  "streamless": zod.boolean(),
+  "storageVideoId": zod.string().nullable(),
+  "thumbnailUrl": zod.string().nullable(),
   "varOpensAt": zod.coerce.date().nullable(),
   "varClosesAt": zod.coerce.date().nullable(),
   "varState": zod.string().nullable(),
@@ -1157,6 +1166,25 @@ export const GetRecordingViewersResponseItem = zod.object({
   "lastViewedAt": zod.coerce.date()
 })
 export const GetRecordingViewersResponse = zod.array(GetRecordingViewersResponseItem)
+
+
+/**
+ * @summary List ready streamless owner recordings for admins
+ */
+export const ListAdminOwnerRecordingsResponseItem = zod.object({
+  "id": zod.number(),
+  "fieldId": zod.number(),
+  "fieldName": zod.string(),
+  "startLocal": zod.string(),
+  "endLocal": zod.string(),
+  "requestedSeconds": zod.number(),
+  "deliveredSeconds": zod.number().nullable(),
+  "readyAt": zod.coerce.date().nullable(),
+  "videoId": zod.string(),
+  "thumbnailUrl": zod.string().nullable(),
+  "playbackUrl": zod.string().nullable()
+})
+export const ListAdminOwnerRecordingsResponse = zod.array(ListAdminOwnerRecordingsResponseItem)
 
 
 /**

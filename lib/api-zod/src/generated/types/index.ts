@@ -148,6 +148,7 @@ export * from './adminFootagePaymentMethod';
 export * from './adminFootageRecheckResult';
 export * from './adminMatchWindowBody';
 export * from './adminMatchWindowResponse';
+export * from './adminOwnerRecording';
 export * from './adminPlayerMetrics';
 export * from './adminRecordingPlayerMetricsResponse';
 export * from './adminReviewerSignInLinksByEmail';

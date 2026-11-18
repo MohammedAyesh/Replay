@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import {
   academiesTable,
   academyMembersTable,
@@ -8,6 +8,7 @@ import {
   academyRecordingsTable,
   academySessionsTable,
   db,
+  fieldOwnersTable,
   fieldsTable,
   footageRequestsTable,
   recordingSchedulesTable,
@@ -283,6 +284,32 @@ export async function canViewBunnyVideo(req: Request, videoId: string): Promise<
 
   const viewer = context.viewer;
   if (!viewer || viewer.isGuest || viewer.isDisabled) return false;
+
+  const ownerRequests = await db
+    .select({
+      fieldId: footageRequestsTable.fieldId,
+      shareToken: footageRequestsTable.shareToken,
+    })
+    .from(footageRequestsTable)
+    .where(and(
+      eq(footageRequestsTable.videoId, videoId),
+      isNull(footageRequestsTable.academyId),
+      inArray(footageRequestsTable.status, ["ready", "partial"]),
+    ));
+  const ownerRequestFieldIds = [...new Set(ownerRequests
+    .filter((row) => /^s-[a-f0-9]{32}$/i.test(row.shareToken ?? ""))
+    .map((row) => row.fieldId))];
+  if (ownerRequestFieldIds.length > 0) {
+    const ownedRequests = await db
+      .select({ fieldId: fieldOwnersTable.fieldId })
+      .from(fieldOwnersTable)
+      .where(and(
+        eq(fieldOwnersTable.userId, viewer.id),
+        inArray(fieldOwnersTable.fieldId, ownerRequestFieldIds),
+      ))
+      .limit(1);
+    if (ownedRequests.length > 0) return true;
+  }
 
   const ownedAcademyVideos = await db.select({ videoUrl: recordingsTable.videoUrl })
     .from(academyRecordingsTable)

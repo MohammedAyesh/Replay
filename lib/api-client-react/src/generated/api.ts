@@ -103,6 +103,7 @@ import type {
   AdminFootageRecheckResult,
   AdminMatchWindowBody,
   AdminMatchWindowResponse,
+  AdminOwnerRecording,
   AdminRecordingPlayerMetricsResponse,
   AdminReviewerSignInLinksInput,
   AdminTrackingBundlePatchBody,
@@ -3858,6 +3859,83 @@ export function useGetRecordingViewers<TData = Awaited<ReturnType<typeof getReco
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetRecordingViewersQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListAdminOwnerRecordingsUrl = () => {
+
+
+
+
+  return `/api/admin/owner-recordings`
+}
+
+/**
+ * @summary List ready streamless owner recordings for admins
+ */
+export const listAdminOwnerRecordings = async ( options?: RequestInit): Promise<AdminOwnerRecording[]> => {
+
+  return customFetch<AdminOwnerRecording[]>(getListAdminOwnerRecordingsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListAdminOwnerRecordingsQueryKey = () => {
+    return [
+    `/api/admin/owner-recordings`
+    ] as const;
+    }
+
+
+export const getListAdminOwnerRecordingsQueryOptions = <TData = Awaited<ReturnType<typeof listAdminOwnerRecordings>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminOwnerRecordings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListAdminOwnerRecordingsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listAdminOwnerRecordings>>> = ({ signal }) => listAdminOwnerRecordings({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listAdminOwnerRecordings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListAdminOwnerRecordingsQueryResult = NonNullable<Awaited<ReturnType<typeof listAdminOwnerRecordings>>>
+export type ListAdminOwnerRecordingsQueryError = ErrorType<void>
+
+
+/**
+ * @summary List ready streamless owner recordings for admins
+ */
+
+export function useListAdminOwnerRecordings<TData = Awaited<ReturnType<typeof listAdminOwnerRecordings>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listAdminOwnerRecordings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListAdminOwnerRecordingsQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

@@ -134,6 +134,8 @@ export type ClipPlayerProps = {
   src: string;
   /** Same recording through the app proxy. Archived recordings use this before any cross-origin source. */
   proxySrc?: string;
+  /** Quality to use when no explicit playback preference has been saved. */
+  defaultPlaybackQuality?: "8k" | "4k" | "hd";
   /** Same-origin progressive MP4 fallback, tried only after an HLS retry fails. */
   fallbackSrc?: string;
   /** Authorized original camera HLS playlist; Stream remains the fallback/export source. */
@@ -306,6 +308,7 @@ function QualityPicker({
 export function ClipPlayer({
   src,
   proxySrc,
+  defaultPlaybackQuality,
   fallbackSrc,
   uhdPlaybackUrl: suppliedUhdPlaybackUrl,
   onFallback,
@@ -654,6 +657,7 @@ export function ClipPlayer({
       const selected = chooseRecordedPlaybackStage({
         preference: readUhdPlaybackPreference(),
         hasSavedPreference: hasSavedPlaybackPreference(),
+        defaultQuality: defaultPlaybackQuality,
         available8k,
         available4k,
         availableH264,
@@ -671,6 +675,7 @@ export function ClipPlayer({
     })();
     return () => { active = false; };
   }, [
+    defaultPlaybackQuality,
     eightKSrc,
     h264Src,
     isLive,

@@ -28,6 +28,7 @@ import {
   storagePlaybackUrlForGuid,
   uhdPlaybackUrlForGuid,
   writeUhdPlaybackPreference,
+  type UhdPlaybackPreference,
 } from "@/lib/uhdPlayback";
 import { HlsPlayer as SharedHlsPlayer } from "@/components/HlsPlayer";
 import AdminVarTab from "@/components/admin/AdminVarTab";
@@ -72,6 +73,7 @@ import {
   useAddAcademyMember,
   useRemoveAcademyMemberRole,
   type AcademyMemberRole,
+  type AdminOwnerRecording,
 } from "@workspace/api-client-react";
 
 const basePath = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -3863,6 +3865,7 @@ function HlsPlayer({
   hasUhdPlayback = false,
   storageVideoId,
   storageOnly,
+  defaultQuality,
 }: {
   url: string;
   className?: string;
@@ -3870,6 +3873,7 @@ function HlsPlayer({
   hasUhdPlayback?: boolean;
   storageVideoId?: string | null;
   storageOnly?: boolean;
+  defaultQuality?: UhdPlaybackPreference;
 }) {
   const videoRef  = useRef<HTMLVideoElement>(null);
   const hlsRef    = useRef<Hls | null>(null);
@@ -3920,6 +3924,7 @@ function HlsPlayer({
       const selected = chooseRecordedPlaybackStage({
         preference: readUhdPlaybackPreference(),
         hasSavedPreference: hasSavedPlaybackPreference(),
+        defaultQuality,
         available8k,
         available4k,
         availableH264,
@@ -3929,7 +3934,7 @@ function HlsPlayer({
       setSourceStage(next);
     })();
     return () => { active = false; };
-  }, [eightKUrl, h264Url, hasUhdPlayback, storageOnlySource, uhdUrl]);
+  }, [defaultQuality, eightKUrl, h264Url, hasUhdPlayback, storageOnlySource, uhdUrl]);
 
   useEffect(() => {
     const el = videoRef.current;
@@ -6754,9 +6759,83 @@ function formatRecordingWatchTime(totalSeconds: number): string {
   return minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
 }
 
+function AdminOwnerFootageSection({ recordings }: { recordings: AdminOwnerRecording[] }) {
+  const [previewId, setPreviewId] = useState<number | null>(null);
+  if (recordings.length === 0) return null;
+
+  return (
+    <section className="space-y-3" data-testid="section-admin-owner-footage">
+      <div>
+        <h2 className="text-sm font-semibold text-white">Private owner recordings</h2>
+        <p className="mt-1 text-xs text-zinc-500">
+          Ready Storage footage for field owners and admins; excluded from public recording lists.
+        </p>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {recordings.map((recording) => {
+          const isOpen = previewId === recording.id;
+          const duration = recording.deliveredSeconds ?? recording.requestedSeconds;
+          return (
+            <article
+              key={recording.id}
+              className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950/60"
+              data-testid={`card-admin-owner-footage-${recording.id}`}
+            >
+              <div className="flex gap-3 p-3">
+                {recording.thumbnailUrl && (
+                  <img
+                    src={`${basePath}${recording.thumbnailUrl}`}
+                    alt=""
+                    loading="lazy"
+                    className="h-20 w-32 shrink-0 rounded-lg bg-black object-contain"
+                    data-testid={`thumbnail-admin-owner-footage-${recording.id}`}
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-white">{recording.fieldName}</p>
+                  <p className="mt-1 font-mono text-xs text-zinc-400">
+                    {recording.startLocal}–{recording.endLocal.slice(11)}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {formatRecordingWatchTime(duration)} · Private owner footage
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setPreviewId(isOpen ? null : recording.id)}
+                    aria-expanded={isOpen}
+                    data-testid={`button-admin-owner-footage-preview-${recording.id}`}
+                    className="mt-2 rounded-lg border border-zinc-700 px-2.5 py-1.5 text-xs font-semibold text-zinc-200 hover:border-primary/60 hover:text-white"
+                  >
+                    {isOpen ? "Hide preview" : "Play recording"}
+                  </button>
+                </div>
+              </div>
+              {isOpen && recording.playbackUrl && (
+                <div className="border-t border-zinc-800 p-3" data-testid={`preview-admin-owner-footage-${recording.id}`}>
+                  <HlsPlayer
+                    url={recording.playbackUrl}
+                    uhdUrl={recording.playbackUrl}
+                    hasUhdPlayback
+                    storageVideoId={recording.videoId}
+                    storageOnly
+                    defaultQuality="4k"
+                    className="max-h-72"
+                  />
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function RecordingsTab() {
   const queryClient = useQueryClient();
   const [recordings, setRecordings] = useState<AdminRecording[]>([]);
+  const [ownerRecordings, setOwnerRecordings] = useState<AdminOwnerRecording[]>([]);
+  const [ownerRecordingsError, setOwnerRecordingsError] = useState(false);
   const [schedules, setSchedules] = useState<AdminSchedule[]>([]);
   const [fields, setFields] = useState<AdminField[]>([]);
   const [loading, setLoading] = useState(true);
@@ -6771,6 +6850,13 @@ function RecordingsTab() {
         apiFetch("/admin/schedules") as Promise<AdminSchedule[]>,
         apiFetch("/admin/fields") as Promise<AdminField[]>,
       ]);
+      try {
+        setOwnerRecordings(await apiFetch("/admin/owner-recordings") as AdminOwnerRecording[]);
+        setOwnerRecordingsError(false);
+      } catch {
+        setOwnerRecordings([]);
+        setOwnerRecordingsError(true);
+      }
       let bunnyVideos: FieldVideo[] = [];
       try {
         bunnyVideos = await apiFetch("/bunny/all-videos") as FieldVideo[];
@@ -6919,33 +7005,42 @@ function RecordingsTab() {
           {importResult}
         </div>
       )}
+      {ownerRecordingsError && (
+        <div role="alert" className="rounded-xl border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-300">
+          Private owner recordings could not be loaded.
+        </div>
+      )}
 
       {loading ? (
         <div className="text-center py-16 text-zinc-500">Loading…</div>
-      ) : fieldGroups.length === 0 ? (
-        <div className="text-center py-16 space-y-2">
-          <p className="text-zinc-400 font-medium">No fields yet</p>
-          <p className="text-zinc-600 text-sm">Sync your fields first to manage recording dates</p>
-        </div>
       ) : (
-        fieldGroups.map(({ fieldId, fieldName, recordings: fieldRecs }) => (
-          <FieldScheduleSection
-            key={fieldId}
-            fieldId={fieldId}
-            fieldName={fieldName}
-            recordings={fieldRecs}
-            schedules={schedulesByField.get(fieldId) ?? []}
-            onVisibilityChange={updateRecordingVisibility}
-            onVideoReplaced={updateRecordingVideo}
-            onTitleChanged={updateRecordingTitle}
-            onSchedulesChange={(updated) =>
-              setSchedules((prev) => [
-                ...prev.filter((s) => s.fieldId !== fieldId),
-                ...updated,
-              ])
-            }
-          />
-        ))
+        <>
+          {fieldGroups.length === 0 && ownerRecordings.length === 0 && (
+            <div className="text-center py-16 space-y-2">
+              <p className="text-zinc-400 font-medium">No fields yet</p>
+              <p className="text-zinc-600 text-sm">Sync your fields first to manage recording dates</p>
+            </div>
+          )}
+          {fieldGroups.map(({ fieldId, fieldName, recordings: fieldRecs }) => (
+            <FieldScheduleSection
+              key={fieldId}
+              fieldId={fieldId}
+              fieldName={fieldName}
+              recordings={fieldRecs}
+              schedules={schedulesByField.get(fieldId) ?? []}
+              onVisibilityChange={updateRecordingVisibility}
+              onVideoReplaced={updateRecordingVideo}
+              onTitleChanged={updateRecordingTitle}
+              onSchedulesChange={(updated) =>
+                setSchedules((prev) => [
+                  ...prev.filter((s) => s.fieldId !== fieldId),
+                  ...updated,
+                ])
+              }
+            />
+          ))}
+          <AdminOwnerFootageSection recordings={ownerRecordings} />
+        </>
       )}
     </div>
   );

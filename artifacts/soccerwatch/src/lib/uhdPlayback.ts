@@ -4,6 +4,7 @@ export type RecordedPlaybackStage = "8k" | "uhd" | "h264" | "stream";
 export function chooseRecordedPlaybackStage(options: {
   preference: UhdPlaybackPreference;
   hasSavedPreference: boolean;
+  defaultQuality?: UhdPlaybackPreference;
   available8k: boolean;
   available4k: boolean;
   availableH264: boolean;
@@ -12,6 +13,7 @@ export function chooseRecordedPlaybackStage(options: {
   const {
     preference,
     hasSavedPreference,
+    defaultQuality,
     available8k,
     available4k,
     availableH264,
@@ -21,6 +23,9 @@ export function chooseRecordedPlaybackStage(options: {
   if (hasSavedPreference && preference === "8k" && available8k) return "8k";
   if (hasSavedPreference && preference === "4k" && available4k) return "uhd";
   if (hasSavedPreference && preference === "hd" && availableH264) return "h264";
+  if (defaultQuality === "8k" && available8k) return "8k";
+  if (defaultQuality === "4k" && available4k) return "uhd";
+  if (defaultQuality === "hd" && availableH264) return "h264";
   if (available8k) return "8k";
   if (available4k) return "uhd";
   if (availableH264) return "h264";

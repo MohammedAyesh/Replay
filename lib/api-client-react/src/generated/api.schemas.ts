@@ -334,6 +334,24 @@ export interface OwnerField {
   balanceFils: number;
 }
 
+export interface AdminOwnerRecording {
+  id: number;
+  fieldId: number;
+  fieldName: string;
+  startLocal: string;
+  endLocal: string;
+  requestedSeconds: number;
+  /** @nullable */
+  deliveredSeconds: number | null;
+  /** @nullable */
+  readyAt: string | null;
+  videoId: string;
+  /** @nullable */
+  thumbnailUrl: string | null;
+  /** @nullable */
+  playbackUrl: string | null;
+}
+
 export interface OwnerAvailability { [key: string]: unknown }
 
 export interface OwnerRequestInput {
@@ -433,6 +451,11 @@ export interface OwnerRequest {
   shareExpiresAt: string | null;
   /** @nullable */
   playbackManifestUrl: string | null;
+  streamless: boolean;
+  /** @nullable */
+  storageVideoId: string | null;
+  /** @nullable */
+  thumbnailUrl: string | null;
   /** @nullable */
   varOpensAt: string | null;
   /** @nullable */

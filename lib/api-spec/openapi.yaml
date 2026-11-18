@@ -1280,6 +1280,23 @@ paths:
         "404":
           description: Recording not found
 
+  /admin/owner-recordings:
+    get:
+      operationId: listAdminOwnerRecordings
+      tags: [recordings]
+      summary: List ready streamless owner recordings for admins
+      responses:
+        "200":
+          description: Ready private owner footage backed by Storage
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AdminOwnerRecording"
+        "403":
+          description: Admin access required
+
   /recordings/{id}:
     get:
       operationId: getRecording
@@ -5799,6 +5816,34 @@ components:
         balanceFils:
           type: integer
 
+    AdminOwnerRecording:
+      type: object
+      required: [id, fieldId, fieldName, startLocal, endLocal, requestedSeconds, deliveredSeconds, readyAt, videoId, thumbnailUrl, playbackUrl]
+      properties:
+        id:
+          type: integer
+        fieldId:
+          type: integer
+        fieldName:
+          type: string
+        startLocal:
+          type: string
+        endLocal:
+          type: string
+        requestedSeconds:
+          type: integer
+        deliveredSeconds:
+          type: ["integer", "null"]
+        readyAt:
+          type: ["string", "null"]
+          format: date-time
+        videoId:
+          type: string
+        thumbnailUrl:
+          type: ["string", "null"]
+        playbackUrl:
+          type: ["string", "null"]
+
     OwnerAvailability:
       type: object
       additionalProperties: true
@@ -5847,7 +5892,7 @@ components:
 
     OwnerRequest:
       type: object
-      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, varOpensAt, varClosesAt, varState, varActive, cancellationStatus, marks, academyName]
+      required: [id, startLocal, endLocal, requestedSeconds, status, progress, billableHours, amountFils, readyAt, shareUrl, shareExpiresAt, playbackManifestUrl, streamless, storageVideoId, thumbnailUrl, varOpensAt, varClosesAt, varState, varActive, cancellationStatus, marks, academyName]
       properties:
         id:
           type: integer
@@ -5879,6 +5924,12 @@ components:
         playbackManifestUrl:
           type: ["string", "null"]
           format: uri
+        streamless:
+          type: boolean
+        storageVideoId:
+          type: ["string", "null"]
+        thumbnailUrl:
+          type: ["string", "null"]
         varOpensAt:
           type: ["string", "null"]
           format: date-time

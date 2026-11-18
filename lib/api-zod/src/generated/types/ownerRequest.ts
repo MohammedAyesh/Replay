@@ -28,6 +28,11 @@ export interface OwnerRequest {
   shareExpiresAt: Date | null;
   /** @nullable */
   playbackManifestUrl: string | null;
+  streamless: boolean;
+  /** @nullable */
+  storageVideoId: string | null;
+  /** @nullable */
+  thumbnailUrl: string | null;
   /** @nullable */
   varOpensAt: Date | null;
   /** @nullable */

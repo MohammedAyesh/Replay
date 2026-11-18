@@ -20,6 +20,7 @@ import {
 import { z } from "zod/v4";
 import { getLocalUserRecord, unauthenticatedResponse } from "../lib/clerkUserBridge";
 import { computeAmountFils, computeBillableHours } from "../lib/footageBilling";
+import { storageThumbnailProxyUrl } from "../lib/uhdPlayback";
 import { controlFetch, controlResponse } from "./contabo";
 import { chooseFootageSource, gapPullPath, remoteJobPath, withGapStore } from "../lib/gapStore";
 import { logger } from "../lib/logger";
@@ -258,6 +259,7 @@ function requestToResponse(
   const base = publicBaseUrl(req);
   const shareUrl = active ? `${base}/w/${row.shareToken}` : null;
   const playbackManifestUrl = active ? `${base}/w/${row.shareToken}/manifest.m3u8` : null;
+  const streamless = isStreamlessShareToken(row.shareToken);
   return {
     id: row.id,
     startLocal: row.startLocal,
@@ -272,7 +274,9 @@ function requestToResponse(
     shareUrl,
     shareExpiresAt: row.shareExpiresAt?.toISOString() ?? null,
     playbackManifestUrl,
-    streamless: isStreamlessShareToken(row.shareToken),
+    streamless,
+    storageVideoId: streamless ? row.videoId : null,
+    thumbnailUrl: streamless ? storageThumbnailProxyUrl(row.videoId) : null,
     varOpensAt: Number.isFinite(varOpenMs) ? new Date(varOpenMs).toISOString() : null,
     varClosesAt: Number.isFinite(varCloseMs) ? new Date(varCloseMs).toISOString() : null,
     varState: academyOwned ? null : row.varState,
