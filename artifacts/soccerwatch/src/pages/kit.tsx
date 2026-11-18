@@ -1,23 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearch } from "wouter";
-import {
-  AlertTriangle,
-  ArrowLeft,
-  Battery,
-  Check,
-  Copy,
-  Loader2,
-  MapPin,
-  Minus,
-  Plus,
-  QrCode,
-  RefreshCw,
-  Ruler,
-  Trophy,
-  Video,
-  Wifi,
-  WifiOff,
-} from "lucide-react";
+import { AlertTriangle, ArrowLeft, Battery, Check, Copy, Loader2, MapPin, Minus, Plus, QrCode, RefreshCw, Ruler, Trophy, Video, Wifi, WifiOff, Cloud } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { KitLivePreview } from "@/components/KitLivePreview";
 import { useKitCopy } from "@/i18n/kit-strings";
@@ -380,6 +363,15 @@ function ConnectStep({ kit, onBack, onNext }: { kit: Kit; onBack: () => void; on
           {kit.wifiPassword && <CopyField label={c.connect.password} value={kit.wifiPassword} />}
         </div>
       ) : <p className="mt-5 rounded-2xl border border-line bg-surface p-4 text-sm text-muted-text">{c.connect.noWifi}</p>}
+      {s?.reason === "cloud" ? (
+      <div className="mt-3 flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3.5">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-raised text-text"><Cloud className="h-[18px] w-[18px]" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold">{c.connect.cloud}</span>
+          <span className="block text-xs leading-5 text-muted-text">{c.connect.cloudHint}</span>
+        </span>
+      </div>
+      ) : (
       <div className={cn("mt-3 flex items-center gap-3 rounded-2xl border px-4 py-3.5", s?.online ? "border-turf/50 bg-turf/[0.08]" : "border-line bg-surface")}>
         <span className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-xl", s?.online ? "bg-turf/15 text-turf" : "bg-raised text-muted-text")}>
           {status.isLoading ? <Loader2 className="h-[18px] w-[18px] animate-spin" /> : s?.online ? <Wifi className="h-[18px] w-[18px]" /> : <WifiOff className="h-[18px] w-[18px]" />}
@@ -390,6 +382,7 @@ function ConnectStep({ kit, onBack, onNext }: { kit: Kit; onBack: () => void; on
         </span>
         {s?.battery != null && <span className="inline-flex items-center gap-1 text-xs text-muted-text"><Battery className="h-3.5 w-3.5" />{c.connect.battery(s.battery)}</span>}
       </div>
+      )}
       <Primary onClick={onNext}>{c.cont}</Primary>
     </Page>
   );
@@ -431,6 +424,8 @@ function ViewStep({ setup }: { setup: KitSetup }) {
     fetch(kitSnapshotUrl(setup.id, bust), { credentials: "include" }).then(async (r) => {
       if (!alive) return;
       if (r.status === 501) { setShot({ state: "none" }); return; }
+      // Reached through Reolink's cloud: no still picture, the live one is the check.
+      if (r.status === 409) { setShot({ state: "none" }); setLive(true); return; }
       if (!r.ok) { setShot({ state: "failed" }); return; }
       url = URL.createObjectURL(await r.blob());
       setShot({ url, state: "ok" });

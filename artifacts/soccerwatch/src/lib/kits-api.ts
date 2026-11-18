@@ -71,7 +71,7 @@ export type KitSetup = {
   localUrl: string | null;
 };
 
-export type KitStatus = { online: boolean; reason?: "unsupported" | "offline" | "unreachable"; ssid?: string | null; signal?: number | null; battery?: number | null };
+export type KitStatus = { online: boolean; reason?: "unsupported" | "offline" | "unreachable" | "cloud"; ssid?: string | null; signal?: number | null; battery?: number | null };
 
 const json = (body: unknown): RequestInit => ({ body: JSON.stringify(body) });
 const apiBase = `${import.meta.env.BASE_URL.replace(/\/$/, "")}/api`;
@@ -160,7 +160,7 @@ export const useReviewSetup = (id: number | null) => useSetupMutation<{ action: 
 export function useManageKits(academyId: number | null, enabled = true) {
   return useQuery({
     queryKey: ["kits", "manage", academyId],
-    queryFn: () => venueCall<{ kits: Kit[]; setups: KitSetup[]; canAdd: boolean }>(`/kits/manage${academyId ? `?academyId=${academyId}` : ""}`),
+    queryFn: () => venueCall<{ kits: Kit[]; setups: KitSetup[]; canAdd: boolean; canAddReplayCamera?: boolean }>(`/kits/manage${academyId ? `?academyId=${academyId}` : ""}`),
     enabled,
   });
 }
@@ -172,6 +172,29 @@ export function useAddKit() {
       venueCall<{ kit: Kit }>("/kits/manage", { method: "POST", ...json(body) }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["kits"] }),
   });
+}
+
+/** A camera someone set up in the Reolink app: its ID (UID) and password. vps1 keeps the password. */
+export function useConnectKit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { academyId: number; name: string; uid: string; password: string; user?: string; wifiSsid?: string | null }) =>
+      venueCall<{ kit: Kit }>("/kits/manage/connect", { method: "POST", ...json(body) }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["kits"] }),
+  });
+}
+
+export function useFixKitConnection(kitId: number | null) {
+  return useMutation({
+    mutationFn: (body: { uid: string; password: string; user?: string }) =>
+      venueCall<{ ok: true }>(`/kits/manage/${kitId}/connection`, { method: "POST", ...json(body) }),
+  });
+}
+
+/** Cameras connected from the app (camera10 and up) are reached through Reolink's cloud. */
+export function isConnectedCamera(cameraId: string): boolean {
+  const m = /^camera(\d+)$/.exec(cameraId);
+  return !!m && Number(m[1]) >= 10;
 }
 
 export function useUpdateKit(kitId: number | null) {

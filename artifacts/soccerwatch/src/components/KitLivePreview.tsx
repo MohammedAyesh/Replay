@@ -10,7 +10,9 @@ import { kitPreviewState, kitPreviewUrl, startKitPreview, type KitPreview } from
  * the kit is on a phone hotspot. Starting takes 10–40 s; the player's playlist refreshes
  * keep it running and vps1 stops it a minute after this closes.
  */
-export function KitLivePreview({ kitId, className }: { kitId: number; className?: string }) {
+export type KitPreviewOutcome = "connecting" | "playing" | "failed" | "password";
+
+export function KitLivePreview({ kitId, className, onOutcome }: { kitId: number; className?: string; onOutcome?: (o: KitPreviewOutcome) => void }) {
   const c = useKitCopy();
   const videoRef = useRef<HTMLVideoElement>(null);
   const [info, setInfo] = useState<KitPreview>({ state: "starting", via: null, message: null });
@@ -71,6 +73,10 @@ export function KitLivePreview({ kitId, className }: { kitId: number; className?
     };
   }, [info.state, kitId]);
 
+  const failedNow = info.state === "failed" || info.state === "stopped" || info.state === "unsupported";
+  const outcome: KitPreviewOutcome = info.state === "ready" && playing ? "playing" : failedNow ? (info.message === "password" ? "password" : "failed") : "connecting";
+  useEffect(() => { onOutcome?.(outcome); }, [outcome, onOutcome]);
+
   const p = c.preview;
   const waiting = info.state === "starting" || (info.state === "ready" && !playing);
   const failed = info.state === "failed" || info.state === "stopped";
@@ -86,7 +92,7 @@ export function KitLivePreview({ kitId, className }: { kitId: number; className?
         )}
         {(failed || info.state === "unsupported") && (
           <div className="absolute inset-0 flex items-center justify-center bg-raised px-4 text-center text-xs text-muted-text">
-            <Video className="me-2 h-4 w-4 shrink-0" />{info.state === "unsupported" ? p.unsupported : p.failed}
+            <Video className="me-2 h-4 w-4 shrink-0" />{info.state === "unsupported" ? p.unsupported : info.message === "password" ? p.badPassword : info.message === "offline" ? p.cloudOffline : p.failed}
           </div>
         )}
         {info.state === "ready" && playing && (

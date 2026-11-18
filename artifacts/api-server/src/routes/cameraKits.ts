@@ -7,6 +7,7 @@ import {
   cameraKitsTable,
   cameraSetupsTable,
   db,
+  fieldsTable,
   venuePitchesTable,
   type CameraKit,
   type CameraSetup,
@@ -147,6 +148,9 @@ router.get("/kits/:kitId/status", async (req, res): Promise<void> => {
     const result = await controlFetch(`/kit/${encodeURIComponent(k.kit.cameraId)}/status`, { method: "GET" }, 12_000);
     if (!result.ok) { res.json({ online: false, reason: result.status === 404 ? "unsupported" : "offline" }); return; }
     const body = (result.body ?? {}) as Record<string, unknown>;
+    // Connected from the app: vps1 only reaches it through Reolink's cloud, so the live
+    // preview is the check, not a status call.
+    if (body.reason === "cloud") { res.json({ online: false, reason: "cloud" }); return; }
     res.json({ online: body.online !== false, ssid: typeof body.ssid === "string" ? body.ssid : null, signal: typeof body.signal === "number" ? body.signal : null, battery: typeof body.battery === "number" ? body.battery : null });
   } catch {
     res.json({ online: false, reason: "unreachable" });
@@ -233,6 +237,7 @@ router.get("/kits/setups/:setupId/snapshot", async (req, res): Promise<void> => 
   try {
     const upstream = await controlResponse(`/kit/${encodeURIComponent(s.kit.cameraId)}/snapshot`, { method: "GET", headers: { Accept: "image/jpeg" } }, 20_000);
     const type = upstream.headers.get("content-type") ?? "";
+    if (upstream.status === 409) { res.status(409).json({ error: "This camera is reached through Reolink's cloud: use the live picture.", reason: "cloud" }); return; }
     if (!upstream.ok || !type.startsWith("image/")) {
       res.status(upstream.status === 404 ? 501 : 502).json({ error: upstream.status === 404 ? "Preview isn't switched on for this camera yet." : "The camera didn't send a picture." });
       return;
@@ -369,7 +374,8 @@ router.get("/kits/manage", async (req, res): Promise<void> => {
   res.json({
     kits: kits.map((k) => kitView(k, latest.get(k.id), "manage")),
     setups: await Promise.all(synced.map((s) => setupView(s))),
-    canAdd: user.isAdmin,
+    canAdd: user.isAdmin || (academyId ? (await kitRole(user, { academyId })) === "manage" : false),
+    canAddReplayCamera: user.isAdmin,
   });
 });
 
@@ -380,6 +386,89 @@ const kitBody = z.object({
   wifiSsid: z.string().trim().max(32).nullable().optional(),
   wifiPassword: z.string().max(63).nullable().optional(),
   localUrl: z.string().trim().url().max(200).nullable().optional(),
+});
+
+// ─── Connect a new camera (anyone who manages the academy or field) ──────────────────────
+// They set it up in the Reolink app first (password, WiFi), then give us its Reolink ID and
+// password here. vps1 keeps the password (0600, never in this database) and reaches the
+// camera through Reolink's cloud. Replay's own cameras are camera1-camera9; connected ones
+// get camera10 upwards.
+
+const connectBody = z.object({
+  academyId: z.number().int().positive(),
+  name: z.string().trim().min(1).max(40),
+  uid: z.string().trim().transform((u) => u.replace(/[\s-]/g, "").toUpperCase()).pipe(z.string().regex(/^[A-Z0-9]{12,24}$/)),
+  user: z.string().trim().regex(/^[A-Za-z0-9_.@-]{1,32}$/).optional(),
+  password: z.string().min(1).max(64),
+  wifiSsid: z.string().trim().max(32).nullable().optional(),
+});
+const fixBody = connectBody.pick({ uid: true, user: true, password: true });
+
+async function nextCameraId(): Promise<string> {
+  const used = [
+    ...(await db.select({ c: fieldsTable.cameraId }).from(fieldsTable)),
+    ...(await db.select({ c: cameraKitsTable.cameraId }).from(cameraKitsTable)),
+  ];
+  let top = 9;
+  for (const { c } of used) {
+    const m = /^camera(\d+)$/.exec(c ?? "");
+    if (m) top = Math.max(top, Number(m[1]));
+  }
+  return `camera${top + 1}`;
+}
+
+/** Hand the camera's details to vps1. An error string means the person has something to fix. */
+async function registerWithVps1(cameraId: string, body: { uid: string; user?: string; password: string }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  try {
+    const r = await controlFetch(`/kit/${encodeURIComponent(cameraId)}/register`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uid: body.uid, user: body.user ?? "admin", password: body.password }),
+    }, 15_000);
+    if (r.ok) return { ok: true };
+    const detail = String(((r.body ?? {}) as Record<string, unknown>).detail ?? "");
+    if (r.status === 409 && detail === "uid in use") return { ok: false, status: 409, error: "That camera is already connected to Replay." };
+    if (r.status === 400 && detail === "uid") return { ok: false, status: 400, error: "That isn't a Reolink camera ID. It's the 16 letters and numbers on the camera's sticker." };
+    if (r.status === 400) return { ok: false, status: 400, error: "Check the camera's password." };
+    return { ok: false, status: 503, error: "Replay couldn't save the camera right now. Try again in a minute." };
+  } catch {
+    return { ok: false, status: 503, error: "Replay couldn't save the camera right now. Try again in a minute." };
+  }
+}
+
+router.post("/kits/manage/connect", async (req, res): Promise<void> => {
+  const user = await labsUser(req, res);
+  if (!user) return;
+  const body = connectBody.safeParse(req.body ?? {});
+  if (!body.success) {
+    const uidBad = body.error.issues.some((i) => i.path[0] === "uid");
+    res.status(400).json({ error: uidBad ? "That isn't a Reolink camera ID. It's the 16 letters and numbers on the camera's sticker." : "Give the camera a name and its password." });
+    return;
+  }
+  if ((await kitRole(user, { academyId: body.data.academyId })) !== "manage") { res.status(403).json({ error: "Only owners and managers add cameras." }); return; }
+  const cameraId = await nextCameraId();
+  const saved = await registerWithVps1(cameraId, body.data);
+  if (!saved.ok) { res.status(saved.status).json({ error: saved.error }); return; }
+  const [row] = await db.insert(cameraKitsTable).values({
+    academyId: body.data.academyId, name: body.data.name, cameraId,
+    wifiSsid: body.data.wifiSsid || null, token: newKitToken(), createdBy: user.id,
+  }).returning();
+  logger.info({ kitId: row.id, cameraId, academyId: body.data.academyId, userId: user.id }, "Camera connected from the app");
+  res.status(201).json({ kit: kitView(row, null, "manage") });
+});
+
+/** Wrong ID or password: type them again. Only for cameras connected from the app. */
+router.post("/kits/manage/:kitId/connection", async (req, res): Promise<void> => {
+  const user = await labsUser(req, res);
+  if (!user) return;
+  const k = await loadKit(req, res, user, "manage");
+  if (!k) return;
+  const m = /^camera(\d+)$/.exec(k.kit.cameraId);
+  if (!m || Number(m[1]) < 10) { res.status(409).json({ error: "This is one of Replay's cameras. Ask Replay to change it." }); return; }
+  const body = fixBody.safeParse(req.body ?? {});
+  if (!body.success) { res.status(400).json({ error: "That isn't a Reolink camera ID. It's the 16 letters and numbers on the camera's sticker." }); return; }
+  const saved = await registerWithVps1(k.kit.cameraId, body.data);
+  if (!saved.ok) { res.status(saved.status).json({ error: saved.error }); return; }
+  res.json({ ok: true });
 });
 
 /** Kits are Replay hardware: only admins add them (with the camera name vps1 knows). */

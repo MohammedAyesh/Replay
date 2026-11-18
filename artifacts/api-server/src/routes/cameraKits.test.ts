@@ -41,7 +41,7 @@ vi.mock("../lib/clerkUserBridge", () => ({
   }),
 }));
 
-const control = vi.hoisted(() => ({ calls: [] as Array<{ path: string; method: string }> }));
+const control = vi.hoisted(() => ({ calls: [] as Array<{ path: string; method: string }>, registered: [] as Array<{ path: string; uid: string; password: string }> }));
 vi.mock("./contabo", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./contabo")>();
   return {
@@ -50,6 +50,12 @@ vi.mock("./contabo", async (importOriginal) => {
       control.calls.push({ path, method: String(opts.method ?? "GET") });
       if (path.startsWith("/record-hq/") && opts.method === "POST") return { ok: true, status: 200, body: { jobId: `job-${control.calls.length}`, status: "scheduled" } };
       if (opts.method === "DELETE") return { ok: true, status: 200, body: { status: "cancelled" } };
+      if (path.endsWith("/register")) {
+        const sent = JSON.parse(String(opts.body ?? "{}")) as { uid: string; password: string };
+        control.registered.push({ path, uid: sent.uid, password: sent.password });
+        if (sent.uid === "9527000IO6BZ1XD9") return { ok: false, status: 409, body: { detail: "uid in use" } };
+        return { ok: true, status: 200, body: { ok: true } };
+      }
       if (path.startsWith("/kit/")) return { ok: false, status: 404, body: null };
       return { ok: true, status: 200, body: {} };
     }),
@@ -167,6 +173,27 @@ describe("portable cameras", () => {
     await request(app).get(`/api/kits/${kitId}/preview/index.m3u8`).set(auth(coachId)).expect(404);
   });
 
+  it("lets an owner connect a new camera by its Reolink ID, keeping the password off this database", async () => {
+    await request(app).get(`/api/kits/manage?academyId=${academyId}`).set(auth(ownerId)).expect(200)
+      .expect((r) => { expect(r.body.canAdd).toBe(true); expect(r.body.canAddReplayCamera).toBe(false); });
+    const send = { academyId, name: "Away kit", uid: "9527-000i-o6bz-1xd0", password: "pa ss\"word" };
+    await request(app).post("/api/kits/manage/connect").set(auth(coachId)).send(send).expect(403);
+    await request(app).post("/api/kits/manage/connect").set(auth(ownerId)).send({ ...send, uid: "hello" }).expect(400)
+      .expect((r) => expect(r.body.error).toMatch(/sticker/));
+    await request(app).post("/api/kits/manage/connect").set(auth(ownerId)).send({ ...send, uid: "9527000IO6BZ1XD9" }).expect(409)
+      .expect((r) => expect(r.body.error).toMatch(/already connected/));
+    const made = await request(app).post("/api/kits/manage/connect").set(auth(ownerId)).send(send).expect(201);
+    const n = Number(/^camera(\d+)$/.exec(made.body.kit.cameraId)?.[1]);
+    expect(n).toBeGreaterThanOrEqual(10);
+    expect(control.registered.at(-1)).toEqual({ path: `/kit/camera${n}/register`, uid: "9527000IO6BZ1XD0", password: 'pa ss"word' });
+    const [row] = await db.select().from(cameraKitsTable).where(eq(cameraKitsTable.id, made.body.kit.id));
+    expect(JSON.stringify(row)).not.toContain("pa ss");
+    // Wrong password: type it again. Replay's own cameras can't be changed this way.
+    await request(app).post(`/api/kits/manage/${made.body.kit.id}/connection`).set(auth(ownerId)).send({ uid: "9527000IO6BZ1XD0", password: "new" }).expect(200);
+    await request(app).post(`/api/kits/manage/${kitId}/connection`).set(auth(adminId)).send({ uid: "9527000IO6BZ1XD0", password: "new" }).expect(409);
+    await db.update(cameraKitsTable).set({ archived: true }).where(eq(cameraKitsTable.id, made.body.kit.id));
+  });
+
   it("needs the mast height typed, records, and keeps what was played on Stop", async () => {
     await request(app).post(`/api/kits/${kitId}/setups`).set(auth(coachId)).send({ pitchId }).expect(400);
     await request(app).post(`/api/kits/${kitId}/setups`).set(auth(coachId)).send({ pitchId, mastHeightM: 0.5 }).expect(400);
@@ -240,7 +267,8 @@ describe("portable cameras", () => {
     expect(camera.pitchModel?.pitchHeightMetres).toBeCloseTo(20);
 
     const manage = await request(app).get(`/api/kits/manage?academyId=${academyId}`).set(auth(ownerId)).expect(200);
-    expect(manage.body.canAdd).toBe(false);
+    expect(manage.body.canAdd).toBe(true);
+    expect(manage.body.canAddReplayCamera).toBe(false);
     expect(manage.body.setups.length).toBeGreaterThanOrEqual(2);
     await request(app).get(`/api/kits/manage?academyId=${academyId}`).set(auth(coachId)).expect(403);
   });
