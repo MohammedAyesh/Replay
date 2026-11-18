@@ -1,0 +1,14 @@
+[Unit]
+Description=Replay kit camera low-quality live preview (%i)
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/opt/replay/venv/bin/python /opt/replay/kit_preview.py %i
+Restart=no
+RuntimeMaxSec=1900
+TimeoutStopSec=20
+KillMode=mixed
+StandardOutput=append:/var/log/replay-kitpreview.log
+StandardError=append:/var/log/replay-kitpreview.log

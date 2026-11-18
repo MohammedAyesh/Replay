@@ -245,6 +245,59 @@ router.get("/kits/setups/:setupId/snapshot", async (req, res): Promise<void> => 
   }
 });
 
+// ─── Low-quality live preview ────────────────────────────────────────────────
+// vps1's kit_preview.py: straight to the camera over WireGuard when it can, else through
+// Reolink's own cloud relay (~0.5 Mbps, enough for the 1536×432 sub stream). It starts on
+// the first request and stops by itself a minute after the last one, so the player's own
+// playlist refreshes are what keep it alive.
+
+const PREVIEW_FILE = /^(index\.m3u8|seg_\d{6}\.ts)$/;
+type PreviewState = { state: "starting" | "ready" | "failed" | "stopped" | "unsupported"; via: "direct" | "cloud" | null; message: string | null };
+
+function previewState(body: unknown): PreviewState {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const state = ["starting", "ready", "failed", "stopped"].includes(String(b.state)) ? (b.state as PreviewState["state"]) : "failed";
+  return { state, via: b.via === "direct" || b.via === "cloud" ? b.via : null, message: typeof b.message === "string" ? b.message : null };
+}
+
+async function previewCall(req: Request, res: Response, method: "POST" | "GET" | "DELETE"): Promise<void> {
+  const user = await labsUser(req, res);
+  if (!user) return;
+  const k = await loadKit(req, res, user);
+  if (!k) return;
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const r = await controlFetch(`/kit/${encodeURIComponent(k.kit.cameraId)}/preview`, { method }, 15_000);
+    if (r.status === 404) { res.json({ state: "unsupported", via: null, message: null } satisfies PreviewState); return; }
+    if (!r.ok) { res.status(502).json({ error: "The preview didn't start." }); return; }
+    res.json(previewState(r.body));
+  } catch {
+    res.status(502).json({ error: "The preview didn't start." });
+  }
+}
+
+router.post("/kits/:kitId/preview", (req, res) => previewCall(req, res, "POST"));
+router.get("/kits/:kitId/preview", (req, res) => previewCall(req, res, "GET"));
+router.delete("/kits/:kitId/preview", (req, res) => previewCall(req, res, "DELETE"));
+
+router.get("/kits/:kitId/preview/:file", async (req, res): Promise<void> => {
+  const file = String(req.params.file ?? "");
+  if (!PREVIEW_FILE.test(file)) { res.status(404).end(); return; }
+  const user = await labsUser(req, res);
+  if (!user) return;
+  const k = await loadKit(req, res, user);
+  if (!k) return;
+  try {
+    const upstream = await controlResponse(`/kit/${encodeURIComponent(k.kit.cameraId)}/preview/${file}`, { method: "GET" }, 20_000);
+    if (!upstream.ok) { res.status(upstream.status === 404 ? 404 : 502).end(); return; }
+    res.setHeader("Content-Type", file.endsWith(".m3u8") ? "application/vnd.apple.mpegurl" : "video/mp2t");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch {
+    res.status(502).end();
+  }
+});
+
 const startBody = z.object({
   minutes: z.number().int().refine((m) => (SETUP_MINUTES as readonly number[]).includes(m)),
   kind: z.enum(["match", "training", "session"]).optional(),

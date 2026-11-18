@@ -181,6 +181,18 @@ const en = {
     autoApprove: "Approve measurements on my own",
     autoApproveHint: "If a portable camera's measurement is within 3% of this pitch's size, use it without asking me.",
   },
+  preview: {
+    show: "Watch live (low quality)",
+    live: "Live",
+    hide: "Back to the picture",
+    connecting: "Connecting to the camera…",
+    connectingCloud: "Connecting through Reolink's cloud… up to 40 seconds",
+    lowQuality: "Live · low quality",
+    viaCloud: "Live · low quality, through Reolink's cloud",
+    failed: "The live picture didn't come through. The camera may be off or still joining the WiFi.",
+    unsupported: "Live preview isn't switched on for this camera yet.",
+    retry: "Try again",
+  },
   errors: { generic: "Something went wrong. Try again." },
 };
 
@@ -361,6 +373,18 @@ const ar: KitStrings = {
     measureHint: "اتركه فاضي ومنقيسه",
     autoApprove: "اعتمد القياسات لحالها",
     autoApproveHint: "إذا قياس الكاميرا المتنقلة ضمن ٣٪ من مقاس الملعب، استعمله بدون ما تسألني.",
+  },
+  preview: {
+    show: "اتفرّج مباشر (جودة خفيفة)",
+    live: "مباشر",
+    hide: "ارجع للصورة",
+    connecting: "عم نتصل بالكاميرا…",
+    connectingCloud: "عم نتصل عن طريق سحابة Reolink… لحد ٤٠ ثانية",
+    lowQuality: "مباشر · جودة خفيفة",
+    viaCloud: "مباشر · جودة خفيفة، عن طريق سحابة Reolink",
+    failed: "البث المباشر ما وصل. ممكن الكاميرا طافية أو لسّا عم تتصل عالواي فاي.",
+    unsupported: "المعاينة المباشرة مش مفعّلة لهالكاميرا لسّا.",
+    retry: "جرّب كمان مرة",
   },
   errors: { generic: "صار في غلط. جرّب كمان مرة." },
 };

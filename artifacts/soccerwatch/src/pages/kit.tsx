@@ -19,6 +19,7 @@ import {
   WifiOff,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
+import { KitLivePreview } from "@/components/KitLivePreview";
 import { useKitCopy } from "@/i18n/kit-strings";
 import { cn } from "@/lib/utils";
 import {
@@ -419,6 +420,7 @@ function ViewStep({ setup }: { setup: KitSetup }) {
   const [bust, setBust] = useState(() => Date.now());
   const [shot, setShot] = useState<{ url?: string; state: "loading" | "ok" | "none" | "failed" }>({ state: "loading" });
   const [allOk, setAllOk] = useState(false);
+  const [live, setLive] = useState(false);
   const patch = usePatchSetup(setup.id);
   const cancel = useCancelSetup(setup.id);
 
@@ -440,6 +442,7 @@ function ViewStep({ setup }: { setup: KitSetup }) {
     <Page ar={ar}>
       <Back label={c.back} onClick={() => cancel.mutate({}, { onSuccess: () => setLocation("/kit") })} />
       <Title title={c.view.title} sub={c.view.sub} />
+      {live ? <KitLivePreview kitId={setup.kitId} className="mt-4" /> : <>
       <div className="relative mt-4 overflow-hidden rounded-2xl border border-line bg-raised" style={{ aspectRatio: "3840 / 1080" }}>
         {shot.state === "ok" && <img src={shot.url} alt="" className="h-full w-full object-cover" />}
         {shot.state === "loading" && <div className="flex h-full items-center justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-text" /></div>}
@@ -447,6 +450,8 @@ function ViewStep({ setup }: { setup: KitSetup }) {
         {shot.state === "ok" && <span className="absolute end-2 top-1.5 rounded-full bg-[#FF5A3C] px-2 py-0.5 text-[10px] font-bold text-white">LIVE</span>}
       </div>
       {shot.state !== "none" && <Secondary className="mt-3 min-h-10 text-sm" onClick={() => setBust(Date.now())}><RefreshCw className="h-4 w-4" />{c.view.refresh}</Secondary>}
+      </>}
+      <Secondary className="mt-2 min-h-10 text-sm" onClick={() => setLive((v) => !v)}><Video className="h-4 w-4" />{live ? c.preview.hide : c.preview.show}</Secondary>
       <Checklist n={1} title={c.mast.before} items={[c.view.corners, c.view.level]} onAll={setAllOk} />
       <Info><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-raised text-turf"><Ruler className="h-[18px] w-[18px]" /></span><span className="text-xs leading-5 text-muted-text">{c.view.after}</span></div></Info>
       <ErrorLine error={patch.error} />
@@ -508,6 +513,7 @@ function RecordingStep({ setup }: { setup: KitSetup }) {
   const elapsed = useElapsed(setup.startedAt);
   const stop = useStopSetup(setup.id);
   const status = useKitStatus(setup.kitId, true);
+  const [live, setLive] = useState(false);
   const name = setup.title || c.session.kinds[setup.kind];
   const place = c.locale === "ar" ? setup.pitchNameAr || setup.pitchName : setup.pitchName;
   return (
@@ -527,6 +533,8 @@ function RecordingStep({ setup }: { setup: KitSetup }) {
         <Tile icon={status.data?.online ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />} label="WiFi" value={status.data?.online ? (status.data.ssid ?? "✓") : "—"} hint={status.data?.battery != null ? c.connect.battery(status.data.battery) : ""} />
         <Tile icon={<Video className="h-3.5 w-3.5" />} label={c.live.footage} value={c.status.recording} ltr={false} hint={setup.footage?.message ?? ""} />
       </div>
+      {live && <KitLivePreview kitId={setup.kitId} className="mt-3" />}
+      <Secondary className="mt-3" onClick={() => setLive((v) => !v)}><Video className="h-[18px] w-[18px]" />{live ? c.preview.hide : c.preview.show}</Secondary>
       {setup.localUrl && <Link href={`/kit/s/${setup.id}/watch`} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-full border border-line bg-raised text-[15px] font-semibold">{c.live.watch}</Link>}
       <ErrorLine error={stop.error} />
       <button type="button" disabled={stop.isPending} onClick={() => { if (window.confirm(c.live.stopConfirm)) stop.mutate({}); }}
