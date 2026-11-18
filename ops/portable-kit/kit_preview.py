@@ -82,6 +82,8 @@ class Run:
             cache = json.load(open(UID_CACHE))
         except (OSError, ValueError):
             pass
+        if not host:
+            return None
         try:
             with kit_api._Session(self.cam) as s:
                 r = s.call("GetP2p", {}, action=0)
@@ -137,12 +139,21 @@ class Run:
         r = self.docker("inspect", "-f", "{{.State.Running}}", self.container, timeout=10)
         return r.stdout.strip() == "true"
 
+    REFUSED = re.compile(r"(?i)(password|credential|login fail|unauthori|AuthFail)")
+
     def wait_logged_in(self, limit):
+        """True once streaming; "refused" the moment the camera turns the password down.
+
+        Stopping at the first refusal matters: neolink keeps retrying, and Reolink cameras
+        lock their logins after a few failures, which would lock the owner out too.
+        """
         end = now() + limit
         while now() < end:
             log = self.neolink_log()
             if "Connected and logged in" in log and f"Available at /{self.cam}/sub" in log:
                 return True
+            if self.REFUSED.search(log):
+                return "refused"
             if not self.neolink_alive():
                 return False
             time.sleep(1)
@@ -176,7 +187,7 @@ class Run:
         attempts = []
         # "via": "cloud" in kits.json (or KITPREVIEW_VIA=cloud for a test) skips the direct path.
         cloud_only = os.environ.get("KITPREVIEW_VIA") == "cloud" or kit_api.kit_entry(self.cam).get("via") == "cloud"
-        if not cloud_only and self.reachable(host):
+        if not cloud_only and host and self.reachable(host):
             attempts.append(("direct", f'address = "{host}:9000"'))
         uid = self.uid(host, user, password)
         if uid:
@@ -184,16 +195,20 @@ class Run:
         if not attempts:
             self.state("failed", "The camera isn't reachable and its Reolink UID isn't known yet")
             return 2
+        result = False
         for via, line in attempts:
             self.via = via
             self.state("starting", "Connecting through Reolink's cloud" if via == "cloud" else "Connecting")
             self.write_config(user, password, line)
             self.start_neolink()
-            if self.wait_logged_in(CONNECT_S if via == "cloud" else 25):
+            result = self.wait_logged_in(CONNECT_S if via == "cloud" else 25)
+            if result is True:
                 break
             self.docker("rm", "-f", self.container)
-        else:
-            self.state("failed", "The camera didn't answer")
+            if result == "refused":
+                break  # never try a wrong password again down another path
+        if result is not True:
+            self.state("failed", "password" if result == "refused" else "offline" if self.via == "cloud" else "The camera didn't answer")
             return 3
         # The config holds the password: gone as soon as neolink has read it.
         shutil.rmtree(self.cfg_dir, ignore_errors=True)

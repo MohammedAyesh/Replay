@@ -8,6 +8,7 @@ Mounted into control.py (x-api-key like every other route):
     GET  /kit/{cam}/status    -> {online, ssid, signal, link}
     GET  /kit/{cam}/snapshot  -> image/jpeg (cmd=Snap, channel 0, the stitched panorama)
     POST /kit/{cam}/wifi      {ssid, password} -> SetWifi, read-modify-write
+    POST /kit/{cam}/register  {uid, user?, password} -> a camera added in the app, reached by Reolink UID
     POST /kit/{cam}/preview   start the low-quality live preview (kit_preview.py); GET = its state
     GET  /kit/{cam}/preview/index.m3u8 | seg_NNNNNN.ts   the preview itself (HLS, H.264)
     DELETE /kit/{cam}/preview stop it now (it also stops by itself 60 s after the last request)
@@ -77,18 +78,23 @@ def _camera(cam):
     short = _short(cam)
     entry = kit_entry(cam)
     host = entry.get("host") or DEFAULT_HOSTS.get(short)
-    if not host:
+    if not host and not entry.get("uid"):
         raise HTTPException(404, "unknown camera")
     password = None
+    if entry.get("passFile"):
+        try:
+            password = json.load(open(entry["passFile"])).get("password")
+        except (OSError, ValueError):
+            password = None
     pass_env = entry.get("passEnv") or DEFAULT_PASS_ENV.get(short)
-    if pass_env:
+    if password is None and pass_env:
         path, _, name = pass_env.partition(":")
         password = _env_value(path, name)
-    if password is None:
+    if password is None and not entry.get("passFile"):
         password = _env_value("/opt/replay/env", "CAM_PASS")
     if not password:
         raise HTTPException(500, "no camera password configured")
-    return host, entry.get("user", "admin"), password
+    return host or None, entry.get("user", "admin"), password
 
 
 def _call(host, cmd, param, token=None, action=None):
@@ -107,6 +113,8 @@ class _Session:
         self.token = None
 
     def __enter__(self):
+        if not self.host:
+            raise HTTPException(409, "cloud-only camera")
         try:
             r = _call(self.host, "Login", {"User": {"Version": "0", "userName": self.user, "password": self.password}})
         except OSError as e:
@@ -151,6 +159,8 @@ def kit_status(cam: str, x_api_key: str = Header(None)):
     except HTTPException as e:
         if e.status_code in (502, 503):
             return {"online": False, "reason": "offline"}
+        if e.status_code == 409:
+            return {"online": False, "reason": "cloud"}
         raise
 
 
@@ -167,6 +177,69 @@ def kit_snapshot(cam: str, x_api_key: str = Header(None)):
     if not kind.startswith("image/") or len(data) < 1000:
         raise HTTPException(502, "camera sent no picture")
     return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+# ── A new camera, connected from the app ────────────────────────────────────────────────
+
+KITPASS_DIR = "/etc/replay/kitpass"
+_UID = re.compile(r"^[A-Z0-9]{12,24}$")
+
+
+@router.post("/kit/{cam}/register")
+def kit_register(cam: str, body: dict = Body(...), x_api_key: str = Header(None)):
+    """Remember a camera someone set up in the Reolink app: its UID and password.
+
+    vps1 reaches it through Reolink's cloud by UID (kit_preview.py). The password goes to
+    /etc/replay/kitpass/<cam>.json (0600), never to kits.json, argv or a log. Replay's own
+    cameras (cam1-cam3) can't be overwritten from here.
+    """
+    _auth(x_api_key)
+    short = _short(cam)
+    if not re.fullmatch(r"cam\d{1,3}", short):
+        raise HTTPException(400, "bad camera name")
+    if short in DEFAULT_HOSTS:
+        raise HTTPException(409, "that camera belongs to Replay")
+    uid = re.sub(r"[\s-]", "", str(body.get("uid") or "")).upper()
+    user = str(body.get("user") or "admin").strip()
+    password = body.get("password")
+    if not _UID.match(uid):
+        raise HTTPException(400, "uid")
+    if not re.fullmatch(r"[A-Za-z0-9_.@-]{1,32}", user):
+        raise HTTPException(400, "user")
+    if password is not None and (not isinstance(password, str) or not (1 <= len(password) <= 64) or any(ord(ch) < 32 for ch in password)):
+        raise HTTPException(400, "password")
+    import fcntl
+    os.makedirs(KITPASS_DIR, mode=0o700, exist_ok=True)
+    with open(KITS_FILE + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            kits = json.load(open(KITS_FILE))
+        except (OSError, ValueError):
+            kits = {}
+        for other, entry in kits.items():
+            if _short(other) != short and str(entry.get("uid") or "").upper() == uid:
+                raise HTTPException(409, "uid in use")
+        entry = dict(kits.get(short) or {})
+        for k in ("host", "passEnv"):
+            entry.pop(k, None)
+        pass_file = os.path.join(KITPASS_DIR, short + ".json")
+        if password is not None:
+            fd = os.open(pass_file + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f:
+                json.dump({"password": password}, f)
+            os.replace(pass_file + ".tmp", pass_file)
+        elif not os.path.exists(pass_file):
+            raise HTTPException(400, "password")
+        entry.update({"uid": uid, "user": user, "via": "cloud", "passFile": pass_file})
+        for k in [k for k in kits if _short(k) == short]:
+            kits.pop(k)
+        kits[short] = entry
+        with open(KITS_FILE + ".tmp", "w") as f:
+            json.dump(kits, f, indent=1)
+        os.replace(KITS_FILE + ".tmp", KITS_FILE)
+    # A preview still running with the old details would keep showing the old camera.
+    subprocess.run(["systemctl", "stop", "--no-block", f"replay-kitpreview@{short}"], timeout=15)
+    return {"ok": True, "camera": short}
 
 
 # ── Low-quality live preview (kit_preview.py, replay-kitpreview@<cam>) ──────────────────

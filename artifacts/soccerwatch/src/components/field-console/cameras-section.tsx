@@ -1,13 +1,13 @@
-import { useState, type FormEvent } from "react";
-import { AlertTriangle, ArrowLeft, Check, ChevronRight, Copy, Plus, RotateCcw, Ruler, Video, Wifi } from "lucide-react";
+import { useCallback, useState, type FormEvent } from "react";
+import { AlertTriangle, ArrowLeft, Check, ChevronRight, Copy, Eye, EyeOff, KeyRound, Loader2, Plus, RotateCcw, Ruler, Video, Wifi } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useKitCopy } from "@/i18n/kit-strings";
-import { KitLivePreview } from "@/components/KitLivePreview";
+import { KitLivePreview, type KitPreviewOutcome } from "@/components/KitLivePreview";
 import { cn } from "@/lib/utils";
-import { useAddKit, useKitWifi, useManageKits, useReviewSetup, type Kit, type KitSetup } from "@/lib/kits-api";
+import { isConnectedCamera, useAddKit, useConnectKit, useFixKitConnection, useKitWifi, useManageKits, useReviewSetup, type Kit, type KitSetup } from "@/lib/kits-api";
 import { Card, ErrorText, SectionHeader, Skeleton } from "./shared";
 
 /**
@@ -38,9 +38,10 @@ export function CamerasSection({ academyId }: { academyId: number }) {
   const [open, setOpen] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
   const [wifiKit, setWifiKit] = useState<Kit | null>(null);
+  const [fixKit, setFixKit] = useState<Kit | null>(null);
   if (q.isLoading) return <Skeleton rows={3} />;
   if (q.isError || !q.data) return <ErrorText error={q.error} />;
-  const { kits, setups, canAdd } = q.data;
+  const { kits, setups, canAdd, canAddReplayCamera } = q.data;
   const current = setups.find((s) => s.id === open);
   if (current) return <ReviewPanel setup={current} onBack={() => setOpen(null)} />;
   const rows = filter === "look" ? setups.filter((s) => s.status === "needs_look") : setups;
@@ -51,7 +52,7 @@ export function CamerasSection({ academyId }: { academyId: number }) {
         action={canAdd ? <Button type="button" onClick={() => setAdding(true)} className="min-h-11 rounded-xl bg-floodlight px-4 font-bold text-void"><Plus className="me-2 h-4 w-4" />{c.console.add}</Button> : undefined} />
       {kits.length === 0 ? <Card><p className="text-sm text-muted-text">{c.console.none}</p></Card> : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {kits.map((k) => <KitCard key={k.id} kit={k} onWifi={() => setWifiKit(k)} />)}
+          {kits.map((k) => <KitCard key={k.id} kit={k} onWifi={() => setWifiKit(k)} onFix={() => setFixKit(k)} />)}
         </div>
       )}
       {setups.length > 0 && (
@@ -91,13 +92,14 @@ export function CamerasSection({ academyId }: { academyId: number }) {
         </section>
       )}
       <p className="text-xs leading-5 text-muted-text">{c.console.footnote}</p>
-      {adding && <AddKitDialog academyId={academyId} onClose={() => setAdding(false)} />}
+      {adding && <ConnectCameraDialog academyId={academyId} canAddReplayCamera={!!canAddReplayCamera} onClose={() => setAdding(false)} />}
       {wifiKit && <WifiDialog kit={wifiKit} onClose={() => setWifiKit(null)} />}
+      {fixKit && <FixConnectionDialog kit={fixKit} onClose={() => setFixKit(null)} />}
     </section>
   );
 }
 
-function KitCard({ kit, onWifi }: { kit: Kit; onWifi: () => void }) {
+function KitCard({ kit, onWifi, onFix }: { kit: Kit; onWifi: () => void; onFix: () => void }) {
   const c = useKitCopy();
   const [copied, setCopied] = useState(false);
   const [watching, setWatching] = useState(false);
@@ -115,7 +117,7 @@ function KitCard({ kit, onWifi }: { kit: Kit; onWifi: () => void }) {
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         {kit.wifiSsid && <span className="inline-flex items-center gap-1.5 text-xs text-muted-text"><Wifi className="h-3.5 w-3.5" /><span dir="ltr">{kit.wifiSsid}</span></span>}
-        <span className="inline-flex items-center gap-1.5 text-xs text-muted-text"><Video className="h-3.5 w-3.5" /><span dir="ltr">{kit.cameraId}</span></span>
+        <span className="inline-flex items-center gap-1.5 text-xs text-muted-text"><Video className="h-3.5 w-3.5" />{isConnectedCamera(kit.cameraId) ? c.console.connectForm.viaCloud : <span dir="ltr">{kit.cameraId}</span>}</span>
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         {sticker && (
@@ -124,7 +126,9 @@ function KitCard({ kit, onWifi }: { kit: Kit; onWifi: () => void }) {
             {copied ? <Check className="h-3.5 w-3.5 text-turf" /> : <Copy className="h-3.5 w-3.5" />}{c.console.sticker}
           </button>
         )}
-        <button type="button" onClick={onWifi} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-line bg-raised px-3 text-xs font-semibold text-text"><Wifi className="h-3.5 w-3.5" />WiFi</button>
+        {isConnectedCamera(kit.cameraId)
+          ? <button type="button" onClick={onFix} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-line bg-raised px-3 text-xs font-semibold text-text"><KeyRound className="h-3.5 w-3.5" />{c.console.connectForm.fix}</button>
+          : <button type="button" onClick={onWifi} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-line bg-raised px-3 text-xs font-semibold text-text"><Wifi className="h-3.5 w-3.5" />WiFi</button>}
         <button type="button" onClick={() => setWatching((v) => !v)} className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold", watching ? "border-turf bg-turf/15 text-turf" : "border-line bg-raised text-text")}><Video className="h-3.5 w-3.5" />{c.preview.live}</button>
       </div>
       {watching && <KitLivePreview kitId={kit.id} className="mt-4" />}
@@ -194,6 +198,149 @@ function ReviewPanel({ setup, onBack }: { setup: KitSetup; onBack: () => void })
         </div>
       </div>
     </section>
+  );
+}
+
+function SecretInput({ value, onChange, id }: { value: string; onChange: (v: string) => void; id?: string }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <Input id={id} type={show ? "text" : "password"} value={value} onChange={(e) => onChange(e.target.value)} required maxLength={64} dir="ltr" autoComplete="new-password" className="pe-10" />
+      <button type="button" onClick={() => setShow((v) => !v)} className="absolute inset-y-0 end-0 flex w-10 items-center justify-center text-muted-text" aria-label={show ? "Hide" : "Show"}>
+        {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Connect a camera the person set up in the Reolink app: name, its Reolink ID and password,
+ * then a live check through Reolink's cloud. Owners and managers do this themselves.
+ */
+function ConnectCameraDialog({ academyId, canAddReplayCamera, onClose }: { academyId: number; canAddReplayCamera: boolean; onClose: () => void }) {
+  const c = useKitCopy();
+  const f = c.console.connectForm;
+  const connect = useConnectKit();
+  const [step, setStep] = useState<"before" | "details" | "check" | "replay">("before");
+  const [name, setName] = useState("");
+  const [uid, setUid] = useState("");
+  const [password, setPassword] = useState("");
+  const [user, setUser] = useState("admin");
+  const [kit, setKit] = useState<Kit | null>(null);
+  const [outcome, setOutcome] = useState<KitPreviewOutcome>("connecting");
+  const [fixing, setFixing] = useState(false);
+  const fix = useFixKitConnection(kit?.id ?? null);
+  const [attempt, setAttempt] = useState(0);
+  const onOutcome = useCallback((o: KitPreviewOutcome) => setOutcome(o), []);
+
+  if (step === "replay") return <AddKitDialog academyId={academyId} onClose={onClose} />;
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    connect.mutate({ academyId, name: name.trim(), uid, password, user: user.trim() || "admin" }, {
+      onSuccess: (r) => { setKit(r.kit); setStep("check"); },
+    });
+  };
+  const resubmit = (e: FormEvent) => {
+    e.preventDefault();
+    fix.mutate({ uid, password, user: user.trim() || "admin" }, { onSuccess: () => { setFixing(false); setOutcome("connecting"); setAttempt((n) => n + 1); } });
+  };
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent dir={c.locale === "ar" ? "rtl" : "ltr"} className="border-line bg-surface text-text sm:max-w-lg">
+        <DialogHeader className="text-start"><DialogTitle>{f.title}</DialogTitle></DialogHeader>
+
+        {step === "before" && (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-text">{f.beforeIntro}</p>
+            <ol className="space-y-2.5">
+              {f.beforeSteps.map((t, i) => (
+                <li key={i} className="flex gap-3 text-sm leading-6">
+                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-raised text-xs font-bold">{i + 1}</span>{t}
+                </li>
+              ))}
+            </ol>
+            <Button type="button" onClick={() => setStep("details")} className="min-h-11 w-full bg-floodlight font-bold text-void">{f.ready}</Button>
+            {canAddReplayCamera && <button type="button" onClick={() => setStep("replay")} className="w-full text-center text-xs font-semibold text-muted-text underline">{f.replayCamera}</button>}
+          </div>
+        )}
+
+        {step === "details" && (
+          <form onSubmit={submit} className="space-y-3">
+            <div className="space-y-1.5"><Label>{f.name}</Label><Input value={name} onChange={(e) => setName(e.target.value)} required maxLength={40} placeholder={f.namePlaceholder} /></div>
+            <div className="space-y-1.5">
+              <Label>{f.uid}</Label>
+              <Input value={uid} onChange={(e) => setUid(e.target.value.toUpperCase())} required maxLength={30} dir="ltr" placeholder="9527000XXXXXXXXX" className="font-mono tracking-wider" autoCapitalize="characters" autoCorrect="off" spellCheck={false} />
+              <p className="text-xs leading-5 text-muted-text">{f.uidHint}</p>
+            </div>
+            <div className="space-y-1.5"><Label>{f.password}</Label><SecretInput value={password} onChange={setPassword} /><p className="text-xs leading-5 text-muted-text">{f.passwordHint}</p></div>
+            <details className="text-xs text-muted-text">
+              <summary className="cursor-pointer select-none">{f.more}</summary>
+              <div className="mt-2 space-y-1.5"><Label>{f.user}</Label><Input value={user} onChange={(e) => setUser(e.target.value)} maxLength={32} dir="ltr" /></div>
+            </details>
+            <ErrorText error={connect.error} />
+            <Button type="submit" disabled={connect.isPending} className="min-h-11 w-full bg-floodlight font-bold text-void">
+              {connect.isPending && <Loader2 className="me-2 h-4 w-4 animate-spin" />}{f.connect}
+            </Button>
+          </form>
+        )}
+
+        {step === "check" && kit && (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-text">{outcome === "playing" ? f.connected(kit.name) : f.checking}</p>
+            <KitLivePreview key={attempt} kitId={kit.id} onOutcome={onOutcome} />
+            {outcome === "playing" && <Button type="button" onClick={onClose} className="min-h-11 w-full bg-floodlight font-bold text-void"><Check className="me-2 h-4 w-4" />{f.done}</Button>}
+            {(outcome === "password" || outcome === "failed") && !fixing && (
+              <div className="space-y-2">
+                <p className="text-xs leading-5 text-muted-text">{outcome === "password" ? f.wrongPassword : f.notThrough}</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <Button type="button" onClick={() => setFixing(true)} className="min-h-11 bg-floodlight font-bold text-void">{f.fixDetails}</Button>
+                  <Button type="button" variant="outline" onClick={onClose} className="min-h-11 border-line bg-raised text-text">{f.later}</Button>
+                </div>
+              </div>
+            )}
+            {fixing && (
+              <form onSubmit={resubmit} className="space-y-3 rounded-2xl border border-line bg-raised p-3">
+                <div className="space-y-1.5"><Label>{f.uid}</Label><Input value={uid} onChange={(e) => setUid(e.target.value.toUpperCase())} required maxLength={30} dir="ltr" className="font-mono tracking-wider" /></div>
+                <div className="space-y-1.5"><Label>{f.password}</Label><SecretInput value={password} onChange={setPassword} /></div>
+                <ErrorText error={fix.error} />
+                <Button type="submit" disabled={fix.isPending} className="min-h-11 w-full bg-floodlight font-bold text-void">{f.tryAgain}</Button>
+              </form>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** A connected camera's password or ID changed: type them again, then check the picture. */
+function FixConnectionDialog({ kit, onClose }: { kit: Kit; onClose: () => void }) {
+  const c = useKitCopy();
+  const f = c.console.connectForm;
+  const fix = useFixKitConnection(kit.id);
+  const [uid, setUid] = useState("");
+  const [password, setPassword] = useState("");
+  const [saved, setSaved] = useState(false);
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent dir={c.locale === "ar" ? "rtl" : "ltr"} className="border-line bg-surface text-text sm:max-w-lg">
+        <DialogHeader className="text-start"><DialogTitle>{f.fixTitle} · {kit.name}</DialogTitle></DialogHeader>
+        {saved ? (
+          <div className="space-y-3">
+            <KitLivePreview kitId={kit.id} />
+            <Button type="button" onClick={onClose} className="min-h-11 w-full bg-floodlight font-bold text-void">{f.done}</Button>
+          </div>
+        ) : (
+          <form onSubmit={(e) => { e.preventDefault(); fix.mutate({ uid, password }, { onSuccess: () => setSaved(true) }); }} className="space-y-3">
+            <div className="space-y-1.5"><Label>{f.uid}</Label><Input value={uid} onChange={(e) => setUid(e.target.value.toUpperCase())} required maxLength={30} dir="ltr" className="font-mono tracking-wider" /><p className="text-xs leading-5 text-muted-text">{f.uidHint}</p></div>
+            <div className="space-y-1.5"><Label>{f.password}</Label><SecretInput value={password} onChange={setPassword} /></div>
+            <ErrorText error={fix.error} />
+            <Button type="submit" disabled={fix.isPending} className="min-h-11 w-full bg-floodlight font-bold text-void">{f.tryAgain}</Button>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

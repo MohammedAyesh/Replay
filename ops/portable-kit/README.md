@@ -32,3 +32,14 @@ The app's "Watch live (low quality)" buttons (view check, recording screen, cons
   RTSP 127.0.0.1:186NN; ffmpeg copies the sub stream to HLS in `/run/replay-kitpreview/<cam>/hls`.
 - Stops 60 s after the last request, at 30 min, or when the stream drops. Log: `/var/log/replay-kitpreview.log`.
 - Measured on cam1: direct ready in ~30 s; cloud ready in 33 s, 72 s of video per 60 s watched, 0.28 Mbps.
+
+## Connecting a new camera from the app (2026-11-18)
+
+Owners and managers: Console → Cameras → Add camera. They first set the camera up in the Reolink app
+(password, WiFi), then type a name, the camera's Reolink ID (UID) and its password. The app gives it the next
+free `cameraN` (10 and up; 1–9 stay Replay's own) and calls vps1 `POST /kit/cameraN/register`, which writes
+`kits.json` `{uid, user, via: "cloud", passFile}` and the password to `/etc/replay/kitpass/camN.json` (0600). The
+password is never stored in the app's database. The dialog then opens the live preview as the check; "ID & password"
+on the camera card re-registers. Replay's own cameras (cam1–cam3) can't be registered over. A refused password stops
+the preview at once (Reolink locks logins after repeated failures). Cloud-only cameras have no snapshot, WiFi change
+or SD pull: status reports `reason: "cloud"`.
