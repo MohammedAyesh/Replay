@@ -265,7 +265,10 @@ export async function isUhdPlaylistAvailable(
   fetcher: typeof fetch = fetch,
 ): Promise<boolean> {
   try {
-    const response = await fetcher(url, { credentials: "include", cache: "no-store" });
+    const pageOrigin = typeof window === "undefined" ? "https://replayjo.com" : window.location.origin;
+    const requestUrl = new URL(url, pageOrigin);
+    const credentials = requestUrl.origin === pageOrigin ? "include" : "omit";
+    const response = await fetcher(url, { credentials, cache: "no-store" });
     const available = response.ok;
     try { await response.body?.cancel(); } catch { /* closed by the response */ }
     return available;

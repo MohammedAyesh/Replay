@@ -182,6 +182,18 @@ describe("recorded UHD playback eligibility and fallback", () => {
     expect(body.cancel).toHaveBeenCalledOnce();
   });
 
+  it("omits credentials when checking a direct Bunny CDN playlist", async () => {
+    const url = "https://replayjo.b-cdn.net/vod/123e4567-e89b-12d3-a456-426614174000/h264.m3u8";
+    const body = { cancel: vi.fn().mockResolvedValue(undefined) };
+    const fetcher = vi.fn().mockResolvedValue({ ok: true, body });
+    expect(await isUhdPlaylistAvailable(url, fetcher)).toBe(true);
+    expect(fetcher).toHaveBeenCalledWith(url, {
+      credentials: "omit",
+      cache: "no-store",
+    });
+    expect(body.cancel).toHaveBeenCalledOnce();
+  });
+
   it("allows a smooth 4K H.264 source when HEVC is unavailable", async () => {
     const capabilities = {
       decodingInfo: vi.fn(async (configuration: MediaDecodingConfiguration) => ({

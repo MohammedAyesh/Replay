@@ -90,6 +90,6 @@ export async function prepareVideoCache(sourceUrl: string): Promise<boolean> {
   // HLS may have fetched its manifest while the player was still paused.
   // Re-request only that tiny playlist after Play so it enters Cache Storage;
   // media and init segments remain progressive and are cached only if requested.
-  void fetch(sourceUrl, { cache: "no-cache", credentials: "include" }).catch(() => undefined);
+  void fetch(sourceUrl, { cache: "no-cache", credentials: "same-origin" }).catch(() => undefined);
   return true;
 }
