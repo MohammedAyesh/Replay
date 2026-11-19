@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   availableSourceQualityOptions,
   qualityLevelDisplay,
+  shouldShowSourceQualityButton,
   shouldShowQualityPicker,
+  sourceQualityButtonLabel,
 } from "./qualityPicker";
 
 describe("recorded-video quality picker", () => {
@@ -38,18 +40,35 @@ describe("recorded-video quality picker", () => {
   });
 
   it("offers only available H.264 and 4K choices for Storage recordings", () => {
-    expect(availableSourceQualityOptions({
+    const bothAvailable = availableSourceQualityOptions({
       streamlessStorage: true,
       eightKAvailable: true,
       uhdAvailable: true,
       h264Available: true,
-    })).toEqual(["4k", "hd"]);
-    expect(availableSourceQualityOptions({
+    });
+    expect(bothAvailable).toEqual(["4k", "hd"]);
+    expect(shouldShowSourceQualityButton(bothAvailable, true, "h264")).toBe(true);
+    expect(shouldShowSourceQualityButton(bothAvailable, true, "stream")).toBe(false);
+    const h264Only = availableSourceQualityOptions({
       streamlessStorage: true,
       eightKAvailable: true,
       uhdAvailable: false,
       h264Available: true,
-    })).toEqual(["hd"]);
+    });
+    expect(h264Only).toEqual(["hd"]);
+    expect(shouldShowSourceQualityButton(h264Only, true, "h264")).toBe(false);
+    expect(availableSourceQualityOptions({
+      streamlessStorage: true,
+      eightKAvailable: true,
+      uhdAvailable: false,
+      h264Available: false,
+    })).toEqual([]);
+  });
+
+  it("labels streamless H.264 as HD and 4K as 4K", () => {
+    expect(sourceQualityButtonLabel("h264", true)).toBe("HD");
+    expect(sourceQualityButtonLabel("uhd", true)).toBe("4K");
+    expect(sourceQualityButtonLabel("h264", false)).toBe("H.264");
   });
 
   it("keeps standard source choices for non-Storage recordings", () => {

@@ -89,6 +89,7 @@ import { normalizeClipKeyframes } from "./normalize";
 import {
   availableSourceQualityOptions,
   qualityLevelDisplay,
+  shouldShowSourceQualityButton,
   shouldShowQualityPicker,
   sourceQualityButtonLabel,
   type HlsQualityLevel,
@@ -311,22 +312,23 @@ function QualityPicker({
             <span className="block font-semibold">Auto{currentDisplay?.label ? ` · ${currentDisplay.label}` : ""}</span>
             {currentDisplay?.details && <span className="mt-0.5 block text-[10px] text-white/60">{currentDisplay.details}</span>}
           </button>
-          {levels.map((level) => (
-            <button
-              key={level.index}
-              type="button"
-              role="menuitemradio"
-              aria-checked={active === level.index}
-              data-testid={`video-quality-${level.index}`}
-              onClick={() => onSelect(level.index)}
-              className={cn("block w-full px-3 py-2.5 text-left text-xs transition-colors hover:bg-white/10", active === level.index ? "text-primary" : "text-white")}
-            >
-              <span className="block font-semibold">{qualityLevelDisplay(level, videoDimensions).label ?? "Quality"}</span>
-              {qualityLevelDisplay(level, videoDimensions).details && (
-                <span className="mt-0.5 block text-[10px] text-white/60">{qualityLevelDisplay(level, videoDimensions).details}</span>
-              )}
-            </button>
-          ))}
+          {levels.map((level) => {
+            const display = qualityLevelDisplay(level, videoDimensions);
+            return (
+              <button
+                key={level.index}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active === level.index}
+                data-testid={`video-quality-${level.index}`}
+                onClick={() => onSelect(level.index)}
+                className={cn("block w-full px-3 py-2.5 text-left text-xs transition-colors hover:bg-white/10", active === level.index ? "text-primary" : "text-white")}
+              >
+                <span className="block font-semibold">{display.label ?? "Quality"}</span>
+                {display.details && <span className="mt-0.5 block text-[10px] text-white/60">{display.details}</span>}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -601,6 +603,20 @@ export function ClipPlayer({
   const [eightKAvailable, setEightKAvailable] = useState(false);
   const [h264Available, setH264Available] = useState(false);
   const [storageOnlyUnavailable, setStorageOnlyUnavailable] = useState(false);
+  const sourceQualityOptions = availableSourceQualityOptions({
+    streamlessStorage,
+    eightKAvailable,
+    uhdAvailable,
+    h264Available,
+  });
+  const currentSourceQuality = sourceStage === "8k" ? "8k"
+    : sourceStage === "uhd" ? "4k"
+    : sourceStage === "h264" ? "hd"
+    : "stream";
+  const showSourceQualityButton =
+    !isLive
+    && sourceStage !== "checking"
+    && shouldShowSourceQualityButton(sourceQualityOptions, streamlessStorage, sourceStage);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [look, setLook] = useState<"original" | "warm" | "cinematic" | "noir">("original");
   const [currentTime, setCurrentTime] = useState(0);
@@ -2172,26 +2188,16 @@ export function ClipPlayer({
                 >
                   {playbackRate}×
                 </button>
-                {(() => {
-                  const qualityOptions = availableSourceQualityOptions({
-                    streamlessStorage,
-                    eightKAvailable,
-                    uhdAvailable,
-                    h264Available,
-                  });
-                  if (isLive || sourceStage === "checking" || qualityOptions.length < 2) return null;
-                  const current = sourceStage === "8k" ? "8k"
-                    : sourceStage === "uhd" ? "4k"
-                    : sourceStage === "h264" ? "hd"
-                    : "stream";
-                  return (
+                {showSourceQualityButton && (
                   <button
                     type="button"
                     data-testid="button-playback-uhd-toggle"
                     aria-label={`Current quality: ${sourceQualityButtonLabel(sourceStage, streamlessStorage)}. Switch quality`}
                     title="Change video quality"
                     onClick={() => {
-                      const next = qualityOptions[(qualityOptions.indexOf(current) + 1) % qualityOptions.length];
+                      const next = sourceQualityOptions[
+                        (sourceQualityOptions.indexOf(currentSourceQuality) + 1) % sourceQualityOptions.length
+                      ];
                       if (next) switchPlaybackQuality(next);
                     }}
                     className={cn(
@@ -2201,8 +2207,7 @@ export function ClipPlayer({
                   >
                     {sourceQualityButtonLabel(sourceStage, streamlessStorage)}
                   </button>
-                  );
-                })()}
+                )}
                 {!usingFallback && /\.m3u8(?:$|\?)/i.test(activeSrc) && (
                   <QualityPicker
                     levels={qualityLevels}

@@ -65,6 +65,15 @@ export function availableSourceQualityOptions(options: {
   ];
 }
 
+export function shouldShowSourceQualityButton(
+  options: readonly SourceQualityOption[],
+  streamlessStorage: boolean,
+  stage: string,
+): boolean {
+  return options.length > 1
+    && (!streamlessStorage || stage === "h264" || stage === "uhd");
+}
+
 export function sourceQualityButtonLabel(stage: string, streamlessStorage: boolean): string {
   if (stage === "8k") return "8K";
   if (stage === "uhd") return "4K";
