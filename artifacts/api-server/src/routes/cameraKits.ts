@@ -471,6 +471,67 @@ router.post("/kits/manage/:kitId/connection", async (req, res): Promise<void> =>
   res.json({ ok: true });
 });
 
+// ─── Full quality: the user connects a router (WireGuard) or FTP ──────────────────────────
+// vps1 makes the tunnel or the FTP login and returns its secret once (router file, FTP
+// password). Nothing secret is stored in this database; the response is never cached.
+
+type LinkState = {
+  pull: "cli" | "ftp" | null;
+  router: { configured: boolean; routerAddress?: string; connected?: boolean; lastSeenSeconds?: number | null; camera?: string | null };
+  ftp: { configured: boolean; server?: string; port?: number; user?: string; folder?: string; lastClipSecondsAgo?: number | null; clips?: number; storedGB?: number };
+};
+
+async function connectedKit(req: Request, res: Response) {
+  const user = await labsUser(req, res);
+  if (!user) return null;
+  const k = await loadKit(req, res, user, "manage");
+  if (!k) return null;
+  const m = /^camera(\d+)$/.exec(k.kit.cameraId);
+  if (!m || Number(m[1]) < 10) { res.status(409).json({ error: "This is one of Replay's cameras: it's already connected in full quality." }); return null; }
+  res.setHeader("Cache-Control", "no-store");
+  return k;
+}
+
+const vps1Path = (cameraId: string, what: string) => `/kit/${encodeURIComponent(cameraId)}/${what}`;
+
+router.get("/kits/manage/:kitId/link", async (req, res): Promise<void> => {
+  const k = await connectedKit(req, res);
+  if (!k) return;
+  try {
+    const r = await controlFetch(vps1Path(k.kit.cameraId, "link"), { method: "GET" }, 15_000);
+    if (!r.ok) { res.status(r.status === 404 ? 404 : 502).json({ error: "Couldn't check the camera's connection." }); return; }
+    res.json(r.body as LinkState);
+  } catch {
+    res.status(502).json({ error: "Couldn't check the camera's connection." });
+  }
+});
+
+for (const what of ["router", "ftp"] as const) {
+  router.post(`/kits/manage/:kitId/${what}`, async (req, res): Promise<void> => {
+    const k = await connectedKit(req, res);
+    if (!k) return;
+    try {
+      const r = await controlFetch(vps1Path(k.kit.cameraId, what), { method: "POST" }, 30_000);
+      if (!r.ok) { res.status(503).json({ error: "Replay couldn't set this up right now. Try again in a minute." }); return; }
+      logger.info({ kitId: k.kit.id, cameraId: k.kit.cameraId, what }, "Kit full-quality link issued");
+      res.json(r.body);
+    } catch {
+      res.status(503).json({ error: "Replay couldn't set this up right now. Try again in a minute." });
+    }
+  });
+  router.delete(`/kits/manage/:kitId/${what}`, async (req, res): Promise<void> => {
+    const k = await connectedKit(req, res);
+    if (!k) return;
+    try {
+      const r = await controlFetch(vps1Path(k.kit.cameraId, what), { method: "DELETE" }, 30_000);
+      if (!r.ok) { res.status(502).json({ error: "Couldn't disconnect it. Try again." }); return; }
+      res.json({ ok: true });
+    } catch {
+      res.status(502).json({ error: "Couldn't disconnect it. Try again." });
+    }
+  });
+}
+
 /** Kits are Replay hardware: only admins add them (with the camera name vps1 knows). */
 router.post("/kits/manage", async (req, res): Promise<void> => {
   const user = await labsUser(req, res);

@@ -1,0 +1,11 @@
+[Unit]
+Description=Replay portable kits: router tunnels, camera discovery, FTP storage cap
+After=network-online.target wg-quick@wg0.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/replay/venv/bin/python /opt/replay/kitnet.py sync
+ExecStart=/opt/replay/venv/bin/python /opt/replay/kitftp.py sync
+TimeoutStartSec=170
+StandardOutput=append:/var/log/replay-kitnet.log
+StandardError=append:/var/log/replay-kitnet.log

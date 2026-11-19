@@ -249,3 +249,35 @@ export function kitPreviewState(kitId: number): Promise<KitPreview> {
 export function kitPreviewUrl(kitId: number): string {
   return `${apiBase}/kits/${kitId}/preview/index.m3u8`;
 }
+
+// ─── Full quality: router tunnel or FTP (vps1 kitnet.py / kitftp.py) ────────
+
+export type KitLink = {
+  pull: "cli" | "ftp" | null;
+  router: { configured: boolean; routerAddress?: string; connected?: boolean; lastSeenSeconds?: number | null; camera?: string | null };
+  ftp: { configured: boolean; server?: string; port?: number; user?: string; folder?: string; lastClipSecondsAgo?: number | null; clips?: number; storedGB?: number };
+};
+export type KitRouterFile = { config: string; routerAddress: string; lan: string };
+export type KitFtpLogin = { server: string; port: number; user: string; password: string; folder: string; ftpsOnly: boolean };
+
+export function useKitLink(kitId: number | null, poll = false) {
+  return useQuery({
+    queryKey: ["kits", "link", kitId],
+    queryFn: () => venueCall<KitLink>(`/kits/manage/${kitId}/link`),
+    enabled: !!kitId,
+    refetchInterval: poll ? 5_000 : false,
+    retry: false,
+  });
+}
+
+function useLinkMutation<T>(kitId: number | null, what: "router" | "ftp", method: "POST" | "DELETE") {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => venueCall<T>(`/kits/manage/${kitId}/${what}`, { method }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["kits", "link", kitId] }),
+  });
+}
+export const useCreateKitRouter = (kitId: number | null) => useLinkMutation<KitRouterFile>(kitId, "router", "POST");
+export const useRemoveKitRouter = (kitId: number | null) => useLinkMutation<{ ok: true }>(kitId, "router", "DELETE");
+export const useCreateKitFtp = (kitId: number | null) => useLinkMutation<KitFtpLogin>(kitId, "ftp", "POST");
+export const useRemoveKitFtp = (kitId: number | null) => useLinkMutation<{ ok: true }>(kitId, "ftp", "DELETE");

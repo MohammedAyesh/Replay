@@ -1,0 +1,722 @@
+#!/opt/replay/venv/bin/python3
+"""On-demand SD pull via Reolink's own CLI.
+
+  sdpull_cli_job.py <cam> "<start>" "<end>" "<title>" <jobId>
+  times are Amman local, "YYYY-MM-DD HH:MM:SS"
+
+Drop-in replacement for sdpull_playback_job.py: same argv, same job-JSON
+contract at /opt/replay/jobs/hq/<cam>/<jobId>.json, same Bunny finish.
+
+WHY THIS EXISTS (2026-08-21)
+  cam3 runs firmware v3.2.0.4989, which refuses cmd=Download and cmd=Playback
+  over HTTP in every form tried - plain token, digest+AES `encrypt=`, HTTP and
+  HTTPS, from the VPS and LAN-direct from the router. Reolink's official
+  LAN-only CLI (github.com/reolink/reolink-cli) does it in one command:
+
+      29,421,515 bytes in 12 s = 2.45 MB/s, exact expected size,
+      ISO MP4 / hevc 4096x1152 / 20 fps / + AAC
+
+  That is 2.4x cam1's 1.0 MB/s per Playback stream, and it arrives as a real
+  MP4 with audio - so flv12_to_av.py is NOT needed on this path.
+
+DIFFERENCES FROM THE PLAYBACK ENGINE
+  * Single stream. The CLI notes a download does not use its shared session,
+    and one stream already beats cam1's 5-stream aggregate per-stream rate.
+    No concurrency controller, no cliff to avoid.
+  * `vod search` returns OPAQUE IDS ("0120260821170507"), not /mnt/sda paths.
+    Download takes those ids.
+  * Segment granularity over this index is ~5 min, where the HTTP Search saw
+    120 s files. Same footage, different grouping.
+  * Requires reolink-gateway.service (loopback 127.0.0.1:9100) and the camera
+    registered via `reolink-cli device add <cam> --host ... --password-stdin`.
+
+NOT YET VERIFIED against cam1 (fw 4518) or cam2 (fw 4060) - both were
+unreachable when this was written. control.py routes only cameras listed in
+CLI_CAMERAS here; everything else stays on sdpull_playback_job.py.
+"""
+import datetime, json, os, re, shutil, subprocess, sys, threading, time
+from concurrent.futures import ThreadPoolExecutor
+import requests
+
+CAM, START_S, END_S, TITLE, JOB = sys.argv[1:6]
+
+CLI = "/root/.local/bin/reolink-cli"
+GATEWAY = os.environ.get("REOLINK_GATEWAY", "127.0.0.1:9100")
+STREAM = os.environ.get("REOLINK_STREAM", "main")
+SEARCH_LIMIT = int(os.environ.get("REOLINK_SEARCH_LIMIT", "500"))
+
+# --- concurrency -----------------------------------------------------------
+# reolink-cli opens ONE TCP flow per download and the older firmwares
+# (cam1 4518, cam2 4060) throttle each flow to ~0.4-0.8 MB/s regardless of how
+# much link is free. Concurrency is the whole fix: measured 2026-08-22 on cam1,
+# 1 stream = 0.42 MB/s, 6 streams = 2.88 MB/s sustained -- a full hour of
+# footage went from ~3.5 h to 29.8 min. cam3 (4989) has no such cap and
+# saturates the link on a single flow, so blindly fanning out would only burn
+# session-pool slots for nothing.
+#
+# So the worker count is PROBED, not configured: pull the first segment alone,
+# measure it, and scale up only if this camera is actually per-flow limited.
+WORKERS_MAX = int(os.environ.get("SDPULL_WORKERS_MAX", "5"))
+# Above this single-stream rate the camera clearly is not per-flow capped.
+FAST_MBS = float(os.environ.get("SDPULL_FAST_MBS", "2.0"))
+# Seconds to sample the first segment before deciding concurrency.
+PROBE_SECONDS = float(os.environ.get("SDPULL_PROBE_SECONDS", "25"))
+
+for line in open("/opt/replay/env"):
+    if "=" in line and not line.strip().startswith("#"):
+        k, v = line.strip().split("=", 1)
+        os.environ.setdefault(k, v.strip('"').strip("'"))
+LIB = os.environ["BUNNY_STREAM_LIB"]; SKEY = os.environ["BUNNY_STREAM_KEY"]
+API = f"https://video.bunnycdn.com/library/{LIB}"
+
+JDIR = f"/opt/replay/jobs/hq/{CAM}"; os.makedirs(JDIR, exist_ok=True)
+JPATH = f"{JDIR}/{JOB}.json"
+WORK = f"/opt/reocam/rescue/job_{JOB}"; os.makedirs(WORK, exist_ok=True)
+
+state = {
+    "jobId": JOB, "cam": CAM, "source": "cli", "engine": "reolink-cli",
+    "title": TITLE, "status": "running", "phase": "search", "percent": 0,
+    "requested": {"start": START_S, "end": END_S},
+    "segments": {"total": 0, "done": 0, "failed": 0},
+    "bytes": {"downloaded": 0, "total": 0},
+    "rateMBs": 0.0, "etaSeconds": None, "message": "searching the SD card",
+    "workers": 1, "workerCeiling": WORKERS_MAX, "probeMBs": None,
+    "startedAt": datetime.datetime.utcnow().isoformat() + "Z",
+    "updatedAt": None, "videoId": None, "playbackUrl": None, "error": None,
+    # 2026-10-30 Early Play: "uploaded" turns true once Bunny has every byte, so
+    # the app knows the original is playable (videoId alone is set before the PUT).
+    "uploaded": False, "uploadedAt": None, "bunnyStatus": None, "encodeProgress": None,
+}
+
+
+_flush_lock = threading.Lock()
+
+
+def flush():
+    # 2026-11-10: lock + per-thread tmp + never raise. flush() runs from the monitor
+    # thread and every download worker; with one shared ".tmp" two concurrent calls
+    # raced (the second os.replace found no tmp) and the error killed the whole pull
+    # (cam1_owner-37, job 251681de38ed, at 22/61 segments).
+    try:
+        with _flush_lock:
+            state["updatedAt"] = datetime.datetime.utcnow().isoformat() + "Z"
+            tmp = "%s.%d.%d.tmp" % (JPATH, os.getpid(), threading.get_ident())
+            with open(tmp, "w") as f:
+                json.dump(state, f)
+            os.replace(tmp, JPATH)      # atomic: the UI never reads a half-written file
+    except Exception as e:
+        try:
+            sys.stderr.write("flush failed (ignored): %r\n" % (e,))
+        except Exception:
+            pass
+
+def fail(msg):
+    state.update(status="failed", error=msg, message=msg, phase="failed")
+    flush(); sys.exit(1)
+
+
+# 2026-09-21 (owner console): an uncaught exception used to leave the job JSON
+# at status "running" forever, which a billing console would poll for ever.
+# Any crash now lands as status "failed" with the exception text.
+def _crash_hook(tp, val, tb):
+    import traceback
+    traceback.print_exception(tp, val, tb)
+    try:
+        state.update(status="failed", phase="failed",
+                     error="crashed: %s: %s" % (tp.__name__, str(val)[:200]),
+                     message="the pull crashed; nothing was delivered")
+        flush()
+    except Exception:
+        pass
+sys.excepthook = _crash_hook
+
+
+# 2026-09-21 (owner console): one pull per camera AT A TIME, but only while
+# the camera is actually needed. The lock is taken here and released before
+# assembly, so the next request starts pulling while Bunny encodes this one.
+# (Whole-process flock in control.py was the first version; it kept the camera
+# idle for the entire Bunny encode.)
+import fcntl
+_CAMLOCK = open(f"/run/lock/sdpull-{CAM}.pull.lock", "w")
+try:
+    fcntl.flock(_CAMLOCK, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    state.update(status="queued", phase="queued",
+                 message="waiting for the camera to be free")
+    flush()
+    fcntl.flock(_CAMLOCK, fcntl.LOCK_EX)
+    state.update(status="running", phase="search",
+                 message="searching the SD card")
+flush()
+
+
+def cli(*args, timeout=1800):
+    """Run reolink-cli and return its parsed JSON envelope."""
+    cmd = [CLI, "--camera", CAM, "--gateway-addr", GATEWAY, *args]
+    p = subprocess.run(cmd, capture_output=True, timeout=timeout,
+                       env={**os.environ, "HOME": "/root"})
+    out = p.stdout.decode("utf-8", "replace").strip()
+    if not out:
+        raise RuntimeError(f"no output (rc={p.returncode}): "
+                           f"{p.stderr.decode('utf-8','replace')[:200]}")
+    try:
+        d = json.loads(out.splitlines()[-1])
+    except Exception:
+        raise RuntimeError(f"unparseable output: {out[:200]}")
+    if not d.get("ok"):
+        err = (d.get("error") or {})
+        raise RuntimeError(f"{err.get('code')}: {err.get('message')}")
+    return d["data"]
+
+
+# --------------------------------------------------------------- 1. window
+def parse_dt(s):
+    # "YYYY-MM-DD 24:00:00" is a legal end-of-day but not a valid time to
+    # strptime (hours are 00-23). Treat it as midnight the following day.
+    m = re.match(r"^(\d{4}-\d{2}-\d{2}) 24:00:00$", s)
+    if m:
+        return datetime.datetime.strptime(m.group(1), "%Y-%m-%d") + datetime.timedelta(days=1)
+    return datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+
+
+t0 = parse_dt(START_S)
+t1 = parse_dt(END_S)
+if t1 <= t0:
+    fail("end must be after start")
+
+# 2026-11-18: portable cameras that send their recordings by FTP (no card to reach).
+# ftp_window_job.py picks the clips that cover the booking and hard-links them into the
+# job's work dir; this pull then skips the camera search/download and goes straight to
+# trim + assemble + upload, the same as any booking.
+_FILES = os.environ.get("SDPULL_FILES")
+if _FILES:
+    have = []
+    for _c in json.load(open(_FILES)):
+        have.append((parse_dt(_c["start"]), _c["path"]))
+    wanted = [{"name": os.path.basename(p)[:-4]} for _, p in have]
+    state.update(engine="ftp", phase="assemble", percent=90,
+                 message=f"{len(have)} clip(s) received by FTP")
+    state["segments"].update(total=len(have), done=len(have))
+    flush()
+else:
+    # --------------------------------------------------------------- 2. search
+    # reolink-cli refuses a search that spans two calendar months:
+    #   "invalid params: vod.files: cross-month query not supported
+    #    (from=2026-08, to=2026-09); query by month"
+    # parse_dt above already turns "2026-08-31 24:00:00" into 2026-09-01 00:00:00,
+    # which is correct as a timestamp and fatal as a query - so a 22:00-24:00 pull
+    # failed on the last day of a month and worked every other night. The console
+    # reported it as "vod search failed: no output (rc=5)" because the CLI writes
+    # the refusal to stderr and exits 5.
+    #
+    # Split the window at midnight and merge. Each slice is inside one month by
+    # construction; a slice that would end at midnight of a NEW month is pulled
+    # back to 23:59:59 of the day before, which loses nothing because segments run
+    # ~5 minutes and are matched by overlap below, not by their start second.
+    def _month_slices(a, b):
+        while a < b:
+            nxt = (a + datetime.timedelta(days=1)).replace(
+                hour=0, minute=0, second=0, microsecond=0)
+            end = min(nxt, b)
+            if (end.year, end.month) != (a.year, a.month):
+                end = a.replace(hour=23, minute=59, second=59, microsecond=0)
+            yield a, end
+            a = nxt
+
+
+    items, seen, scanned, truncated = [], set(), 0, False
+    for _s0, _s1 in _month_slices(t0, t1):
+        try:
+            data = cli("vod", "search",
+                       "--from", _s0.strftime("%Y-%m-%dT%H:%M:%S"),
+                       "--to", _s1.strftime("%Y-%m-%dT%H:%M:%S"),
+                       "--stream", STREAM, "--limit", str(SEARCH_LIMIT), timeout=180)
+        except Exception as e:
+            fail(f"vod search failed ({_s0:%Y-%m-%d %H:%M} to {_s1:%H:%M:%S}): "
+                 f"{str(e)[:120]}")
+        scanned += int(data.get("scanned") or 0)
+        truncated = truncated or bool(data.get("truncated"))
+        for _f in data.get("items", []):
+            if _f.get("name") not in seen:
+                seen.add(_f.get("name"))
+                items.append(_f)
+
+    if truncated:
+        state["message"] = (f"search truncated at limit {SEARCH_LIMIT} "
+                            f"(scanned {scanned}) - window may be incomplete")
+        flush()
+
+
+    def iso(s):
+        return datetime.datetime.strptime(s[:19], "%Y-%m-%dT%H:%M:%S")
+
+
+    # keep anything that overlaps [t0, t1)
+    wanted = []
+    for it in items:
+        try:
+            s, e = iso(it["startTime"]), iso(it["endTime"])
+        except Exception:
+            continue
+        if s < t1 and e > t0:
+            wanted.append({"name": it["name"], "start": s, "end": e,
+                           "size": int(it.get("fileSize") or 0)})
+    wanted.sort(key=lambda x: x["start"])
+    if not wanted:
+        fail("no recordings on the SD card for that window")
+
+    state["segments"]["total"] = len(wanted)
+    state["bytes"]["total"] = sum(x["size"] for x in wanted)
+    state.update(phase="download", message=f"pulling {len(wanted)} segments")
+    flush()
+
+    # ------------------------------------------------------------- 3. download
+    t_start = time.time()
+
+
+    def bump():
+        el = max(time.time() - t_start, 0.001)
+        dl = state["bytes"]["downloaded"]; tot = state["bytes"]["total"]
+        state["rateMBs"] = round(dl / 1e6 / el, 3)
+        state["percent"] = min(int(dl * 90 / max(tot, 1)), 90)   # download == 0-90%
+        if state["rateMBs"] > 0:
+            state["etaSeconds"] = int((tot - dl) / 1e6 / state["rateMBs"])
+        flush()
+
+
+    have = []
+    have_lock = threading.Lock()
+    stop_monitor = threading.Event()
+
+
+    def on_disk():
+        """Bytes actually present, counting files still being written.
+
+        The old loop only credited a segment on completion, so bytes.downloaded
+        and percent sat at 0 for the whole pull and then jumped to done -- the UI
+        showed nothing happening for half an hour. Summing the directory instead
+        makes progress move continuously and stays correct with parallel workers.
+        """
+        tot = 0
+        try:
+            for f in os.listdir(WORK):
+                if f.endswith(".mp4") and f != "joined.mp4":
+                    try:
+                        tot += os.path.getsize(os.path.join(WORK, f))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return tot
+
+
+    def monitor():
+        while not stop_monitor.wait(3):
+            state["bytes"]["downloaded"] = on_disk()
+            bump()
+
+
+    ATTEMPTS = int(os.environ.get("SDPULL_ATTEMPTS", "3"))
+    # Segments pulled ahead of time by sdpull_prefetch.py during a live match.
+    CACHE = os.environ.get("SDPULL_CACHE", "/opt/reocam/sdcache")
+    # How long the sweep keeps retrying stragglers, and how long it waits between
+    # passes. Default 8h: long enough to outlast a match and everything after it.
+    SWEEP_DEADLINE = float(os.environ.get("SDPULL_SWEEP_DEADLINE", "28800"))
+    SWEEP_PASS_SLEEP = float(os.environ.get("SDPULL_SWEEP_PASS_SLEEP", "180"))
+    RETRY_BACKOFF = float(os.environ.get("SDPULL_RETRY_BACKOFF", "5"))
+
+
+    def fetch(seg):
+        """Pull one segment, retrying transient failures. Returns (start, path)/None.
+
+        Added 2026-08-24. Before this a segment got exactly one attempt: any error,
+        or any short file, incremented `failed` and gave up. A cam2 pull that day
+        finished 6 of 18 segments and still reported status=done, percent=100,
+        message="ready" -- a third of an hour published as a whole one. Transient
+        failures are the norm here, not the exception: five concurrent flows on a
+        camera that is simultaneously recording will drop some.
+        """
+        out = os.path.join(WORK, seg["name"] + ".mp4")
+
+        # Prefetch cache: if the match was pulled as it played, the bytes are
+        # already here and this whole job is a local assemble. Hard-link rather
+        # than copy -- same filesystem, and a footage-hour is ~4.6 GB. The job
+        # removes WORK when it finishes, which drops the link, not the cache.
+        cached = os.path.join(CACHE, CAM, seg["name"] + ".mp4")
+        if os.path.exists(cached) and (
+                not seg.get("size") or os.path.getsize(cached) >= seg["size"] * 0.97):
+            try:
+                if os.path.exists(out):
+                    os.remove(out)
+                try:
+                    os.link(cached, out)
+                except OSError:
+                    shutil.copy(cached, out)
+                with have_lock:
+                    state["segments"]["done"] += 1
+                    state["message"] = (f"{state['segments']['done']}/{len(wanted)} "
+                                        f"segments (from prefetch cache)")
+                    state["bytes"]["downloaded"] = on_disk()
+                    bump()
+                return (seg["start"], out)
+            except Exception:
+                pass   # fall through to a normal download
+
+        last = ""
+        for attempt in range(1, ATTEMPTS + 1):
+            try:
+                cli("vod", "download", seg["name"], "-o", out,
+                    "--stream", STREAM, timeout=1800)
+                got = os.path.getsize(out) if os.path.exists(out) else 0
+                # the CLI writes the whole file or errors; accept >=97%
+                if seg["size"] and got < seg["size"] * 0.97:
+                    last = f"short ({got}/{seg['size']})"
+                    raise RuntimeError(last)
+                break
+            except Exception as e:
+                last = str(e)[:70]
+                try:
+                    os.remove(out)
+                except OSError:
+                    pass
+                if attempt < ATTEMPTS:
+                    with have_lock:
+                        state["message"] = (f"segment {seg['name']} attempt "
+                                            f"{attempt}/{ATTEMPTS} failed: {last}")
+                        flush()
+                    time.sleep(RETRY_BACKOFF * attempt)
+                    continue
+                with have_lock:
+                    state["segments"]["failed"] += 1
+                    state["message"] = (f"segment {seg['name']} failed after "
+                                        f"{ATTEMPTS} attempts: {last}")
+                    flush()
+                return None
+        with have_lock:
+            state["segments"]["done"] += 1
+            state["message"] = f"{state['segments']['done']}/{len(wanted)} segments"
+            state["bytes"]["downloaded"] = on_disk()
+            bump()
+        return (seg["start"], out)
+
+
+    mon = threading.Thread(target=monitor, daemon=True)
+    mon.start()
+    try:
+        # --- probe: measure the first segment IN FLIGHT, do not wait for it ---
+        # The probe used to download segment 1 to completion before deciding how
+        # many workers to use. Measured on cam2 2026-08-24: segments are ~342 MB and
+        # the link ran at 0.115 MB/s, so the job sat at one stream for ~50 minutes
+        # purely to learn that it was slow -- the exact case where the parallelism
+        # was most needed. Sampling the same download after PROBE_SECONDS gives the
+        # identical rate figure for ~1% of the wait, and the probe keeps running as
+        # an ordinary worker alongside the rest.
+        rest = wanted[1:]
+        probe_path = os.path.join(WORK, wanted[0]["name"] + ".mp4")
+        probe_out = {}
+
+        def _probe():
+            probe_out["r"] = fetch(wanted[0])
+
+        probe_th = threading.Thread(target=_probe, daemon=True)
+        probe_t = time.time()
+        probe_th.start()
+        while time.time() - probe_t < PROBE_SECONDS and probe_th.is_alive():
+            time.sleep(1)
+        got = os.path.getsize(probe_path) if os.path.exists(probe_path) else 0
+        probe_el = max(time.time() - probe_t, 0.001)
+        # got == 0 means the sample told us nothing (the file may also have been
+        # removed mid-retry), so treat it as unknown rather than as "infinitely
+        # slow" -- see the cautious branch below.
+        probe_mbs = (got / 1e6 / probe_el) if got else 0.0
+        first = None if got == 0 else True
+
+        if not rest:
+            workers = 1
+        elif not first:
+            # The probe did not merely measure slow -- it FAILED, so probe_mbs is
+            # 0.0. The old branch read that as "very slow camera" and went straight
+            # to the 5-worker ceiling, which is exactly backwards: the one signal we
+            # have says this camera is already struggling. That is how the cam2 pull
+            # on 2026-08-24 lost 12 of 18 segments. Start cautious instead.
+            workers = min(2, len(rest))
+        elif probe_mbs >= FAST_MBS:
+            # Not per-flow limited (cam3 class). One extra flow hides per-segment
+            # setup latency; more would just consume session-pool slots.
+            workers = min(2, len(rest))
+        else:
+            workers = min(WORKERS_MAX, len(rest))
+
+        state["workers"] = workers
+        state["workerCeiling"] = WORKERS_MAX
+        state["probeMBs"] = round(probe_mbs, 2)
+        state["message"] = (f"probe {probe_mbs:.2f} MB/s -> {workers} worker(s) "
+                            f"for {len(rest)} remaining segment(s)")
+        flush()
+
+        if rest:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                for r in pool.map(fetch, rest):
+                    if r:
+                        have.append(r)
+        # The probe segment is still in flight alongside the pool; collect it last.
+        probe_th.join()
+        if probe_out.get("r"):
+            have.append(probe_out["r"])
+
+        # --- sweep: retry the stragglers alone, once the pool has drained ---
+        # Retrying inside fetch() is not enough on a camera that fails BECAUSE of
+        # concurrency. All three attempts happen while the other four workers are
+        # still hammering it, so each retry meets the same overload that caused the
+        # failure: cam2 on 2026-08-24 lost 5 of 14 segments at 5 workers despite 15
+        # attempts being spent on them. Once every other worker has finished the
+        # contention is gone, so a serial pass is a genuinely different condition
+        # rather than a fourth roll of the same dice.
+        # Keep sweeping until the window is complete or SWEEP_DEADLINE expires.
+        # A single pass is not enough when the camera is the flaky part: the whole
+        # point is that conditions change over hours, so a segment that refuses at
+        # 00:40 may come back fine at 02:00 once the match, the other camera's job
+        # and the recording load have all stopped. Missing footage is unrecoverable
+        # once the SD card wraps; waiting costs only time.
+        sweep_start = time.time()
+        sweep_pass = 0
+        while True:
+            got_names = {os.path.basename(pth)[:-4] for _, pth in have}
+            missing = [seg for seg in wanted if seg["name"] not in got_names]
+            if not missing:
+                if sweep_pass:
+                    state["message"] = f"sweep complete: {len(have)}/{len(wanted)} segments"
+                    flush()
+                break
+            elapsed = time.time() - sweep_start
+            if elapsed > SWEEP_DEADLINE:
+                state["message"] = (f"giving up after {elapsed/3600:.1f}h: "
+                                    f"{len(missing)} segment(s) still missing")
+                log(state["message"]); flush()
+                break
+            sweep_pass += 1
+            state.update(phase="sweep",
+                         message=(f"sweep pass {sweep_pass}: retrying {len(missing)} "
+                                  f"straggler(s) ({elapsed/60:.0f}m elapsed)"))
+            state["segments"]["failed"] = 0   # each pass re-counts its own failures
+            flush()
+            for seg in missing:
+                r = fetch(seg)
+                if r:
+                    have.append(r)
+            got_names = {os.path.basename(pth)[:-4] for _, pth in have}
+            if any(seg["name"] not in got_names for seg in wanted):
+                time.sleep(SWEEP_PASS_SLEEP)
+    finally:
+        stop_monitor.set()
+        mon.join(timeout=5)
+        state["bytes"]["downloaded"] = on_disk()
+        bump()
+
+if not have:
+    fail("no segments could be pulled")
+
+# A partial pull must never be presented as a complete one. The old rule was
+# simply "did anything arrive?", so 6 of 18 segments assembled, uploaded and
+# reported ready -- 20 minutes of footage published as an hour, with 12 silent
+# gaps in the middle. Publish it anyway (the footage that exists is still worth
+# having) but carry the shortfall through to the final status so the console
+# cannot show it as clean.
+missing = len(wanted) - len(have)
+state["partial"] = missing > 0
+state["missingSegments"] = missing
+if missing:
+    state["message"] = (f"PARTIAL: {len(have)}/{len(wanted)} segments -- "
+                        f"{missing} missing, the clip will have gaps")
+    flush()
+
+have.sort()
+
+# ------------------------------------------------------ 4. trim + assemble
+fcntl.flock(_CAMLOCK, fcntl.LOCK_UN)   # camera no longer needed
+state.update(phase="assemble", percent=92, message="assembling", etaSeconds=None); flush()
+first_start = have[0][0]
+off = max((t0 - first_start).total_seconds(), 0)
+dur = (t1 - t0).total_seconds()
+
+lst = os.path.join(WORK, "list.txt")
+with open(lst, "w") as f:
+    for _, p in have:
+        f.write("file '%s'\n" % p)
+joined = os.path.join(WORK, "joined.mp4")
+# 2026-09-22: a 2 h pull filled the disk mid-trim; the truncated final.mp4 then
+# failed ffprobe and was reported as "geometry unknown ... 8K mode?". Check the
+# space up front (join + trim each need ~the sum of the segments) and check
+# ffmpeg's exit codes so a disk-full is reported as a disk-full.
+_need = sum(os.path.getsize(p) for _, p in have) * 2 + 2_000_000_000
+_free = shutil.disk_usage(WORK).free
+if _free < _need:
+    fail(f"not enough disk to assemble: need {_need/1e9:.1f} GB, free {_free/1e9:.1f} GB. "
+         f"Segments kept in {WORK}")
+_r = subprocess.run(["/opt/ffmpeg7/ffmpeg", "-y", "-v", "error", "-fflags", "+genpts",
+                "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", joined],
+               capture_output=True, timeout=3600)
+if _r.returncode != 0:
+    fail("join failed: " + _r.stderr.decode("utf-8", "replace")[-300:])
+OUT = os.path.join(WORK, "final.mp4")
+# 2026-10-30 Early Play: Bunny serves this exact file to phones before it has
+# encoded anything. iPhones only play HEVC in MP4 when it is tagged hvc1 (hev1
+# shows a black frame), and a stream copy keeps whatever tag came in. The
+# cameras write hvc1 today; force it so a firmware change cannot break playback.
+_vcodec = subprocess.run(["/usr/bin/ffprobe", "-v", "error", "-select_streams", "v:0",
+                          "-show_entries", "stream=codec_name", "-of", "csv=p=0", joined],
+                         capture_output=True, timeout=60).stdout.decode("utf-8", "replace").strip()
+_TAG = ["-tag:v", "hvc1"] if _vcodec == "hevc" else []
+# copy-trim to the exact requested window; -ss lands on the nearest keyframe
+_r = subprocess.run(["/opt/ffmpeg7/ffmpeg", "-y", "-v", "error", "-ss", str(off), "-t", str(dur),
+                "-i", joined, "-c", "copy", *_TAG, "-avoid_negative_ts", "make_zero",
+                "-movflags", "+faststart", OUT], capture_output=True, timeout=3600)
+if _r.returncode != 0:
+    fail("trim failed: " + _r.stderr.decode("utf-8", "replace")[-300:])
+try:
+    os.remove(joined)   # intermediate; frees ~the whole window before upload
+except OSError:
+    pass
+if not os.path.exists(OUT) or os.path.getsize(OUT) < 1_000_000:
+    fail("assembly produced no usable file")
+
+# ------------------------------------------------- geometry guard
+# Bunny Stream rejects 7680x2160 outright: the object sits in processing and
+# lands on status 5 hours later with nothing recoverable. So a pull of 8K
+# footage spends the entire download - 5.8 GB and forty minutes for one hour -
+# and only then reports failure. process.sh has carried this guard since the
+# 8K trap was found; this path never got it.
+#
+# Fail BEFORE the upload, and keep the assembled file: the download is the
+# expensive part and it is perfectly good footage, it just needs converting to
+# 4096x1152 before Bunny will take it.
+_geom = subprocess.run(["/usr/bin/ffprobe", "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=width,height", "-of", "csv=p=0", OUT],
+                       capture_output=True).stdout.decode("utf-8", "replace").strip()
+EXPECTED_GEOMETRY = os.environ.get("EXPECTED_GEOMETRY", "4096,1152")
+if not _geom.startswith(EXPECTED_GEOMETRY):
+    state["keptFile"] = OUT
+    state["geometry"] = _geom or "unknown"
+    flush()
+    # 2026-11-17: 8K no longer fails. Stream refuses it, so streamless.py publishes the
+    # camera's own 7680x2160 to Bunny Storage (vod/<new id>/8k.*) and makes the 4K and
+    # H.264 copies on a rented Vast GPU; the app plays those with no Stream video at all.
+    # It takes over this process and this job JSON from here. STREAMLESS_8K=0 turns it off.
+    _SL = "/opt/replay/streamless.py"
+    if _geom.startswith("7680,2160") and os.path.exists(_SL) and os.environ.get("STREAMLESS_8K", "1") != "0":
+        state.update(phase="publish-8k", percent=93, error=None,
+                     message="8K footage: publishing without Stream")
+        flush()
+        sys.stdout.flush(); sys.stderr.flush()
+        os.execv("/usr/bin/python3", ["/usr/bin/python3", "-u", _SL, CAM, JOB])
+    fail(f"geometry {_geom or 'unknown'} is not {EXPECTED_GEOMETRY} - Bunny would "
+         f"reject this (camera in 8K mode?). Assembled file kept at {OUT}")
+
+if _FILES and os.environ.get("SDPULL_STOP_BEFORE_UPLOAD") == "1":
+    state.update(status="assembled", phase="assembled", percent=94,
+                 message="test run: assembled, not uploaded", keptFile=OUT, geometry=_geom)
+    flush(); sys.exit(0)
+
+# ----------------------------------------------------------- 5. to Bunny
+state.update(phase="upload", percent=94, message="uploading to Bunny"); flush()
+
+COLL_PATH = "/etc/reocam/collections.json"
+try:
+    colls = json.load(open(COLL_PATH))
+except Exception:
+    colls = {}
+COLL = colls.get(CAM)
+if not COLL:
+    # first sight of this camera - create its collection, same as process.sh
+    try:
+        COLL = requests.post(f"{API}/collections", headers={"AccessKey": SKEY},
+                             json={"name": CAM}, timeout=60).json()["guid"]
+        colls[CAM] = COLL
+        with open(COLL_PATH, "w") as f:
+            json.dump(colls, f, indent=1)
+    except Exception as e:
+        fail(f"could not create Bunny collection for {CAM}: {str(e)[:100]}")
+
+guid = requests.post(f"{API}/videos", headers={"AccessKey": SKEY},
+                     json={"title": TITLE, "collectionId": COLL}, timeout=60).json()["guid"]
+state["videoId"] = guid; flush()
+with open(OUT, "rb") as fh:
+    up = requests.put(f"{API}/videos/{guid}", headers={"AccessKey": SKEY},
+                      data=fh, timeout=7200)          # streamed: never load multi-GB into RAM
+if up.status_code != 200:
+    fail(f"bunny upload HTTP {up.status_code}")
+
+state.update(phase="encode", percent=96, message="Bunny is encoding",
+             uploaded=True, uploadedAt=datetime.datetime.utcnow().isoformat() + "Z"); flush()
+
+# 2026-11-08: the 4K original goes to Bunny Storage straight from this file
+# (galaxyfield/vod/<guid>/4k.mp4 + 4k.m3u8, a stream copy - no re-encode), so the
+# app plays the camera's own HEVC from replayjo.b-cdn.net and Stream is only the
+# fallback. It is never fatal: if it fails, uhd_sweep.py (cron */5) builds the 4K
+# from Bunny's kept original instead. ~2 min for a 2 h match.
+state.update(message="publishing the 4K original to Bunny Storage"); flush()
+try:
+    with open("/var/log/replay-uhd.log", "a") as _uhdlog:
+        _uhd = subprocess.run(["/usr/bin/python3", "/opt/replay/uhd_sweep.py", "--local", guid, OUT, TITLE],
+                              stdout=_uhdlog, stderr=subprocess.STDOUT, timeout=3600)
+    state["uhd"] = "published" if _uhd.returncode == 0 else f"left to the sweep (exit {_uhd.returncode})"
+    if _uhd.returncode == 0:
+        state["uhdPlaylist"] = f"https://replayjo.b-cdn.net/vod/{guid}/4k.m3u8"
+except Exception as _e:
+    state["uhd"] = f"left to the sweep ({str(_e)[:80]})"
+state["message"] = "Bunny is encoding"; flush()
+
+
+def _top_rendition_playable(j):
+    """True once the full-quality rendition plays end to end, even while Bunny is
+    still encoding the smaller renditions / MP4 fallback (status 3, early play).
+    availableResolutions alone is not proof: during a re-encode it listed 1080p
+    while the master playlist did not. So probe the media playlist itself."""
+    res = [r.strip() for r in (j.get("availableResolutions") or "").split(",") if r.strip()]
+    if not res:
+        return False
+    top = max(res, key=lambda r: int("".join(c for c in r if c.isdigit()) or 0))
+    try:
+        host = os.environ.get("BUNNY_STREAM_HOST") or "vz-03425ccd-3d0.b-cdn.net"
+        r = requests.get(f"https://{host}/{guid}/{top}/video.m3u8",
+                         headers={"Referer": "https://iframe.mediadelivery.net/"}, timeout=30)
+        if r.status_code != 200 or "#EXT-X-ENDLIST" not in r.text:
+            return False
+        secs = sum(float(m) for m in re.findall(r"#EXTINF:([0-9.]+)", r.text))
+        want = float(j.get("length") or 0)
+        return want > 0 and secs >= want * 0.98
+    except Exception:
+        return False
+
+
+# Ready as soon as the full-quality rendition plays (status 4, or status 3 with the
+# top rendition complete). Adding 480p/720p renditions and the MP4 fallback made
+# Bunny's full encode long enough to hit the old 2 h limit on a 2 h match, which
+# failed bookings whose video was fine. Give up only after 8 h.
+_deadline = time.time() + 8 * 3600
+while time.time() < _deadline:
+    time.sleep(30)
+    try:
+        j = requests.get(f"{API}/videos/{guid}", headers={"AccessKey": SKEY}, timeout=30).json()
+    except Exception:
+        continue
+    _st = j.get("status")
+    state["bunnyStatus"] = _st
+    state["encodeProgress"] = j.get("encodeProgress")
+    if _st == 4 or (_st == 3 and _top_rendition_playable(j)):
+        _missing = state.get("missingSegments") or 0
+        state.update(status="partial" if _missing else "done",
+                     phase="done", percent=100,
+                     message=(f"ready, but PARTIAL -- {_missing} of "
+                              f"{len(wanted)} segments never downloaded"
+                              if _missing else "ready"),
+                     etaSeconds=0,
+                     durationSeconds=j.get("length"),
+                     playbackUrl=f"https://iframe.mediadelivery.net/play/{LIB}/{guid}")
+        flush()
+        subprocess.run(["rm", "-rf", WORK])
+        sys.exit(0)
+    if _st in (5, 6):
+        fail(f"Bunny encode failed (status {_st})")
+    state["message"] = f"Bunny encoding (status {_st})"; flush()
+fail("timed out waiting for Bunny to make the video playable (8 h)")

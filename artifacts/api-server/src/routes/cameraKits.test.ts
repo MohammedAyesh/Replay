@@ -50,6 +50,9 @@ vi.mock("./contabo", async (importOriginal) => {
       control.calls.push({ path, method: String(opts.method ?? "GET") });
       if (path.startsWith("/record-hq/") && opts.method === "POST") return { ok: true, status: 200, body: { jobId: `job-${control.calls.length}`, status: "scheduled" } };
       if (opts.method === "DELETE") return { ok: true, status: 200, body: { status: "cancelled" } };
+      if (path.endsWith("/router") && opts.method === "POST") return { ok: true, status: 200, body: { config: "[Interface]\nPrivateKey = test\n", routerAddress: "10.199.1.1", lan: "10.199.1.0/24" } };
+      if (path.endsWith("/ftp") && opts.method === "POST") return { ok: true, status: 200, body: { server: "169.58.73.17", port: 21, user: "reoftp_cam10", password: "x".repeat(24), folder: "/upload", ftpsOnly: true } };
+      if (path.endsWith("/link")) return { ok: true, status: 200, body: { pull: "ftp", router: { configured: false }, ftp: { configured: true, lastClipSecondsAgo: 60 } } };
       if (path.endsWith("/register")) {
         const sent = JSON.parse(String(opts.body ?? "{}")) as { uid: string; password: string };
         control.registered.push({ path, uid: sent.uid, password: sent.password });
@@ -191,6 +194,19 @@ describe("portable cameras", () => {
     // Wrong password: type it again. Replay's own cameras can't be changed this way.
     await request(app).post(`/api/kits/manage/${made.body.kit.id}/connection`).set(auth(ownerId)).send({ uid: "9527000IO6BZ1XD0", password: "new" }).expect(200);
     await request(app).post(`/api/kits/manage/${kitId}/connection`).set(auth(adminId)).send({ uid: "9527000IO6BZ1XD0", password: "new" }).expect(409);
+    // Full quality: router file and FTP login come back once, never cached; Replay's own cameras refuse.
+    const id = made.body.kit.id;
+    await request(app).post(`/api/kits/manage/${id}/router`).set(auth(coachId)).expect(403);
+    await request(app).post(`/api/kits/manage/${id}/router`).set(auth(ownerId)).expect(200)
+      .expect("cache-control", /no-store/)
+      .expect((r) => { expect(r.body.config).toContain("PrivateKey"); expect(r.body.routerAddress).toBe("10.199.1.1"); });
+    await request(app).post(`/api/kits/manage/${id}/ftp`).set(auth(ownerId)).expect(200)
+      .expect((r) => expect(r.body.password).toHaveLength(24));
+    await request(app).get(`/api/kits/manage/${id}/link`).set(auth(ownerId)).expect(200)
+      .expect((r) => expect(r.body.ftp.configured).toBe(true));
+    await request(app).delete(`/api/kits/manage/${id}/ftp`).set(auth(ownerId)).expect(200);
+    await request(app).post(`/api/kits/manage/${kitId}/router`).set(auth(adminId)).expect(409);
+    expect(control.calls.some((c) => c.path === `/kit/camera${n}/router` && c.method === "POST")).toBe(true);
     await db.update(cameraKitsTable).set({ archived: true }).where(eq(cameraKitsTable.id, made.body.kit.id));
   });
 

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useKitCopy } from "@/i18n/kit-strings";
 import { KitLivePreview, type KitPreviewOutcome } from "@/components/KitLivePreview";
+import { FullQualityRow } from "./full-quality";
 import { cn } from "@/lib/utils";
 import { isConnectedCamera, useAddKit, useConnectKit, useFixKitConnection, useKitWifi, useManageKits, useReviewSetup, type Kit, type KitSetup } from "@/lib/kits-api";
 import { Card, ErrorText, SectionHeader, Skeleton } from "./shared";
@@ -131,6 +132,7 @@ function KitCard({ kit, onWifi, onFix }: { kit: Kit; onWifi: () => void; onFix: 
           : <button type="button" onClick={onWifi} className="inline-flex min-h-9 items-center gap-1.5 rounded-xl border border-line bg-raised px-3 text-xs font-semibold text-text"><Wifi className="h-3.5 w-3.5" />WiFi</button>}
         <button type="button" onClick={() => setWatching((v) => !v)} className={cn("inline-flex min-h-9 items-center gap-1.5 rounded-xl border px-3 text-xs font-semibold", watching ? "border-turf bg-turf/15 text-turf" : "border-line bg-raised text-text")}><Video className="h-3.5 w-3.5" />{c.preview.live}</button>
       </div>
+      {isConnectedCamera(kit.cameraId) && kit.role === "manage" && <FullQualityRow kit={kit} />}
       {watching && <KitLivePreview kitId={kit.id} className="mt-4" />}
     </div>
   );

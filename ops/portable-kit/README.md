@@ -43,3 +43,25 @@ password is never stored in the app's database. The dialog then opens the live p
 on the camera card re-registers. Replay's own cameras (cam1–cam3) can't be registered over. A refused password stops
 the preview at once (Reolink locks logins after repeated failures). Cloud-only cameras have no snapshot, WiFi change
 or SD pull: status reports `reason: "cloud"`.
+
+## Full quality for connected cameras: router or FTP (2026-11-18)
+
+On each connected camera's card (camera10+), owners and managers get **Full quality → Set up**:
+
+- **Connect a router** (`kitnet.py`, `POST|DELETE /kit/camN/router`): a WireGuard peer per kit. Kit n gets tunnel
+  10.99.0.(128+n) and LAN 10.199.n.0/24; the user uploads the one-time .conf in their GL.iNet router, turns on
+  "Allow remote access to LAN" and sets the router's LAN address to 10.199.n.1. `replay-kitnet.timer` (2 min) re-adds
+  peers after a wg0 restart, finds the camera behind the router (UID over HTTP, else the only host on TCP 9000), adds
+  the reolink-cli alias `camN` and sets kits.json `pull: "cli"`: bookings then pull the card like cam1.
+  Security: private key never stored on vps1; client routes only 10.99.0.1; chain REPLAY-KITNET (top of INPUT) lets a
+  kit only answer connections vps1 opened; REPLAY-KITNET-FWD keeps kits off each other and Jordan Galaxy. Peers live in
+  /etc/replay/kitnet/, never wg0.conf.
+- **Send clips by FTP** (`kitftp.py`, `POST|DELETE /kit/camN/ftp`): user `reoftp_camN`, 24-char password shown once,
+  `/etc/vsftpd_user_conf/reoftp_camN` forces TLS for logins and data, live-hold marker keeps clips out of the public
+  hourly archive. Bookings (`pull: "ftp"`) run `ftp_window_job.py`, which reserves the window's clips, hard-links them and
+  hands over to `sdpull_cli_job.py` with `SDPULL_FILES` (files mode skips the camera search; trim/assemble/8K/upload
+  unchanged). Storage cap per camera: 8 GB / 24 h (`KITFTP_MAX_GB`, `KITFTP_MAX_HOURS`); under 12 GB free disk the
+  oldest unreserved kit clips go first.
+- Install: `install_fullquality.sh` (checks control.py / sdpull_cli_job.py are the expected versions first; vsftpd
+  config rolls back by itself if vsftpd won't start). `control.py.vps1` / `sdpull_cli_job.py.vps1` are the edited copies.
+- `GET /kit/camN/link`: what the app shows (router connected / camera found / last FTP clip).
