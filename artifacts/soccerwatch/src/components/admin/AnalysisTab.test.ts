@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysisGpuQueueLabel, buildAnalysisJobParams } from "./AnalysisTab";
+import { analysisDetailLabel, analysisDetailParams, analysisGpuQueueLabel, buildAnalysisJobParams } from "./AnalysisTab";
 
 describe("analysis GPU params", () => {
   it("queues each finish-time choice on the Salad auto-fleet", () => {
@@ -81,5 +81,22 @@ describe("analysis GPU queue labels", () => {
     expect(analysisGpuQueueLabel({ gpu: "vast:RTX 4090" })).toBe("Vast RTX 4090");
     expect(analysisGpuQueueLabel({ gpu: "multi", gpus: ["vast:RTX 5090", "vast:RTX 3090"] }))
       .toBe("2 cards: Vast RTX 5090 + Vast RTX 3090");
+  });
+});
+describe("analysis detail params", () => {
+  it("sends nothing extra by default", () => {
+    expect(analysisDetailParams(false, false)).toEqual({});
+    expect(analysisDetailLabel({ gpu: "auto" })).toBe("");
+  });
+
+  it("asks the worker for the 8K original and for a one-chunk test", () => {
+    expect(analysisDetailParams(true, false)).toEqual({ prefer8k: true });
+    expect(analysisDetailParams(true, true)).toEqual({ prefer8k: true, maxChunks: 1 });
+    expect(analysisDetailParams(false, true)).toEqual({ maxChunks: 1 });
+  });
+
+  it("labels 8K and test jobs in the queue", () => {
+    expect(analysisDetailLabel({ prefer8k: true })).toBe(" · 8K native");
+    expect(analysisDetailLabel({ prefer8k: true, maxChunks: 1 })).toBe(" · 8K native · test: 1 chunk");
   });
 });
