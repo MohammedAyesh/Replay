@@ -21,7 +21,14 @@ import http from "http";
 import crypto from "crypto";
 import fs from "node:fs";
 import { execFileSync } from "node:child_process";
-import { db, usersTable, userClipsTable } from "@workspace/db";
+import {
+  db,
+  fieldsTable,
+  recordingsTable,
+  recordingSchedulesTable,
+  usersTable,
+  userClipsTable,
+} from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { runExportFailoverSweepOnce } from "../lib/exportFailover";
 
@@ -119,6 +126,8 @@ import { renderQueue, useLiveRenderSettings } from "../lib/renderQueue";
 const FILE = crypto.randomBytes(300 * 1024);
 const VIDEO = "1e69d9ea-e5ef-4c20-990d-a4fd678f7ace";
 const TAG = `fo_${Date.now()}`;
+const STORAGE_VIDEO = "0bc2a645-8c42-4e9b-8c2c-36427c20e556";
+const BACKFILL_STORAGE_VIDEO = "75a5ba45-2076-473b-a77d-2e02fc176fe8";
 
 type Job = { status: string; errorKind?: string | null; progress: number; submissions: number; retried: number };
 const jobs = new Map<string, Job>();
@@ -132,6 +141,10 @@ const unreachableSubmit = new Set<number>();
 let vps1: http.Server;
 let app: Express;
 let ownerId: number;
+let fieldId: number;
+let storageRecordingId: number;
+const storageRecordingIds: number[] = [];
+let queueMissingClipExportIfEligible: typeof import("./userClips")["queueMissingClipExportIfEligible"];
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -203,7 +216,8 @@ beforeAll(async () => {
   vi.stubEnv("CONTABO_CONTROL_URL", `http://127.0.0.1:${(vps1.address() as { port: number }).port}`);
   vi.stubEnv("CONTABO_CONTROL_KEY", "test-control-key");
 
-  const { default: router } = await import("./userClips");
+  const { default: router, queueMissingClipExportIfEligible: queueMissing } = await import("./userClips");
+  queueMissingClipExportIfEligible = queueMissing;
   app = express();
   app.use(cookieParser());
   app.use(express.json());
@@ -214,7 +228,19 @@ beforeAll(async () => {
     .values({ name: "Owner", email: `owner_${TAG}@test.local`, isGuest: false, profileComplete: false, plan: "pro" })
     .returning({ id: usersTable.id });
   ownerId = owner.id;
-});
+  const [field] = await db.insert(fieldsTable).values({
+    name: `Storage export source ${TAG}`,
+    location: "Test",
+  }).returning({ id: fieldsTable.id });
+  fieldId = field.id;
+  storageRecordingId = await insertStorageRecording(STORAGE_VIDEO);
+  await db.insert(recordingSchedulesTable).values({
+    fieldId,
+    allowedDate: "2026-09-22",
+    startTime: "00:00",
+    endTime: "23:59",
+  });
+}, 30_000);
 
 afterAll(async () => {
   const { settingsDefaultsTable, brandingProfilesTable } = await import("@workspace/db");
@@ -226,6 +252,11 @@ afterAll(async () => {
   (await import("../lib/settings")).invalidateSettingsCache();
   await db.delete(userClipsTable).where(inArray(userClipsTable.userId, [ownerId]));
   await db.delete(usersTable).where(eq(usersTable.id, ownerId));
+  await db.delete(recordingSchedulesTable).where(eq(recordingSchedulesTable.fieldId, fieldId));
+  if (storageRecordingIds.length) {
+    await db.delete(recordingsTable).where(inArray(recordingsTable.id, storageRecordingIds));
+  }
+  await db.delete(fieldsTable).where(eq(fieldsTable.id, fieldId));
   await new Promise<void>((r) => vps1.close(() => r()));
   fs.rmSync("/tmp/test-primary-export.mp4", { force: true });
   vi.unstubAllEnvs();
@@ -300,6 +331,20 @@ async function waitForBackupJob(id: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Backup job for clip ${id} was not accepted`);
+}
+
+async function insertStorageRecording(videoId: string): Promise<number> {
+  const [recording] = await db.insert(recordingsTable).values({
+    fieldId,
+    court: "cam1",
+    date: "2026-09-22",
+    timeSlot: "12:00",
+    duration: "00:30:00",
+    videoUrl: `https://replayjo.b-cdn.net/vod/${videoId}/8k.m3u8`,
+    isVisible: true,
+  }).returning({ id: recordingsTable.id });
+  storageRecordingIds.push(recording.id);
+  return recording.id;
 }
 
 describe("export failover to the backup renderer", () => {
@@ -395,6 +440,133 @@ describe("export failover to the backup renderer", () => {
     const res = await status(id, "?verify=1");
     expect(["pending", "done"]).toContain(res.body.status);
     expect(res.body.status).not.toBe("error");
+  });
+});
+
+describe("streamless Storage clip exports", () => {
+  it("queues an export on create, accepts export requests, reports progress, and lists the finished URL", async () => {
+    exportMocks.primaryEnabled = false;
+    exportMocks.storageConfigured = true;
+    exportMocks.backupEnabled = false;
+    const gate = deferred<void>();
+    exportMocks.renderClip.mockImplementationOnce(async () => {
+      await gate.promise;
+      return "/tmp/test-primary-export.mp4";
+    });
+    const requests: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      requests.push(url);
+      return url.endsWith("/h264.m3u8")
+        ? new Response("#EXTM3U\n#EXT-X-ENDLIST", { status: 200 })
+        : new Response(null, { status: 404 });
+    });
+
+    try {
+      const created = await request(app).post("/api/user-clips").send({
+        videoId: STORAGE_VIDEO,
+        recordingId: storageRecordingId,
+        title: "Storage highlight",
+        startTime: 0.2,
+        endTime: 0.3,
+        cropPath: [],
+      }).expect(201);
+
+      expect(created.body).toMatchObject({
+        exportStatus: "pending",
+        exportedUrl: null,
+      });
+      expect(created.body.playbackUrl).toMatch(new RegExp(`/vod/${STORAGE_VIDEO}/h264\\.m3u8$`));
+
+      for (let i = 0; i < 200 && exportMocks.renderClip.mock.calls.length === 0; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(exportMocks.renderClip).toHaveBeenCalled();
+
+      const progress = await status(created.body.id);
+      expect(progress.body).toMatchObject({
+        status: "pending",
+        method: "primary",
+        progress: "encoding",
+      });
+
+      const accepted = await request(app).post(`/api/user-clips/${created.body.id}/export`);
+      expect(accepted.status).toBe(200);
+      expect(accepted.body.status).toBe("pending");
+
+      gate.resolve();
+      await waitForExportStatus(created.body.id, "done");
+      const listed = await request(app).get("/api/user-clips").expect(200);
+      const clip = listed.body.find((candidate: { id: number }) => candidate.id === created.body.id);
+      expect(clip).toMatchObject({
+        exportStatus: "done",
+        exportedUrl: `https://storage.test/clips/${created.body.id}.mp4`,
+      });
+      expect(requests.map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8"]);
+      expect(exportMocks.getBunnyVideoInfo).not.toHaveBeenCalled();
+    } finally {
+      gate.resolve();
+      fetchSpy.mockRestore();
+    }
+  }, 30_000);
+
+  it("backfills a legacy Storage clip after confirming its H.264 playlist exists", async () => {
+    exportMocks.primaryEnabled = false;
+    exportMocks.storageConfigured = true;
+    exportMocks.backupEnabled = false;
+    const recordingId = await insertStorageRecording(BACKFILL_STORAGE_VIDEO);
+    const id = await clip(null);
+    await db.update(userClipsTable).set({
+      videoId: BACKFILL_STORAGE_VIDEO,
+      sourceRecordingId: recordingId,
+    }).where(eq(userClipsTable.id, id));
+    const [candidate] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, id));
+    const requests: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      requests.push(url);
+      return url.endsWith("/h264.m3u8")
+        ? new Response("#EXTM3U\n#EXT-X-ENDLIST", { status: 200 })
+        : new Response(null, { status: 404 });
+    });
+
+    try {
+      await expect(queueMissingClipExportIfEligible(candidate)).resolves.toBe(true);
+      await waitForExportStatus(id, "done");
+      expect((await rowOf(id)).exportedUrl).toBe(`https://storage.test/clips/${id}.mp4`);
+      expect(requests.map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8"]);
+      expect(exportMocks.getBunnyVideoInfo).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  }, 30_000);
+
+  it("does not backfill a Storage clip when neither supported playlist exists", async () => {
+    exportMocks.primaryEnabled = false;
+    exportMocks.storageConfigured = true;
+    exportMocks.backupEnabled = false;
+    const unavailableVideo = "925d87d7-a3d9-4d23-8a70-b2a21e49d6c2";
+    const recordingId = await insertStorageRecording(unavailableVideo);
+    const id = await clip(null);
+    await db.update(userClipsTable).set({
+      videoId: unavailableVideo,
+      sourceRecordingId: recordingId,
+    }).where(eq(userClipsTable.id, id));
+    const [candidate] = await db.select().from(userClipsTable).where(eq(userClipsTable.id, id));
+    const requests: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
+      requests.push(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return new Response(null, { status: 404 });
+    });
+
+    try {
+      await expect(queueMissingClipExportIfEligible(candidate)).resolves.toBe(false);
+      expect((await rowOf(id)).exportStatus).toBeNull();
+      expect(requests.map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8", "4k.m3u8"]);
+      expect(exportMocks.renderClip).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
   });
 });
 

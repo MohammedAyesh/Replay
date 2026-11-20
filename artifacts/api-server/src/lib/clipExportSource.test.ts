@@ -80,6 +80,44 @@ describe("waiting for a 4K-only clip export source", () => {
     expect(getSource).toHaveBeenCalledWith(guid);
   });
 
+  it("chooses the H.264 Storage playlist for an export and never requests 8K", async () => {
+    const requests: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      requests.push(String(input));
+      return new Response(playlist, { status: 200 });
+    });
+    try {
+      const source = await waitForCamera4kSource(guid, { timeoutMs: 1 });
+      expect(source.rendition).toBe("h264");
+      expect(source.url).toMatch(new RegExp(`/vod/${guid}/h264\\.m3u8$`));
+      expect(requests.map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8"]);
+      expect(requests.every((url) => !url.endsWith("/8k.m3u8"))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("uses 4K only when H.264 is missing and still never requests 8K", async () => {
+    const fallbackGuid = "a1d64853-8136-49d9-b973-87ee88a13837";
+    const requests: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      requests.push(url);
+      return url.endsWith("/h264.m3u8")
+        ? new Response(null, { status: 404 })
+        : new Response(playlist, { status: 200 });
+    });
+    try {
+      const source = await waitForCamera4kSource(fallbackGuid, { timeoutMs: 1 });
+      expect(source.rendition).toBe("4k");
+      expect(source.url).toMatch(new RegExp(`/vod/${fallbackGuid}/4k\\.m3u8$`));
+      expect(requests.map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8", "4k.m3u8"]);
+      expect(requests.every((url) => !url.endsWith("/8k.m3u8"))).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("fails immediately for a permanent 4K access error rather than selecting Stream", async () => {
     const getPlaylist = vi.fn().mockRejectedValue(new UhdPlaylistRequestError(403));
     await expect(waitForCamera4kSource(guid, {

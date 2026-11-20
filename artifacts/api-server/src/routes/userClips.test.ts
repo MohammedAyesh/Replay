@@ -260,6 +260,7 @@ describe("missing clip-export backfill eligibility", () => {
     expect(shouldRetryMissingClipExport({ ...clip, exportStatus: "error" }, true, false)).toBe(true);
     expect(shouldRetryMissingClipExport({ ...clip, exportStatus: "expired" }, true, false)).toBe(false);
     expect(shouldRetryMissingClipExport({ ...clip, exportStatus: "done" }, true, false)).toBe(false);
+    expect(shouldRetryMissingClipExport({ ...clip, exportedUrl: "https://cdn.test/already-exported.mp4" }, true, false)).toBe(false);
     expect(shouldRetryMissingClipExport(clip, false, false)).toBe(false);
     expect(shouldRetryMissingClipExport(clip, true, true)).toBe(false);
     expect(shouldRetryMissingClipExport({ ...clip, videoId: "live:camera1" }, true, false)).toBe(false);
@@ -306,7 +307,7 @@ describe("POST /api/user-clips", () => {
     expect(row.sourceRecordingId).toBe(recordingId);
   });
 
-  it("plays streamless clips from H.264 and does not queue a server export", async () => {
+  it("keeps streamless clip playback direct from H.264", async () => {
     const streamlessVideoId = "123e4567-e89b-12d3-a456-426614174000";
     const requests: string[] = [];
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input: any) => {
@@ -316,38 +317,37 @@ describe("POST /api/user-clips", () => {
       return new Response("not found", { status: 404 });
     });
     try {
-      mockedGetLocalUserId.mockResolvedValueOnce(userAId);
-      const created = await request(app)
-        .post("/api/user-clips")
-        .send({
-          ...SAMPLE_CLIP_BODY,
-          videoId: streamlessVideoId,
-          recordingId: storageRecordingId,
-        })
-        .expect(201);
-      expect(created.body.playbackUrl).toMatch(/\/vod\/123e4567-e89b-12d3-a456-426614174000\/h264\.m3u8$/);
-      expect(created.body.exportStatus).toBeNull();
-      expect(created.body.exportedUrl).toBeNull();
+      const [clip] = await db.insert(userClipsTable).values({
+        userId: userAId,
+        videoId: streamlessVideoId,
+        title: "Storage highlight",
+        startTime: "0.1",
+        endTime: "0.2",
+        cropPath: [],
+        visibility: "private",
+        aspectRatio: "16:9",
+        sourceRecordingId: storageRecordingId,
+      }).returning({ id: userClipsTable.id, sourceRecordingId: userClipsTable.sourceRecordingId });
+      expect(clip.sourceRecordingId).toBe(storageRecordingId);
 
-      const [row] = await db.select({ sourceRecordingId: userClipsTable.sourceRecordingId })
-        .from(userClipsTable).where(eq(userClipsTable.id, created.body.id));
-      expect(row.sourceRecordingId).toBe(storageRecordingId);
+      mockedGetLocalUserId.mockResolvedValueOnce(userAId);
+      const clips = await request(app).get("/api/user-clips").expect(200);
+      const listed = clips.body.find((candidate: { id: number }) => candidate.id === clip.id);
+      expect(listed.playbackUrl).toMatch(/\/vod\/123e4567-e89b-12d3-a456-426614174000\/h264\.m3u8$/);
+      expect(listed.exportStatus).toBeNull();
+      expect(listed.exportedUrl).toBeNull();
 
       mockedGetLocalUserId.mockResolvedValueOnce(userAId);
       const shareLink = await request(app)
-        .get(`/api/user-clips/${created.body.id}/share-link`)
+        .get(`/api/user-clips/${clip.id}/share-link`)
         .expect(200);
-      expect(shareLink.body.shareUrl).toContain(`/s/${created.body.id}/`);
+      expect(shareLink.body.shareUrl).toContain(`/s/${clip.id}/`);
       expect(shareLink.body.ready).toBe(false);
 
       const shareCount = await request(app)
-        .post(`/api/user-clips/${created.body.id}/share`)
+        .post(`/api/user-clips/${clip.id}/share`)
         .expect(200);
       expect(shareCount.body).toMatchObject({ ok: true, shareCount: 1 });
-      mockedGetLocalUserId.mockResolvedValueOnce(userAId);
-      const exportRequest = await request(app).post(`/api/user-clips/${created.body.id}/export`);
-      expect(exportRequest.status).toBe(409);
-      await new Promise((resolve) => setTimeout(resolve, 25));
 
       expect(requests.some((url) => url.includes("video.bunnycdn.com"))).toBe(false);
       expect(requests.filter((url) => url.endsWith(".m3u8")).map((url) => url.slice(url.lastIndexOf("/") + 1))).toEqual(["h264.m3u8"]);

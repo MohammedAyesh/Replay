@@ -371,12 +371,13 @@ async function clipMediaUrls(
 const BUNNY_VIDEO_GUID_RE = /^(?:[0-9a-f]{32}|[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12})$/i;
 
 export function shouldRetryMissingClipExport(
-  clip: { videoId: string; exportStatus: string | null },
+  clip: { videoId: string; exportStatus: string | null; exportedUrl?: string | null },
   sourceExists: boolean,
   alreadyInFlight: boolean,
 ): boolean {
   return sourceExists
     && !alreadyInFlight
+    && !clip.exportedUrl
     && !isLiveVideoId(clip.videoId)
     && BUNNY_VIDEO_GUID_RE.test(clip.videoId)
     && (clip.exportStatus == null || clip.exportStatus === "error");
@@ -1685,14 +1686,12 @@ if (process.env.NODE_ENV !== "test") {
  */
 export async function queueUserClipExport(clip: typeof userClipsTable.$inferSelect): Promise<string | null> {
   if (isLiveVideoId(clip.videoId)) return null;
-  // Camera originals are already a playable CDN HLS source. Never enqueue a
-  // server cut or Storage upload for these clips.
-  if (await isStreamlessStorageClip(clip)) return clip.exportStatus === "done" && clip.exportedUrl ? "done" : null;
   if (clip.exportStatus === "done" && clip.exportedUrl) return "done";
   if (isInternalPendingStatus(clip.exportStatus)) return "pending";
   if (inFlight.has(clip.id)) return "pending";
 
-  const primaryAvailable = isBunnyStorageConfigured() && isBunnyConfigured();
+  const streamlessStorage = await isStreamlessStorageClip(clip);
+  const primaryAvailable = isBunnyStorageConfigured() && (streamlessStorage || isBunnyConfigured());
   if (!primaryAvailable && !isBackupExportConfigured()) {
     await db.update(userClipsTable)
       .set({ exportStatus: "error" })
@@ -1714,6 +1713,69 @@ export async function queueUserClipExport(clip: typeof userClipsTable.$inferSele
 }
 
 /**
+ * Queue one missing export after confirming the matching source still exists.
+ * Storage-backed clips use their H.264/4K playlist instead of the Bunny Stream
+ * metadata API; their export renderer independently pins H.264, then 4K.
+ */
+export async function queueMissingClipExportIfEligible(
+  clip: typeof userClipsTable.$inferSelect,
+): Promise<boolean> {
+  const streamlessSource = await isStreamlessStorageClip(clip);
+  const primaryAvailable = isBunnyStorageConfigured() && (streamlessSource || isBunnyConfigured());
+  const backupAvailable = isBackupExportConfigured();
+  if (
+    isLiveVideoId(clip.videoId)
+    || !BUNNY_VIDEO_GUID_RE.test(clip.videoId)
+    || clip.exportedUrl
+    || inFlight.has(clip.id)
+    || (!primaryAvailable && !backupAvailable)
+    || (!streamlessSource && !isBunnyConfigured())
+  ) return false;
+
+  let sourceExists = false;
+  if (streamlessSource) {
+    sourceExists = Boolean(await storageH264Or4kPlaylistUrl(clip.videoId));
+    if (!sourceExists) return false;
+  } else {
+    try {
+      await getBunnyVideoInfo(clip.videoId);
+      sourceExists = true;
+    } catch (err) {
+      if (classifyPortfolioSourceError(err) === "expired") {
+        await db.update(userClipsTable)
+          .set({ exportStatus: "expired" })
+          .where(and(
+            eq(userClipsTable.id, clip.id),
+            isNull(userClipsTable.exportedUrl),
+            or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+          ));
+      } else {
+        logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
+      }
+      return false;
+    }
+  }
+
+  if (!shouldRetryMissingClipExport(clip, sourceExists, inFlight.has(clip.id))) return false;
+
+  const [claimed] = await db
+    .update(userClipsTable)
+    .set({ exportStatus: "pending" })
+    .where(and(
+      eq(userClipsTable.id, clip.id),
+      isNull(userClipsTable.exportedUrl),
+      or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
+    ))
+    .returning({ id: userClipsTable.id });
+  if (!claimed) return false;
+
+  inFlight.add(clip.id);
+  startBackgroundExport({ ...clip, exportStatus: "pending" });
+  logger.info({ clipId: clip.id }, "Queued an export from the missing-export backfill");
+  return true;
+}
+
+/**
  * Gently recover clips whose export never started or failed while the source
  * footage is still available. The cursor uses the existing primary-key index;
  * work is claimed with a conditional update before the normal renderer starts.
@@ -1732,6 +1794,7 @@ function startMissingExportBackfill(intervalMs = 10 * 60_000): () => void {
         .from(userClipsTable)
         .where(and(
           gt(userClipsTable.id, cursor),
+          isNull(userClipsTable.exportedUrl),
           or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
         ))
         .orderBy(asc(userClipsTable.id))
@@ -1744,57 +1807,7 @@ function startMissingExportBackfill(intervalMs = 10 * 60_000): () => void {
       cursor = candidates[candidates.length - 1].id;
       if (candidates.length < 3) cursor = 0;
 
-      await Promise.all(candidates.map(async (clip) => {
-        const streamlessSource = await isStreamlessStorageClip(clip);
-        if (streamlessSource) return;
-        const primaryAvailable = isBunnyStorageConfigured() && isBunnyConfigured();
-        const backupAvailable = isBackupExportConfigured();
-        if (
-          isLiveVideoId(clip.videoId)
-          || !BUNNY_VIDEO_GUID_RE.test(clip.videoId)
-          || inFlight.has(clip.id)
-          || (!primaryAvailable && !backupAvailable)
-          // Only Stream-backed sources use the Stream metadata API to decide
-          // whether a missing export is safe to retry.
-          || (!streamlessSource && !isBunnyConfigured())
-        ) return;
-
-        if (!streamlessSource) {
-          try {
-            await getBunnyVideoInfo(clip.videoId);
-          } catch (err) {
-            if (classifyPortfolioSourceError(err) === "expired") {
-              const probe = clip.exportedUrl ? await probeExportObject(clip.exportedUrl) : { state: "missing" as const, url: "", bytes: null };
-              if (probe.state !== "unverified") {
-                await db.update(userClipsTable)
-                  .set(probe.state === "exists" ? { exportStatus: "done", exportedUrl: probe.url } : { exportStatus: "expired" })
-                  .where(and(
-                    eq(userClipsTable.id, clip.id),
-                    or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
-                  ));
-              }
-            } else {
-              logger.warn({ err, clipId: clip.id }, "Skipping export backfill because the source could not be checked");
-            }
-            return;
-          }
-        }
-        if (!shouldRetryMissingClipExport(clip, true, inFlight.has(clip.id))) return;
-
-        const [claimed] = await db
-          .update(userClipsTable)
-          .set({ exportStatus: "pending" })
-          .where(and(
-            eq(userClipsTable.id, clip.id),
-            or(isNull(userClipsTable.exportStatus), eq(userClipsTable.exportStatus, "error")),
-          ))
-          .returning({ id: userClipsTable.id });
-        if (!claimed) return;
-
-        inFlight.add(clip.id);
-        startBackgroundExport({ ...clip, exportStatus: "pending" });
-        logger.info({ clipId: clip.id }, "Queued an export from the missing-export backfill");
-      }));
+      await Promise.all(candidates.map(queueMissingClipExportIfEligible));
     } catch (err) {
       logger.error({ err }, "Missing clip-export backfill failed");
     } finally {
@@ -1959,8 +1972,8 @@ router.post("/user-clips", async (req, res): Promise<void> => {
 
   // Pre-render the clip immediately so it's ready (or nearly ready) by the
   // time the user navigates to My Clips and taps Download.
-  let initialExportStatus: string | null = streamlessStorage ? null : row.exportStatus ?? null;
-  if (!isLive && !streamlessStorage && !inFlight.has(row.id)) {
+  let initialExportStatus: string | null = row.exportStatus ?? null;
+  if (!isLive && !inFlight.has(row.id)) {
     initialExportStatus = await queueUserClipExport(row);
     if (initialExportStatus === "pending") {
       logger.info({ clipId: row.id }, "Auto-triggered clip export on creation");
@@ -1989,7 +2002,7 @@ router.post("/user-clips", async (req, res): Promise<void> => {
       thumbnailUrl,
       playbackUrl,
       exportStatus: initialExportStatus,
-      exportedUrl: streamlessStorage ? null : row.exportedUrl ?? null,
+      exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
       footageRequestId: row.footageRequestId ?? null,
@@ -2062,8 +2075,8 @@ router.get("/user-clips", async (req, res): Promise<void> => {
       thumbnailTime,
       thumbnailUrl: media.thumbnailUrl,
       playbackUrl: media.playbackUrl,
-      exportStatus: streamlessIds.has(row.id) ? null : publicExportStatus(row.exportStatus),
-      exportedUrl: streamlessIds.has(row.id) ? null : row.exportedUrl ?? null,
+      exportStatus: publicExportStatus(row.exportStatus),
+      exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
       matchCode: row.matchCode ?? null,
@@ -2185,12 +2198,11 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
     .returning();
 
   const streamlessStorage = await isStreamlessStorageClip(row);
-  let responseExportStatus = streamlessStorage ? null : publicExportStatus(row.exportStatus);
+  let responseExportStatus = publicExportStatus(row.exportStatus);
   if (body.data.showInPortfolio === true
     && row.showInPortfolio
     && row.visibility === "public"
     && !row.isHidden
-    && !streamlessStorage
     && !isLiveVideoId(row.videoId)
   ) {
     clearPortfolioExportQueueAttempt(row.id);
@@ -2236,7 +2248,7 @@ router.patch("/user-clips/:id", async (req, res): Promise<void> => {
       thumbnailUrl,
       playbackUrl,
       exportStatus: responseExportStatus,
-      exportedUrl: streamlessStorage ? null : row.exportedUrl ?? null,
+      exportedUrl: row.exportedUrl ?? null,
       createdAt: row.createdAt.toISOString(),
       academyId: row.academyId ?? null,
       introVideoUrl,
@@ -2569,10 +2581,6 @@ router.post("/user-clips/:id/export", async (req, res): Promise<void> => {
   const clip = accessibleClip;
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
-  if (await isStreamlessStorageClip(clip)) {
-    res.status(409).json({ error: "Streamless Storage clips play directly from their source playlist" });
-    return;
-  }
   if (isLiveVideoId(clip.videoId)) {
     res.status(400).json({ error: "Live stream clips cannot be exported. The recording must be uploaded to Bunny Stream first." });
     return;
@@ -2680,10 +2688,6 @@ router.get("/user-clips/:id/export-status", async (req, res): Promise<void> => {
   const clip = accessibleClip;
 
   if (!clip) { res.status(404).json({ error: "Clip not found" }); return; }
-  if (await isStreamlessStorageClip(clip)) {
-    res.json({ status: "idle", url: null, method: null, queuePosition: null, queueWaiting: 0 });
-    return;
-  }
 
   const queue = queueStateFor(clip.id);
   const decided = await exportStatusFor(clip, { verify: req.query.verify === "1" });
