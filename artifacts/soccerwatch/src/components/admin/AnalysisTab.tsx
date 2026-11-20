@@ -64,6 +64,10 @@ interface Job {
     cards?: "auto" | number;
     fleetTargetMin?: FleetTargetMin;
     training?: boolean;
+    /** Analyse the camera's own 7680x2160 original instead of the 4K copy (vps1 worker). */
+    prefer8k?: boolean;
+    /** Cap on chunks: a short trial run. */
+    maxChunks?: number;
   };
   status: JobStatus;
   stage: string | null;
@@ -306,6 +310,20 @@ export function analysisGpuQueueLabel(params?: Job["params"]): string {
   return analysisGpuLabel(params?.gpu);
 }
 
+export function analysisDetailParams(native8k: boolean, oneChunkTest: boolean): NonNullable<Job["params"]> {
+  const params: NonNullable<Job["params"]> = {};
+  if (native8k) params.prefer8k = true;
+  if (oneChunkTest) params.maxChunks = 1;
+  return params;
+}
+
+export function analysisDetailLabel(params?: Job["params"]): string {
+  const parts: string[] = [];
+  if (params?.prefer8k) parts.push("8K native");
+  if (typeof params?.maxChunks === "number") parts.push(`test: ${params.maxChunks} chunk${params.maxChunks === 1 ? "" : "s"}`);
+  return parts.length ? ` · ${parts.join(" · ")}` : "";
+}
+
 export function buildAnalysisJobParams(
   gpuMode: "manual" | "salad-fleet" | "finish",
   gpuCards: GpuCardSelection[],
@@ -433,6 +451,8 @@ export default function AnalysisTab() {
   const [selected, setSelected] = useState<number[]>([]);
   const [startInput, setStartInput] = useState("0:00");
   const [trainingMode, setTrainingMode] = useState(false);
+  const [native8k, setNative8k] = useState(false);
+  const [oneChunkTest, setOneChunkTest] = useState(false);
   const [queueMode, setQueueMode] = useState<"finish" | "advanced">("finish");
   const [fleetTargetMin, setFleetTargetMin] = useState<FleetTargetMin>(120);
   const [cardCount, setCardCount] = useState(1);
@@ -656,6 +676,7 @@ export default function AnalysisTab() {
         ? buildAnalysisJobParams("finish", gpuCards, fleetCardCount, fleetTargetMin)
         : buildAnalysisJobParams(gpuMode, gpuCards, fleetCardCount);
       if (trainingMode) params.training = true;
+      Object.assign(params, analysisDetailParams(native8k, oneChunkTest));
       await api("/admin/analysis-jobs", {
         method: "POST",
         body: JSON.stringify({
@@ -667,6 +688,8 @@ export default function AnalysisTab() {
       });
       setSelected([]);
       setTrainingMode(false);
+      setNative8k(false);
+      setOneChunkTest(false);
       setQueueMode("finish");
       setFleetTargetMin(120);
       setCardCount(1);
@@ -946,6 +969,44 @@ export default function AnalysisTab() {
               </span>
             </span>
           </label>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2" dir={locale === "ar" ? "rtl" : "ltr"}>
+            <input
+              type="checkbox"
+              checked={native8k}
+              onChange={(event) => setNative8k(event.target.checked)}
+              className="h-4 w-4 accent-sky-500"
+              data-testid="analysis-native-8k"
+            />
+            <span>
+              <span className="block text-xs font-semibold text-zinc-200">
+                {locale === "ar" ? "دقة 8K كاملة" : "Full 8K detail"}
+              </span>
+              <span className="block text-[11px] text-zinc-500">
+                {locale === "ar"
+                  ? "حلّل صورة الكاميرا الأصلية 7680×2160 بدون تحويل إلى 4K. أبطأ وأغلى؛ للملاعب الكبيرة. يعود إلى 4K إن لم تكن نسخة 8K موجودة."
+                  : "Analyse the camera's own 7680×2160 picture, no 4K conversion. Slower and dearer; for full-size pitches. Falls back to 4K when no 8K copy exists."}
+              </span>
+            </span>
+          </label>
+          <label className="flex min-h-10 cursor-pointer items-center gap-2 rounded border border-zinc-800 bg-zinc-950/60 px-3 py-2" dir={locale === "ar" ? "rtl" : "ltr"}>
+            <input
+              type="checkbox"
+              checked={oneChunkTest}
+              onChange={(event) => setOneChunkTest(event.target.checked)}
+              className="h-4 w-4 accent-sky-500"
+              data-testid="analysis-one-chunk-test"
+            />
+            <span>
+              <span className="block text-xs font-semibold text-zinc-200">
+                {locale === "ar" ? "تجربة: أول 10 دقائق فقط" : "Test: first 10 minutes only"}
+              </span>
+              <span className="block text-[11px] text-zinc-500">
+                {locale === "ar"
+                  ? "مقطع واحد من بداية المباراة لقياس السرعة والتكلفة قبل تحليل المباراة كاملة."
+                  : "One chunk from kick-off, to measure speed and cost before a full run."}
+              </span>
+            </span>
+          </label>
           {queueMode === "advanced" && <div className="min-w-0 flex-1">
             <div className="flex items-start gap-2">
               <div className="w-20 shrink-0">
@@ -1108,6 +1169,7 @@ export default function AnalysisTab() {
               {job.sources.length > 1 ? `${job.sources.length} recordings` : "1 recording"}
               {" · kick-off "}{formatStartTime(job.matchStartSeconds)}
               {" · GPU: "}{analysisGpuQueueLabel(job.params)}
+              {analysisDetailLabel(job.params)}
               {job.bundleRecordingIds.length > 0 &&
                 ` · ${job.bundleRecordingIds.length}/${job.sources.length} bundles attached`}
             </p>
