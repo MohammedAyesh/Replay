@@ -177,7 +177,12 @@ describe("match room helpers", () => {
     expect(matchPhase({ ...base, status: "running" }, whistle + 6 * 60 * 1000)).toBe("processing");
     expect(matchPhase({ ...base, status: "ready", readyAt: new Date(whistle) }, whistle + 60 * 60 * 1000)).toBe("ready");
     expect(matchPhase({ ...base, status: "ready", readyAt: new Date(whistle) }, whistle + 15 * 24 * 60 * 60 * 1000)).toBe("expired");
+    expect(matchPhase({ ...base, status: "expired" }, kickoff)).toBe("expired");
+    expect(matchPhase({ ...base, status: "refunded" }, kickoff)).toBe("cancelled");
+    expect(matchPhase({ ...base, status: "rejected" }, kickoff)).toBe("cancelled");
     expect(matchPhase({ ...base, status: "cancelled" }, kickoff)).toBe("cancelled");
+    expect(voteOpen({ ...base, status: "refunded" }, whistle)).toBe(false);
+    expect(voteOpen({ ...base, status: "rejected" }, whistle)).toBe(false);
     expect(voteOpen({ ...base, status: "ready" }, whistle + 23 * 60 * 60 * 1000)).toBe(true);
     expect(voteOpen({ ...base, status: "ready" }, whistle + 25 * 60 * 60 * 1000)).toBe(false);
   });

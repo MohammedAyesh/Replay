@@ -303,7 +303,7 @@ describe("early-play access", () => {
     state.academyRows = [{ id: 9 }];
     expect((await status()).status).toBe(404);
   });
-  it.each(["cancelled", "failed", "refunded"])("a %s request is 404 for everyone", async (s) => {
+  it.each(["cancelled", "failed", "refunded", "rejected", "expired"])("a %s request is 404 for everyone", async (s) => {
     state.ctx = ctx({ status: s });
     state.viewer = { id: 51, isAdmin: true, isGuest: false };
     expect((await status()).status).toBe(404);

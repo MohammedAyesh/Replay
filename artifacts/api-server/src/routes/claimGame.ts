@@ -185,7 +185,7 @@ async function refreshMatchStats(recordingId: number): Promise<void> {
 /** State is the page's own document; keep it bounded rather than trusting its size. */
 const MAX_STATE_BYTES = 2_000_000;
 
-const DEAD_BOOKINGS = ["cancelled", "refunded", "failed"];
+const DEAD_BOOKINGS = ["cancelled", "refunded", "failed", "rejected"];
 
 function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;

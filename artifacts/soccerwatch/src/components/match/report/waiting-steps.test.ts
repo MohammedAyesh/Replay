@@ -50,7 +50,7 @@ describe("shouldShowWaiting", () => {
     expect(shouldShowWaiting(processingRoom(true), undefined)).toBe(false);
   });
 
-  it("uses the report for expired matches", () => {
-    expect(shouldShowWaiting(processingRoom(false, "expired"), undefined)).toBe(false);
+  it.each(["expired", "failed", "cancelled"])("uses the report for %s matches", (phase) => {
+    expect(shouldShowWaiting(processingRoom(false, phase), undefined)).toBe(false);
   });
 });

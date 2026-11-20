@@ -156,7 +156,7 @@ export function MatchReelRow({ room, L, r }: { room: MatchRoom; L: L; r: R }) {
   if (!room.signedIn || loading || userClips.isLoading) return null;
   // Count what the reel builder will actually start with: visible, one shape.
   const count = matchReelPicks(userClips.data ?? [], ids, REEL_MAX_CLIPS).length;
-  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
+  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" && room.phase !== "cancelled" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
   if (count >= REEL_MIN_CLIPS) {
     return (
       <Link href={matchReelPath(room.code)} className="flex min-h-14 items-center gap-3 rounded-2xl border border-turf/40 bg-turf/10 px-3.5" data-testid="link-match-reel">
@@ -270,7 +270,7 @@ function FormLine({ me, stats, L }: { me: PlayerStats; stats: Stats; L: L }) {
 /* ------------------------------------------------------------------ E1: compact */
 
 function MatchStrip({ room, r, L, me, replay, durationSeconds }: { room: MatchRoom; r: R; L: L; me: PlayerStats; replay: MatchReplay | undefined; durationSeconds: number }) {
-  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
+  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" && room.phase !== "cancelled" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
   const totalMin = Math.round(durationSeconds / 60);
   const onMin = Math.round(me.minutes ?? 0);
   const pct = (seconds: number) => `${Math.min(98, Math.max(2, (seconds / Math.max(1, durationSeconds)) * 100))}%`;
@@ -292,7 +292,7 @@ function MatchStrip({ room, r, L, me, replay, durationSeconds }: { room: MatchRo
         </Link>
       ) : (
         <div className="flex h-[72px] items-center justify-center rounded-2xl border border-line bg-surface px-4 text-center text-sm text-muted-text">
-          {room.phase === "expired" ? r.expired : r.processing}
+          {room.phase === "expired" ? r.expired : room.phase === "cancelled" ? r.footageUnavailable : r.processing}
         </div>
       )}
       <div dir="ltr" className="relative h-6">
@@ -470,7 +470,7 @@ export function SheetLayout(props: LayoutProps) {
   const halves = me.report ? compareHalves(me.report.blocks, durationSeconds) : null;
   const blocks = me.report ? foldBlocks(me.report.blocks, durationSeconds) : [];
   const topRate = Math.max(...blocks.map((block) => block.metresPerMinute ?? 0), 1);
-  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
+  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" && room.phase !== "cancelled" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
   const moments = myMoments(me, L);
   const team = stats.team;
   const possession = team && team.possessionPercent.length >= 2 && room.teamCount !== 3 ? team.possessionPercent : null;

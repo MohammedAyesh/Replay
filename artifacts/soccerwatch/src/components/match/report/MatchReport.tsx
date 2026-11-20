@@ -295,9 +295,10 @@ function TitleBlock({ room, copy, r, now, colors, names, replay, meId, me, playe
         <bdi className="ms-2 font-mono text-[11px] tracking-[0.2em] text-muted-text/70">#{room.code}</bdi>
       </p>
       <ReportScoreRows room={room} copy={copy} r={r} colors={colors} names={names} replay={replay} meId={meId} me={me} players={players} stats={stats} />
-      {room.phase === "expired" || !room.footage.ready || (!me && canFind) ? <div className="mt-4 rounded-2xl bg-void/45 p-3.5">
+      {room.phase === "expired" || room.phase === "cancelled" || !room.footage.ready || (!me && canFind) ? <div className="mt-4 rounded-2xl bg-void/45 p-3.5">
         {room.phase === "expired" ? <p className="text-sm text-muted-text">{r.expired}</p>
-          : !room.footage.ready ? <>
+          : room.phase === "cancelled" ? <p className="text-sm text-muted-text">{r.footageUnavailable}</p>
+            : !room.footage.ready ? <>
             <p className="flex items-center gap-2 text-sm font-semibold"><Loader2 className="h-4 w-4 animate-spin text-turf" />{r.processing}</p>
             <p className="mt-1 text-xs text-muted-text">{r.processingDesc}</p>
             {room.progress > 0 && room.progress < 100 && <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#1B2338]"><span className="block h-full bg-turf" style={{ width: `${room.progress}%` }} /></div>}
@@ -309,12 +310,12 @@ function TitleBlock({ room, copy, r, now, colors, names, replay, meId, me, playe
             {room.footage.shareToken && <Link href={`/w/${room.footage.shareToken}?m=${room.code}`} className="mt-2 flex min-h-11 items-center justify-center gap-2 rounded-full border border-turf/60 text-sm font-bold text-turf" data-testid="link-watch-full-match"><Play className="h-4 w-4 fill-current" />{r.watchMatch}</Link>}
           </> : null}
       </div> : null}
-      {me && room.footage.ready && <div className="mt-3 grid grid-cols-2 gap-2">
+      {me && room.footage.ready && room.phase !== "cancelled" && <div className="mt-3 grid grid-cols-2 gap-2">
         {room.footage.shareToken && <Link href={`/w/${room.footage.shareToken}?m=${room.code}`} className="flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-sm font-extrabold text-void" data-testid="link-watch-full-match"><Play className="h-4 w-4 fill-current" />{r.watchMatch}</Link>}
         <button type="button" onClick={onShare} className="flex min-h-12 items-center justify-center gap-2 rounded-full border border-turf/60 text-sm font-bold text-turf"><Share2 className="h-4 w-4" />{r.shareMatch}</button>
       </div>}
-      {!me && !canFind && room.phase !== "expired" && room.footage.ready && room.footage.shareToken && <Link href={`/w/${room.footage.shareToken}?m=${room.code}`} className="mt-3 flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-sm font-extrabold text-void" data-testid="link-watch-full-match"><Play className="h-4 w-4 fill-current" />{r.watchMatch}</Link>}
-      {room.footage.expiresAt && room.phase !== "expired" && <p className="mt-2 text-xs text-muted-text">{r.keptUntil(formatDate(Date.parse(room.footage.expiresAt), copy.locale))}</p>}
+      {!me && !canFind && room.phase !== "expired" && room.phase !== "cancelled" && room.footage.ready && room.footage.shareToken && <Link href={`/w/${room.footage.shareToken}?m=${room.code}`} className="mt-3 flex min-h-12 items-center justify-center gap-2 rounded-full bg-floodlight text-sm font-extrabold text-void" data-testid="link-watch-full-match"><Play className="h-4 w-4 fill-current" />{r.watchMatch}</Link>}
+      {room.footage.expiresAt && room.phase !== "expired" && room.phase !== "cancelled" && <p className="mt-2 text-xs text-muted-text">{r.keptUntil(formatDate(Date.parse(room.footage.expiresAt), copy.locale))}</p>}
     </section>
   );
 }
@@ -395,6 +396,9 @@ function TimelineBlock({ room, r, colors, replay, me, meId, durationSeconds }: {
 function FootageBlock({ room, copy, r, primary }: { room: MatchRoom; copy: Copy; r: R; primary: boolean }) {
   if (room.phase === "expired") {
     return <Section><p className="text-sm text-muted-text">{r.expired}</p></Section>;
+  }
+  if (room.phase === "cancelled") {
+    return <Section><p className="text-sm text-muted-text">{r.footageUnavailable}</p></Section>;
   }
   if (!room.footage.ready) {
     return (

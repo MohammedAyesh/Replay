@@ -55,7 +55,7 @@ function requestCode(req: Request): string {
 async function authorizedRequest(req: Request, res: Response) {
   const roomCode = requestCode(req);
   const ctx = await loadRoomByCode(roomCode);
-  if (!ctx || ["cancelled", "failed", "refunded"].includes(ctx.request.status)) {
+  if (!ctx || ["cancelled", "failed", "refunded", "rejected", "expired"].includes(ctx.request.status)) {
     res.status(404).json({ error: "Match not found" });
     return null;
   }

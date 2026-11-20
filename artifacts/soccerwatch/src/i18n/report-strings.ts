@@ -68,6 +68,7 @@ const en = {
   waitingReadyBody: "Your video is ready",
   waitingReadyToast: "Your match video is ready",
   expired: "This footage has expired. The report stays.",
+  footageUnavailable: "The footage request is no longer active.",
   flags: "Moments flagged during the game",
 
   findTitle: "You're not in the numbers yet",
@@ -283,6 +284,7 @@ const ar: ReportStrings = {
   waitingReadyBody: "الفيديو جاهز",
   waitingReadyToast: "فيديو الماتش صار جاهز",
   expired: "الفيديو انتهت مدته. التقرير باقي.",
+  footageUnavailable: "طلب الفيديو ما عاد فعّال.",
   flags: "لحظات انعلّمت وقت الماتش",
 
   findTitle: "لسا مش موجود بالأرقام",

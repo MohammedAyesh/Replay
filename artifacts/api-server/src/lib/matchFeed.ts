@@ -92,7 +92,7 @@ function teamFor(base: string | null, spans: readonly unknown[], offsetSec: numb
   return teamAtTime(base as TeamSpanTeam, spans as readonly TeamSpanAtTime[], offsetSec);
 }
 
-const DEAD_BOOKINGS = ["cancelled", "refunded", "failed"];
+const DEAD_BOOKINGS = ["cancelled", "refunded", "failed", "rejected"];
 
 /** "60:00", "1:59:57", "3600" or "60" -> seconds. Bare small numbers are minutes. */
 export function durationSeconds(text: string | null | undefined): number {
