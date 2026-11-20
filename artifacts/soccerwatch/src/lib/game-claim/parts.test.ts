@@ -32,7 +32,7 @@ function makeContext(loaded: boolean): Ctx {
     crossings: [],
   };
   return {
-    game: { frameRate: 20 },
+    game: { frameRate: 20, outOfPlay: [] },
     CH: loaded ? { 1: chunk } : {},
     S: { you: {} },
   } as unknown as Ctx;

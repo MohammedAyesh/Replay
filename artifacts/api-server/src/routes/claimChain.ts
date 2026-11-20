@@ -1168,7 +1168,12 @@ router.get("/recordings/:id/claim-match/chain", async (req, res): Promise<void> 
   const ctx = await begin(req, res, { includeSegments: view === "full" });
   if (!ctx) return;
   const identity = (ctx.manifest.identities ?? []).find((item) => item.id === ctx.identityId);
-  const chain = chainOf(ctx.manifest, ctx.identityId);
+  const detectedGameWindow = await savedDetectedGameWindow(ctx);
+  const scopedCtx = contextWithDetectedGameWindow(ctx, detectedGameWindow);
+  const chain = clipPartsToMatchWindow(
+    chainOf(ctx.manifest, ctx.identityId),
+    scopedCtx.manifest,
+  );
   // No chain, but a binding an admin released: the claim was taken away, not
   // never made. Without saying so the page just looks like a fresh start and
   // the person's coverage has silently gone to zero.
@@ -1184,7 +1189,7 @@ router.get("/recordings/:id/claim-match/chain", async (req, res): Promise<void> 
     resetByAdmin = own?.state === "released";
   }
   res.setHeader("Vary", CLAIM_CHAIN_VIEW_HEADER);
-  res.json(describe(ctx, chain, identity?.name ?? null, null, resetByAdmin, view));
+  res.json(describe(scopedCtx, chain, identity?.name ?? null, null, resetByAdmin, view));
 });
 
 /**

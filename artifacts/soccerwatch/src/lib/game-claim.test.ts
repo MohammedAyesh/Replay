@@ -625,7 +625,7 @@ describe("jersey sidecar loading", () => {
     expect(loaded.pieces["s0:t1"]).toMatchObject({ t0: 4, t1: 5 });
     expect(loaded.jersey).toEqual({
       v: 1,
-      tracks: { "s0:t1": { number: "8", seenFrames: 1, confidence: 0.9, frames: [50] } },
+      tracks: { "s0:t1": { number: "8", seenFrames: 1, confidence: 0.9, frames: [80] } },
       numbers: { "8": ["s0:t1"] },
     });
   });

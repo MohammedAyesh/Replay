@@ -273,6 +273,40 @@ describe("GET the chain", () => {
     expect(res.body.frameRate).toBe(FPS);
   });
 
+  it("returns chain coverage clipped to the claimant's selected detected game", async () => {
+    const parts = [
+      { trackId: "t1", fromFrame: 0, toFrame: 99 },
+      { trackId: "t2", fromFrame: 100, toFrame: 199 },
+    ];
+    await resetManifest({
+      provenance: {
+        phases: {
+          sessions: [
+            { start: 0, end: 4, spans: [[0, 4]] },
+            { start: 4, end: 8, spans: [[4, 8]] },
+          ],
+        },
+      },
+      identities: [{
+        id: claimIdentityId(playerId, recordingId),
+        name: "Mohammed",
+        parts,
+      }],
+    } as Partial<TrackingManifest>);
+    const saved = await request(app).put(gameUrl()).send({
+      state: { detectedGameWindow: { startSeconds: 4, endSeconds: 8 } },
+      bench: [],
+      done: false,
+    });
+    expect(saved.status).toBe(200);
+
+    const res = await request(app).get(url()).set("x-claim-chain-view", "summary");
+    expect(res.status).toBe(200);
+    expect(res.body.chain).toEqual([{ trackId: "t2", fromFrame: 100, toFrame: 199 }]);
+    expect(res.body.coverageSeconds).toBe(4);
+    expect(res.body.coveragePercent).toBe(100);
+  });
+
   it("refuses an unauthenticated caller", async () => {
     mockedAccountUser.mockResolvedValue(null);
     mockedLocalUser.mockResolvedValue(null);
