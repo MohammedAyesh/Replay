@@ -81,6 +81,8 @@ function seedFromIdentities(manifest: TrackingManifest, trackIds: Set<string>): 
 export async function loadChunkData(opts: {
   manifest: TrackingManifest;
   k: number;
+  /** Selected detected-game ranges; kits and shirt readings must ignore other games in this segment. */
+  windowRanges?: Array<[number, number]>;
   fetchSegment: (index: number) => Promise<{
     startSeconds: number;
     endSeconds: number;
@@ -95,32 +97,56 @@ export async function loadChunkData(opts: {
   const { manifest, k } = opts;
   const meta = manifest.segments.find((s) => s.index === k);
   if (!meta) throw new Error(`No segment ${k}`);
+  const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
+  const ranges = opts.windowRanges?.filter(([start, end]) => end > start) ?? [];
+  const inRange = (frame: number) => ranges.some(([start, end]) => frame / fps >= start && frame / fps < end);
   const [segment, sprites, people, jersey] = await Promise.all([
     opts.fetchSegment(k),
     opts.fetchSprites(k).catch(() => ({})),
     opts.fetchPeople ? opts.fetchPeople(k).catch(() => null) : Promise.resolve(null),
     opts.fetchJersey(k).catch(() => null),
   ]);
-  const availableJersey = hasJerseyReadings(jersey) ? jersey : null;
+  const scopedSegment = ranges.length ? {
+    ...segment,
+    tracks: segment.tracks.flatMap((track) => {
+      const boxes = track.boxes.filter((box) => inRange(box.frame));
+      return boxes.length >= 2 ? [{ ...track, boxes }] : [];
+    }),
+    crossings: segment.crossings.filter((crossing) => inRange(crossing.frame)),
+  } : segment;
+  const scopedSprites = ranges.length
+    ? Object.fromEntries(Object.entries(sprites).map(([trackId, items]) => [
+      trackId,
+      items.filter((item) => inRange(item.f)),
+    ]))
+    : sprites;
+  const scopedJersey = ranges.length ? jerseyInsideWindows(jersey, inRange) : jersey;
+  const availableJersey = hasJerseyReadings(scopedJersey) ? scopedJersey : null;
   const chunk = buildChunk({
     k,
     start: meta.startSeconds,
     dur: Math.max(0, meta.endSeconds - meta.startSeconds),
     frameRate: manifest.frameRate,
-    tracks: segment.tracks,
-    crossings: segment.crossings,
-    sprites,
+    tracks: scopedSegment.tracks,
+    crossings: scopedSegment.crossings,
+    sprites: scopedSprites,
   });
   if (people?.groups?.length) {
     // The pipeline read every track at full resolution and grouped them the
-    // prototype's way; crops only fill pieces it had no reading for.
+    // prototype's way; selected-game windows remeasure only their own crops.
     applyPeople(chunk, people);
+    if (ranges.length) {
+      for (const piece of Object.values(chunk.pieces)) {
+        piece.feat = null;
+        piece.nr = 0;
+      }
+    }
     await measureChunk(chunk, featureFromJpeg);
   } else {
     await measureChunk(chunk, featureFromJpeg);
     groupChunk(chunk, seedFromIdentities(manifest, new Set(Object.keys(chunk.pieces))));
   }
-  const pipelineKits = people?.groups?.length ? kitsFromPeople(chunk, people) : null;
+  const pipelineKits = people?.groups?.length && !ranges.length ? kitsFromPeople(chunk, people) : null;
   if (pipelineKits) return Object.assign(chunk, { kits: pipelineKits, jersey: availableJersey, grouping: "pipeline" as const });
   const kits = splitKits(
     chunk.groups.map((g) => {
@@ -134,6 +160,24 @@ export async function loadChunkData(opts: {
     for (const kit of kits.groups) for (const cid of kit.memberIds) if (chunk.byCid[cid]) chunk.byCid[cid].team = kit.key;
   }
   return Object.assign(chunk, { kits, jersey: availableJersey, grouping: people?.groups?.length ? "pipeline" as const : "browser" as const });
+}
+
+function jerseyInsideWindows(
+  value: JerseySidecar | null,
+  inRange: (frame: number) => boolean,
+): JerseySidecar | null {
+  if (!value || typeof value !== "object" || !value.tracks || typeof value.tracks !== "object") return value;
+  const tracks = Object.fromEntries(Object.entries(value.tracks).flatMap(([trackId, reading]) => {
+    if (!reading || typeof reading !== "object") return [];
+    if (!Array.isArray(reading.frames)) return [[trackId, reading]];
+    const frames = reading.frames.filter(inRange);
+    return frames.length ? [[trackId, { ...reading, frames, seenFrames: frames.length }]] : [];
+  }));
+  const numbers: Record<string, string[]> = {};
+  for (const [trackId, reading] of Object.entries(tracks)) {
+    numbers[reading.number] = [...(numbers[reading.number] ?? []), trackId];
+  }
+  return { ...value, tracks, numbers };
 }
 
 function hasJerseyReadings(value: JerseySidecar | null): value is JerseySidecar {

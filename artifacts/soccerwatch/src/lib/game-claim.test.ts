@@ -592,6 +592,43 @@ describe("jersey sidecar loading", () => {
     await expect(load(async () => { throw new Error("not available"); })).resolves.toMatchObject({ jersey: null });
     await expect(load(async () => ({ tracks: {}, numbers: {} }))).resolves.toMatchObject({ jersey: null });
   });
+
+  it("filters track samples and shirt-number frames to the selected session", async () => {
+    const loaded = await loadChunkData({
+      manifest,
+      k: 0,
+      windowRanges: [[4, 6]],
+      fetchSegment: async () => ({
+        startSeconds: 0,
+        endSeconds: 10,
+        tracks: [{
+          id: "s0:t1",
+          boxes: Array.from({ length: 21 }, (_, index) => ({
+            frame: index * 5,
+            x: 100 + index,
+            y: 100,
+            w: 20,
+            h: 40,
+          })),
+        }],
+        crossings: [],
+      }),
+      fetchSprites: async () => ({}),
+      fetchPeople: async () => null,
+      fetchJersey: async () => ({
+        v: 1,
+        tracks: { "s0:t1": { number: "8", seenFrames: 3, confidence: 0.9, frames: [10, 50, 80] } },
+        numbers: { "8": ["s0:t1"] },
+      }),
+    });
+
+    expect(loaded.pieces["s0:t1"]).toMatchObject({ t0: 4, t1: 5 });
+    expect(loaded.jersey).toEqual({
+      v: 1,
+      tracks: { "s0:t1": { number: "8", seenFrames: 1, confidence: 0.9, frames: [50] } },
+      numbers: { "8": ["s0:t1"] },
+    });
+  });
 });
 
 describe("spans", () => {

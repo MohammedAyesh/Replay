@@ -76,6 +76,10 @@ export type ClaimState = {
   switches?: SwitchEvent[];
   /** Match windows selected on the intro screen (server-provided match codes). */
   matchChoices?: string[];
+  /** Selected analysis-detected game, persisted as a tracking-time range. */
+  detectedGameWindow?: { startSeconds: number; endSeconds: number } | null;
+  /** Exact included ranges used to clip gaps, coverage and saved track parts. */
+  windowRanges?: Array<[number, number]>;
   /**
    * The off ranges the last startClaimWithWindows added for the chosen games
    * (outside the games, and bench). Removed before the next call adds its own,
@@ -927,25 +931,28 @@ export function startClaim(ctx: Ctx, from?: number): "kit" | "done" {
   return order.length ? "kit" : "done";
 }
 
-/**
- * Apply the chosen match windows before deriving the order, so blocks outside
- * the selected match can never become the starting chunk or a later visit.
- */
-export function startClaimWithWindows(
+/** Update the selected time windows without resetting an existing claim's cursor. */
+export function applyClaimWindows(
   ctx: Ctx,
   windows: Array<[number, number]>,
   benchRanges: Array<[number, number]> = [],
-): "kit" | "done" {
-  const selected = windows
+  preserveSkipped = false,
+): void {
+  const selected = union(windows
     .filter(([start, end]) => Number.isFinite(start) && Number.isFinite(end) && end > start)
-    .slice()
-    .sort((a, b) => a[0] - b[0]);
+    .map(([start, end]) => [Math.max(0, start), Math.min(ctx.game.total, end)] as [number, number])
+    .filter(([start, end]) => end > start));
+  const previousRanges = ctx.S.windowRanges ?? [];
+  const wasOutsidePrevious = (chunk: { start: number; dur: number }) =>
+    previousRanges.length > 0
+    && !previousRanges.some(([start, end]) => end > chunk.start && start < chunk.start + chunk.dur);
 
   const sameRange = (x: OffRange, y: OffRange) => x[0] === y[0] && x[1] === y[1] && x[2] === y[2];
   const previous = ctx.S.windowOff ?? [];
   if (previous.length) ctx.S.off = ctx.S.off.filter((r) => !previous.some((w) => sameRange(r, w)));
   const before = ctx.S.off.slice();
   ctx.S.windowOff = [];
+  ctx.S.windowRanges = selected;
 
   if (selected.length) {
     let at = 0;
@@ -964,15 +971,30 @@ export function startClaimWithWindows(
       const overlaps = selected.some(([start, end]) => (
         end > chunk.start && start < chunk.start + chunk.dur
       ));
-      Y(ctx, chunk.k).skipped = !overlaps;
+      if (!overlaps) Y(ctx, chunk.k).skipped = true;
+      else if (!preserveSkipped || wasOutsidePrevious(chunk)) Y(ctx, chunk.k).skipped = false;
     }
     ctx.S.off.sort((a, b) => a[0] - b[0]);
     ctx.S.windowOff = ctx.S.off.filter((r) => !before.includes(r));
   } else if (previous.length) {
-    // The earlier call hid the blocks outside its games; no game now, so none is hidden.
-    for (const chunk of ctx.game.chunks) Y(ctx, chunk.k).skipped = false;
+    // No selected window: remove only the exclusions installed by the earlier
+    // selection, without unskipping a block the claimant skipped themselves.
+    for (const chunk of ctx.game.chunks) {
+      if (!preserveSkipped || wasOutsidePrevious(chunk)) Y(ctx, chunk.k).skipped = false;
+    }
   }
+}
 
+/**
+ * Apply the chosen match windows before deriving the order, so blocks outside
+ * the selected match can never become the starting chunk or a later visit.
+ */
+export function startClaimWithWindows(
+  ctx: Ctx,
+  windows: Array<[number, number]>,
+  benchRanges: Array<[number, number]> = [],
+): "kit" | "done" {
+  applyClaimWindows(ctx, windows, benchRanges);
   return startClaim(ctx);
 }
 

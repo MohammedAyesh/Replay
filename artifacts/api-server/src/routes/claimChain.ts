@@ -67,7 +67,14 @@ import {
 } from "./claimMatch";
 import { extractBunnyVideoId } from "./userClips";
 import { deriveChainClaimState, isChainComplete, requiredCoverageFor } from "../lib/claimChainState";
-import { clipPartsToMatchWindow, matchWindowSeconds, offPitchWithMatchWindow } from "../lib/matchWindow";
+import {
+  clipPartsToMatchWindow,
+  matchWindowSeconds,
+  offPitchWithMatchWindow,
+  withSelectedMatchWindow,
+  type ExplicitMatchWindow,
+} from "../lib/matchWindow";
+import { selectedSessionFromState } from "../lib/matchFlow";
 import {
   captureDecisionGeometry,
   chainIntervals,
@@ -227,6 +234,30 @@ export type ChainContext = {
   /** The bundle-version key the segment cache is read under. */
   segmentsCacheKey: string;
 };
+
+async function savedDetectedGameWindow(ctx: ChainContext): Promise<ExplicitMatchWindow | null> {
+  const [progress] = await db.select({ gameState: claimMatchProgressTable.gameState })
+    .from(claimMatchProgressTable)
+    .where(and(
+      eq(claimMatchProgressTable.userId, ctx.userId),
+      eq(claimMatchProgressTable.recordingId, ctx.recordingId),
+    ));
+  const session = selectedSessionFromState(ctx.manifest.provenance, ctx.manifest.duration, progress?.gameState);
+  return session ? { startSeconds: session.startSeconds, endSeconds: session.endSeconds } : null;
+}
+
+function contextWithDetectedGameWindow(
+  ctx: ChainContext,
+  window: ExplicitMatchWindow | null,
+): ChainContext {
+  if (!window) return ctx;
+  const manifest = withSelectedMatchWindow(ctx.manifest, window);
+  return {
+    ...ctx,
+    manifest,
+    offPitch: offPitchWithMatchWindow(ctx.offPitch, manifest),
+  };
+}
 
 /**
  * The context with its segments, reading them (through the shared cache) only
@@ -715,9 +746,14 @@ export async function syncChainClaim(
   chain: ChainPart[],
   hasOpenQuestion: boolean,
   /** see completeDespiteDeckCuts: the check deck and the recording-wide re-sync pass it */
-  options: { creditDeckCuts?: boolean } = {},
+  options: { creditDeckCuts?: boolean; sessionWindow?: ExplicitMatchWindow | null } = {},
 ): Promise<void> {
   try {
+    const sessionWindow = "sessionWindow" in options
+      ? options.sessionWindow ?? null
+      : await savedDetectedGameWindow(ctx);
+    const scopedCtx = contextWithDetectedGameWindow(ctx, sessionWindow);
+    const scopedChain = clipPartsToMatchWindow(chain, scopedCtx.manifest);
     const offPitchRows = await db
       .select({
         fromSeconds: claimMatchOffPitchSpansTable.fromSeconds,
@@ -730,32 +766,36 @@ export async function syncChainClaim(
       ));
 
     const derived = deriveChainClaimState(
-      ctx.manifest,
-      ctx.segments.map((segment) => ({ tracks: segment.tracks, events: segment.events })),
-      chain,
+      scopedCtx.manifest,
+      scopedCtx.segments.map((segment) => ({ tracks: segment.tracks, events: segment.events })),
+      scopedChain,
       { offPitch: offPitchRows, hasOpenQuestion },
     );
     const state = options.creditDeckCuts
-      ? await completeDespiteDeckCuts(ctx, chain, derived, { offPitch: offPitchRows, hasOpenQuestion })
+      ? await completeDespiteDeckCuts(scopedCtx, scopedChain, derived, {
+        offPitch: offPitchRows,
+        hasOpenQuestion,
+        sessionWindow,
+      })
       : derived;
 
     const [bundle] = await db
       .select()
       .from(recordingTrackingBundlesTable)
-      .where(eq(recordingTrackingBundlesTable.id, ctx.bundleId));
+      .where(eq(recordingTrackingBundlesTable.id, scopedCtx.bundleId));
 
     let binding: Awaited<ReturnType<typeof syncIdentityBinding>> = null;
     if (bundle) {
-      binding = await syncIdentityBinding(ctx.userId, ctx.recordingId, bundle, {
+      binding = await syncIdentityBinding(scopedCtx.userId, scopedCtx.recordingId, bundle, {
         // The person pointed at themselves. There is no vote to be ambiguous
         // about, so there are no conflict moments and support is total --
         // which is the whole reason this model replaced the other one.
-        identityResolution: chain.length
+        identityResolution: scopedChain.length
           ? {
-            personId: ctx.identityId,
+            personId: scopedCtx.identityId,
             resolutionMethod: "chain",
-            supportCount: chain.length,
-            acceptedAnswerCount: ctx.answeredFrames.size,
+            supportCount: scopedChain.length,
+            acceptedAnswerCount: scopedCtx.answeredFrames.size,
             supportPercent: 100,
             conflictMoments: [],
           }
@@ -770,7 +810,7 @@ export async function syncChainClaim(
       // terminal: no path ever lifted it, and a player who re-claimed after a
       // re-analysis was complete but earned nothing (recording 392, Ib and Ez,
       // 2026-10-04).
-      chain.length > 0);
+      scopedChain.length > 0);
     }
 
     // Clips only become real user_clips on completion. Materialising earlier
@@ -795,8 +835,8 @@ export async function syncChainClaim(
         if (play?.hasBall) {
           // Only the match: parts outside the window earn no moments.
           const parts = clipPartsToMatchWindow(
-            chain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
-            ctx.manifest,
+            scopedChain.map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
+            scopedCtx.manifest,
           );
           // only goals a player in the match confirmed (goalReview); a goal
           // confirmed later re-syncs every claim on the recording
@@ -818,18 +858,18 @@ export async function syncChainClaim(
           // "Is this you?": a moment where his piece could be someone else
           // waits for his "yes" in the check deck before it becomes a clip
           // (lib/checkDeck). A "no" has already taken it off the claim.
-          const mine = personalMoments(play, parts, ctx.segments, ctx.manifest, goalVotes, {
+          const mine = personalMoments(play, parts, scopedCtx.segments, scopedCtx.manifest, goalVotes, {
             topSpeedAt: cachedStats?.stats.extras?.topSpeedAt,
             topSpeedKmh: cachedStats?.stats.topSpeedKmh,
           });
           const answers = await momentChecksFor(ctx.userId, ctx.recordingId);
-          const waiting = new Set(unsureMoments(mine, parts, ctx.segments, play.manifest, play.kits)
+          const waiting = new Set(unsureMoments(mine, parts, scopedCtx.segments, play.manifest, play.kits)
             .filter((u) => answers.get(u.moment.id)?.verdict !== "yes")
             .map((u) => u.moment.id));
           earnedClips = mergeMoments(
             earnedClips,
             mine.filter((m) => !waiting.has(m.id)),
-            teamGoalMoments(play, state.attributed, ctx.manifest, parts, goalVotes),
+            teamGoalMoments(play, state.attributed, scopedCtx.manifest, parts, goalVotes),
           );
         }
       } catch (error) {
@@ -843,21 +883,21 @@ export async function syncChainClaim(
         .where(eq(recordingsTable.id, ctx.recordingId));
       if (recording) {
         earnedClips = await materializeClaimMoments(
-          ctx.userId, recording, ctx.manifest, earnedClips,
+          scopedCtx.userId, recording, scopedCtx.manifest, earnedClips,
         );
       }
     }
 
     const values = {
-      userId: ctx.userId,
-      recordingId: ctx.recordingId,
-      currentTrackId: chain.length ? chain[chain.length - 1].trackId : null,
-      stage: state.completed ? "done" : chain.length ? "follow" : "find",
+      userId: scopedCtx.userId,
+      recordingId: scopedCtx.recordingId,
+      currentTrackId: scopedChain.length ? scopedChain[scopedChain.length - 1].trackId : null,
+      stage: state.completed ? "done" : scopedChain.length ? "follow" : "find",
       confirmedFromSeconds: state.attributed[0]?.startSeconds ?? 0,
       currentPositionSeconds: state.attributed[state.attributed.length - 1]?.endSeconds ?? 0,
       claimedPercent: state.coveragePercent,
       clipsUnlocked: state.completed && bindingAwards ? earnedClips.length : 0,
-      correctionCount: ctx.answeredFrames.size,
+      correctionCount: scopedCtx.answeredFrames.size,
       completed: state.completed,
       earnedClips,
       updatedAt: new Date(),
@@ -869,9 +909,9 @@ export async function syncChainClaim(
         target: [claimMatchProgressTable.userId, claimMatchProgressTable.recordingId],
         set: values,
       });
-    await invalidateMatchStatsCacheForRecording(ctx.recordingId);
+    await invalidateMatchStatsCacheForRecording(scopedCtx.recordingId);
     if (state.completed && bindingAwards) {
-      queueMatchStatsCacheForRecording(ctx.recordingId, 700);
+      queueMatchStatsCacheForRecording(scopedCtx.recordingId, 700);
     }
   } catch (error) {
     console.error("[claim-chain] claim sync failed", { recordingId: ctx.recordingId, error });

@@ -127,6 +127,15 @@ export function firstRosterChunk(
 
 export function chainParts(ctx: Ctx): ChainPartOut[] {
   const fps = ctx.game.frameRate > 0 ? ctx.game.frameRate : 20;
+  const windows = ctx.S.windowRanges ?? [];
+  const clip = (fromFrame: number, toFrame: number): Array<[number, number]> => {
+    if (!windows.length) return [[fromFrame, toFrame]];
+    return windows.flatMap(([start, end]) => {
+      const from = Math.max(fromFrame, Math.ceil(start * fps));
+      const to = Math.min(toFrame, Math.ceil(end * fps) - 1);
+      return to > from ? [[from, to] as [number, number]] : [];
+    });
+  };
   const byTrack = new Map<string, Array<[number, number]>>();
   for (const key of Object.keys(ctx.S.you)) {
     const k = Number(key);
@@ -140,14 +149,14 @@ export function chainParts(ctx: Ctx): ChainPartOut[] {
         const from = Math.round((chunk.start + p.t0) * fps);
         const to = Math.round((chunk.start + p.t1) * fps);
         if (to <= from) continue;
-        byTrack.set(trackId, [...(byTrack.get(trackId) ?? []), [from, to]]);
+        byTrack.set(trackId, [...(byTrack.get(trackId) ?? []), ...clip(from, to)]);
       }
     }
     for (const part of y.rosterParts ?? []) {
       if (part.toFrame <= part.fromFrame) continue;
       byTrack.set(part.trackId, [
         ...(byTrack.get(part.trackId) ?? []),
-        [part.fromFrame, part.toFrame],
+        ...clip(part.fromFrame, part.toFrame),
       ]);
     }
   }

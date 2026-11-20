@@ -14,7 +14,13 @@
 import type { TrackingManifest, TrackingSegmentPayload } from "@workspace/db";
 import { chainIntervals, totalSeconds, type ChainPart } from "./claimChain";
 import { buildPlayerMetrics, type OffPitchWindow } from "./playerMetrics";
-import { matchWindowSeconds, offPitchWithMatchWindow } from "./matchWindow";
+import {
+  clipPartsToMatchWindow,
+  matchWindowSeconds,
+  offPitchWithMatchWindow,
+  withSelectedMatchWindow,
+  type ExplicitMatchWindow,
+} from "./matchWindow";
 
 /** Kept identical to the anchor flow's ids so a clip already materialised for
  * a person is recognised rather than duplicated when they re-claim. */
@@ -127,7 +133,7 @@ export function clipsForIntervals(
   for (const event of segments.flatMap((segment) => segment.events)) {
     if (!CLIP_EVENT_TYPES.has(event.type.toLowerCase())) continue;
     const inside = attributed.some((interval) =>
-      event.time >= interval.startSeconds && event.time <= interval.endSeconds);
+      event.time >= interval.startSeconds && event.time < interval.endSeconds);
     if (!inside) continue;
     const clip: ChainEarnedClip = {
       id: event.clipId ?? `claim-${event.type}-${Math.round(event.time)}`,
@@ -158,28 +164,32 @@ export function deriveChainClaimState(
   chain: ChainPart[],
   opts: {
     offPitch?: Array<{ fromSeconds: number; toSeconds: number }>;
+    /** Request-scoped detected game; never written back to the bundle manifest. */
+    sessionWindow?: ExplicitMatchWindow | null;
     /** True while an uncertainty is still waiting for an answer. */
     hasOpenQuestion: boolean;
   },
 ): ChainClaimState {
-  const offPitch = offPitchWithMatchWindow(opts.offPitch ?? [], manifest);
-  const attributed = chainIntervals(chain, manifest, offPitch);
+  const scopedManifest = withSelectedMatchWindow(manifest, opts.sessionWindow);
+  const scopedChain = clipPartsToMatchWindow(chain, scopedManifest);
+  const offPitch = offPitchWithMatchWindow(opts.offPitch ?? [], scopedManifest);
+  const attributed = chainIntervals(scopedChain, scopedManifest, offPitch);
   const coverageSeconds = totalSeconds(attributed);
   const offPitchSeconds = totalSeconds(offPitch.map((span) => ({
     startSeconds: span.fromSeconds,
     endSeconds: span.toSeconds,
   })));
-  const denominator = Math.max(manifest.duration - offPitchSeconds, 1);
+  const denominator = Math.max(scopedManifest.duration - offPitchSeconds, 1);
   const coveragePercent = Math.min(
     100,
     Math.round((coverageSeconds / denominator) * 10000) / 100,
   );
 
   // The short-match rule is about the match, so it reads the window's length.
-  const matchSeconds = matchWindowSeconds(manifest);
+  const matchSeconds = matchWindowSeconds(scopedManifest);
   const required = requiredCoverageFor(matchSeconds);
 
-  const claimedTrackIds = new Set(chain.map((part) => part.trackId));
+  const claimedTrackIds = new Set(scopedChain.map((part) => part.trackId));
   const trackedSegments = segments.filter((segment) =>
     segment.tracks.some((track) => claimedTrackIds.has(track.id))).length;
 
@@ -187,18 +197,18 @@ export function deriveChainClaimState(
   const matchedEvents = segments
     .flatMap((segment) => segment.events)
     .filter((event) => attributed.some((interval) =>
-      event.time >= interval.startSeconds && event.time <= interval.endSeconds))
+      event.time >= interval.startSeconds && event.time < interval.endSeconds))
     .length;
 
   const completed = isChainComplete({
-    chainLength: chain.length,
+    chainLength: scopedChain.length,
     coveragePercent,
     durationSeconds: matchSeconds,
     hasOpenQuestion: opts.hasOpenQuestion,
   });
   const completionReason = completed
     ? `Followed for ${coverageSeconds.toFixed(1)}s (${coveragePercent}% of the match) with nothing left to check.`
-    : chain.length === 0
+    : scopedChain.length === 0
       ? "No part of the match has been claimed yet."
       : opts.hasOpenQuestion
         ? "There is still a moment waiting for an answer."
@@ -208,7 +218,7 @@ export function deriveChainClaimState(
     attributed,
     coverageSeconds,
     coveragePercent,
-    vouchedFragments: chain.map((part) => ({ ...part })),
+    vouchedFragments: scopedChain.map((part) => ({ ...part })),
     earnedClips,
     matchedEvents,
     trackedSegments,

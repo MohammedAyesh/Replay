@@ -61,12 +61,21 @@ import {
   type ShirtConfirmationUiState,
 } from "@/lib/game-claim/shirt-confirmation";
 import { matchBenchRanges, type ClaimMatchWindow } from "@/lib/game-claim/match-windows";
+import {
+  bookingsForDetectedGame,
+  claimCoverageForWindow,
+  claimWindowsForSelection,
+  defaultDetectedGame,
+  detectedGameTimeRange,
+  detectedGamesFromProvenance,
+  type DetectedGame,
+} from "@/lib/game-claim/detected-games";
 import { claimCountsForGroups, claimStatusForGroup, otherClaimOwners, type ClaimStatusIdentity } from "@/lib/game-claim/claim-status";
 import { pictureForPiece, type PiecePicture } from "@/lib/game-claim/images";
 import type { Game, Group, OffRange, Point } from "@/lib/game-claim/model";
 import { chunkAt, L2G, mmss, spread } from "@/lib/game-claim/model";
 import {
-  addTap, afterChunk, benchInHole, benchSpans, candidates, claimVisitOrder, clearPick, clearRosterPick, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
+  addTap, afterChunk, applyClaimWindows, benchInHole, benchSpans, candidates, claimVisitOrder, clearPick, clearRosterPick, chunkMeta, chunkPercent, inPlaySec, isSure, kept, mine,
   newState, nextHole, nextIllustratedJoin, notYetYours, ovPos, pick, profileTimeForChunk, questions, rankNext, startClaim, timeline, totals, twins, weakColour, wrappedFrom, Y, youIds,
   hkey, recordSwitch, restoreClaimVisitOrder, resumableSavedClaim, startClaimWithWindows, updatePendingSwitchIdentity, type ClaimState, type Ctx, type Hole, type Step,
 } from "@/lib/game-claim/claim";
@@ -149,6 +158,10 @@ export default function ClaimGamePage() {
   const rosterPlayers = rosterQuery.data?.players ?? [];
   const manifest = claimQuery.data?.manifest;
   const recording = claimQuery.data?.recording ?? null;
+  const detectedGames = useMemo(
+    () => manifest ? detectedGamesFromProvenance(manifest.provenance, manifest.duration) : [],
+    [manifest],
+  );
 
   const [server, setServer] = useState<ServerGame | null>(null);
   const [serverError, setServerError] = useState(false);
@@ -263,6 +276,13 @@ export default function ClaimGamePage() {
       accountName={user?.name ?? ""}
       matches={server.matches ?? []}
       matchWindow={server.matchWindow ?? null}
+      detectedGames={detectedGames}
+      recordingDate={recording?.date ?? null}
+      recordingTimeSlot={recording?.timeSlot ?? null}
+      claimParts={chain?.chain ?? []}
+      offPitchSpans={(server.state?.off ?? [])
+        .filter((range) => range[2] === "bench")
+        .map(([fromSeconds, toSeconds]) => ({ fromSeconds, toSeconds }))}
       continuation={server.continuation ?? null}
       rosterPlayers={rosterPlayers}
       loadRoster={async () => {
@@ -345,6 +365,11 @@ type Props = {
   accountName: string;
   matches: ClaimMatch[];
   matchWindow?: ServerGame["matchWindow"];
+  detectedGames: DetectedGame[];
+  recordingDate: string | null;
+  recordingTimeSlot: string | null;
+  claimParts: Array<{ trackId: string; fromFrame: number; toFrame: number }>;
+  offPitchSpans: Array<{ fromSeconds: number; toSeconds: number }>;
   continuation: ServerGame["continuation"];
   rosterPlayers: MatchRosterPlayer[];
   loadRoster: () => Promise<MatchRosterPlayer[]>;
@@ -363,7 +388,7 @@ export function GameClaim({
   game, manifest, recordingId, videoUrl, eyebrow, saved, fingerprint, copy,
   staleState = false, rosterPlayers, loadRoster,
   identities, identityId, identityName, resetByAdmin, coveragePercent, accountName,
-  matches, matchWindow = null, continuation,
+  matches, matchWindow = null, detectedGames, recordingDate, recordingTimeSlot, claimParts, offPitchSpans, continuation,
   serverCompleted,
 }: Props) {
   const queryClient = useQueryClient();
@@ -405,11 +430,33 @@ export function GameClaim({
   // A link for a game that isn't on this recording (it used to be sent here for
   // a 0.9 s overlap): say so instead of quietly claiming another game.
   const requestedMatchMissing = Boolean(requestedMatchCode && !matches.some((match) => match.code === requestedMatchCode));
-  const initialMatchChoices = saved?.matchChoices?.length
-    ? saved.matchChoices
-    : requestedMatchCode && matches.some((match) => match.code === requestedMatchCode)
-      ? [requestedMatchCode]
-      : matches.filter((match) => match.rostered).map((match) => match.code);
+  const detectedGameFlow = detectedGames.length >= 2;
+  const savedDetectedGame = detectedGames.find((game) => (
+    saved?.detectedGameWindow?.startSeconds === game.startSeconds
+    && saved?.detectedGameWindow?.endSeconds === game.endSeconds
+  ));
+  const initialDetectedGame = detectedGameFlow
+    ? savedDetectedGame ?? defaultDetectedGame(detectedGames)
+    : null;
+  const [detectedGameKey, setDetectedGameKey] = useState<string | null>(initialDetectedGame?.key ?? null);
+  const selectedDetectedGame = detectedGameFlow
+    ? detectedGames.find((game) => game.key === detectedGameKey) ?? defaultDetectedGame(detectedGames)
+    : null;
+  const defaultSessionBookings = selectedDetectedGame
+    ? bookingsForDetectedGame(matches, selectedDetectedGame)
+    : [];
+  const savedSessionChoices = saved?.matchChoices?.filter((code) => defaultSessionBookings.includes(code)) ?? [];
+  const initialMatchChoices = detectedGameFlow
+    ? savedDetectedGame && savedSessionChoices.length
+      ? [savedSessionChoices[0]]
+      : requestedMatchCode && defaultSessionBookings.includes(requestedMatchCode)
+        ? [requestedMatchCode]
+        : defaultSessionBookings
+    : saved?.matchChoices?.length
+      ? saved.matchChoices
+      : requestedMatchCode && matches.some((match) => match.code === requestedMatchCode)
+        ? [requestedMatchCode]
+        : matches.filter((match) => match.rostered).map((match) => match.code);
   const [matchChoices, setMatchChoices] = useState<string[]>(initialMatchChoices);
   // The match this visit is about: back/close and "See my match report" go there.
   const reportMatchCode = resolveFindMatchCode({ requested: requestedMatchCode, choices: matchChoices, matches });
@@ -445,6 +492,9 @@ export function GameClaim({
       loading.current[k] = loadChunkData({
         manifest,
         k,
+        ...(ctxRef.current.S.detectedGameWindow
+          ? { windowRanges: ctxRef.current.S.windowRanges ?? [] }
+          : {}),
         fetchSegment: (index) => getClaimMatchSegment(recordingId, index) as never,
         fetchSprites: async (index) => {
           const r = await fetch(`${basePath}/api/recordings/${recordingId}/claim-match/sprites/${index}`, { credentials: "include" });
@@ -942,9 +992,17 @@ export function GameClaim({
     const trial: Ctx = {
       game,
       CH: chunks.current,
-      S: { ...newState(game), off: S.off.slice(), matchChoices: [...matchChoices], windowOff: S.windowOff },
+      S: {
+        ...newState(game),
+        off: S.off.slice(),
+        matchChoices: [...matchChoices],
+        detectedGameWindow: selectedDetectedGame
+          ? { startSeconds: selectedDetectedGame.startSeconds, endSeconds: selectedDetectedGame.endSeconds }
+          : null,
+        windowOff: S.windowOff,
+      },
     };
-    if (applyMatchWindows(trial, matchChoices) === "done") {
+    if (applyMatchWindows(trial, matchChoices, selectedDetectedGame) === "done") {
       setNothingToClaim(true);
       return;
     }
@@ -968,11 +1026,19 @@ export function GameClaim({
     const off = S.off;
     // Keep the bookings this claim is for: the server reads them from the
     // saved state to put the player on the right match and record team switches.
-    ctxRef.current.S = { ...newState(game), off, matchChoices: [...matchChoices], windowOff: S.windowOff };
+    ctxRef.current.S = {
+      ...newState(game),
+      off,
+      matchChoices: [...matchChoices],
+      detectedGameWindow: selectedDetectedGame
+        ? { startSeconds: selectedDetectedGame.startSeconds, endSeconds: selectedDetectedGame.endSeconds }
+        : null,
+      windowOff: S.windowOff,
+    };
     pendingContinuationNumber.current = new URLSearchParams(window.location.search).get("number");
     t0.current = null;
     tap();
-    const destination = applyMatchWindows(ctxRef.current, matchChoices);
+    const destination = applyMatchWindows(ctxRef.current, matchChoices, selectedDetectedGame);
     bump();
     if (destination === "done") {
       // Checked above; never land on the end screen without a pick.
@@ -981,7 +1047,7 @@ export function GameClaim({
       setVer((v) => v + 1);
       return;
     }
-    const availableRoster = await loadRoster();
+    const availableRoster = scopeRosterPlayers(await loadRoster());
     const suggestedPlayerId = new URLSearchParams(window.location.search).get("suggestedPlayer");
     const suggestedPlayer = suggestedPlayerId
       ? availableRoster.find((player) => player.id === suggestedPlayerId)
@@ -1038,26 +1104,93 @@ export function GameClaim({
     go("review");
   };
 
-  const applyMatchWindows = (target: Ctx, choices: string[]): "kit" | "done" => {
+  const scopeRosterPlayers = (players: MatchRosterPlayer[]): MatchRosterPlayer[] => {
+    if (!detectedGameFlow || !selectedDetectedGame) return players;
+    const windows = claimWindowsForSelection(
+      matches,
+      matchChoices,
+      matchWindow ? [matchWindow.startSeconds, matchWindow.endSeconds] : null,
+      selectedDetectedGame,
+    );
+    if (!windows.length) return [];
+    const fps = game.frameRate > 0 ? game.frameRate : 20;
+    return players.flatMap((player) => {
+      const parts = player.parts.flatMap((part) => {
+        return windows.flatMap(([start, end]) => {
+          const clippedFrom = Math.max(part.fromFrame, Math.ceil(start * fps));
+          const clippedTo = Math.min(part.toFrame, Math.ceil(end * fps) - 1);
+          return clippedTo > clippedFrom ? [{ ...part, fromFrame: clippedFrom, toFrame: clippedTo }] : [];
+        });
+      });
+      if (!parts.length) return [];
+      const photos = player.photos.filter((photo) => windows.some(([start, end]) => {
+        const time = photo.frame / fps;
+        return time >= start && time < end;
+      })).slice(0, 3);
+      const seconds = parts.reduce((sum, part) => sum + (part.toFrame - part.fromFrame) / fps, 0);
+      return [{ ...player, parts, photos, minutes: Math.min(player.minutes, seconds / 60) }];
+    });
+  };
+
+  const applyMatchWindows = (target: Ctx, choices: string[], detectedGame: DetectedGame | null = selectedDetectedGame): "kit" | "done" => {
     const selected = matches.filter((m) => choices.includes(m.code));
-    const windows = selected
-      .flatMap((m) => m.games.length
-        ? m.games.map((g) => [g.startSeconds, g.endSeconds] as [number, number])
-        : [[m.startSeconds, m.endSeconds] as [number, number]]);
+    const windows = claimWindowsForSelection(
+      matches,
+      choices,
+      matchWindow ? [matchWindow.startSeconds, matchWindow.endSeconds] : null,
+      detectedGame,
+    );
+    if (detectedGame && windows.length === 0) return "done";
     const benchRanges = selected.flatMap((match) => (
       matchBenchRanges(match, target.S.switches ?? [])
-    ));
-    // No booking chosen, but the recording has a match window: claim inside
-    // it, so blocks that are all another group's game are never offered.
-    if (!windows.length && matchWindow && matchWindow.endSeconds > matchWindow.startSeconds) {
-      windows.push([matchWindow.startSeconds, matchWindow.endSeconds]);
-    }
+    )).flatMap(([start, end]) => windows.flatMap(([windowStart, windowEnd]) => {
+      const from = Math.max(start, windowStart);
+      const to = Math.min(end, windowEnd);
+      return to > from ? [[from, to] as [number, number]] : [];
+    }));
+    target.S.matchChoices = [...choices];
+    target.S.detectedGameWindow = detectedGame
+      ? { startSeconds: detectedGame.startSeconds, endSeconds: detectedGame.endSeconds }
+      : null;
     return startClaimWithWindows(target, windows, benchRanges);
   };
 
   const resume = async (j: ClaimState) => {
     ctxRef.current.S = { ...newState(game), ...j };
     const s = ctxRef.current.S;
+    const selectionChanged = detectedGameFlow && (
+      !j.detectedGameWindow
+      || !selectedDetectedGame
+      || j.detectedGameWindow.startSeconds !== selectedDetectedGame.startSeconds
+      || j.detectedGameWindow.endSeconds !== selectedDetectedGame.endSeconds
+      || JSON.stringify(j.matchChoices ?? []) !== JSON.stringify(matchChoices)
+    );
+    if (selectionChanged) {
+      await startNew();
+      return;
+    }
+    if (detectedGameFlow && selectedDetectedGame) {
+      const windows = claimWindowsForSelection(
+        matches,
+        matchChoices,
+        matchWindow ? [matchWindow.startSeconds, matchWindow.endSeconds] : null,
+        selectedDetectedGame,
+      );
+      if (!windows.length) {
+        setNothingToClaim(true);
+        return;
+      }
+      const selected = matches.filter((match) => matchChoices.includes(match.code));
+      const bench = selected.flatMap((match) => matchBenchRanges(match, s.switches ?? []))
+        .flatMap(([start, end]) => windows.flatMap(([windowStart, windowEnd]) => {
+          const from = Math.max(start, windowStart);
+          const to = Math.min(end, windowEnd);
+          return to > from ? [[from, to] as [number, number]] : [];
+        }));
+      s.matchChoices = [...matchChoices];
+      s.detectedGameWindow = { startSeconds: selectedDetectedGame.startSeconds, endSeconds: selectedDetectedGame.endSeconds };
+      applyClaimWindows(ctxRef.current, windows, bench, true);
+    }
     // Expand older saved orders without moving the claimant off their current
     // chunk. Already-finished earlier chunks stay behind the cursor.
     if (s.k !== null && s.step !== "done" && s.step !== "stats") {
@@ -1383,6 +1516,34 @@ export function GameClaim({
   };
 
   const needsChunk = ["kit", "shirt", "gallery", "review", "joins", "gaps", "next"].includes(S.step);
+  const currentRosterPlayers = scopeRosterPlayers(rosterPlayers);
+  const introWindows = selectedDetectedGame
+    ? claimWindowsForSelection(
+      matches,
+      matchChoices,
+      matchWindow ? [matchWindow.startSeconds, matchWindow.endSeconds] : null,
+      selectedDetectedGame,
+    )
+    : [];
+  const introCoverage = selectedDetectedGame
+    ? claimCoverageForWindow(
+      claimParts,
+      game.frameRate,
+      introWindows,
+      [
+        ...offPitchSpans,
+        ...S.off.filter((range) => range[2] === "bench").map(([fromSeconds, toSeconds]) => ({ fromSeconds, toSeconds })),
+      ],
+    )
+    : coveragePercent;
+  const resumeDifferentGame = Boolean(savedClaim && detectedGameFlow && (
+    !savedClaim.detectedGameWindow
+    || !selectedDetectedGame
+    || savedClaim.detectedGameWindow.startSeconds !== selectedDetectedGame.startSeconds
+    || savedClaim.detectedGameWindow.endSeconds !== selectedDetectedGame.endSeconds
+    || JSON.stringify(savedClaim.matchChoices ?? []) !== JSON.stringify(matchChoices)
+  ));
+
   let body: React.ReactNode = null;
 
   if (finishing) {
@@ -1407,12 +1568,34 @@ export function GameClaim({
     body = (
       <IntroScreen
         ctx={ctx} copy={copy} eyebrow={eyebrow} mediaSlot={mediaSlot} markA={markA} saved={savedClaim}
-        resetByAdmin={resetByAdmin} coveragePercent={coveragePercent}
+        resetByAdmin={resetByAdmin} coveragePercent={introCoverage}
         matches={matches} matchChoices={matchChoices} onMatchChoices={(choices) => {
           setMatchChoices(choices);
           S.matchChoices = choices;
           setNothingToClaim(false);
         }}
+        detectedGames={detectedGameFlow ? detectedGames : []}
+        selectedDetectedGameKey={selectedDetectedGame?.key ?? null}
+        detectedGameTime={(session) => detectedGameTimeRange(
+          session,
+          recordingDate,
+          recordingTimeSlot,
+          manifest.videoStartSeconds ?? 0,
+          copy.locale,
+        )}
+        onDetectedGame={(session) => {
+          const codes = bookingsForDetectedGame(matches, session);
+          const choices = requestedMatchCode && codes.includes(requestedMatchCode)
+            ? [requestedMatchCode]
+            : codes;
+          setDetectedGameKey(session.key);
+          setMatchChoices(choices);
+          S.matchChoices = choices;
+          S.detectedGameWindow = { startSeconds: session.startSeconds, endSeconds: session.endSeconds };
+          setNothingToClaim(false);
+        }}
+        resumeLabel={resumeDifferentGame ? copy.intro.startNew : copy.intro.resume}
+        resumeDifferentGame={resumeDifferentGame}
         nothingToClaim={nothingToClaim || requestedMatchMissing}
         onGoToGame={(() => {
           const code = requestedMatchMissing ? requestedMatchCode : null;
@@ -1451,7 +1634,7 @@ export function GameClaim({
           }}>{copy.roster.notHere}</Btn>
         </Row>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {rosterPlayers.map((player) => {
+          {currentRosterPlayers.map((player) => {
             const label = player.name || copy.roster.unnamed;
             const number = player.number ? `#${player.number}` : copy.roster.noNumber;
             const photos = player.photos.slice(0, 3);
@@ -1723,7 +1906,7 @@ export function GameClaim({
     body = <ReviewScreen ctx={ctx} d={currentChunk} copy={copy} mediaSlot={mediaSlot} span={span(S.k)} disp={disp} wrapStart={wrapStart}
       act={act} go={go} show={show} media={media} previewGroup={previewGroup}
       writeGroupDecision={writeGroupDecision} writeRejectedGroup={writeRejectedGroup}
-      writeRejectedTrack={writeRejectedTrack} hasSquadList={rosterPlayers.length > 0} />;
+      writeRejectedTrack={writeRejectedTrack} hasSquadList={currentRosterPlayers.length > 0} />;
   } else if (S.step === "joins" && currentChunk && S.k !== null) {
     const next = nextIllustratedJoin(ctx, S.k, S.qi);
     const j = next.junction;
@@ -1854,7 +2037,7 @@ export function GameClaim({
     body = <DoneScreen ctx={ctx} copy={copy} elapsed={elapsed}
       completed={claimCompleted}
       recordingId={recordingId}
-      rosterPlayers={rosterPlayers}
+      rosterPlayers={currentRosterPlayers}
       friends={friendsQuery.data?.friends ?? []}
       matchCode={matches.find((match) => matchChoices.includes(match.code))?.code ?? null}
       sendSuggestion={(input) => sendPlayerSuggestion.mutateAsync(input)}
@@ -2106,9 +2289,11 @@ function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
 
 /* ------------------------------------------------------------------ intro */
 
- function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin, coveragePercent, matches, matchChoices, onMatchChoices, nothingToClaim, onGoToGame, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
+function IntroScreen({ ctx, copy, eyebrow, mediaSlot, markA, saved, resetByAdmin, coveragePercent, matches, matchChoices, onMatchChoices, detectedGames, selectedDetectedGameKey, detectedGameTime, onDetectedGame, resumeLabel, resumeDifferentGame, nothingToClaim, onGoToGame, onMarkA, onMarkB, onDel, onWatch, onStart, onResume }: {
   ctx: Ctx; copy: GameStrings; eyebrow: string; mediaSlot: React.ReactNode; markA: number | null; saved: (ClaimState & { saved?: number }) | null;
   resetByAdmin: boolean; coveragePercent: number; matches: ClaimMatch[]; matchChoices: string[]; onMatchChoices: (choices: string[]) => void;
+  detectedGames: DetectedGame[]; selectedDetectedGameKey: string | null; detectedGameTime: (game: DetectedGame) => string;
+  onDetectedGame: (game: DetectedGame) => void; resumeLabel: string; resumeDifferentGame: boolean;
   nothingToClaim: boolean; onGoToGame: (() => void) | null;
   onMarkA: () => void; onMarkB: () => void; onDel: (i: number) => void; onWatch: (i: number) => void; onStart: () => void; onResume: () => void;
 }) {
@@ -2119,7 +2304,36 @@ function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
       {eyebrow && <Eyebrow>{eyebrow}</Eyebrow>}
       <Title big>{copy.intro.title}</Title>
       <Lede>{copy.intro.lead}</Lede>
-      {matches.length >= 2 && (
+      {detectedGames.length >= 2 ? (
+        <Section title={copy.intro.matchesTitle}>
+          <Lede>{copy.intro.detectedGamesLead}</Lede>
+          <div className="flex flex-col gap-2">
+            {detectedGames.map((game) => {
+              const bookingCodes = bookingsForDetectedGame(matches, game);
+              const relatedBookings = matches.filter((match) => bookingCodes.includes(match.code)).map((match) => match.title);
+              const detail = [
+                relatedBookings.join(" · "),
+                game.players ? copy.intro.detectedGamePlayers(game.players) : "",
+              ].filter(Boolean).join(" · ");
+              return (
+                <label key={game.key} className="flex items-center gap-3 rounded-xl border border-line bg-surface px-3 py-2 text-sm">
+                  <input
+                    type="radio"
+                    name="detected-game-choice"
+                    checked={selectedDetectedGameKey === game.key}
+                    onChange={() => onDetectedGame(game)}
+                    data-testid={`radio-detected-game-${game.index}`}
+                  />
+                  <span className="flex-1">
+                    <b className="text-text">{copy.intro.detectedGame(game.index, detectedGameTime(game))}</b>
+                    {detail && <><br /><span className="text-xs text-muted-text">{detail}</span></>}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </Section>
+      ) : matches.length >= 2 && (
         <Section title={copy.intro.matchesTitle}>
           <Lede>{copy.intro.matchesLead}</Lede>
           <div className="flex flex-col gap-2">
@@ -2179,8 +2393,9 @@ function SharedPickConfirm({ text, yes, no, onYes, onNo }: {
             {copy.intro.savedMeta(Object.keys(saved.you ?? {}).length)}
             {saved.saved ? ` · ${new Date(saved.saved).toLocaleString()}` : ""}
             <div className="mt-1">{copy.intro.resumeDesc(Math.max(0, Math.min(100, Math.round(coveragePercent))))}</div>
+            {resumeDifferentGame && <div className="mt-1">{copy.intro.resumeDifferentGame}</div>}
           </div>
-          <Btn kind="primary" onClick={onResume}>{saved.step === "done" || saved.step === "stats" ? copy.intro.seeStats : copy.intro.resume}</Btn>
+          <Btn kind="primary" onClick={onResume}>{resumeDifferentGame ? resumeLabel : saved.step === "done" || saved.step === "stats" ? copy.intro.seeStats : resumeLabel}</Btn>
         </div>
       )}
       <Row><Btn kind={saved ? "ghost" : "primary"} onClick={onStart}>{saved ? copy.intro.startNew : copy.intro.start}</Btn></Row>

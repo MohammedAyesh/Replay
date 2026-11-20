@@ -21,6 +21,13 @@ export type MatchFlow = {
   inPlay: Array<[number, number]> | null;
 };
 
+export type DetectedSession = {
+  startSeconds: number;
+  endSeconds: number;
+  spans: Array<[number, number]>;
+  players?: number;
+};
+
 export type RecordingFlowInput = {
   /** the recording's share of the booking, tracking seconds */
   fromSeconds: number;
@@ -48,6 +55,104 @@ export function phasesFromProvenance(provenance: Record<string, unknown> | null 
     out.push({ kind, start, end });
   }
   return out.length ? out : null;
+}
+
+/** Analysis-detected games from the same phases block, bounded to the recording. */
+export function sessionsFromProvenance(
+  provenance: Record<string, unknown> | null | undefined,
+  duration: number,
+): DetectedSession[] {
+  const block = provenance?.phases;
+  if (!block || typeof block !== "object" || !Array.isArray((block as { sessions?: unknown }).sessions)) return [];
+  return ((block as { sessions: unknown[] }).sessions).flatMap((entry): DetectedSession[] => {
+    if (!entry || typeof entry !== "object") return [];
+    const raw = entry as Record<string, unknown>;
+    if (typeof raw.start !== "number" || typeof raw.end !== "number") return [];
+    if (!Number.isFinite(raw.start) || !Number.isFinite(raw.end)) return [];
+    const startSeconds = Math.max(0, raw.start);
+    const endSeconds = Math.min(duration, raw.end);
+    if (endSeconds <= startSeconds) return [];
+    const spans = (Array.isArray(raw.spans) ? raw.spans : []).flatMap((span): Array<[number, number]> => {
+      if (!Array.isArray(span) || typeof span[0] !== "number" || typeof span[1] !== "number") return [];
+      if (!Number.isFinite(span[0]) || !Number.isFinite(span[1])) return [];
+      const from = Math.max(startSeconds, span[0]);
+      const to = Math.min(endSeconds, span[1]);
+      return to > from ? [[from, to]] : [];
+    });
+    const players = typeof raw.players === "number" && Number.isSafeInteger(raw.players) && raw.players >= 0
+      ? raw.players
+      : undefined;
+    return [{
+      startSeconds,
+      endSeconds,
+      spans,
+      ...(players === undefined ? {} : { players }),
+    }];
+  });
+}
+
+/** Accept a saved selection only when it exactly names one of this bundle's sessions. */
+export function selectedSessionFromState(
+  provenance: Record<string, unknown> | null | undefined,
+  duration: number,
+  state: unknown,
+): DetectedSession | null {
+  if (!state || typeof state !== "object") return null;
+  const window = (state as Record<string, unknown>).detectedGameWindow;
+  if (!window || typeof window !== "object") return null;
+  const raw = window as Record<string, unknown>;
+  if (typeof raw.startSeconds !== "number" || typeof raw.endSeconds !== "number") return null;
+  return sessionsFromProvenance(provenance, duration).find((session) =>
+    session.startSeconds === raw.startSeconds && session.endSeconds === raw.endSeconds) ?? null;
+}
+
+/** Choose the detected game with the most played time inside a booking window. */
+export function sessionForWindow(
+  provenance: Record<string, unknown> | null | undefined,
+  duration: number,
+  window: { fromSeconds: number; toSeconds: number },
+): DetectedSession | null {
+  const sessions = sessionsFromProvenance(provenance, duration);
+  if (sessions.length < 2 || window.toSeconds <= window.fromSeconds) return null;
+  const score = (session: DetectedSession) => {
+    const spans = session.spans.length
+      ? session.spans
+      : [[session.startSeconds, session.endSeconds] as [number, number]];
+    return spans.reduce(
+      (sum, [from, to]) => sum + Math.max(0, Math.min(to, window.toSeconds) - Math.max(from, window.fromSeconds)),
+      0,
+    );
+  };
+  let best: DetectedSession | null = null;
+  let bestScore = 0;
+  for (const session of sessions) {
+    const current = score(session);
+    if (current > bestScore) {
+      best = session;
+      bestScore = current;
+    }
+  }
+  return best;
+}
+
+/**
+ * Sidecar kit summaries aggregate a whole segment. Use them only when that
+ * whole segment belongs to the selected game; a boundary-crossing segment
+ * cannot be divided safely after aggregation.
+ */
+export function segmentIndexesContainedInSession(
+  segments: Array<{ index: number; startSeconds: number; endSeconds: number }>,
+  session: DetectedSession,
+  window: { fromSeconds: number; toSeconds: number },
+): Set<number> {
+  const epsilon = 1 / 100;
+  return new Set(segments
+    .filter((segment) =>
+      segment.endSeconds > window.fromSeconds
+      && segment.startSeconds < window.toSeconds
+      && segment.startSeconds >= session.startSeconds - epsilon
+      && segment.endSeconds <= session.endSeconds + epsilon)
+    .map((segment) => segment.index));
 }
 
 /** Merge spans that overlap or sit within `gap` seconds of each other. */

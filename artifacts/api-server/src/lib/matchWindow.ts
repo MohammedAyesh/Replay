@@ -46,6 +46,7 @@ export type ResolvedMatchWindow = {
 };
 
 type WindowManifest = Pick<TrackingManifest, "duration"> & { provenance?: Record<string, unknown> | null };
+export type ExplicitMatchWindow = { startSeconds: number; endSeconds: number };
 
 const WHY_MAX_CHARS = 500;
 
@@ -103,6 +104,32 @@ export function readMatchWindow(manifest: WindowManifest | null | undefined): Re
 export function matchWindowSeconds(manifest: WindowManifest): number {
   const window = readMatchWindow(manifest);
   return window ? window.endSeconds - window.startSeconds : manifest.duration;
+}
+
+/**
+ * A request-scoped manifest view for one selected detected game. The stored
+ * recording manifest is never changed; an existing admin/detector window is
+ * intersected before any claim coverage or clip logic reads this view.
+ */
+export function withSelectedMatchWindow<T extends WindowManifest>(
+  manifest: T,
+  selected: ExplicitMatchWindow | null | undefined,
+): T {
+  if (!selected) return manifest;
+  if (!finite(selected.startSeconds) || !finite(selected.endSeconds) || selected.endSeconds <= selected.startSeconds) {
+    throw new RangeError("Invalid selected match window");
+  }
+  const existing = readMatchWindow(manifest);
+  const startSeconds = Math.max(0, selected.startSeconds, existing?.startSeconds ?? 0);
+  const endSeconds = Math.min(manifest.duration, selected.endSeconds, existing?.endSeconds ?? manifest.duration);
+  if (endSeconds <= startSeconds) throw new RangeError("Selected game does not overlap the recording match window");
+  return {
+    ...manifest,
+    provenance: {
+      ...(manifest.provenance ?? {}),
+      matchWindow: { startSeconds, endSeconds, source: "detector" },
+    },
+  };
 }
 
 /**
@@ -204,7 +231,7 @@ export function clipPartsToMatchWindow<T extends { fromFrame: number; toFrame: n
   if (!window) return [...parts];
   const fps = manifest.frameRate > 0 ? manifest.frameRate : 20;
   const a = Math.ceil(window.startSeconds * fps);
-  const b = Math.floor(window.endSeconds * fps);
+  const b = Math.ceil(window.endSeconds * fps) - 1;
   return parts
     .map((part) => ({ ...part, fromFrame: Math.max(part.fromFrame, a), toFrame: Math.min(part.toFrame, b) }))
     .filter((part) => part.toFrame > part.fromFrame);

@@ -75,7 +75,15 @@ import {
 import { goalVotesFor, reviewedGoalsOf, type ReviewedGoal } from "./goalReview";
 import { loadRecordingPlay, type RecordingPlay } from "./matchPlayLoad";
 import { buildPlayerMetrics } from "./playerMetrics";
-import { matchFlow, mergeSpans, type MatchFlow, type RecordingFlowInput } from "./matchFlow";
+import {
+  matchFlow,
+  mergeSpans,
+  segmentIndexesContainedInSession,
+  sessionForWindow,
+  sessionsFromProvenance,
+  type MatchFlow,
+  type RecordingFlowInput,
+} from "./matchFlow";
 import { MatchPlayerReportBuilder, REPORT_BLOCK_SECONDS, type MatchPlayerReport } from "./matchPlayerReport";
 import { teamAtTime, type TeamSpanAtTime, type TeamSpanTeam } from "./matchTeamSpans";
 import { bookingShareOfRecording } from "./matchWindow";
@@ -512,9 +520,18 @@ function sideKits(room: MatchRoom, roster: MatchPlayer[], play: RecordingPlay, r
   // booked, white v navy worn, 99% possession). For two sides, the shirts the
   // camera actually saw in this window decide; the swatch only says which is which.
   if (sides.length === 2 && !(kits.A?.measured && kits.B?.measured)) {
-    const segs = new Set(play.manifest.segments
-      .filter((s) => s.endSeconds > window.fromSeconds && s.startSeconds < window.toSeconds)
-      .map((s) => s.index));
+    const detectedSessions = sessionsFromProvenance(play.manifest.provenance, play.manifest.duration);
+    const sessionScoped = detectedSessions.length >= 2;
+    const relevantSession = sessionScoped
+      ? sessionForWindow(play.manifest.provenance, play.manifest.duration, window)
+      : null;
+    const segs = sessionScoped
+      ? relevantSession
+        ? segmentIndexesContainedInSession(play.manifest.segments, relevantSession, window)
+        : new Set<number>()
+      : new Set(play.manifest.segments
+        .filter((s) => s.endSeconds > window.fromSeconds && s.startSeconds < window.toSeconds)
+        .map((s) => s.index));
     // With bibs on one side the two shirts are the bib and everything else;
     // the light/dark 2-means put the bibs with the other side's white shirts.
     const bibKits = play.bib ? bibObservedKits(play.sidecars, play.bib, segs) : null;
@@ -672,8 +689,15 @@ async function linkPlays(ctx: RoomContext, roster: MatchPlayer[], keepSegments: 
     const play = await loadRecordingPlay(link.recordingId, { keepSegments });
     if (!play) continue;
     const reviewed = play.hasBall ? reviewedGoalsOf(play, votes.get(link.recordingId) ?? []) : [];
+    const detectedSessions = sessionsFromProvenance(play.manifest.provenance, play.manifest.duration);
     const spansInBookingClock = roster.flatMap((p) => spans.get(p.id) ?? []);
     const points = [windowFrom, windowTo];
+    if (detectedSessions.length >= 2) {
+      for (const session of detectedSessions) {
+        if (session.startSeconds > windowFrom && session.startSeconds < windowTo) points.push(session.startSeconds);
+        if (session.endSeconds > windowFrom && session.endSeconds < windowTo) points.push(session.endSeconds);
+      }
+    }
     for (const span of spansInBookingClock) {
       for (const offset of [span.fromOffsetSec, span.toOffsetSec]) {
         if (typeof offset !== "number") continue;

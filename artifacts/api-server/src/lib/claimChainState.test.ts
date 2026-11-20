@@ -96,6 +96,39 @@ describe("coverage", () => {
     const state = deriveChainClaimState(manifest, segments, chain, { hasOpenQuestion: false });
     expect(state.vouchedFragments).toEqual(chain);
   });
+
+  it("clips coverage, completion and earned moments to the selected detected game", () => {
+    const gameSegments: ChainClaimSegment[] = [{
+      tracks: [{ id: "A" }],
+      events: [
+        { type: "goal", time: 99 },
+        { type: "goal", time: 100 },
+        { type: "shot", time: 299 },
+        { type: "goal", time: 300 },
+        { type: "goal", time: 301 },
+      ],
+    }];
+    const state = deriveChainClaimState(
+      manifest,
+      gameSegments,
+      [part("A", 0, 600)],
+      {
+        hasOpenQuestion: false,
+        sessionWindow: { startSeconds: 100, endSeconds: 300 },
+      },
+    );
+
+    expect(state.coverageSeconds).toBeCloseTo(200, 1);
+    expect(state.coveragePercent).toBe(100);
+    expect(state.completed).toBe(true);
+    expect(state.earnedClips.map((clip) => clip.momentSeconds)).toEqual([100, 299]);
+    expect(state.matchedEvents).toBe(2);
+    expect(state.vouchedFragments).toEqual([{
+      trackId: "A",
+      fromFrame: 2_500,
+      toFrame: 7_499,
+    }]);
+  });
 });
 
 describe("completion", () => {

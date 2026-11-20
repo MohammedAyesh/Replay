@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { matchFlow, mergeSpans, phasesFromProvenance } from "./matchFlow";
+import {
+  matchFlow,
+  mergeSpans,
+  phasesFromProvenance,
+  segmentIndexesContainedInSession,
+  selectedSessionFromState,
+  sessionForWindow,
+  sessionsFromProvenance,
+} from "./matchFlow";
 
 describe("phasesFromProvenance", () => {
   it("reads phases.py's block and drops malformed entries", () => {
@@ -14,6 +22,43 @@ describe("phasesFromProvenance", () => {
     })).toEqual([{ kind: "before", start: 0, end: 897 }, { kind: "game", start: 897, end: 5043 }]);
     expect(phasesFromProvenance({ chain: "x" })).toBeNull();
     expect(phasesFromProvenance(undefined)).toBeNull();
+  });
+});
+
+describe("detected sessions", () => {
+  const provenance = {
+    phases: {
+      sessions: [
+        { start: 10, end: 40, spans: [[12, 20], [25, 35]], players: 11 },
+        { start: 60, end: 90, spans: [[65, 85]], players: 9 },
+        { start: -10, end: 0, spans: [[-5, 0]] },
+      ],
+    },
+  };
+
+  it("bounds and validates session spans and resolves only a saved session from this bundle", () => {
+    expect(sessionsFromProvenance(provenance, 80)).toEqual([
+      { startSeconds: 10, endSeconds: 40, spans: [[12, 20], [25, 35]], players: 11 },
+      { startSeconds: 60, endSeconds: 80, spans: [[65, 80]], players: 9 },
+    ]);
+    expect(selectedSessionFromState(provenance, 80, {
+      detectedGameWindow: { startSeconds: 60, endSeconds: 80 },
+    })).toEqual({ startSeconds: 60, endSeconds: 80, spans: [[65, 80]], players: 9 });
+    expect(selectedSessionFromState(provenance, 80, {
+      detectedGameWindow: { startSeconds: 1, endSeconds: 80 },
+    })).toBeNull();
+  });
+
+  it("maps a booking to its best-overlapping game and excludes aggregated boundary segments", () => {
+    const selected = sessionForWindow(provenance, 100, { fromSeconds: 55, toSeconds: 95 });
+    expect(selected).toMatchObject({ startSeconds: 60, endSeconds: 90 });
+    expect(segmentIndexesContainedInSession([
+      { index: 0, startSeconds: 0, endSeconds: 20 },
+      { index: 1, startSeconds: 20, endSeconds: 40 },
+      { index: 2, startSeconds: 40, endSeconds: 60 },
+      { index: 3, startSeconds: 60, endSeconds: 80 },
+      { index: 4, startSeconds: 80, endSeconds: 100 },
+    ], selected!, { fromSeconds: 55, toSeconds: 95 })).toEqual(new Set([3]));
   });
 });
 

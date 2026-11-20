@@ -46,9 +46,11 @@ import { applyCuts } from "../lib/checkDeck";
 import { clearMomentChecks, momentChecksFor } from "../lib/momentChecks";
 import {
   detectedShots,
+  bibKit,
   shotContext,
   pitchSizeOf,
   DRIBBLE,
+  kitOptions,
   kitOfParts,
   parseLab,
   passEvents,
@@ -93,7 +95,17 @@ import { queueMatchStatsCacheForRecording } from "../lib/matchStatsCacheJobs";
 import { invalidateMatchStatsCacheForRecording } from "../lib/matchStatsCache";
 import { ammanLocalInstant } from "../lib/matchRooms";
 import { recordingWindow } from "../lib/matchFeed";
-import { bookingShareOfRecording, clipPartsToMatchWindow, readMatchWindow } from "../lib/matchWindow";
+import {
+  bookingShareOfRecording,
+  clipPartsToMatchWindow,
+  clipRangeToMatchWindow,
+  readMatchWindow,
+  withSelectedMatchWindow,
+} from "../lib/matchWindow";
+import {
+  segmentIndexesContainedInSession,
+  selectedSessionFromState,
+} from "../lib/matchFlow";
 
 const router: IRouter = Router();
 
@@ -151,10 +163,15 @@ const DecisionLabelBody = z.object({
  * changes it has to refresh the stats cache.
  */
 function statsStateKey(state: unknown): string {
-  const doc = (state && typeof state === "object" ? state : {}) as { matchChoices?: unknown; switches?: unknown };
+  const doc = (state && typeof state === "object" ? state : {}) as {
+    matchChoices?: unknown;
+    switches?: unknown;
+    detectedGameWindow?: unknown;
+  };
   return JSON.stringify({
     matchChoices: Array.isArray(doc.matchChoices) ? doc.matchChoices : [],
     switches: Array.isArray(doc.switches) ? doc.switches : [],
+    detectedGameWindow: doc.detectedGameWindow ?? null,
   });
 }
 
@@ -445,6 +462,20 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     return;
   }
 
+  const stateWindow = (parsed.data.state as { detectedGameWindow?: unknown }).detectedGameWindow;
+  const requestedSession = selectedSessionFromState(ctx.manifest.provenance, ctx.manifest.duration, parsed.data.state);
+  if (stateWindow != null && !requestedSession) {
+    res.status(400).json({ error: "Selected game does not belong to this recording" });
+    return;
+  }
+  let scopedManifest = ctx.manifest;
+  try {
+    if (requestedSession) scopedManifest = withSelectedMatchWindow(ctx.manifest, requestedSession);
+  } catch {
+    res.status(400).json({ error: "Selected game is outside this recording's match window" });
+    return;
+  }
+
   const [previous] = await db
     .select({ gameState: claimMatchProgressTable.gameState })
     .from(claimMatchProgressTable)
@@ -483,9 +514,10 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
     )),
     ctx.tracksById,
   );
+  const scopedChain = clipPartsToMatchWindow(chain, scopedManifest);
 
   try {
-    await persistChain(ctx, chain, { chosen: parsed.data.name ?? null, fallback: null }, { kind: "decision", answeredFrame: null });
+    await persistChain(ctx, scopedChain, { chosen: parsed.data.name ?? null, fallback: null }, { kind: "decision", answeredFrame: null });
   } catch (error) {
     // The bundle was replaced between reading it and the save's row lock.
     if (error instanceof ClaimBundleChangedError) {
@@ -500,6 +532,10 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   // Bench time is this claimant's off-pitch time: replace their spans with it.
   const bench = parsed.data.bench
     .filter((span) => span.toSeconds > span.fromSeconds)
+    .flatMap((span) => {
+      const clipped = clipRangeToMatchWindow(span.fromSeconds, span.toSeconds, scopedManifest);
+      return clipped ? [clipped] : [];
+    })
     .map((span, index) => ({ ...span, clientId: `game-bench-${index}` }));
   try {
     await db.transaction(async (tx) => {
@@ -522,7 +558,10 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   }
 
   // The page re-applies the deck's "Not me" cuts on every save; judge completion as the deck does.
-  await syncChainClaim(ctx, chain, !parsed.data.done, { creditDeckCuts: true });
+  await syncChainClaim(ctx, scopedChain, !parsed.data.done, {
+    creditDeckCuts: true,
+    ...(requestedSession ? { sessionWindow: requestedSession } : {}),
+  });
 
   // A finished claim puts the claimant on the roster of every match booked
   // over this recording, on the team their shirt matches. Best effort: the
@@ -530,12 +569,12 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
   const rawChoices = Array.isArray((parsed.data.state as { matchChoices?: unknown }).matchChoices)
     ? (parsed.data.state as { matchChoices: unknown[] }).matchChoices.filter((x): x is string => typeof x === "string").slice(0, 50)
     : [];
-  if (parsed.data.done && chain.length) {
+  if (parsed.data.done && scopedChain.length) {
     try {
       // The fourth argument is optional in older matchFeed builds; an empty
       // choice list intentionally preserves their all-overlap behaviour.
       await (joinMatchesFromClaim as unknown as (...args: unknown[]) => Promise<number>)(
-        ctx.userId, ctx.recordingId, chain, rawChoices.length ? rawChoices : undefined,
+        ctx.userId, ctx.recordingId, scopedChain, rawChoices.length ? rawChoices : undefined,
       );
     } catch (error) {
       console.error("[claim-game] match roster join failed", { recordingId: ctx.recordingId, error });
@@ -575,6 +614,9 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
           }))
           .filter((entry): entry is { at: number; team: string; shirtChanged: boolean } => entry.at !== null)
           .filter((entry) => entry.at >= match.startSeconds && entry.at < match.endSeconds)
+          .filter((entry) => !requestedSession || (
+            entry.at >= requestedSession.startSeconds && entry.at < requestedSession.endSeconds
+          ))
           .sort((a, b) => a.at - b.at);
         // Only claim rows beginning inside this recording's overlap are
         // replaced. A span from another recording (or a manual span) survives.
@@ -634,7 +676,7 @@ router.put("/recordings/:id/claim-match/game", async (req, res): Promise<void> =
 
   res.json({
     ok: true,
-    parts: chain.length,
+   parts: scopedChain.length,
     claimedPercent: progress?.claimedPercent ?? 0,
     completed: progress?.completed ?? false,
   });
@@ -853,23 +895,53 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
     return;
   }
   const identity = (access.row?.bundle?.manifest.identities ?? []).find((item) => item.id === claimIdentityId(userId, recordingId));
-  // Only the match counts: the claimant's parts, and every touch, dribble and
-  // detected event the stats screen sums, are cut to the match window.
-  const window = readMatchWindow(play.manifest);
-  const inWindow = (t: number) => !window || (t >= window.startSeconds && t < window.endSeconds);
-  const parts: ClaimedPart[] = clipPartsToMatchWindow(
-    (identity?.parts ?? []).map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
-    play.manifest,
-  );
-  const touches = window ? play.touches.filter((t) => inWindow(t.t)) : play.touches;
-  const playDribbles = window ? play.dribbles.filter((d) => inWindow(d.t0)) : play.dribbles;
-  const playEvents = window ? play.events.filter((e) => inWindow(e.t)) : play.events;
-  const ownKit = kitOfParts(parts, play.sidecars, play.fps);
-
   const [row] = await db
     .select({ gameState: claimMatchProgressTable.gameState })
     .from(claimMatchProgressTable)
     .where(and(eq(claimMatchProgressTable.userId, userId), eq(claimMatchProgressTable.recordingId, recordingId)));
+  const gameState = row?.gameState as Record<string, unknown> | null;
+  const selectedSession = selectedSessionFromState(play.manifest.provenance, play.manifest.duration, gameState);
+  if (gameState?.detectedGameWindow != null && !selectedSession) {
+    res.status(409).json({ error: "The selected game is no longer available in this recording" });
+    return;
+  }
+  let statsManifest = play.manifest;
+  try {
+    if (selectedSession) statsManifest = withSelectedMatchWindow(play.manifest, selectedSession);
+  } catch {
+    res.status(409).json({ error: "The selected game is outside this recording's match window" });
+    return;
+  }
+  const sessionScoped = selectedSession !== null;
+  const allowedSegments = selectedSession
+    ? segmentIndexesContainedInSession(
+      play.manifest.segments,
+      selectedSession,
+      { fromSeconds: selectedSession.startSeconds, toSeconds: selectedSession.endSeconds },
+    )
+    : null;
+  const scopedSidecars = sessionScoped
+    ? play.sidecars.map((sidecar, index) => allowedSegments?.has(index) ? sidecar : null)
+    : play.sidecars;
+  const scopedKits = new Map<string, Lab>();
+  for (const sidecar of scopedSidecars) {
+    for (const [id, lab] of Object.entries(sidecar?.kits ?? {})) scopedKits.set(id, [lab[0], lab[1], lab[2]]);
+  }
+  const scopedKitOptions = kitOptions(scopedSidecars);
+  const scopedBib = bibKit(scopedSidecars);
+  // Only the match counts: the claimant's parts, and every touch, dribble and
+  // detected event the stats screen sums, are cut to the match window.
+  const window = readMatchWindow(statsManifest);
+  const inWindow = (t: number) => !window || (t >= window.startSeconds && t < window.endSeconds);
+  const parts: ClaimedPart[] = clipPartsToMatchWindow(
+    (identity?.parts ?? []).map((p) => ({ trackId: p.trackId, fromFrame: p.fromFrame, toFrame: p.toFrame })),
+    statsManifest,
+  );
+  const touches = window ? play.touches.filter((t) => inWindow(t.t)) : play.touches;
+  const playDribbles = window ? play.dribbles.filter((d) => inWindow(d.t0)) : play.dribbles;
+  const playEvents = window ? play.events.filter((e) => inWindow(e.t)) : play.events;
+  const ownKit = kitOfParts(parts, scopedSidecars, play.fps);
+
   const saved = (row?.gameState as { teams?: { a?: unknown; b?: unknown } } | null)?.teams;
   const savedPick = saved && Array.isArray(saved.a) && Array.isArray(saved.b)
     ? { a: saved.a as Lab, b: saved.b as Lab }
@@ -880,8 +952,9 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
   let source: "query" | "saved" | "seeded" | null = null;
   if (qa && qb) { pick = { a: qa, b: qb }; source = "query"; }
   else if (savedPick) { pick = savedPick; source = "saved"; }
-  else { pick = seedTeams(ownKit, play.kitOptions, play.bib ?? null); source = pick ? "seeded" : null; }
-  if (!play.hasKits) { pick = null; source = null; }
+  else { pick = seedTeams(ownKit, scopedKitOptions, scopedBib); source = pick ? "seeded" : null; }
+  const hasScopedKits = scopedSidecars.some((sidecar) => sidecar && Object.keys(sidecar.kits).length > 0);
+  if (!hasScopedKits) { pick = null; source = null; }
 
   const events = passEvents(touches, pick);
   const mine = playerPlay(touches, events, parts, Boolean(pick));
@@ -896,13 +969,13 @@ router.get("/recordings/:id/claim-match/game/play", async (req, res): Promise<vo
     for (const r of rows) { const side = sideOfKit(r.kit, pick); if (side !== null) n[side]++; }
     return n;
   };
-  const dribbleTeams = pick ? teamDribbles(playDribbles, play.kits, pick) : null;
+  const dribbleTeams = pick ? teamDribbles(playDribbles, scopedKits, pick) : null;
   res.json({
     available: play.hasBall,
     hasPitch: play.hasPitch,
-    hasKits: play.hasKits,
+    hasKits: hasScopedKits,
     fps: play.fps,
-    kits: play.kitOptions,
+    kits: scopedKitOptions,
     ownKit,
     teams: pick ? { a: pick.a, b: pick.b, source } : null,
     team: pick ? {

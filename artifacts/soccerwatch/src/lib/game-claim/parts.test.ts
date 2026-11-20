@@ -61,6 +61,20 @@ describe("roster-seeded claim parts", () => {
     ]);
   });
 
+  it("clips claimed and roster frames to the selected game, excluding gaps between windows", () => {
+    const ctx = makeContext(false);
+    ctx.game.frameRate = 20;
+    ctx.game.chunks = [{ k: 1, start: 0, dur: 10 }];
+    ctx.S = newState(ctx.game);
+    ctx.S.windowRanges = [[2, 3], [6, 7]];
+    Y(ctx, 1).rosterParts = [{ trackId: "s1:t7", fromFrame: 0, toFrame: 200 }];
+
+    expect(chainParts(ctx)).toEqual([
+      { trackId: "s1:t7", fromFrame: 40, toFrame: 59 },
+      { trackId: "s1:t7", fromFrame: 120, toFrame: 139 },
+    ]);
+  });
+
   it("materializes exact ranges for review and respects a later removal", () => {
     const ctx = makeContext(true);
     Y(ctx, 1).rosterParts = [{ trackId: "s1:t7", fromFrame: 105, toFrame: 140 }];
