@@ -129,8 +129,8 @@ export function normalizeCode(value: unknown): string {
 }
 
 export function matchPhase(request: Pick<FootageRequest, "startLocal" | "endLocal" | "status" | "readyAt" | "shareRevoked" | "shareExpiresAt">, now = Date.now()): MatchPhase {
-  if (request.status === "expired") return "expired";
-  if (request.status === "cancelled" || request.status === "refunded" || request.status === "rejected") return "cancelled";
+  if (request.status === "expired" || request.status === "refunded") return "expired";
+  if (request.status === "cancelled" || request.status === "rejected") return "cancelled";
   if (request.status === "failed") return "failed";
   // A player booking waiting on its payment stays "upcoming" until the slot is over.
   if (request.status === "awaiting_payment") {
@@ -164,7 +164,7 @@ export function matchWindow(request: Pick<FootageRequest, "startLocal" | "endLoc
 }
 
 export function voteOpen(request: Pick<FootageRequest, "startLocal" | "endLocal" | "status">, now = Date.now()): boolean {
-  if (["cancelled", "failed", "refunded", "rejected"].includes(request.status)) return false;
+  if (["cancelled", "failed", "rejected"].includes(request.status)) return false;
   const end = ammanLocalInstant(request.endLocal);
   const start = ammanLocalInstant(request.startLocal);
   // Opens at kick-off + half the match so a vote is possible from the car park,

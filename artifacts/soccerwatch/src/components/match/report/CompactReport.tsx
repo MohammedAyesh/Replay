@@ -18,6 +18,7 @@ import { barShare, boardRows, formMarks, matchReelPicks, myStanding, pickHeadlin
 import { REEL_MAX_CLIPS, REEL_MIN_CLIPS } from "@/lib/end-screen";
 import { getListUserClipsQueryKey, useListUserClips } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
+import { canWatchFullMatch, matchReportFootageNotice } from "@/lib/match-report-footage";
 import { Num, visibleColour } from "./ReportParts";
 import { Disclosure, EveryoneSection, NightSection, RivalSection, TwoSidesSection, watchHref } from "./StatsReport";
 
@@ -270,7 +271,8 @@ function FormLine({ me, stats, L }: { me: PlayerStats; stats: Stats; L: L }) {
 /* ------------------------------------------------------------------ E1: compact */
 
 function MatchStrip({ room, r, L, me, replay, durationSeconds }: { room: MatchRoom; r: R; L: L; me: PlayerStats; replay: MatchReplay | undefined; durationSeconds: number }) {
-  const watch = room.footage.ready && room.footage.shareToken && room.phase !== "expired" && room.phase !== "cancelled" ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
+  const watch = canWatchFullMatch(room) ? `/w/${room.footage.shareToken}?m=${room.code}` : null;
+  const footageNotice = matchReportFootageNotice(room);
   const totalMin = Math.round(durationSeconds / 60);
   const onMin = Math.round(me.minutes ?? 0);
   const pct = (seconds: number) => `${Math.min(98, Math.max(2, (seconds / Math.max(1, durationSeconds)) * 100))}%`;
@@ -292,7 +294,7 @@ function MatchStrip({ room, r, L, me, replay, durationSeconds }: { room: MatchRo
         </Link>
       ) : (
         <div className="flex h-[72px] items-center justify-center rounded-2xl border border-line bg-surface px-4 text-center text-sm text-muted-text">
-          {room.phase === "expired" ? r.expired : room.phase === "cancelled" ? r.footageUnavailable : r.processing}
+          {footageNotice === "unavailable" ? r.footageUnavailable : footageNotice === "expired" ? r.expired : r.processing}
         </div>
       )}
       <div dir="ltr" className="relative h-6">
